@@ -116,6 +116,9 @@ DEFAULT_OP_TIMEOUT_MS = 20_000
 #: tens of seconds on a cold model, which is exactly how a *successful*
 #: `add_subject_mask` came back to the caller as a bare tool error (B-153).
 AI_MASK_TIMEOUT_MS = 180_000
+#: Openverse search/download (D-400): the app's own HTTP client allows 30s per
+#: request plus one 10s `429` wait, and a download of a long track takes longer.
+AUDIO_LIBRARY_TIMEOUT_MS = 120_000
 
 # D-318's recut detectors used to have a 180_000 budget here, on the reasoning
 # that a cold decode of a long 4K source is not 20s-fast. B-188 proved that far
@@ -437,7 +440,7 @@ def get_timeline() -> str:
     clips: [{index, id, name, sourcePath, startFrame, duration, sourceStart,
     sourceLen, sourceFps, linkGroup, fadeInFrames, fadeOutFrames, fadeInCurve,
     fadeOutCurve, fadeInCurveName, fadeOutCurveName, volume, pan, eqBands,
-    eqActive}]}]}.
+    eqActive, highlights}]}]}.
 
     `volume`/`pan` (D-223) are the CLIP's own level and stereo position, which
     MULTIPLY with the track's own `gain` rather than replacing it — see
@@ -448,6 +451,10 @@ def get_timeline() -> str:
     it: a four-band strip whose gains are all 0 dB is completely inert, and
     `eqBands` being non-empty is NOT the same as the clip being filtered. See
     editor_set_clip_eq.
+
+    `highlights` (D-396, B-270) is that clip's phrase highlights, `[]` when it
+    has none, each `{box: [x0, y0, x1, y1], at, dur, color?, opacity?}` -- the
+    same shape editor_set_clip_highlights takes and returns.
 
     All positions and durations are in FRAMES, not seconds — the unit every
     Edit-tab number is in. `index` is what set_clip_fade and set_track_duck
@@ -1964,6 +1971,104 @@ def editor_add_clip(
     if name is not None:
         args["name"] = name
     return json.dumps(_op("editor_add_clip", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_search_audio(
+    query: str,
+    kind: str = "any",
+    min_secs: float | None = None,
+    max_secs: float | None = None,
+    licenses: list[str] | None = None,
+    page: int = 1,
+    page_size: int = 10,
+) -> str:
+    """Search Openverse (openverse.org) for CC-licensed sound effects and music. A
+    NETWORK call to api.openverse.org, made only because you called this tool;
+    nothing else in the app reaches the internet for audio.
+
+    `kind` is "sfx", "music" or "any". `min_secs`/`max_secs` bound the length.
+    `licenses` defaults to ["cc0", "by"] (public-domain dedication and plain
+    attribution); "by-sa" and "pdm" are accepted when named. NonCommercial
+    (`nc`) and NoDerivatives (`nd`) licences are ALWAYS refused, with the reason:
+    a published video can be monetised and cutting/mixing sound is an
+    adaptation, so neither can go in one. `page_size` is 1..20.
+
+    Returns {total, page, pageCount, hits: [{id, title, creator, creatorUrl,
+    license, licenseVersion, licenseUrl, source, category, durationSecs,
+    previewUrl, filetype, landingUrl, attribution}], skipped: {...counts of
+    results left out and why}}. Filtering happens after the search, so a page
+    can hold fewer hits than `page_size`: raise `page` for more. Take a hit's
+    `id` to editor_import_audio. CC BY sounds REQUIRE a credit: importing one
+    records it, and editor_get_credits returns the text to paste."""
+    import json
+
+    args: dict = {"query": query, "kind": kind, "page": page, "pageSize": page_size}
+    if min_secs is not None:
+        args["minSecs"] = min_secs
+    if max_secs is not None:
+        args["maxSecs"] = max_secs
+    if licenses is not None:
+        args["licenses"] = licenses
+    return json.dumps(
+        _op("editor_search_audio", timeout_ms=AUDIO_LIBRARY_TIMEOUT_MS, **args),
+        indent=2,
+        default=str,
+    )
+
+
+@mcp.tool()
+def editor_import_audio(
+    openverse_id: str,
+    track: int | None = None,
+    start_frame: int | None = None,
+) -> str:
+    """Download one Openverse sound (an `id` from editor_search_audio) into the
+    project's `assets/audio/`, import it into the media pool, and optionally
+    place it. A NETWORK call, made only because you called this tool.
+
+    The licence is re-checked on Openverse's own record for that id: an NC or ND
+    sound is refused with the reason whatever found it. The credit is appended
+    to `assets/audio/CREDITS.json` in the same step (a re-import of the same id
+    replaces its entry, and does not download the file twice).
+
+    Pass `track` to also place it, at `start_frame` (timeline frames; omit to
+    let editor_add_clip choose) with the sound's full length: an audio file
+    goes on an audio track. Without `track` it is imported only; place it later
+    with editor_add_clip.
+
+    Returns {ok, saved: {path, projectFile, title, creator, license,
+    durationSecs, credit, downloaded}, media, placed?}. If the download worked
+    but the import or placement failed, the error says so and still carries
+    `saved`."""
+    import json
+
+    args: dict = {"openverseId": openverse_id}
+    if track is not None:
+        args["track"] = track
+    if start_frame is not None:
+        args["startFrame"] = start_frame
+    return json.dumps(
+        _op("editor_import_audio", timeout_ms=AUDIO_LIBRARY_TIMEOUT_MS, **args),
+        indent=2,
+        default=str,
+    )
+
+
+@mcp.tool()
+def editor_get_credits() -> str:
+    """The project's audio credits as ready-to-paste video-description text.
+
+    Reads `assets/audio/CREDITS.json`, which editor_import_audio appends to.
+    Returns {count, text, entries, ledger}: `text` lists the CC BY credits (the
+    ones that are required) first, then the public-domain ones, each with title,
+    creator, landing page and licence link. Empty `text` means nothing has been
+    imported. Reads a local file; no network.
+
+    Read-only, cheap, no side effects."""
+    import json
+
+    return json.dumps(_op("editor_get_credits"), indent=2, default=str)
 
 
 @mcp.tool()

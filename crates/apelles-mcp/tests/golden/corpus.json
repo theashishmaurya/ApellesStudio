@@ -2710,6 +2710,15 @@
       }
     },
     {
+      "name": "editor_get_credits",
+      "description": "The project's audio credits as ready-to-paste video-description text.\n\n    Reads `assets/audio/CREDITS.json`, which editor_import_audio appends to.\n    Returns {count, text, entries, ledger}: `text` lists the CC BY credits (the\n    ones that are required) first, then the public-domain ones, each with title,\n    creator, landing page and licence link. Empty `text` means nothing has been\n    imported. Reads a local file; no network.\n\n    Read-only, cheap, no side effects.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+        "title": "editor_get_creditsArguments"
+      }
+    },
+    {
       "name": "editor_get_grade_status",
       "description": "Which clips on the Edit timeline carry a real **Colorist grade** \u2014 and\n    what, if anything, that grade loses on the way there (D-256).\n\n    Returns `clips` (`{clipId, name, graded}` per video clip), `gradedCount`,\n    and `warnings`. `graded: true` means this clip previews AND exports with\n    its Colorist grade applied \u2014 automatically, with no toggle; see\n    `editor_get_capabilities`' `colorist_grade` key for the model. `graded:\n    false` covers both \"never graded\" and \"graded, then reset to nothing\":\n    either way no LUT is applied at all, and the pixels are identical to a\n    build without the feature.\n\n    **Read `warnings` before trusting an export to match the Colorist tab.**\n    The grade crosses into the Edit tab as a baked 3D LUT, which carries the\n    whole global grade exactly but *cannot* carry anything spatial \u2014 a mask /\n    local layer, the Colorist crop, depth relight. Each such drop is listed\n    here, named by clip. An empty `warnings` list means the exported file is\n    the grade, in full.\n\n    Use it to confirm a grade actually landed on the clip you meant (the link\n    is the CLIP id, not the source file \u2014 two clips cut from one file grade\n    independently, and splitting a graded clip does not copy the grade onto\n    the new half), and to check a timeline before `editor_export`.\n\n    Cheap to call repeatedly: each clip's lattice is memoised on its grade\n    file's own mtime, so asking twice costs nothing.",
       "inputSchema": {
@@ -2946,6 +2955,47 @@
         ],
         "type": "object",
         "title": "editor_get_word_transcriptArguments"
+      }
+    },
+    {
+      "name": "editor_import_audio",
+      "description": "Download one Openverse sound (an `id` from editor_search_audio) into the\n    project's `assets/audio/`, import it into the media pool, and optionally\n    place it. A NETWORK call, made only because you called this tool.\n\n    The licence is re-checked on Openverse's own record for that id: an NC or ND\n    sound is refused with the reason whatever found it. The credit is appended\n    to `assets/audio/CREDITS.json` in the same step (a re-import of the same id\n    replaces its entry, and does not download the file twice).\n\n    Pass `track` to also place it, at `start_frame` (timeline frames; omit to\n    let editor_add_clip choose) with the sound's full length: an audio file\n    goes on an audio track. Without `track` it is imported only; place it later\n    with editor_add_clip.\n\n    Returns {ok, saved: {path, projectFile, title, creator, license,\n    durationSecs, credit, downloaded}, media, placed?}. If the download worked\n    but the import or placement failed, the error says so and still carries\n    `saved`.",
+      "inputSchema": {
+        "properties": {
+          "openverse_id": {
+            "title": "Openverse Id",
+            "type": "string"
+          },
+          "track": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Track"
+          },
+          "start_frame": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start Frame"
+          }
+        },
+        "required": [
+          "openverse_id"
+        ],
+        "type": "object",
+        "title": "editor_import_audioArguments"
       }
     },
     {
@@ -3674,6 +3724,77 @@
         ],
         "type": "object",
         "title": "editor_roll_editArguments"
+      }
+    },
+    {
+      "name": "editor_search_audio",
+      "description": "Search Openverse (openverse.org) for CC-licensed sound effects and music. A\n    NETWORK call to api.openverse.org, made only because you called this tool;\n    nothing else in the app reaches the internet for audio.\n\n    `kind` is \"sfx\", \"music\" or \"any\". `min_secs`/`max_secs` bound the length.\n    `licenses` defaults to [\"cc0\", \"by\"] (public-domain dedication and plain\n    attribution); \"by-sa\" and \"pdm\" are accepted when named. NonCommercial\n    (`nc`) and NoDerivatives (`nd`) licences are ALWAYS refused, with the reason:\n    a published video can be monetised and cutting/mixing sound is an\n    adaptation, so neither can go in one. `page_size` is 1..20.\n\n    Returns {total, page, pageCount, hits: [{id, title, creator, creatorUrl,\n    license, licenseVersion, licenseUrl, source, category, durationSecs,\n    previewUrl, filetype, landingUrl, attribution}], skipped: {...counts of\n    results left out and why}}. Filtering happens after the search, so a page\n    can hold fewer hits than `page_size`: raise `page` for more. Take a hit's\n    `id` to editor_import_audio. CC BY sounds REQUIRE a credit: importing one\n    records it, and editor_get_credits returns the text to paste.",
+      "inputSchema": {
+        "properties": {
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "kind": {
+            "default": "any",
+            "title": "Kind",
+            "type": "string"
+          },
+          "min_secs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Min Secs"
+          },
+          "max_secs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Secs"
+          },
+          "licenses": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Licenses"
+          },
+          "page": {
+            "default": 1,
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "default": 10,
+            "title": "Page Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object",
+        "title": "editor_search_audioArguments"
       }
     },
     {
@@ -5710,7 +5831,7 @@
     },
     {
       "name": "get_timeline",
-      "description": "The active edit timeline: every track and every clip on it, with the\n    indices the mutating Edit-tab tools address clips by.\n\n    Returns {id, name, durationFrames, tracks: [{index, kind: \"video\"|\"audio\",\n    gain, locked, hidden, duckFrom, duckDb, duckAttackMs, duckReleaseMs,\n    clips: [{index, id, name, sourcePath, startFrame, duration, sourceStart,\n    sourceLen, sourceFps, linkGroup, fadeInFrames, fadeOutFrames, fadeInCurve,\n    fadeOutCurve, fadeInCurveName, fadeOutCurveName, volume, pan, eqBands,\n    eqActive}]}]}.\n\n    `volume`/`pan` (D-223) are the CLIP's own level and stereo position, which\n    MULTIPLY with the track's own `gain` rather than replacing it \u2014 see\n    editor_set_clip_audio.\n\n    `eqBands` (D-224) is that clip's own parametric EQ, `[]` when it has none;\n    `eqActive` says whether ANY of those bands actually changes the sound. Read\n    it: a four-band strip whose gains are all 0 dB is completely inert, and\n    `eqBands` being non-empty is NOT the same as the clip being filtered. See\n    editor_set_clip_eq.\n\n    All positions and durations are in FRAMES, not seconds \u2014 the unit every\n    Edit-tab number is in. `index` is what set_clip_fade and set_track_duck\n    address; `id` is the stable identity that survives a reorder, for re-finding\n    a clip after an edit. `duckFrom` is null on a track that is not ducked.\n\n    B-077 \u2014 `startFrame` (and `durationFrames`) are TIMELINE frames (this\n    timeline's own rate); `duration`/`sourceStart`/`sourceLen` are a CLIP'S\n    OWN native frames, which only match the timeline's rate when `sourceFps`\n    equals it. A clip's real length in seconds is `duration / (sourceFps or\n    the timeline's own rate)`, NOT `duration / durationFrames`'s implied rate\n    \u2014 dividing a clip's native frame count by the wrong rate is exactly the\n    bug that once showed a 47.86s clip as 88s. `sourceFps` is null for a clip\n    probed before this field existed, or genuinely same-rate as the timeline.\n\n    Read-only, cheap, no side effects.",
+      "description": "The active edit timeline: every track and every clip on it, with the\n    indices the mutating Edit-tab tools address clips by.\n\n    Returns {id, name, durationFrames, tracks: [{index, kind: \"video\"|\"audio\",\n    gain, locked, hidden, duckFrom, duckDb, duckAttackMs, duckReleaseMs,\n    clips: [{index, id, name, sourcePath, startFrame, duration, sourceStart,\n    sourceLen, sourceFps, linkGroup, fadeInFrames, fadeOutFrames, fadeInCurve,\n    fadeOutCurve, fadeInCurveName, fadeOutCurveName, volume, pan, eqBands,\n    eqActive, highlights}]}]}.\n\n    `volume`/`pan` (D-223) are the CLIP's own level and stereo position, which\n    MULTIPLY with the track's own `gain` rather than replacing it \u2014 see\n    editor_set_clip_audio.\n\n    `eqBands` (D-224) is that clip's own parametric EQ, `[]` when it has none;\n    `eqActive` says whether ANY of those bands actually changes the sound. Read\n    it: a four-band strip whose gains are all 0 dB is completely inert, and\n    `eqBands` being non-empty is NOT the same as the clip being filtered. See\n    editor_set_clip_eq.\n\n    `highlights` (D-396, B-270) is that clip's phrase highlights, `[]` when it\n    has none, each `{box: [x0, y0, x1, y1], at, dur, color?, opacity?}` -- the\n    same shape editor_set_clip_highlights takes and returns.\n\n    All positions and durations are in FRAMES, not seconds \u2014 the unit every\n    Edit-tab number is in. `index` is what set_clip_fade and set_track_duck\n    address; `id` is the stable identity that survives a reorder, for re-finding\n    a clip after an edit. `duckFrom` is null on a track that is not ducked.\n\n    B-077 \u2014 `startFrame` (and `durationFrames`) are TIMELINE frames (this\n    timeline's own rate); `duration`/`sourceStart`/`sourceLen` are a CLIP'S\n    OWN native frames, which only match the timeline's rate when `sourceFps`\n    equals it. A clip's real length in seconds is `duration / (sourceFps or\n    the timeline's own rate)`, NOT `duration / durationFrames`'s implied rate\n    \u2014 dividing a clip's native frame count by the wrong rate is exactly the\n    bug that once showed a 47.86s clip as 88s. `sourceFps` is null for a clip\n    probed before this field existed, or genuinely same-rate as the timeline.\n\n    Read-only, cheap, no side effects.",
       "inputSchema": {
         "properties": {},
         "type": "object",
@@ -13205,6 +13326,25 @@
       ]
     },
     {
+      "tool": "editor_get_credits",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "editor_get_credits",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "editor_get_grade_status",
       "case": "minimal",
       "arguments": {},
@@ -13471,6 +13611,56 @@
             "start": true
           },
           "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_import_audio",
+      "case": "minimal",
+      "arguments": {
+        "openverse_id": "v_editor_import_audio.openverse_id"
+      },
+      "requests": [
+        {
+          "op": "editor_import_audio",
+          "args": {
+            "openverseId": "v_editor_import_audio.openverse_id"
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_import_audio",
+      "case": "full",
+      "arguments": {
+        "openverse_id": "v_editor_import_audio.openverse_id",
+        "track": 62,
+        "start_frame": 10
+      },
+      "requests": [
+        {
+          "op": "editor_import_audio",
+          "args": {
+            "openverseId": "v_editor_import_audio.openverse_id",
+            "track": 62,
+            "startFrame": 10
+          },
+          "timeout_ms": 120000
         }
       ],
       "isError": false,
@@ -14175,6 +14365,71 @@
             "delta": 59
           },
           "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_search_audio",
+      "case": "minimal",
+      "arguments": {
+        "query": "v_editor_search_audio.query"
+      },
+      "requests": [
+        {
+          "op": "editor_search_audio",
+          "args": {
+            "query": "v_editor_search_audio.query",
+            "kind": "any",
+            "page": 1,
+            "pageSize": 10
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_search_audio",
+      "case": "full",
+      "arguments": {
+        "query": "v_editor_search_audio.query",
+        "kind": "v_editor_search_audio.kind",
+        "min_secs": 17.35,
+        "max_secs": 7.39,
+        "licenses": [
+          "v_editor_search_audio.licenses[0]"
+        ],
+        "page": 51,
+        "page_size": 77
+      },
+      "requests": [
+        {
+          "op": "editor_search_audio",
+          "args": {
+            "query": "v_editor_search_audio.query",
+            "kind": "v_editor_search_audio.kind",
+            "page": 51,
+            "pageSize": 77,
+            "minSecs": 17.35,
+            "maxSecs": 7.39,
+            "licenses": [
+              "v_editor_search_audio.licenses[0]"
+            ]
+          },
+          "timeout_ms": 120000
         }
       ],
       "isError": false,

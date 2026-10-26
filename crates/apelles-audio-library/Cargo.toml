@@ -1,0 +1,20 @@
+[package]
+name = "apelles-audio-library"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Apelles — Openverse audio search + import (D-400): the licence policy, the response parser, the credits ledger and the HTTP client. The only network code in the Edit path, reached only by an explicit tool call."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+# The HTTP client, the same rustls-only configuration `apelles-ai` uses. Async,
+# driven by the Tauri command that calls it.
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
+tokio = { version = "1", features = ["time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["time", "macros", "rt"] }

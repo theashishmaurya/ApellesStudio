@@ -472,6 +472,7 @@ import {
   type MarqueeRect,
   type MarqueeViewport,
 } from './marquee';
+import { useViewportWidth } from './useViewportWidth';
 
 const EFFECT_ID = 'clip';
 /** how many pixels a labeled ruler tick should target, at any zoom (D-058
@@ -1261,7 +1262,6 @@ export function TimelinePane() {
   // (the track-header column is a separate `ResizablePanel`), so its client
   // width IS the viewport. Tracked with a `ResizeObserver` because a panel
   // drag resizes it without any React state changing.
-  const [viewportWidth, setViewportWidth] = useState(0);
 
   const editorRef = useRef<TimelineState>(null);
   /**
@@ -1477,15 +1477,11 @@ export function TimelinePane() {
   }, [scrollLeft, scrollTop]);
 
   // D-128 — keep `viewportWidth` honest across window and panel resizes.
-  useEffect(() => {
-    const el = editAreaRef.current;
-    if (!el) return;
-    setViewportWidth(el.clientWidth);
-    const ro = new ResizeObserver(() => setViewportWidth(el.clientWidth));
-    ro.observe(el);
-    return () => ro.disconnect();
-    // B-123 — see the `wheel` effect above; same late-mount, same fix.
-  }, [editArea]);
+  // B-267 — `measureEpoch` bumps once when the pane was laid out hidden (a tab
+  // that stays mounted under `display: none`) and is first shown; it keys the
+  // library below so its AutoSizer measures a visible element.
+  // B-123 — `editArea`, not a ref: this node mounts late; see the `wheel` effect.
+  const { width: viewportWidth, epoch: measureEpoch } = useViewportWidth(editArea);
 
   // --------------------------------------------------------------------- //
   // D-235 — the context-sensitive trim tool (roadmap item 27). A FIFTH
@@ -4383,6 +4379,7 @@ export function TimelinePane() {
             }}
           >
             <TimelineEditor
+              key={measureEpoch}
               ref={editorRef}
               editorData={editorData}
               effects={effects}

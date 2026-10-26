@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@apelles/bridge": "*",
     "@apelles/history": "*",
     "@apelles/inspector": "*",
     "@apelles/motion-engine": "*",

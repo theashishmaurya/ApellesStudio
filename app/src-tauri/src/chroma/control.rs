@@ -67,6 +67,16 @@
 //! see [`BridgeClaim`]. The op-registry boundary is unchanged: this still knows
 //! no op names, only the prefixes the frontend tells it about at runtime.
 //!
+//! **One op runs once (B-272).** `chroma://request` is a broadcast: every live
+//! frontend listener hears it. A registration whose `unlisten` never ran (the
+//! dev-mode HMR teardown race) therefore executed every op beside its
+//! replacement: one `editor_add_marker` made two markers, a 44-frame
+//! `editor_ripple_delete_ranges` removed 88. Each claim now carries a fresh
+//! `instance` id per subscription and [`dispatch`] stamps the request with a
+//! `target` naming the one instance (the latest announcer of the most specific
+//! prefix) that is to run it; every other instance ignores it
+//! (`@apelles/bridge`'s `newBridgeClaim().isForMe`).
+//!
 //! See chroma/docs/08-decisions.md D-020 / D-210 and
 //! chroma/docs/notes/control-server/SPEC.md.
 
@@ -311,6 +321,15 @@ struct BridgeClaim {
     prefix: String,
     #[serde(default)]
     defers: Vec<String>,
+    /// B-272 — which SUBSCRIPTION of that registry this is: new for every
+    /// `listen()` the frontend makes. Tauri events fan out to every live
+    /// listener, so a registration whose `unlisten` never ran (the dev-mode HMR
+    /// teardown race) would otherwise execute every op beside its replacement.
+    /// [`dispatch`] stamps each request with the one instance meant to run it
+    /// and every other instance ignores it. Empty from a frontend that predates
+    /// the field, in which case the request carries no target.
+    #[serde(default)]
+    instance: String,
 }
 
 impl BridgeClaim {
@@ -340,6 +359,19 @@ impl BridgeRegistry {
             None => claims.push(claim),
         }
         self.ready.notify_all();
+    }
+
+    /// The subscription that is to run `op` (B-272): the most specific claim
+    /// that serves it (longest prefix, so `editor_` beats the `""` catch-all),
+    /// and for one prefix the latest announcer, since [`Self::announce`]
+    /// replaces. `None` when nothing serves it or the claim has no instance.
+    fn target_for(&self, op: &str) -> Option<String> {
+        let claims = self.claims.lock().ok()?;
+        claims
+            .iter()
+            .filter(|c| c.serves(op) && !c.instance.is_empty())
+            .max_by_key(|c| c.prefix.len())
+            .map(|c| c.instance.clone())
     }
 
     /// Block until some checked-in registry serves `op`, or `timeout` elapses.
@@ -581,9 +613,11 @@ fn dispatch(
         let _ = tx.send(ev.payload().to_string());
     });
 
+    // B-272 — the request names the ONE frontend subscription that runs it, so
+    // a leaked listener from before a reload hears the event and does nothing.
     let _ = app.emit(
         "chroma://request",
-        serde_json::json!({ "id": id, "op": op, "args": args }),
+        serde_json::json!({ "id": id, "op": op, "args": args, "target": registry.target_for(op) }),
     );
 
     match rx.recv_timeout(timeout) {
@@ -667,13 +701,48 @@ mod tests {
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
+            instance: "colorist-1".into(),
         }
     }
     fn editor() -> BridgeClaim {
+        editor_instance("editor-1")
+    }
+    fn editor_instance(instance: &str) -> BridgeClaim {
         BridgeClaim {
             prefix: "editor_".into(),
             defers: vec![],
+            instance: instance.into(),
         }
+    }
+
+    /// **B-272.** A frontend that registers twice (a reload whose first
+    /// `unlisten` never ran) is addressed at ONE instance: the latest
+    /// announcer. The earlier subscription is never named as a target, so it
+    /// cannot execute the op beside its replacement.
+    #[test]
+    fn a_second_registration_of_a_prefix_becomes_the_only_target() {
+        let reg = BridgeRegistry::default();
+        reg.announce(colorist());
+        reg.announce(editor_instance("editor-old"));
+        reg.announce(editor_instance("editor-new"));
+        assert_eq!(
+            reg.target_for("editor_add_marker").as_deref(),
+            Some("editor-new")
+        );
+        // The catch-all keeps its own op, and nothing else's.
+        assert_eq!(reg.target_for("get_state").as_deref(), Some("colorist-1"));
+        assert_eq!(reg.target_for("motion_seek"), None);
+    }
+
+    /// A claim from a frontend that predates `instance` names no target, so the
+    /// request is sent untargeted rather than aimed at an empty string.
+    #[test]
+    fn a_claim_without_an_instance_names_no_target() {
+        let reg = BridgeRegistry::default();
+        let legacy: BridgeClaim =
+            serde_json::from_str(r#"{"prefix":"editor_"}"#).expect("prefix-only claim");
+        reg.announce(legacy);
+        assert_eq!(reg.target_for("editor_add_marker"), None);
     }
 
     #[test]

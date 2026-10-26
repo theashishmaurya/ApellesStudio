@@ -41,6 +41,12 @@ D-045/D-046 media-pool store, now consumed by a real panel (D-046's
   `listen()` registration (B-032/B-034/D-112). The canonical copy for
   `packages/*`, which cannot import `app/src/utils/tauriListeners.ts`.
 
+- `newBridgeClaim` (`src/controlBridge.ts`, B-272) — the control-bridge
+  handshake every op registry (Colorist, Edit, Motion, Debug) uses: a fresh
+  `instance` id per subscription, and `isForMe(payload)` so a listener leaked
+  across a reload never runs an op the control server addressed to its
+  replacement.
+
 **Tests:** `npm test --workspace @apelles/bridge` (vitest, node environment) —
 `src/media.test.ts` covers the pool's project-identity input (B-083/D-203);
 `src/aiEnv.test.ts` covers the D-315 status vocabulary and the rule that

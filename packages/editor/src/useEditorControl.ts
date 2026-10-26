@@ -105,7 +105,7 @@ import {
 } from './recutRuns';
 import { listen, emit } from '@tauri-apps/api/event';
 
-import { useMediaPoolStore, type MediaItem } from '@apelles/bridge';
+import { newBridgeClaim, useMediaPoolStore, type MediaItem } from '@apelles/bridge';
 import { runAsAgent } from '@apelles/history';
 // B-217/D-358 — the cross-store project-identity guard; see the dispatcher below.
 import { assertProjectIdentity } from '@apelles/store';
@@ -317,7 +317,6 @@ const EDITOR_OP_PREFIX = 'editor_';
  *  in `app/src/hooks/useChromaControl.ts` is the only one with anything to
  *  defer. The event name is spelled out here rather than imported, matching how
  *  `chroma://request`/`chroma://response/` already are in all four registries. */
-const BRIDGE_CLAIM = { prefix: EDITOR_OP_PREFIX, defers: [] as string[] };
 
 /** B-032/B-034/D-112's own fix, copied verbatim from `useMotionControl.ts` —
  *  `listen()`'s cleanup is `unlistenPromise.then((f) => f())`, and Tauri's
@@ -675,6 +674,11 @@ export function timelineDto(tl: Timeline) {
         // response (there is no `kind` field on a clip — being a title IS
         // having a text layer, see `apelles_timeline::Clip::text`).
         text: c.text ?? null,
+        // D-396 / B-270 — the clip's phrase highlights, in the same shape
+        // `editor_set_clip_highlights` takes and returns (`{box, at, dur,
+        // color?, opacity?}`), so an agent can read back what it wrote with
+        // the same call every other clip property comes from. `[]` for none.
+        highlights: c.highlights ?? [],
       })),
     })),
     // D-222 — reported alongside the tracks so `editor_get_timeline` is still
@@ -2521,6 +2525,65 @@ export function useEditorControl(): void {
               : null,
           })),
         };
+      },
+
+      // D-400 — Openverse audio: search, import (with its credit) and read the
+      // credits back. MCP-first by the owner's call (no GUI panel), and the
+      // only network calls in the Edit path: each is one explicit tool call,
+      // made by Rust (`chroma/audio_library.rs`), never by the webview.
+      editor_search_audio: async (a) => {
+        const query = typeof a?.query === 'string' ? a.query.trim() : '';
+        if (!query) return { error: 'query is required (what to search for, e.g. "rain on a window")' };
+        // Built before the `try`: the React Compiler (D-201) bails out on
+        // conditional values inside one.
+        const searchArgs = {
+          query,
+          kind: a?.kind ?? null,
+          minSecs: a?.minSecs ?? null,
+          maxSecs: a?.maxSecs ?? null,
+          licenses: Array.isArray(a?.licenses) ? a.licenses : null,
+          page: a?.page ?? null,
+          pageSize: a?.pageSize ?? null,
+        };
+        try {
+          return await invoke('chroma_audio_search', searchArgs);
+        } catch (e) {
+          return { error: thrownMessage(e) };
+        }
+      },
+
+      editor_import_audio: async (a) => {
+        const openverseId = typeof a?.openverseId === 'string' ? a.openverseId.trim() : '';
+        if (!openverseId) return { error: 'openverse_id is required (an `id` from editor_search_audio)' };
+        const place = a?.track !== undefined && a?.track !== null;
+        let saved: { path: string; projectFile: string; credit: string; downloaded: boolean };
+        try {
+          saved = await invoke('chroma_audio_download', { openverseId });
+        } catch (e) {
+          return { error: thrownMessage(e) };
+        }
+        const imported = await OPS.editor_import_media({ paths: [saved.path] });
+        if (imported?.error) return { error: `downloaded ${saved.projectFile} but the import failed: ${imported.error}`, saved };
+        const media = imported.added?.[0];
+        if (!media) return { error: `downloaded ${saved.projectFile} but the media pool did not accept it`, saved };
+        if (!place) return { ok: true, saved, media };
+        const placed = await OPS.editor_add_clip({
+          mediaId: media.id,
+          track: a.track,
+          startFrame: a?.startFrame ?? undefined,
+        });
+        if (placed?.error) {
+          return { error: `imported ${saved.projectFile} but placing it failed: ${placed.error}`, saved, media };
+        }
+        return { ok: true, saved, media, placed };
+      },
+
+      editor_get_credits: async () => {
+        try {
+          return await invoke('chroma_audio_credits');
+        } catch (e) {
+          return { error: thrownMessage(e) };
+        }
       },
 
       // Roadmap item 23 (2026-09-07) — the minimal fix for "the media pool
@@ -5335,9 +5398,14 @@ export function useEditorControl(): void {
     // long before anyone can queue one. Idempotent — see `textFonts.ts`.
     void loadTextFonts();
 
+    // B-272 — this subscription's identity. The control server addresses every
+    // request to ONE announced instance, so a leaked older subscription (a
+    // failed unlisten across HMR) hears the event and ignores it.
+    const bridge = newBridgeClaim(EDITOR_OP_PREFIX);
     const unlistenP = listen('chroma://request', async (ev: any) => {
       const payload = ev?.payload || {};
       const { id, op, args } = payload;
+      if (!bridge.isForMe(payload)) return;
       if (typeof op !== 'string' || !op.startsWith(EDITOR_OP_PREFIX)) {
         // Not ours — leave it for useChromaControl.ts's Colorist registry
         // (or Motion's) to claim. Responding here would race a real handler
@@ -5379,7 +5447,7 @@ export function useEditorControl(): void {
     // promise resolving is that fact), and only if this effect is still live.
     let subscribed = true;
     void unlistenP.then(() => {
-      if (subscribed) void emit('chroma://bridge-ready', BRIDGE_CLAIM);
+      if (subscribed) void emit('chroma://bridge-ready', bridge.claim);
     });
 
     return () => {

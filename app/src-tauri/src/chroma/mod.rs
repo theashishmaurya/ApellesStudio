@@ -114,6 +114,10 @@
 //!   gate (D-382). No judgement, no timeline — the op layer maps clips
 //! - `sidecar`  — spawn + supervise the `ai/` and `ai-media/` FastAPI sidecars,
 //!   kill them on exit (D-028; second sidecar D-189, N-sidecar supervisor D-190)
+//! - `audio_library` — **Openverse audio search/import/credits (D-400)**: the Tauri
+//!   commands behind `editor_search_audio` / `editor_import_audio` /
+//!   `editor_get_credits`; the real code is `apelles-audio-library`. Explicit
+//!   network calls only, never in the render or grade path
 //! - `write_text_file` — generic "write this UTF-8 text to this absolute path"
 //!   primitive (D-196), used by the Edit-tab FCPXML interchange exporter
 //!   (`packages/editor/src/timelineInterchange.ts` builds the XML string;
@@ -122,6 +126,7 @@
 
 pub mod ai_env;
 pub mod audio;
+pub mod audio_library;
 pub mod caption_render;
 pub mod colorist_view;
 pub mod commands;
@@ -147,6 +152,7 @@ pub mod ffmpeg_run;
 pub mod filmstrip;
 pub mod grade;
 pub mod grade_lut;
+pub mod highlight_draw;
 pub mod keyframes;
 pub mod load;
 pub mod mask;

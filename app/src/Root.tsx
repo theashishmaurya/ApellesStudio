@@ -15,7 +15,7 @@ import {
   useMotionProjectStore,
   type SceneRenderResult,
 } from '@apelles/motion';
-import { useMediaPoolStore, trackEvent } from '@apelles/bridge';
+import { pageStart, trackEvent, useMediaPoolStore, watchPageUnload } from '@apelles/bridge';
 import { useKeymapStore } from '@apelles/keymap';
 import { setProjectIdentityAlertSink } from '@apelles/store';
 import { useTranslation } from 'react-i18next';
@@ -302,6 +302,26 @@ export function Root() {
       });
     });
     return () => setProjectIdentityAlertSink(null);
+  }, []);
+
+  // B-274 — a webview that comes back WITHOUT having said goodbye (no
+  // `pagehide`) is one macOS replaced after its web content process died, which
+  // loses every edit not yet saved. Silent was the bug: say so, in the log and
+  // on screen. A deliberate reload (a dev-server full reload) fires `pagehide`
+  // and is not reported.
+  useEffect(() => {
+    const start = pageStart(window, window.sessionStorage);
+    if (start === 'unexpected-reload') {
+      trackEvent('webview_restarted_unexpectedly');
+      console.error(
+        '[lifecycle] the page was reloaded without unloading: its web content process was terminated (usually memory pressure). Edits not yet saved were lost.',
+      );
+      toast.warn(
+        'Apelles was restarted by macOS (the window ran out of memory). Edits made in the last moments may be missing; check the timeline.',
+        { toastId: 'webview-restarted', autoClose: false },
+      );
+    }
+    return watchPageUnload(window, window.sessionStorage);
   }, []);
 
   useEffect(() => {

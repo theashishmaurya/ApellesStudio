@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { assertProjectIdentity } from '@apelles/store';
 import { stepHistory } from '@apelles/shell';
 import { safeUnlisten } from '../utils/tauriListeners';
+import { newBridgeClaim } from '@apelles/bridge';
 
 // D-183 — the three Edit-tab ops that used to live here (`get_timeline`,
 // `set_clip_fade`, `set_track_duck`) moved to `@apelles/editor`'s own
@@ -235,7 +236,7 @@ function nonDefault(obj: Record<string, any> | undefined): Record<string, any> {
  *  requests would be emitted into a window where their real registry is not
  *  listening yet. This list must therefore stay identical to the early-return
  *  skip in the handler below; they are the same fact stated to two audiences. */
-const BRIDGE_CLAIM = { prefix: '', defers: ['motion_', 'editor_', 'debug_'] };
+const BRIDGE_DEFERS = ['motion_', 'editor_', 'debug_'];
 
 export function useChromaControl() {
   const { setAdjustments } = useEditorActions();
@@ -1512,9 +1513,12 @@ export function useChromaControl() {
       };
     };
 
+    // B-272 — this subscription's identity; see `@apelles/bridge`'s `controlBridge`.
+    const bridge = newBridgeClaim('', BRIDGE_DEFERS);
     const unlistenP = listen('chroma://request', async (ev: any) => {
       const payload = ev?.payload || {};
       const { id, op, args } = payload;
+      if (!bridge.isForMe(payload)) return;
       // Motion ops (namespaced `motion_*`) are answered by `@apelles/motion`'s
       // own `useMotionControl` listener, mounted from `MotionTab.tsx` — see
       // docs/notes/motion-mcp-surface-research.md §6. Both listeners see
@@ -1659,7 +1663,7 @@ export function useChromaControl() {
     // promise resolving is that fact), and only if this effect is still live.
     let subscribed = true;
     void unlistenP.then(() => {
-      if (subscribed) void emit('chroma://bridge-ready', BRIDGE_CLAIM);
+      if (subscribed) void emit('chroma://bridge-ready', bridge.claim);
     });
 
     return () => {

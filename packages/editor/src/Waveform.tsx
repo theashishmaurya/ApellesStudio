@@ -24,6 +24,7 @@ import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
 import { isClipVisible } from './clipVisibility';
+import { waveformSpan } from './waveformWindow';
 
 /** One amplitude bucket: `[min, max]`, both in `-1..1`. Mirrors the `(f32, f32)`
  *  pairs `chroma_audio_waveform` returns. */
@@ -131,16 +132,23 @@ export function Waveform({
     };
   }, [sourcePath, startSecs, durationSecs, buckets, width, onScreen]);
 
+  // B-274 — the canvas backs only the visible span of the clip (plus a margin),
+  // never the whole clip: an 803 s clip is tens of thousands of css px wide and
+  // a full-width backing store is tens of MB per clip, redrawn on every edit.
+  const span = waveformSpan(width, visibleStartPx, visibleEndPx);
+  const spanStart = span?.start ?? 0;
+  const spanWidth = span ? span.end - span.start : 0;
+
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !peaks || peaks.length === 0 || width <= 0 || height <= 0) return;
+    if (!canvas || !peaks || peaks.length === 0 || spanWidth <= 0 || height <= 0) return;
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.max(1, Math.round(width * dpr));
+    canvas.width = Math.max(1, Math.round(spanWidth * dpr));
     canvas.height = Math.max(1, Math.round(height * dpr));
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
+    ctx.clearRect(0, 0, spanWidth, height);
 
     // Theme-consistent colour without a magic literal: resolve the existing
     // `--color-text-primary` token through the canvas element's own computed
@@ -150,22 +158,33 @@ export function Waveform({
 
     const mid = height / 2;
     const barW = width / peaks.length;
-    peaks.forEach(([lo, hi], i) => {
-      const x = i * barW;
+    // Only the buckets that fall inside the canvas's span are drawn.
+    const first = Math.max(0, Math.floor(spanStart / barW));
+    const last = Math.min(peaks.length - 1, Math.ceil((spanStart + spanWidth) / barW));
+    for (let i = first; i <= last; i++) {
+      const [lo, hi] = peaks[i];
+      const x = i * barW - spanStart;
       const y1 = mid - hi * mid;
       const y2 = mid - lo * mid;
       const h = Math.max(Math.abs(y2 - y1), 1);
       ctx.fillRect(x, Math.min(y1, y2), Math.max(barW - 0.5, 0.5), h);
-    });
-  }, [peaks, width, height]);
+    }
+  }, [peaks, width, height, spanStart, spanWidth]);
 
-  if (!peaks || peaks.length === 0) return null;
+  if (!peaks || peaks.length === 0 || spanWidth <= 0) return null;
 
   return (
     <canvas
       ref={canvasRef}
       className="text-text-primary"
-      style={{ width, height, position: 'absolute', inset: 0, pointerEvents: 'none' }}
+      style={{
+        width: spanWidth,
+        height,
+        position: 'absolute',
+        top: 0,
+        left: spanStart,
+        pointerEvents: 'none',
+      }}
     />
   );
 }
