@@ -14,12 +14,21 @@
  * `clean-reload` or `unexpected-reload` and arms the marker for this page;
  * [`watchPageUnload`] installs the `pagehide` half.
  *
+ * **D-402 — the native signal.** The Rust side now hooks WebKit's own
+ * `webViewWebContentProcessDidTerminate` (`chroma::webview_lifecycle`), records
+ * the termination and reloads the page itself. [`takeWebviewTermination`] is the
+ * typed binding the reloaded page asks once: an authoritative answer, where the
+ * `sessionStorage` marker above is a heuristic that stays as the fallback (it
+ * also catches a reload the hook never saw).
+ *
  * **What it does NOT do.** Show anything or recover anything: the caller says
- * what to tell the user (`app/src/Root.tsx`). It cannot prevent the loss; it
- * exists so the loss is never silent. WebKit's `sessionStorage` surviving a web
- * process replacement is the documented behaviour but is unverified on the
- * running app (see B-274).
+ * what to tell the user (`app/src/Root.tsx`), and the Edit timeline's
+ * write-ahead journal (`@apelles/editor`'s `editJournal.ts`) does the
+ * recovering. WebKit's `sessionStorage` surviving a web process replacement is
+ * the documented behaviour but is unverified on the running app (see B-274).
  */
+
+import { invoke } from '@tauri-apps/api/core';
 
 const MARKER_KEY = 'apelles.page.lifecycle';
 
@@ -71,4 +80,33 @@ export function watchPageUnload(target: Pick<Window, 'addEventListener' | 'remov
   };
   target.addEventListener('pagehide', onHide);
   return () => target.removeEventListener('pagehide', onHide);
+}
+
+/** Mirrors `chroma::webview_lifecycle::WebviewTermination`. */
+export interface WebviewTermination {
+  /** the webview's label (`main` for the app window) */
+  label: string;
+  /** RFC 3339, when WebKit reported it */
+  at: string;
+  /** terminations this app process has seen, this one included */
+  count: number;
+}
+
+const TERMINATION_CACHE = Symbol.for('apelles.page.termination');
+
+/** The web content process termination the previous page died of, if no page
+ *  has been told yet (the backend hands it out once). `null` when there was
+ *  none, or when the backend cannot answer: no claim without evidence.
+ *
+ *  Asked ONCE per page load, the answer cached on `target` for the reason
+ *  [`pageStart`] caches its own: the backend's answer is consumed by the first
+ *  ask, so a StrictMode double-mount or a hot-reloaded module asking again
+ *  would otherwise get `null` and miss it. */
+export function takeWebviewTermination(target: object): Promise<WebviewTermination | null> {
+  const cache = target as { [TERMINATION_CACHE]?: Promise<WebviewTermination | null> };
+  cache[TERMINATION_CACHE] ??= invoke<WebviewTermination | null>('chroma_webview_take_termination').then(
+    (r) => (r && typeof r.count === 'number' ? r : null),
+    () => null,
+  );
+  return cache[TERMINATION_CACHE];
 }

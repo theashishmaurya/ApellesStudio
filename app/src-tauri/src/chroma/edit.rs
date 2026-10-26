@@ -796,13 +796,24 @@ pub async fn chroma_timeline_get() -> Result<Timeline, String> {
 /// `project.json`. Stores whatever is sent verbatim (no server-side
 /// clamping) — same contract as D-041, now scoped to whichever timeline is
 /// active rather than assuming there's only one.
+///
+/// **B-274/D-402 — `journal_seq`** is the last edit-journal entry this timeline
+/// includes (the Edit store's write-ahead journal, `chroma::edit_journal`). It
+/// is recorded in the same atomic manifest write as the timeline, then the
+/// entries it covers are compacted away. Omitted, the save supersedes every
+/// entry on disk (see `edit_journal::record_save`).
 #[tauri::command]
-pub fn chroma_timeline_set(timeline: Timeline) -> Result<(), String> {
+pub fn chroma_timeline_set(timeline: Timeline, journal_seq: Option<u64>) -> Result<(), String> {
     let (dir, mut manifest) = load_and_ensure_timeline(false)?;
     let idx = manifest.active_timeline;
     manifest.timelines[idx] = timeline;
     manifest.modified = now_rfc3339();
-    project::save_manifest(&dir, &manifest)
+    let compact_through = super::edit_journal::record_save(&dir, &mut manifest, journal_seq);
+    project::save_manifest(&dir, &manifest)?;
+    if let Some(through) = compact_through {
+        super::edit_journal::compact_after_save(&dir, through);
+    }
+    Ok(())
 }
 
 /// One timeline's id/name/duration + whether it's the active one — what
@@ -5528,6 +5539,7 @@ mod preview_text_tests {
             active_timeline: 0,
             media: Vec::new(),
             folders: Vec::new(),
+            edit_journal_seq: None,
         };
         super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
         super::state::set_project(Some(super::state::ProjectRef {
@@ -5656,7 +5668,7 @@ mod preview_text_tests {
         // through the same command.
         let mut tl = super::resolve_timeline(false).expect("timeline");
         tl.tracks[0].clips[0].position_x = 0.25;
-        super::chroma_timeline_set(tl).expect("persist");
+        super::chroma_timeline_set(tl, None).expect("persist");
         let _ = &project; // keep the project dir alive for the second render
         let shifted = centre_x(&decode_preview(
             &super::timeline_frame(12, Some(W), super::FrameIntent::Single).expect("frame"),
@@ -5781,6 +5793,7 @@ mod preview_transition_tests {
             active_timeline: 0,
             media: Vec::new(),
             folders: Vec::new(),
+            edit_journal_seq: None,
         };
         super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
         super::state::set_project(Some(super::state::ProjectRef {
@@ -6012,6 +6025,7 @@ mod preview_throughput_tests {
             active_timeline: 0,
             media: Vec::new(),
             folders: Vec::new(),
+            edit_journal_seq: None,
         };
         super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
         super::state::set_project(Some(super::state::ProjectRef {
@@ -6075,6 +6089,7 @@ mod preview_throughput_tests {
             active_timeline: 0,
             media: Vec::new(),
             folders: Vec::new(),
+            edit_journal_seq: None,
         };
         super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
         super::state::set_project(Some(super::state::ProjectRef {
@@ -6661,6 +6676,7 @@ mod preview_adjustment_tests {
             active_timeline: 0,
             media: Vec::new(),
             folders: Vec::new(),
+            edit_journal_seq: None,
         };
         super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
         super::state::set_project(Some(super::state::ProjectRef {
@@ -6982,6 +6998,7 @@ mod grade_bridge_tests {
             active_timeline: 0,
             media: Vec::new(),
             folders: Vec::new(),
+            edit_journal_seq: None,
         };
         super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
         super::state::set_project(Some(super::state::ProjectRef {

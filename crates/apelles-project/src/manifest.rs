@@ -354,6 +354,14 @@ pub struct ProjectManifest {
     /// D-045's original behaviour) is remembered too, not just an explicit one.
     #[serde(default)]
     pub folders: Vec<String>,
+    /// B-274/D-402 — the sequence number of the last Edit-timeline journal
+    /// entry ([`crate::journal`]) the active timeline saved here includes.
+    /// Written by `chroma_timeline_set` in the same atomic save as the timeline
+    /// itself, which is what makes replay exact: the entries numbered after it
+    /// are precisely the edits this file does not have. `None` for a project
+    /// never saved by a journalling build (every entry then replays).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit_journal_seq: Option<u64>,
 }
 
 impl ProjectManifest {
@@ -372,6 +380,7 @@ impl ProjectManifest {
             active_timeline: 0,
             media: Vec::new(),
             folders: Vec::new(),
+            edit_journal_seq: None,
         }
     }
 }

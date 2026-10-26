@@ -314,6 +314,7 @@ mod motion_relink_tests {
             active_timeline: 0,
             media: Vec::new(),
             folders: Vec::new(),
+            edit_journal_seq: None,
         }
     }
 

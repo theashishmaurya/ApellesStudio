@@ -145,6 +145,7 @@ pub mod debug_record;
 pub mod decode_pipe;
 pub mod depth;
 pub mod edit;
+pub mod edit_journal;
 pub mod edit_render;
 pub mod export;
 pub mod export_status;
@@ -175,6 +176,7 @@ pub mod state;
 pub mod subtitles;
 pub mod text;
 pub mod video;
+pub mod webview_lifecycle;
 pub mod write_text_file;
 
 /// **The one lock every test that opens a project must hold** (D-211).

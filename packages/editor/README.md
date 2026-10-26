@@ -29,7 +29,13 @@ dragging a pool item in from the shell's Sources panel.
   resolves only once the write has really returned. `createTimeline`/
   `setActiveTimeline` do that themselves; the project axis does it one layer up
   in `app/src/store/useSessionStore.ts`. Lives here for now; a `@apelles/bridge`
-  extraction is a later task.
+  extraction is a later task. **D-402 — write-ahead journal:** every op (and
+  every undo/redo snapshot) is also appended at once to the project's
+  `edit-journal.jsonl` (`chroma_edit_journal_append`), each save tells the
+  backend which entry it includes (`journalSeq`), and a page's first load
+  replays the entries the saved timeline lacks (`editJournal.ts`'s
+  `replayJournal`, exposed as `recoveredEdits`), so a killed web content
+  process loses nothing (B-274).
 - `timeline.ts` — the model mirrored from the `apelles-timeline` Rust crate,
   the pure edit ops (including D-046's `add_clip`, purely client-side — no
   Rust op needed since `chroma_timeline_set` stores whatever is sent

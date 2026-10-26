@@ -15,6 +15,9 @@
 //!   `resolve_timeline` / `resolve_timeline_and_settings`, lifted out of
 //!   `chroma/edit.rs` where they had been living under an Edit-tab name.
 //!   See that module's doc for the call-graph evidence.
+//! - [`journal`] — the Edit timeline's write-ahead journal file
+//!   (`edit-journal.jsonl`, B-274/D-402): append, read back, compact. The
+//!   entries are the frontend's ops, opaque here.
 //!
 //! **What it does NOT do:**
 //! - **No `#[tauri::command]`.** A hard `tauri-macros` constraint, not a
@@ -35,6 +38,7 @@
 //!   name during migration but never parsed here (that is
 //!   `apelles-grade-model`).
 
+pub mod journal;
 pub mod manifest;
 pub mod timeline;
 

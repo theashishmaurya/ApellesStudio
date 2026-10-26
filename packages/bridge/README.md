@@ -47,6 +47,13 @@ D-045/D-046 media-pool store, now consumed by a real panel (D-046's
   across a reload never runs an op the control server addressed to its
   replacement.
 
+- `pageStart` / `watchPageUnload` / `takeWebviewTermination`
+  (`src/pageLifecycle.ts`, B-274/D-402) — whether this page follows one whose
+  web content process the OS killed. `takeWebviewTermination` is the binding
+  over `chroma_webview_take_termination` (WebKit's own report, recorded by the
+  Rust hook in `chroma::webview_lifecycle`), asked once per page; the
+  `sessionStorage` marker is the fallback heuristic.
+
 **Tests:** `npm test --workspace @apelles/bridge` (vitest, node environment) —
 `src/media.test.ts` covers the pool's project-identity input (B-083/D-203);
 `src/aiEnv.test.ts` covers the D-315 status vocabulary and the rule that

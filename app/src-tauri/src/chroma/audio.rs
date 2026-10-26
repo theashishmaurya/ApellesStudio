@@ -1125,6 +1125,7 @@ mod tests {
             active_timeline: 0,
             media: Vec::new(),
             folders: Vec::new(),
+            edit_journal_seq: None,
         };
         super::super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
         super::super::state::set_project(Some(super::super::state::ProjectRef {
@@ -1472,6 +1473,7 @@ mod tests {
             active_timeline: 0,
             media: Vec::new(),
             folders: Vec::new(),
+            edit_journal_seq: None,
         };
         super::super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
         super::super::state::set_project(Some(super::super::state::ProjectRef {
@@ -1716,6 +1718,7 @@ mod tests {
             active_timeline: 0,
             media: Vec::new(),
             folders: Vec::new(),
+            edit_journal_seq: None,
         };
         super::super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
         super::super::state::set_project(Some(super::super::state::ProjectRef {
@@ -1828,6 +1831,7 @@ mod tests {
             active_timeline: 0,
             media: Vec::new(),
             folders: Vec::new(),
+            edit_journal_seq: None,
         };
         super::super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
         super::super::state::set_project(Some(super::super::state::ProjectRef {

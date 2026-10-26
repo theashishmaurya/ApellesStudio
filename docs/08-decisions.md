@@ -6,6 +6,22 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-402 — Edit timeline durability: a write-ahead journal of store ops, and WebKit's termination report handled natively
+
+**decided (2026-10-26, B-274's open half)**
+
+**Context.** The Edit store changes its timeline at once and saves the whole document ~400 ms later (`SAVE_DEBOUNCE_MS`). macOS terminates the WKWebView's web content process under memory pressure with no `pagehide`, no `beforeunload`, nothing that runs: whatever sat on the debounce died with it (B-274 saw 39 of 62 volume changes revert). Tauri then reloaded the page silently (`tauri-runtime-wry`'s default hook logs at `debug` and calls `reload()`).
+
+**Options.** (1) Flush on `pagehide`/`visibilitychange`. Rejected: a killed process fires neither, which is the whole incident. (2) Save on every op (drop or shorten the debounce). Rejected: it narrows the window to one IPC round trip but does not close it, and it costs a full-timeline serialise + IPC + atomic fsynced manifest write per op, on a 490-clip project in bursts of hundreds of ops; performance comes first in this repo. (3) Journal a full snapshot per op to a sidecar. Same cost as (2). (4) A write-ahead journal of the ops themselves, replayed on load: the standard shape for this (SQLite's WAL, an editor's recovery log). Each entry is one op (hundreds of bytes), sent the moment it is made; the window left is posting one IPC message. Chosen.
+
+**Choice.** `@apelles/editor`'s `editJournal.ts` + `timelineStore.ts`: every `applyOp` appends `{seq, timelineId, kind: 'op', op}` and every undo/redo appends `{kind: 'snapshot', timeline}` through `chroma_edit_journal_append`; the debounced `chroma_timeline_set` passes `journalSeq`, the last number the saved timeline includes. Rust (`apelles_project::journal`, `chroma::edit_journal`) appends to `<project>/edit-journal.jsonl` (no fsync: the threat is a process dying, and a finished `write` is in the page cache), records `journalSeq` as `ProjectManifest.edit_journal_seq` **in the same atomic manifest write as the timeline**, then compacts. That atomicity is what makes replay exact: the entries numbered after the recorded sequence are precisely the edits `project.json` lacks, so nothing is applied twice even if compaction never ran. A page's first load of a project reads the journal (`chroma_edit_journal_read`), replays those entries through the same pure `applyOp` reducer that made them, continues the numbering from the highest number seen, and saves at once; `recoveredEdits` drives a toast. A save without `journalSeq` (a non-journalling caller, or a page whose journal read failed and so journals nothing) supersedes every entry on disk.
+
+The native half: `Builder::on_web_content_process_terminate` exists in the Tauri we use (2.11.5, wry 0.55.1, `WebViewBuilderExtDarwin::with_on_web_content_process_terminate_handler` underneath), so no upgrade or patch was needed. `chroma::webview_lifecycle` replaces the silent default: it logs at `warn` (so it reaches `app.log`), records the termination, and reloads the webview itself. The reloaded page asks `chroma_webview_take_termination` once (`@apelles/bridge`'s `takeWebviewTermination`, cached per page against StrictMode's double mount) and says so; B-274's `pagehide` marker stays as the fallback.
+
+**Not covered.** The journal is the Edit timeline only: the media pool, the Colorist grade and the Motion manifest keep their own persistence. An OS crash or power loss can lose the newest journal lines. Ops replay against the persisted timeline; a Rust-side writer that changed the timeline behind the store's back while entries were pending would get them replayed on top (the debounced save already overwrote such writes before this decision, so this is not a new exposure). Not verified live: no real web content process has been killed under this build.
+
+---
+
 ## D-401 — Export loudness target: a measured post-pass in `apelles-media`, not ffmpeg `loudnorm`
 
 **decided (2026-10-26, roadmap 0c; found normalising the Black October master by hand)**

@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **B-274's open half done in code (D-402): a killed web content process loses no Edit timeline edit.** A write-ahead journal (`edit-journal.jsonl`, appended per op, included sequence recorded atomically with each save, replayed on the next page's first load) plus WebKit's termination report handled natively through Tauri's `on_web_content_process_terminate` (logged, reported to the reloaded page, reloaded on purpose). Not exercised against a real killed process yet.
+
 - **2026-10-26** — **B-276 fixed (not reproduced live): a fresh project exports.** `editor_export` now settles the pending timeline save before the backend sizes and renders the persisted document (a still placed a moment earlier was missing from it), the compositor composes a sizeless project at the export's own `width`/`height` as the compiler already did, and a genuinely sizeless project elsewhere is refused by name ("set_project_settings").
 
 - **2026-10-26** — **B-273 fixed: `editor_add_clip` with no `track` puts the clip on a new track of the kind it needs** (a new bottom audio track for an audio-only source, a new top video track otherwise) in one op and one undo, instead of failing with "no track NaN". `track` is now optional in both MCP servers; parity corpus re-captured.

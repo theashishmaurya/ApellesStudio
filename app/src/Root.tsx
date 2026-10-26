@@ -15,7 +15,7 @@ import {
   useMotionProjectStore,
   type SceneRenderResult,
 } from '@apelles/motion';
-import { pageStart, trackEvent, useMediaPoolStore, watchPageUnload } from '@apelles/bridge';
+import { pageStart, takeWebviewTermination, trackEvent, useMediaPoolStore, watchPageUnload } from '@apelles/bridge';
 import { useKeymapStore } from '@apelles/keymap';
 import { setProjectIdentityAlertSink } from '@apelles/store';
 import { useTranslation } from 'react-i18next';
@@ -309,20 +309,47 @@ export function Root() {
   // loses every edit not yet saved. Silent was the bug: say so, in the log and
   // on screen. A deliberate reload (a dev-server full reload) fires `pagehide`
   // and is not reported.
+  // D-402 — the Rust side now hooks WebKit's own termination report, so ask it
+  // first (authoritative); the `pagehide` marker stays as the fallback. The
+  // Edit timeline's write-ahead journal restores its unsaved edits, so the
+  // message says what is and is not covered rather than "edits were lost".
   useEffect(() => {
+    let cancelled = false;
     const start = pageStart(window, window.sessionStorage);
-    if (start === 'unexpected-reload') {
-      trackEvent('webview_restarted_unexpectedly');
+    void takeWebviewTermination(window).then((native) => {
+      if (cancelled || (!native && start !== 'unexpected-reload')) return;
+      trackEvent('webview_restarted_unexpectedly', {
+        source: native ? 'webkit' : 'pagehide-marker',
+        ...(native ? { count: native.count } : {}),
+      });
       console.error(
-        '[lifecycle] the page was reloaded without unloading: its web content process was terminated (usually memory pressure). Edits not yet saved were lost.',
+        `[lifecycle] the page was reloaded after its web content process was terminated (usually memory pressure)${
+          native ? `, reported by WebKit at ${native.at} (termination ${native.count} this session)` : ''
+        }. Edit-timeline changes are restored from the edit journal; anything else unsaved was lost.`,
       );
       toast.warn(
-        'Apelles was restarted by macOS (the window ran out of memory). Edits made in the last moments may be missing; check the timeline.',
+        'Apelles was restarted by macOS (the window ran out of memory). Your Edit timeline changes are restored; check other unsaved work.',
         { toastId: 'webview-restarted', autoClose: false },
       );
-    }
-    return watchPageUnload(window, window.sessionStorage);
+    });
+    const stop = watchPageUnload(window, window.sessionStorage);
+    return () => {
+      cancelled = true;
+      stop();
+    };
   }, []);
+
+  // D-402 — say how many unsaved edits the journal put back, whatever the
+  // reason the previous page died (a crash the hook never saw included).
+  const recoveredEdits = useEditorTimelineStore((s) => s.recoveredEdits);
+  useEffect(() => {
+    if (recoveredEdits <= 0) return;
+    trackEvent('edit_journal_replayed', { edits: recoveredEdits });
+    toast.info(
+      `Restored ${recoveredEdits} Edit timeline change${recoveredEdits === 1 ? '' : 's'} that had not been saved yet.`,
+      { toastId: 'edit-journal-replayed' },
+    );
+  }, [recoveredEdits]);
 
   useEffect(() => {
     useKeymapStore.getState().hydrate(keybinds);

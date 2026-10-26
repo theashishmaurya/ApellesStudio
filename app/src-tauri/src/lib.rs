@@ -1824,6 +1824,16 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     }
 
+    // B-274/D-402 — a web content process the OS terminates (memory pressure)
+    // is logged, reported to the reloaded page and reloaded by us, instead of
+    // by tauri-runtime-wry's silent default. See `chroma::webview_lifecycle`.
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.on_web_content_process_terminate(
+            chroma::webview_lifecycle::on_web_content_process_terminate,
+        );
+    }
+
     builder
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_fs::init())
@@ -2330,6 +2340,9 @@ pub fn run() {
             chroma::project::chroma_project_resync_clips,
             chroma::edit::chroma_timeline_get,
             chroma::edit::chroma_timeline_set,
+            chroma::edit_journal::chroma_edit_journal_append,
+            chroma::edit_journal::chroma_edit_journal_read,
+            chroma::webview_lifecycle::chroma_webview_take_termination,
             chroma::edit::chroma_timeline_frame,
             chroma::grade_lut::chroma_timeline_grade_luts,
             chroma::edit::chroma_timeline_clip_geometry,

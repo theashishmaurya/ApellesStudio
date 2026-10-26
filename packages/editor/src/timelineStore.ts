@@ -102,6 +102,7 @@ import { clampPreviewView, FIT_VIEW, type PreviewView } from './previewZoom';
 import { clampPlaybackRate, DEFAULT_PLAYBACK_RATE } from '@apelles/player';
 import { DEFAULT_CLIP_INSPECTOR_TAB, type ClipInspectorTab } from './clipInspectorTabs';
 import { DEFAULT_EDIT_LIBRARY_MODE, type EditLibraryMode } from './editLibrary';
+import { isJournalEntry, replayJournal, type EditJournalEntry, type EditJournalState } from './editJournal';
 
 const SAVE_DEBOUNCE_MS = 400;
 
@@ -404,6 +405,12 @@ interface EditorTimelineState {
    *  forever. That was B-088. Depend on this instead of on `timeline`
    *  whenever the thing being re-run is a backend read of the timeline. */
   savedVersion: number;
+  /** B-274/D-402 — how many journalled edits the last first-load of this
+   *  project replayed on top of `project.json` (edits a previous page made but
+   *  did not get to save, typically because macOS terminated its web content
+   *  process). `0` when there was nothing to replay. The composition root tells
+   *  the user when it is non-zero. */
+  recoveredEdits: number;
 
   /** The one signal that starts and stops this store's work: the key of the
    *  project that is open now, or `null` for none. Idempotent *per key* — the
@@ -525,6 +532,48 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
  *  `restoreSnapshot`). `load()` compares it across its fetch: if it moved, the
  *  answer was computed before an edit the store now holds and is stale. */
 let localEditGeneration = 0;
+
+/** B-274/D-402 — the write-ahead journal's numbering for the open project
+ *  (`editJournal.ts`). `journalSeq` is the last number this page handed out;
+ *  `journalOn` is whether this page may journal at all, which it only may once
+ *  its first load has read the journal and continued the numbering from the
+ *  highest number on disk (two pages must never hand out the same number). A
+ *  backend that cannot answer the read leaves it off, and the store saves
+ *  exactly as it did before the journal existed. */
+let journalSeq = 0;
+let journalOn = false;
+
+/** Append one entry. Fire-and-forget by design: the point is that the message
+ *  leaves this page NOW. A failed append is logged and costs only the crash
+ *  protection of that edit; the debounced save still carries it. */
+function appendJournal(entry: EditJournalEntry): void {
+  invoke('chroma_edit_journal_append', { entry }).catch((e: unknown) => {
+    console.error(`[edit-journal] append #${entry.seq} failed: ${String(e)}`);
+  });
+}
+
+/** The `chroma_timeline_set` arguments for `timeline`: with the journal on, the
+ *  sequence it includes (every number handed out so far, since `applyOp` and
+ *  the journal advance together synchronously). */
+function saveArgs(timeline: Timeline): { timeline: Timeline; journalSeq?: number } {
+  return journalOn ? { timeline, journalSeq } : { timeline };
+}
+
+/** Read the open project's journal for a first load. `null` when the backend
+ *  cannot answer in the expected shape (journal stays off). */
+async function readJournal(): Promise<EditJournalState | null> {
+  try {
+    const raw = await invoke<unknown>('chroma_edit_journal_read');
+    if (typeof raw !== 'object' || raw === null) return null;
+    const r = raw as { savedSeq?: unknown; entries?: unknown };
+    if (!Array.isArray(r.entries)) return null;
+    const savedSeq = typeof r.savedSeq === 'number' && Number.isInteger(r.savedSeq) ? r.savedSeq : null;
+    return { savedSeq, entries: r.entries.filter(isJournalEntry) };
+  } catch (e) {
+    console.error(`[edit-journal] read failed, journal off for this project: ${String(e)}`);
+    return null;
+  }
+}
 
 /** B-080 — the `chroma_timeline_set` currently in flight, or `null`.
  *
@@ -649,6 +698,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   // the rail could switch it at all (D-046) and what an edit starts from.
   libraryMode: DEFAULT_EDIT_LIBRARY_MODE,
   savedVersion: 0,
+  recoveredEdits: 0,
 
   setOpenProject: (key) => {
     if (get().openProjectKey === key) return;
@@ -680,8 +730,13 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
       clearTimeout(saveTimer);
       saveTimer = null;
     }
+    // B-274/D-402 — the journal's numbering belongs to the outgoing project;
+    // the incoming one's first load reads its own and turns journalling on.
+    journalOn = false;
+    journalSeq = 0;
     set({
       openProjectKey: key,
+      recoveredEdits: 0,
       timeline: null,
       status: key === null ? 'idle' : 'loading',
       error: null,
@@ -746,6 +801,10 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
     // B-272 — what this fetch can safely replace. A save pending on its timer or
     // in flight means the backend is behind the store right now.
     const generationAtStart = localEditGeneration;
+    // B-274/D-402 — the first load of a project in this page is the one that
+    // reads the journal: it replays what the previous page did not save and
+    // continues the numbering.
+    const firstLoad = get().timeline === null;
     const owedAtStart = saveTimer !== null || (inFlightSave !== null && opts?.afterOwnSave !== true);
     // Don't flash the error screen away on a background refetch that may
     // itself fail; `status` only moves to 'loading' when there's nothing good
@@ -765,9 +824,31 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
       ) {
         return;
       }
-      const dur = timelineDuration(timeline);
+      let landed = timeline;
+      let recovered = 0;
+      if (firstLoad && !journalOn) {
+        const journal = await readJournal();
+        if (token !== loadToken) return;
+        if (journal) {
+          const out = replayJournal(timeline, journal);
+          journalSeq = out.lastSeq;
+          journalOn = true;
+          if (out.applied > 0) {
+            landed = out.timeline;
+            recovered = out.applied;
+            console.warn(
+              `[edit-journal] replayed ${out.applied} unsaved edit(s) onto the saved timeline (journal #${journal.savedSeq ?? 0}..#${out.lastSeq})`,
+            );
+          }
+          if (out.skipped > 0) {
+            console.warn(`[edit-journal] ${out.skipped} journalled edit(s) no longer apply and were dropped`);
+          }
+        }
+      }
+      if (recovered > 0) localEditGeneration += 1; // B-272: a local write the backend lacks
+      const dur = timelineDuration(landed);
       set((s) => ({
-        timeline,
+        timeline: landed,
         error: null,
         status: 'ready',
         playhead: Math.min(s.playhead, Math.max(0, dur - 1)),
@@ -775,9 +856,14 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
         // demonstrably holds it: a real `savedVersion` change. Covers the
         // window-`focus` refetch, the timeline switcher, and
         // `restoreSnapshot`'s own trailing reconcile (which is why undo/redo
-        // needs no bump of its own).
-        savedVersion: s.savedVersion + 1,
+        // needs no bump of its own). A replayed timeline is NOT what the
+        // backend holds yet; its save below bumps it when it lands.
+        savedVersion: recovered > 0 ? s.savedVersion : s.savedVersion + 1,
+        ...(firstLoad ? { recoveredEdits: recovered } : {}),
       }));
+      // B-274/D-402 — persist the replayed edits now, which also records their
+      // sequence and compacts the journal.
+      if (recovered > 0) void get()._flushSave();
     } catch (e) {
       if (token !== loadToken) return; // superseded — never clobber a newer result
       set({ timeline: null, error: String(e), status: 'error', playing: false });
@@ -835,6 +921,9 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
     const after = applyOpPure(before, op);
     if (after === before) return; // no-op (clamped away)
     localEditGeneration += 1; // B-272
+    // B-274/D-402 — written ahead of the debounced save, the moment the edit
+    // exists, so a web process killed inside the debounce loses nothing.
+    if (journalOn) appendJournal({ seq: ++journalSeq, timelineId: after.id, kind: 'op', op });
     const dur = timelineDuration(after);
     set((s) => ({ timeline: after, playhead: Math.min(s.playhead, Math.max(0, dur - 1)) }));
 
@@ -910,6 +999,9 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
 
   restoreSnapshot: (timeline) => {
     localEditGeneration += 1; // B-272
+    // B-274/D-402 — an undo/redo is journalled as the whole snapshot it
+    // restores: its immediate save is still a round trip a killed page can lose.
+    if (journalOn) appendJournal({ seq: ++journalSeq, timelineId: timeline.id, kind: 'snapshot', timeline });
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
@@ -920,7 +1012,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
     // followed straight away by a timeline switch is the same race a debounced
     // edit is, and `flushPendingSave` has to be able to wait this one out too.
     void trackSave(
-      invoke('chroma_timeline_set', { timeline })
+      invoke('chroma_timeline_set', saveArgs(timeline))
         .then(() => {
           void get().load({ afterOwnSave: true });
           return true;
@@ -956,7 +1048,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
     const timeline = get().timeline;
     if (!timeline) return Promise.resolve(true);
     return trackSave(
-      invoke('chroma_timeline_set', { timeline })
+      invoke('chroma_timeline_set', saveArgs(timeline))
         .then(() => {
           set((s) => ({ savedVersion: s.savedVersion + 1 }));
           return true;
