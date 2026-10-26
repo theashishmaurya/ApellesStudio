@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **B-265 (stale dev module): second look, no new cause.** Ruled out Vite pre-bundling (no `@apelles/*` in the dep cache) and any config override; the remaining suspect is the web content process replacement of B-274. No code change.
+
 - **2026-10-26** — **B-267 (mitigated, unconfirmed live): an Edit timeline mounted while its tab is hidden is re-measured once when shown.** Candidate cause: the library's AutoSizer measured 0 px under `display: none` and rendered no rows. `useViewportWidth` bumps a key once on first visibility; remains open until checked on a restarted app.
 
 - **2026-10-26** — **B-274 (partly fixed): the Edit webview no longer allocates a whole-clip waveform canvas, and a killed web process is reported.** The canvas now backs only the visible span (<= 4096 px) instead of tens of MB per long clip; a webview that reloads without unloading raises a persistent warning and a log event. Write-ahead journaling and the live heap measurement remain open.
