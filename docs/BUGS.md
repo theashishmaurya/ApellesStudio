@@ -27,6 +27,13 @@ Still real:
 
 ## Open
 
+## B-273 — `editor_add_clip` without a `track` fails with "no track NaN" (its own error text says to do exactly that)
+
+status: **open** · severity: **major** (an agent cannot get a fresh track for a clip in one call; an `editor_add_track` made first can be pruned as empty before the clip lands, B-259's shape) · area: `editor_add_clip` handler in `packages/editor/src/useEditorControl.ts` (the B-259 fix, D-398 branch)
+
+- **found:** 2026-10-26, placing SFX on the Black October timeline. `editor_add_clip(sourcePath, sourceStart, duration, startFrame)` with no `track` answered `no track NaN — … or add the clip without a track to get a new one`.
+- **expected:** with `track` omitted, a new track of the kind the source needs is appended and the clip lands on it, as the error text and the docstring promise; `track` validated only when given.
+
 ## B-272 — every control-bridge op is applied twice after dev reloads
 
 status: **open** · severity: **critical** (an agent's edits silently double: one `editor_split_clip` makes two splits, one `editor_ripple_delete_ranges` of 44 frames removes 88, one `editor_add_marker` adds two markers) · area: the frontend control-bridge subscription (`chroma://op` listener / bridge registration in `@apelles/editor` / `app/src`), `app/src-tauri/src/chroma/control.rs`

@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **Logged B-273 (open):** `editor_add_clip` with no `track` fails with "no track NaN".
+
 - **2026-10-26** — **Logged B-272 (open, critical):** control-bridge ops run twice after dev reloads (duplicate frontend subscribers).
 
 - **2026-10-26** — **Logged B-271 (open):** clip highlights slow the compositor ~2.5× (every frame clones the full source still).
