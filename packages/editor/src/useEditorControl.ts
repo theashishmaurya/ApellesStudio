@@ -2534,16 +2534,19 @@ export function useEditorControl(): void {
       editor_search_audio: async (a) => {
         const query = typeof a?.query === 'string' ? a.query.trim() : '';
         if (!query) return { error: 'query is required (what to search for, e.g. "rain on a window")' };
+        // Built before the `try`: the React Compiler (D-201) bails out on
+        // conditional values inside one.
+        const searchArgs = {
+          query,
+          kind: a?.kind ?? null,
+          minSecs: a?.minSecs ?? null,
+          maxSecs: a?.maxSecs ?? null,
+          licenses: Array.isArray(a?.licenses) ? a.licenses : null,
+          page: a?.page ?? null,
+          pageSize: a?.pageSize ?? null,
+        };
         try {
-          return await invoke('chroma_audio_search', {
-            query,
-            kind: a?.kind ?? null,
-            minSecs: a?.minSecs ?? null,
-            maxSecs: a?.maxSecs ?? null,
-            licenses: Array.isArray(a?.licenses) ? a.licenses : null,
-            page: a?.page ?? null,
-            pageSize: a?.pageSize ?? null,
-          });
+          return await invoke('chroma_audio_search', searchArgs);
         } catch (e) {
           return { error: thrownMessage(e) };
         }
