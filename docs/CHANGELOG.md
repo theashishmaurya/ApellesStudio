@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **B-267 (mitigated, unconfirmed live): an Edit timeline mounted while its tab is hidden is re-measured once when shown.** Candidate cause: the library's AutoSizer measured 0 px under `display: none` and rendered no rows. `useViewportWidth` bumps a key once on first visibility; remains open until checked on a restarted app.
+
 - **2026-10-26** — **B-274 (partly fixed): the Edit webview no longer allocates a whole-clip waveform canvas, and a killed web process is reported.** The canvas now backs only the visible span (<= 4096 px) instead of tens of MB per long clip; a webview that reloads without unloading raises a persistent warning and a log event. Write-ahead journaling and the live heap measurement remain open.
 
 - **2026-10-26** — **B-272 (second half): a refetch can no longer overwrite a newer local edit.** `timelineStore.load()` discarded nothing before, so a window-focus refetch during the 400 ms save debounce replaced fresh edits with the older backend copy (39 of 62 volume changes reverted). It now keeps the store when a write was owed.
