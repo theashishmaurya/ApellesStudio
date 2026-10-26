@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **B-271 fixed: clip highlights no longer clone the source still every frame.** `chroma/highlight_draw.rs` keeps one working copy per clip, redraws only the stroke rows, and reuses the finished picture once every sweep is done: 240 frames of a 2880×1620 still with 2 highlights went 500.6 ms → 137.6 ms.
+
 - **2026-10-26** — **Logged B-271 (open):** clip highlights slow the compositor ~2.5× (every frame clones the full source still).
 
 - **2026-10-26** — **B-269 fixed: highlight suggestions find the real headline** (not a logo, sidebar strip, ad or photo text). Logged B-270 (open): `editor_get_timeline` does not report clip highlights.

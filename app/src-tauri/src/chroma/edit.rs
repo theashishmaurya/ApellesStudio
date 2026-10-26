@@ -93,6 +93,9 @@ use serde::Serialize;
 
 use apelles_timeline::{Clip, LayerRole, LayerSource, Timeline, TrackKind, VisibleLayer};
 
+#[cfg(test)]
+use super::highlight_draw::apply_highlights_to_rgba;
+use super::highlight_draw::highlighted_picture;
 use super::state;
 use super::video::VideoInfo;
 use super::{caption_render, decode_pipe, grade_lut, project, text};
@@ -180,7 +183,11 @@ const PARALLEL_PIXEL_MIN: u64 = 1024 * 1024;
 ///
 /// The serial arm is not a fallback for correctness — both arms run the same
 /// closure over the same disjoint rows — it is purely the small-image case.
-fn for_each_row_mut(buf: &mut [u8], stride: usize, f: impl Fn(usize, &mut [u8]) + Send + Sync) {
+pub(super) fn for_each_row_mut(
+    buf: &mut [u8],
+    stride: usize,
+    f: impl Fn(usize, &mut [u8]) + Send + Sync,
+) {
     debug_assert!(stride > 0 && buf.len().is_multiple_of(stride));
     if (buf.len() / stride.max(1)) as u64 * (stride as u64 / 4) < PARALLEL_PIXEL_MIN {
         buf.chunks_mut(stride)
@@ -2434,7 +2441,7 @@ fn composite_video_frame(
         // crop, push-in and rotation. The ffmpeg exporter's `geq` nodes sit at
         // exactly this point in the per-clip chain (after `lut3d`, before
         // `crop`). A clip with none costs one empty-slice check.
-        apply_highlights_to_rgba(&mut rgba, &clip.highlights, *source_frame);
+        highlighted_picture(&clip.id, &mut rgba, &clip.highlights, *source_frame);
         decoded.push(Step::Paint {
             img: rgba,
             // D-344 — `corner_radius` is the one geometry field authored in
@@ -2476,65 +2483,6 @@ fn composite_video_frame(
     }
 
     Ok(DynamicImage::ImageRgba8(canvas))
-}
-
-/// D-396 — draw a clip's highlighter strokes onto its decoded picture.
-///
-/// Each stroke is the pen's current rounded rectangle (`Highlight::sweep_at`),
-/// blended with the plain "over" operator at `coverage × opacity`: `c' = c +
-/// k·(highlight − c)`. Strokes apply in list order, a later one over an
-/// earlier. The ffmpeg exporter's `geq` node computes the identical expression,
-/// so a stroke measures the same in the preview and the export (the pixel test
-/// in `timelineExportHighlight.ffmpeg.test.ts` holds that to one level).
-///
-/// **Normal blend, not multiply**, measured on both page polarities (D-396): a
-/// multiplied stroke is invisible on a dark article page, while an over blend at
-/// the default 0.45 keeps dark text on a white page at a 4.8:1 contrast against
-/// the stroke and light text on a dark page at 4.1:1 (WCAG contrast ratios).
-///
-/// `Arc::make_mut` copies a still's shared decode-cache buffer only when a
-/// stroke is actually visible this frame; before the first sweep begins, or on
-/// a clip with none, the buffer is untouched and uncopied.
-fn apply_highlights_to_rgba(
-    img: &mut std::sync::Arc<image::RgbaImage>,
-    highlights: &[apelles_timeline::Highlight],
-    source_frame: i64,
-) {
-    if highlights.is_empty() {
-        return;
-    }
-    let (w, h) = img.dimensions();
-    let sweeps: Vec<apelles_timeline::highlight::Sweep> = highlights
-        .iter()
-        .filter_map(|hl| hl.sweep_at(source_frame, w, h))
-        .collect();
-    if sweeps.is_empty() {
-        return;
-    }
-    let stride = w as usize * 4;
-    for_each_row_mut(std::sync::Arc::make_mut(img).as_mut(), stride, |y, row| {
-        for sweep in &sweeps {
-            let (x0, y0, x1, y1) = sweep.pixel_bounds(w, h);
-            if (y as u32) < y0 || (y as u32) >= y1 {
-                continue;
-            }
-            for x in x0..x1 {
-                let k = f64::from(sweep.coverage(x, y as u32)) * f64::from(sweep.opacity);
-                if k <= 0.0 {
-                    continue;
-                }
-                let px = &mut row[x as usize * 4..x as usize * 4 + 3];
-                for (c, &target) in px.iter_mut().zip(sweep.rgb.iter()) {
-                    let cur = f64::from(*c);
-                    // Truncates, deliberately: ffmpeg's `geq` floors the float
-                    // it computes to the 8-bit level, and agreeing with it by
-                    // construction beats rounding "more correctly" and
-                    // differing from the export by a level on half the pixels.
-                    *c = (cur + k * (f64::from(target) - cur)).clamp(0.0, 255.0) as u8;
-                }
-            }
-        }
-    });
 }
 
 /// D-230 — apply an adjustment clip's colour operator to the whole canvas.

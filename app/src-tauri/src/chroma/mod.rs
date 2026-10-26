@@ -147,6 +147,7 @@ pub mod ffmpeg_run;
 pub mod filmstrip;
 pub mod grade;
 pub mod grade_lut;
+pub mod highlight_draw;
 pub mod keyframes;
 pub mod load;
 pub mod mask;
