@@ -27,6 +27,15 @@ Still real:
 
 ## Open
 
+## B-272 — every control-bridge op is applied twice after dev reloads
+
+status: **open** · severity: **critical** (an agent's edits silently double: one `editor_split_clip` makes two splits, one `editor_ripple_delete_ranges` of 44 frames removes 88, one `editor_add_marker` adds two markers) · area: the frontend control-bridge subscription (`chroma://op` listener / bridge registration in `@apelles/editor` / `app/src`), `app/src-tauri/src/chroma/control.rs`
+
+- **found:** 2026-10-26, cutting a retake on the Black October timeline (a session with several full webview reloads, `touch app/index.html`). The dev log showed 7 `frontend bridge ready: prefix "editor_"` handshakes. A single `editor_add_marker` call then produced two markers with consecutive ids.
+- **suspected cause:** a bridge listener registered in an effect or module scope whose unlisten never runs across a reload/HMR. Each reload adds a live subscriber, so every op is executed by every one.
+- **expected:** exactly one handler executes each op. A second registration replaces the first, or the Rust side delivers each op to a single claimed bridge, never fan-out.
+- **recovery used:** undid step by step to the pre-edit state (verified), then restarted the dev app.
+
 ## B-271 — clip highlights make the compositor ~2.5× slower: every frame clones the whole source still
 
 status: **open** · severity: **high** (performance is this project's first priority: a 15-minute 960×540 compositor export went from ~4 to ~10+ minutes once 38 clips carried highlights) · area: `app/src-tauri/src/chroma/edit.rs` (`apply_highlights_to_rgba`)
