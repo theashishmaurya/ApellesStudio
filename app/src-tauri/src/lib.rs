@@ -2377,6 +2377,11 @@ pub fn run() {
             // over the control server, so the GUI and an agent read one value.
             chroma::export_status::chroma_editor_export_status,
             chroma::write_text_file::chroma_write_text_file,
+            // D-400 — Openverse audio search/import/credits. Explicit network
+            // calls, reached only by the Edit tab's agent ops.
+            chroma::audio_library::chroma_audio_search,
+            chroma::audio_library::chroma_audio_download,
+            chroma::audio_library::chroma_audio_credits,
             // B-100/D-219 — internal debug tooling is never shipped
             // (CLAUDE.md). `tauri::generate_handler!` parses an outer
             // attribute per command and re-emits it on that command's match

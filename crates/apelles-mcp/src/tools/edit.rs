@@ -150,6 +150,44 @@ pub struct EditorAddClipArgs {
     pub name: Option<String>,
 }
 
+fn default_editor_search_audio_kind() -> String {
+    "any".to_owned()
+}
+
+fn default_editor_search_audio_page() -> i64 {
+    1
+}
+
+fn default_editor_search_audio_page_size() -> i64 {
+    10
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorSearchAudioArgs {
+    pub query: String,
+    #[serde(default = "default_editor_search_audio_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub min_secs: Option<f64>,
+    #[serde(default)]
+    pub max_secs: Option<f64>,
+    #[serde(default)]
+    pub licenses: Option<Vec<String>>,
+    #[serde(default = "default_editor_search_audio_page")]
+    pub page: i64,
+    #[serde(default = "default_editor_search_audio_page_size")]
+    pub page_size: i64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorImportAudioArgs {
+    pub openverse_id: String,
+    #[serde(default)]
+    pub track: Option<i64>,
+    #[serde(default)]
+    pub start_frame: Option<i64>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SetClipFadeArgs {
     pub track: i64,
@@ -1240,6 +1278,97 @@ impl ApellesMcp {
             .put("atIndex", p.at_index)
             .put("name", p.name);
         let env = self.op("editor_add_clip", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_search_audio",
+        description = r#"Search Openverse (openverse.org) for CC-licensed sound effects and music. A
+    NETWORK call to api.openverse.org, made only because you called this tool;
+    nothing else in the app reaches the internet for audio.
+
+    `kind` is "sfx", "music" or "any". `min_secs`/`max_secs` bound the length.
+    `licenses` defaults to ["cc0", "by"] (public-domain dedication and plain
+    attribution); "by-sa" and "pdm" are accepted when named. NonCommercial
+    (`nc`) and NoDerivatives (`nd`) licences are ALWAYS refused, with the reason:
+    a published video can be monetised and cutting/mixing sound is an
+    adaptation, so neither can go in one. `page_size` is 1..20.
+
+    Returns {total, page, pageCount, hits: [{id, title, creator, creatorUrl,
+    license, licenseVersion, licenseUrl, source, category, durationSecs,
+    previewUrl, filetype, landingUrl, attribution}], skipped: {...counts of
+    results left out and why}}. Filtering happens after the search, so a page
+    can hold fewer hits than `page_size`: raise `page` for more. Take a hit's
+    `id` to editor_import_audio. CC BY sounds REQUIRE a credit: importing one
+    records it, and editor_get_credits returns the text to paste."#
+    )]
+    pub async fn editor_search_audio(
+        &self,
+        Parameters(p): Parameters<EditorSearchAudioArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("query", p.query)
+            .set("kind", p.kind)
+            .set("page", p.page)
+            .set("pageSize", p.page_size)
+            .put("minSecs", p.min_secs)
+            .put("maxSecs", p.max_secs)
+            .put("licenses", p.licenses);
+        let env = self
+            .op_with("editor_search_audio", crate::AUDIO_LIBRARY_TIMEOUT_MS, args)
+            .await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_import_audio",
+        description = r#"Download one Openverse sound (an `id` from editor_search_audio) into the
+    project's `assets/audio/`, import it into the media pool, and optionally
+    place it. A NETWORK call, made only because you called this tool.
+
+    The licence is re-checked on Openverse's own record for that id: an NC or ND
+    sound is refused with the reason whatever found it. The credit is appended
+    to `assets/audio/CREDITS.json` in the same step (a re-import of the same id
+    replaces its entry, and does not download the file twice).
+
+    Pass `track` to also place it, at `start_frame` (timeline frames; omit to
+    let editor_add_clip choose) with the sound's full length: an audio file
+    goes on an audio track. Without `track` it is imported only; place it later
+    with editor_add_clip.
+
+    Returns {ok, saved: {path, projectFile, title, creator, license,
+    durationSecs, credit, downloaded}, media, placed?}. If the download worked
+    but the import or placement failed, the error says so and still carries
+    `saved`."#
+    )]
+    pub async fn editor_import_audio(
+        &self,
+        Parameters(p): Parameters<EditorImportAudioArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("openverseId", p.openverse_id)
+            .put("track", p.track)
+            .put("startFrame", p.start_frame);
+        let env = self
+            .op_with("editor_import_audio", crate::AUDIO_LIBRARY_TIMEOUT_MS, args)
+            .await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_get_credits",
+        description = r#"The project's audio credits as ready-to-paste video-description text.
+
+    Reads `assets/audio/CREDITS.json`, which editor_import_audio appends to.
+    Returns {count, text, entries, ledger}: `text` lists the CC BY credits (the
+    ones that are required) first, then the public-domain ones, each with title,
+    creator, landing page and licence link. Empty `text` means nothing has been
+    imported. Reads a local file; no network.
+
+    Read-only, cheap, no side effects."#
+    )]
+    pub async fn editor_get_credits(&self) -> Result<CallToolResult, ErrorData> {
+        let env = self.op("editor_get_credits", WireArgs::new()).await?;
         Ok(render::json_text(&env))
     }
 

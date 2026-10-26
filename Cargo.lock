@@ -145,6 +145,7 @@ dependencies = [
  "ab_glyph",
  "anyhow",
  "apelles-ai",
+ "apelles-audio-library",
  "apelles-gpu",
  "apelles-grade-model",
  "apelles-media",
@@ -250,6 +251,17 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+]
+
+[[package]]
+name = "apelles-audio-library"
+version = "0.0.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -5874,6 +5886,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

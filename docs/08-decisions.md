@@ -6,6 +6,21 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-400 — Openverse audio search and import as MCP tools: `editor_search_audio`, `editor_import_audio`, `editor_get_credits`
+
+**decided (2026-10-26, owner: "a feature to get the SFX — MCP and API should be able to find the right one and add it; mostly MCP, I don't think GUI can be helpful here")**
+
+- **Context.** An edit needs sound effects and music that are free to publish. Finding one means leaving the app, checking a licence by eye, downloading, importing and remembering the credit.
+- **Options.** (a) Freesound's own API (needs a key per user, its own terms). (b) Pixabay/Mixkit-style libraries (no stable API, licence text is bespoke). (c) Openverse (`api.openverse.org/v1/audio/`): one anonymous, keyless, open API over Freesound, Jamendo and others, with a machine-readable licence on every result and a ready attribution string.
+- **Choice.** Openverse. Three tools in both MCP servers (Python and Rust, parity corpus re-captured, 195 tools): search, import (download into `assets/audio/`, import to the pool, optionally place), and credits (`assets/audio/CREDITS.json` as paste-ready video-description text, CC BY lines first). The HTTP is done by Rust, never the webview: the crate `apelles-audio-library` (parser, licence policy, credits, client) behind three `chroma_audio_*` Tauri commands that the Edit tab's control ops call.
+- **Licence policy.** `cc0` and `by` by default; `by-sa` and `pdm` only when named (ShareAlike obliges the licence of the combined work, which is the owner's call). **NonCommercial and NoDerivatives are always refused, with the reason in the error**: a published video can be monetised, and cutting, fading or mixing sound is an adaptation. The check runs before the request, on every result, and again on Openverse's own record at import, so no search path can smuggle one in. Importing a CC BY sound writes the credit in the same step as the file.
+- **Exception to human-and-AI parity (the owner's explicit call).** CLAUDE.md requires every feature to ship a GUI affordance and an MCP surface together. This one is **MCP-first by the owner's decision, with no GUI panel**, because picking a sound effect is a search-and-judge task an agent does well and a panel would not help. The imported file lands in the media pool, so a human can still see, drag and use it from the Sources panel. Recorded here so the gap reads as a decision, not an omission.
+- **Local-first.** This is a network call, so it is an explicit, documented opt-in action: only these three ops reach the internet (credits reads a local file), each only because a tool call asked, and nothing in the render or grade path links to the crate. Anonymous use is rate limited; the client sends a real `User-Agent`, waits out a short `429 Retry-After` once, and reports a longer one.
+- **Limits.** Openverse's `category` is empty for most Freesound effects, so `kind="sfx"` means "not music or speech" decided client-side, and filtering after the search means a page can hold fewer hits than `page_size`. Previews are the catalogues' MP3s (Freesound's `-hq` preview, not the original WAV). Dependency: no new third-party crate (`reqwest` and `tokio` were already in the graph).
+- **Verification.** Parser and licence filter tested against a recorded real response (`tests/fixtures/search_rain_all_licences.json`, 20 results across every licence family), 18 crate tests, 3 command tests, 6 dom tests for the ops, parity 5/5 and the HTTP-transport surface test. A live search was run once to record the fixture; no test uses the network. Not verified in the running app: a real import, because a dev app was in use.
+
+---
+
 ## D-399 — Motion themes are data: a validated `ThemeDef` embedded in the manifest, kept in a user library, or derived from a token file
 
 **decided (2026-10-26, owner: "why we needed to do code change to convert to light theme — themes should be dynamic")** · fixes B-268

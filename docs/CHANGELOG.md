@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **D-400: find and import CC sound effects and music from Openverse over MCP.** `editor_search_audio` / `editor_import_audio` / `editor_get_credits` (195 tools): CC0 + CC BY by default, NC/ND always refused with a reason, imports land in `assets/audio/` with a `CREDITS.json` entry, credits come back as paste-ready description text. MCP-first by the owner's call (no GUI panel). New crate `apelles-audio-library`; a network call only when a tool asks.
+
 - **2026-10-26** — **B-272 fixed: a control-bridge op runs exactly once.** Every registry subscription now announces a fresh instance id and the control server addresses each `chroma://request` to one (`target`); a listener leaked across a reload ignores it. Shared `newBridgeClaim` in `@apelles/bridge` replaces four copies.
 
 - **2026-10-26** — **B-270 fixed: `editor_get_timeline` reports each clip's `highlights`** (`[]` when none), so an agent reads back what `editor_set_clip_highlights` wrote. Both MCP docstrings and the parity corpus updated.

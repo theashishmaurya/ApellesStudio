@@ -67,6 +67,10 @@ pub const DEFAULT_OP_TIMEOUT_MS: u64 = 20_000;
 /// back to the caller as a bare tool error (B-153).
 pub const AI_MASK_TIMEOUT_MS: u64 = 180_000;
 
+/// Openverse search/download (D-400): the app's own HTTP client allows 30s per request
+/// plus one 10s `429` wait, and a download of a long track takes longer.
+pub const AUDIO_LIBRARY_TIMEOUT_MS: u64 = 120_000;
+
 // D-318's recut detectors used to have a `RECUT_TIMEOUT_MS = 180_000` here, on
 // the reasoning that a cold decode of a long 4K source is not 20s-fast. B-188
 // proved that far too optimistic — a real 16.5-minute 4K file took 244s and
