@@ -241,6 +241,12 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 
 0c. ~~**Export loudness target (EBU R128 / YouTube -14 LUFS)**~~ **done (D-401, 2026-10-26)** (found 2026-10-26 finishing the Black October video). `editor_export` writes the mix at whatever level the tracks sum to (that video: -21.6 LUFS, peak -6.5 dBFS). YouTube turns loud uploads down but never quiet ones up, so the finished file had to be normalised by hand with a two-pass ffmpeg `loudnorm` outside the app (video stream copied). Needs: an export option (target LUFS + true-peak ceiling, presets YouTube -14 / broadcast -23 / off) on both export paths, as an MCP parameter and an Export dialog field, measured with a test.
 
+0d. **A per-user taste profile (`taste.md`) distilled from every chat, choice and finished video** (owner, 2026-10-26: "we need a way to get smarter with choices … the choices are distilled and used to create a file for the user which can be referenced as per his taste, more like taste.md"). Not designed yet; needs a D-NNN before building. Scope to settle:
+   - **Inputs:** accepted vs rejected suggestions, manual corrections after an agent's edit (e.g. "too loud" → SFX volume 0.35 → 0.08; "no tilt"; "light theme, not black and white"), the final state of exported projects (pacing, cut rate, music/SFX levels, themes, fonts, highlight use).
+   - **Output:** a human-readable, user-editable `taste.md` (plus a structured sidecar for tools), per user and optionally per client/brand for the studio use case.
+   - **Use:** read by the in-app agent and by every MCP session as default choices; cited when a choice is made ("using your usual -14 dB music duck").
+   - **Rules:** local-first (stays on the machine unless the user exports it); the user can see, edit and delete every line; distillation runs on explicit events (export, accept/reject, a correction), never as hidden telemetry; human-and-AI parity (a GUI view/editor plus MCP `taste_get` / `taste_note` / `taste_forget`).
+
 0. **Export through the app's own compositor instead of an ffmpeg filter graph — D-350.**
    Moved here from "Later" 2026-09-18 when **phase 1 shipped**. Origin: B-228/B-229/B-230
    found and fixed three measured resource pathologies in `editor_export`'s ffmpeg
