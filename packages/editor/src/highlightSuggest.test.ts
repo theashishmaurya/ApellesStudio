@@ -8,8 +8,7 @@ import {
   suggestHighlights,
   tokensMatch,
   type OcrLine,
-  type SpokenWord,
-} from './highlightSuggest';
+  type SpokenWord, pickHeadline } from './highlightSuggest';
 
 /** A line of OCR words laid out left to right across `[x0, x1]` at row `y`. */
 function line(text: string, y: number, h = 0.05, x0 = 0.1, x1 = 0.9): OcrLine {
@@ -93,7 +92,7 @@ describe('suggestHighlights', () => {
     expect(MIN_CONTENT_WORDS).toBe(2);
     const out = suggestHighlights({
       ...base,
-      lines: [line('Quarterly report', 0.2)],
+      lines: [line('Quarterly report shows growth', 0.2)],
       spoken: speech('and the quarterly numbers'),
     });
     expect(out.basis).toBe('headline'); // fell back: only "quarterly" matched
@@ -164,7 +163,7 @@ describe('suggestHighlights', () => {
     const short = suggestHighlights({
       ...base,
       clipSourceFrames: 5,
-      lines: [line('Headline', 0.1, 0.1)],
+      lines: [line('One big headline here', 0.1, 0.1)],
       spoken: [],
     });
     expect(short.highlights[0].dur).toBe(5);
@@ -178,5 +177,53 @@ describe('suggestHighlights', () => {
     expect(padded[2]).toBe(1);
     expect(padded[1]).toBe(0);
     expect(padded[3]).toBeGreaterThan(0.05);
+  });
+});
+
+describe('pickHeadline (B-269)', () => {
+  const line = (text: string, bbox: [number, number, number, number]): OcrLine => ({
+    text,
+    bbox,
+    confidence: 1,
+    words: text.split(' ').map((t, i, all) => {
+      const w = (bbox[2] - bbox[0]) / all.length;
+      return { text: t, bbox: [bbox[0] + i * w, bbox[1], bbox[0] + (i + 1) * w, bbox[3]], confidence: 1 };
+    }),
+  });
+
+  it('skips a site logo in the chrome band even when it is the tallest box', () => {
+    const logo = line('TNW', [0.01, 0.01, 0.05, 0.05]);
+    const head = line('PHP rushes out emergency patches', [0.25, 0.2, 0.75, 0.24]);
+    expect(pickHeadline([logo, head])).toEqual([head]);
+  });
+
+  it('skips a tall vertical strip and a one-word photo caption', () => {
+    const strip = line('Home Membership FAQ About', [0.03, 0.31, 0.07, 0.54]);
+    const photo = line('OpenAI', [0.37, 0.6, 0.47, 0.7]);
+    const head = line('Some websites go dark as operators', [0.2, 0.3, 0.6, 0.34]);
+    expect(pickHeadline([strip, photo, head])).toEqual([head]);
+  });
+
+  it('takes the wrapped continuation lines set at the same size, in reading order', () => {
+    const l1 = line('Some websites go dark as operators', [0.2, 0.3, 0.6, 0.34]);
+    const l2 = line('address an AI-detected flaw in web', [0.2, 0.345, 0.6, 0.385]);
+    const body = line('PHP shipped emergency patches for two critical flaws', [0.2, 0.42, 0.7, 0.44]);
+    expect(pickHeadline([body, l2, l1])).toEqual([l1, l2]);
+  });
+
+  it('returns nothing when no line looks like a headline', () => {
+    expect(pickHeadline([line('TNW', [0.01, 0.01, 0.05, 0.05])])).toEqual([]);
+  });
+});
+
+describe('pickHeadline — narrow sidebar text (B-269)', () => {
+  it('passes over a narrow sidebar line even when its type is larger', () => {
+    const mk = (text: string, bbox: [number, number, number, number]): OcrLine => ({
+      text, bbox, confidence: 1,
+      words: text.split(' ').map((t) => ({ text: t, bbox, confidence: 1 })),
+    });
+    const ad = mk('already built for you', [0.66, 0.57, 0.79, 0.61]);
+    const head = mk('Zeabur shutting down after second security breach', [0.2, 0.3, 0.7, 0.33]);
+    expect(pickHeadline([ad, head])).toEqual([head]);
   });
 });

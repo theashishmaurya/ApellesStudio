@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **B-269 fixed: highlight suggestions find the real headline** (not a logo, sidebar strip, ad or photo text). Logged B-270 (open): `editor_get_timeline` does not report clip highlights.
+
 - **2026-10-26** — **D-399 (B-268): Motion themes are data.** A theme is a validated definition that can be embedded in the manifest (so renders stay deterministic), kept in a user library, or derived from a CSS token file; `motion_define_theme` / `motion_list_themes` / `motion_delete_theme` (192 tools) and a theme editor beside the picker. Compiled presets stay as the built-ins.
 
 - **2026-10-26** — **B-259 fixed: `editor_add_clip` on a track that no longer exists is refused, not placed on track 0.** The error names the valid range; an empty timeline gets a track of the kind the source needs (audio for an audio-only file).

@@ -281,12 +281,67 @@ export function suggestHighlights(args: {
   }
   if (highlights.length > 0) return { ...base, highlights, basis: 'transcript', phrases };
 
-  // Fallback: the biggest line of text, swept once at the clip's start.
-  const headline = [...lines]
-    .filter((l) => l.bbox[2] > l.bbox[0] && l.bbox[3] > l.bbox[1])
-    .sort((a, b) => b.bbox[3] - b.bbox[1] - (a.bbox[3] - a.bbox[1]) || b.bbox[2] - b.bbox[0] - (a.bbox[2] - a.bbox[0]))[0];
-  if (!headline) return { ...base, highlights: [], basis: 'none', phrases: [] };
+  // Fallback: the headline, swept once at the clip's start (line by line if it wraps).
+  const headline = pickHeadline(lines);
+  if (headline.length === 0) return { ...base, highlights: [], basis: 'none', phrases: [] };
   const sweepFrames = Math.max(1, Math.min(Math.round(DEFAULT_HIGHLIGHT_SWEEP_SECONDS * clipSourceFps), clipSourceFrames));
-  const h = sanitizeHighlight({ box: padHighlightBox(headline.bbox), at: clipSourceStart, dur: sweepFrames });
-  return { ...base, highlights: h ? [h] : [], basis: h ? 'headline' : 'none', phrases: [] };
+  const perLine = Math.max(1, Math.round(sweepFrames / headline.length));
+  const fallback = headline
+    .map((l, i) => sanitizeHighlight({ box: padHighlightBox(l.bbox), at: clipSourceStart + i * perLine, dur: perLine }))
+    .filter((h): h is ClipHighlight => h !== null);
+  return { ...base, highlights: fallback, basis: fallback.length > 0 ? 'headline' : 'none', phrases: [] };
+}
+
+/** B-269 — what a headline line looks like: real words, set horizontally, below the
+ *  site chrome. The tallest box on a page is often NOT the headline — a logo in the
+ *  nav bar, a vertical sidebar strip, or text inside a photo — so the bare
+ *  "largest line" rule highlighted those. */
+export const HEADLINE_MIN_WORDS = 3;
+/** Lines whose top sits above this fraction of the image are site chrome (logo, nav). */
+export const HEADLINE_CHROME_BAND = 0.07;
+/** A text line is at least this many times wider than it is tall. */
+export const HEADLINE_MIN_ASPECT = 3;
+/** A headline line spans at least this fraction of the image width: narrower lines are
+ *  sidebar items, ads and captions (a BleepingComputer sidebar ad won before this). */
+export const HEADLINE_MIN_WIDTH = 0.18;
+/** Wrapped headline lines are within this ratio of the first line's height. */
+const HEADLINE_SAME_SIZE = 0.2;
+/** At most this many wrapped lines are swept as one headline. */
+const HEADLINE_MAX_LINES = 3;
+
+/** B-269 — the headline: the largest-type line that looks like a headline, plus the
+ *  lines directly beneath it set at the same size (its wrapped continuation), in
+ *  reading order. Empty when nothing on the picture looks like a headline. */
+export function pickHeadline(lines: readonly OcrLine[]): OcrLine[] {
+  const height = (l: OcrLine) => l.bbox[3] - l.bbox[1];
+  const width = (l: OcrLine) => l.bbox[2] - l.bbox[0];
+  const candidates = lines.filter(
+    (l) =>
+      height(l) > 0 &&
+      width(l) > 0 &&
+      l.bbox[1] >= HEADLINE_CHROME_BAND &&
+      width(l) >= HEADLINE_MIN_ASPECT * height(l) &&
+      width(l) >= HEADLINE_MIN_WIDTH &&
+      l.words.filter((w) => normaliseToken(w.text).length > 0).length >= HEADLINE_MIN_WORDS,
+  );
+  if (candidates.length === 0) return [];
+  const top = [...candidates].sort((a, b) => height(b) - height(a) || width(b) - width(a))[0];
+  // Wrapped lines of the same headline: same type size, stacked directly on one
+  // another, in the same column. Grow the block up from `top`, then down.
+  const sameBlock = (a: OcrLine, b: OcrLine) =>
+    Math.abs(height(a) - height(top)) <= HEADLINE_SAME_SIZE * height(top) &&
+    a.bbox[0] < b.bbox[2] &&
+    a.bbox[2] > b.bbox[0];
+  const byY = [...candidates].sort((a, b) => a.bbox[1] - b.bbox[1]);
+  const block = [top];
+  for (let i = byY.indexOf(top) - 1; i >= 0 && block.length < HEADLINE_MAX_LINES; i--) {
+    const l = byY[i];
+    if (sameBlock(l, block[0]) && block[0].bbox[1] - l.bbox[3] <= height(top) * 0.8) block.unshift(l);
+  }
+  for (let i = byY.indexOf(top) + 1; i < byY.length && block.length < HEADLINE_MAX_LINES; i++) {
+    const l = byY[i];
+    const last = block[block.length - 1];
+    if (sameBlock(l, last) && l.bbox[1] - last.bbox[3] <= height(top) * 0.8) block.push(l);
+  }
+  return block;
 }

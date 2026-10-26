@@ -27,6 +27,21 @@ Still real:
 
 ## Open
 
+## B-270 — `editor_get_timeline` does not report a clip's `highlights`
+
+status: **open** · severity: **minor** (an agent can write highlights with `editor_set_clip_highlights` but cannot read them back from the timeline read every other clip property comes from) · area: `packages/editor/src/useEditorControl.ts` (`editor_get_timeline`'s clip summary), both MCP servers' docs
+
+- **found:** 2026-10-26, applying D-396 highlights to 38 clips: `editor_get_timeline` listed every other clip field but no `highlights`; the saved `project.json` held all 62.
+- **expected:** the clip summary carries `highlights` (or a count plus a pointer to a read tool), so the read half matches the write half (human-and-AI parity).
+
+## B-269 — `editor_suggest_clip_highlights`' headline fallback picked logos, sidebar strips and photo text
+
+status: **fixed** (2026-10-26) · severity: **major** (46 of 59 real article captures fell back to the headline rule; most boxes were not the headline) · area: `packages/editor/src/highlightSuggest.ts`
+
+- **found:** 2026-10-26, validating D-397 on the Black October captures. "The largest line" won with a site logo in the nav bar (TNW, W3Techs, php.net, Sansec), a vertical sidebar strip (PPC Land), the "OpenAI" text inside an AP photo, and a BleepingComputer sidebar ad.
+- **fix:** `pickHeadline`. A headline line has at least 3 words, is at least 3× wider than tall and spans at least 18% of the page width, and sits below the top 7% site-chrome band. The largest-type such line is taken with the same-size lines stacked directly above and below it (its wrap, up to 3), swept in reading order.
+- **verification:** 5 new `pickHeadline` tests built from the real failure shapes; `highlightSuggest` 47/47; on the 46 distinct captures every headline-basis box now lands on the article headline (checked by drawing each box on its capture).
+
 ## B-268 — a Motion theme can only be added by changing engine code; themes are not data
 
 status: **fixed (D-399, 2026-10-26)** · severity: **major** (a look that is not already compiled in needs an engine change, a commit and a rebuild; neither a user nor an agent can add one at runtime) · area: `packages/motion-engine/src/design.ts` (`THEMES`), `engine/schema.ts` (`theme` is a `z.enum` of the compiled names), `themeFonts.ts`, `motion_set_project_theme`
