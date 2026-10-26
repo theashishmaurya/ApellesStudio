@@ -630,3 +630,62 @@ describe('auto-decommission empty tracks — selection follows the prune (owner,
     expect(s.selection).toEqual([{ track: 2, id: 'c' }]); // untouched — nothing pruned
   });
 });
+
+describe('a refetch never replaces a newer local edit with an older backend copy (B-272)', () => {
+  function tracks(n: number): Timeline {
+    return {
+      id: 'A',
+      name: 'A',
+      rate: null,
+      tracks: Array.from({ length: n }, () => ({ kind: 'video', clips: [] })),
+    } as unknown as Timeline;
+  }
+
+  beforeEach(() => {
+    useEditorTimelineStore.setState({ openProjectKey: PROJECT_A, timeline: tracks(1), status: 'ready' });
+  });
+
+  it('keeps an edit whose save is still on its debounce timer when a refetch answers', async () => {
+    // The backend still holds the old document (the save has not been sent).
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'chroma_timeline_get' ? Promise.resolve(tracks(1)) : Promise.resolve(undefined),
+    );
+    vi.useFakeTimers();
+    useEditorTimelineStore.getState().applyOp({ kind: 'add_track', trackKind: 'video' });
+    await useEditorTimelineStore.getState().load(); // e.g. the window `focus` refetch
+    expect(useEditorTimelineStore.getState().timeline?.tracks).toHaveLength(2);
+  });
+
+  it('keeps an edit made while the refetch was in flight', async () => {
+    const stale = deferred<Timeline>();
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'chroma_timeline_get' ? stale.promise : Promise.resolve(undefined),
+    );
+    vi.useFakeTimers();
+    const loading = useEditorTimelineStore.getState().load();
+    useEditorTimelineStore.getState().applyOp({ kind: 'add_track', trackKind: 'video' });
+    await vi.advanceTimersByTimeAsync(500); // its save has now been sent AND finished
+    stale.resolve(tracks(1)); // the answer was computed before the edit
+    await loading;
+    expect(useEditorTimelineStore.getState().timeline?.tracks).toHaveLength(2);
+  });
+
+  it('still takes the backend copy when nothing is owed (a focus refetch picks up outside changes)', async () => {
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'chroma_timeline_get' ? Promise.resolve(tracks(3)) : Promise.resolve(undefined),
+    );
+    await useEditorTimelineStore.getState().load();
+    expect(useEditorTimelineStore.getState().timeline?.tracks).toHaveLength(3);
+  });
+
+  it('an undo’s own reconcile refetch still lands (and bumps savedVersion)', async () => {
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'chroma_timeline_get' ? Promise.resolve(tracks(4)) : Promise.resolve(undefined),
+    );
+    const before = useEditorTimelineStore.getState().savedVersion;
+    useEditorTimelineStore.getState().restoreSnapshot(tracks(4));
+    await flush();
+    expect(useEditorTimelineStore.getState().savedVersion).toBeGreaterThan(before);
+    expect(useEditorTimelineStore.getState().timeline?.tracks).toHaveLength(4);
+  });
+});

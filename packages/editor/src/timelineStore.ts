@@ -410,7 +410,20 @@ interface EditorTimelineState {
    *  composition root's effect may re-run with an unchanged value — but a
    *  DIFFERENT key is a real project switch and reloads everything (B-083). */
   setOpenProject: (key: string | null) => void;
-  load: () => Promise<void>;
+  /** Fetch the backend's copy of the active timeline into the store.
+   *
+   *  **B-272 — it never replaces a newer local edit with an older backend copy.**
+   *  `applyOp` changes the store at once and persists ~{@link SAVE_DEBOUNCE_MS}
+   *  later, so for that window (and while a save is in flight) the backend is
+   *  BEHIND the store. A window-`focus` refetch landing then used to overwrite
+   *  the store with the older copy and the debounced save then persisted it:
+   *  62 `editor_set_clip_audio` calls read back at 0.15, minutes later 39 were
+   *  at 0.35 again, with nothing on the undo stack. A fetched copy is therefore
+   *  DISCARDED when the store owed the backend a write at any point between the
+   *  request and its answer. `afterOwnSave` is for the one caller that has just
+   *  finished its own save (`restoreSnapshot`'s reconcile): the save in flight
+   *  is that very one, so only a NEWER edit makes the answer stale. */
+  load: (opts?: { afterOwnSave?: boolean }) => Promise<void>;
   setPlayhead: (frame: number) => void;
   setPlaying: (playing: boolean) => void;
   /** Accepts a value or a `useState`-style updater — `TimelinePane.tsx`'s
@@ -507,6 +520,11 @@ interface EditorTimelineState {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** B-272 — counts every local write to the active timeline (`applyOp`,
+ *  `restoreSnapshot`). `load()` compares it across its fetch: if it moved, the
+ *  answer was computed before an edit the store now holds and is stale. */
+let localEditGeneration = 0;
 
 /** B-080 — the `chroma_timeline_set` currently in flight, or `null`.
  *
@@ -723,8 +741,12 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
     attempt(0);
   },
 
-  load: async () => {
+  load: async (opts) => {
     const token = ++loadToken;
+    // B-272 — what this fetch can safely replace. A save pending on its timer or
+    // in flight means the backend is behind the store right now.
+    const generationAtStart = localEditGeneration;
+    const owedAtStart = saveTimer !== null || (inFlightSave !== null && opts?.afterOwnSave !== true);
     // Don't flash the error screen away on a background refetch that may
     // itself fail; `status` only moves to 'loading' when there's nothing good
     // on screen to preserve.
@@ -732,6 +754,17 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
     try {
       const timeline = await invokeWithTimeout<Timeline>('chroma_timeline_get', LOAD_TIMEOUT_MS);
       if (token !== loadToken) return; // superseded — a newer load owns the state
+      // B-272 — the store holds an edit this answer predates: keep the store.
+      // Its own pending save brings the backend level (and bumps
+      // `savedVersion` when it lands).
+      // (With no timeline in the store there is nothing to preserve, so a first
+      // load always lands.)
+      if (
+        get().timeline !== null &&
+        (owedAtStart || generationAtStart !== localEditGeneration || saveTimer !== null)
+      ) {
+        return;
+      }
       const dur = timelineDuration(timeline);
       set((s) => ({
         timeline,
@@ -801,6 +834,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
     if (!before) return;
     const after = applyOpPure(before, op);
     if (after === before) return; // no-op (clamped away)
+    localEditGeneration += 1; // B-272
     const dur = timelineDuration(after);
     set((s) => ({ timeline: after, playhead: Math.min(s.playhead, Math.max(0, dur - 1)) }));
 
@@ -875,6 +909,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   },
 
   restoreSnapshot: (timeline) => {
+    localEditGeneration += 1; // B-272
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
@@ -887,7 +922,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
     void trackSave(
       invoke('chroma_timeline_set', { timeline })
         .then(() => {
-          void get().load();
+          void get().load({ afterOwnSave: true });
           return true;
         })
         .catch((e) => {
