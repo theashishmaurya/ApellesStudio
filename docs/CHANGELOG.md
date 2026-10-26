@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **B-274 (partly fixed): the Edit webview no longer allocates a whole-clip waveform canvas, and a killed web process is reported.** The canvas now backs only the visible span (<= 4096 px) instead of tens of MB per long clip; a webview that reloads without unloading raises a persistent warning and a log event. Write-ahead journaling and the live heap measurement remain open.
+
 - **2026-10-26** — **B-272 (second half): a refetch can no longer overwrite a newer local edit.** `timelineStore.load()` discarded nothing before, so a window-focus refetch during the 400 ms save debounce replaced fresh edits with the older backend copy (39 of 62 volume changes reverted). It now keeps the store when a write was owed.
 
 - **2026-10-26** — **D-400: find and import CC sound effects and music from Openverse over MCP.** `editor_search_audio` / `editor_import_audio` / `editor_get_credits` (195 tools): CC0 + CC BY by default, NC/ND always refused with a reason, imports land in `assets/audio/` with a `CREDITS.json` entry, credits come back as paste-ready description text. MCP-first by the owner's call (no GUI panel). New crate `apelles-audio-library`; a network call only when a tool asks.
