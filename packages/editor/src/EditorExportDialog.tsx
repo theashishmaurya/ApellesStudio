@@ -82,6 +82,31 @@ import { warmGradeLuts } from './gradeLuts';
 // B-208/D-353 — the composition size, for this dialog's default width/height
 // AND for the compiler the queue runs at enqueue time.
 import { warmCompositionSize } from './compositionSize';
+// D-401 — the audio loudness target, offered the way Premiere's Export Settings
+// (Audio > Loudness normalization) and Resolve's Deliver page (Audio >
+// Normalize audio, with a loudness standard and a max true peak) do: a preset
+// list that fills the two numbers, with the numbers editable.
+import { LOUDNESS_PRESETS, DEFAULT_TRUE_PEAK_DBTP, type LoudnessPresetName, type LoudnessReport } from './loudness';
+
+type LoudnessChoice = 'off' | LoudnessPresetName | 'custom';
+
+const LOUDNESS_LABELS: Record<LoudnessChoice, string> = {
+  off: 'Off (as mixed)',
+  youtube: 'YouTube (-14 LUFS)',
+  broadcast: 'Broadcast, EBU R128 (-23 LUFS)',
+  podcast: 'Podcast (-16 LUFS)',
+  custom: 'Custom…',
+};
+
+/** `-21.6 → -14.0 LUFS · peak -6.5 → -1.1 dBTP` — the measured result. */
+function loudnessSummary(r: LoudnessReport): string {
+  if (r.skipped || !r.before || !r.after) return r.skipped ?? '';
+  return (
+    `${r.before.integratedLufs.toFixed(1)} → ${r.after.integratedLufs.toFixed(1)} LUFS · ` +
+    `peak ${r.before.truePeakDbtp.toFixed(1)} → ${r.after.truePeakDbtp.toFixed(1)} dBTP` +
+    (r.targetMet ? '' : ' (target not fully reached)')
+  );
+}
 
 const FALLBACK_WIDTH = 1920;
 const FALLBACK_HEIGHT = 1080;
@@ -200,6 +225,9 @@ export function EditorExportDialog() {
   const [fitOverrides, setFitOverrides] = useState<Record<string, 'fit' | 'stretch'>>({});
   const [freezeOverrides, setFreezeOverrides] = useState<Record<string, boolean>>({});
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [loudnessChoice, setLoudnessChoice] = useState<LoudnessChoice>('off');
+  const [customLufs, setCustomLufs] = useState('-14');
+  const [customPeak, setCustomPeak] = useState(String(DEFAULT_TRUE_PEAK_DBTP));
   /** D-256 — what baking the clips' Colorist grades had to drop (a masked
    *  layer, a Colorist crop). Shown in the dialog rather than only logged:
    *  these are precisely the cases where the exported file will NOT match what
@@ -319,6 +347,9 @@ export function EditorExportDialog() {
       fps: f,
       fitOverrides: Object.keys(fitOverrides).length > 0 ? fitOverrides : undefined,
       freezeOverrides: Object.keys(freezeOverrides).length > 0 ? freezeOverrides : undefined,
+      ...(loudnessChoice === 'custom'
+        ? { loudnessLufs: parseFloat(customLufs), truePeakDbtp: parseFloat(customPeak) }
+        : { loudnessPreset: loudnessChoice }),
     });
     if ('error' in result) {
       setValidationError(result.error);
@@ -382,6 +413,54 @@ export function EditorExportDialog() {
                 <Label>FPS</Label>
                 <Input type="number" min={1} step="any" value={fps} onChange={(e) => setFps(e.target.value)} />
               </div>
+            </div>
+
+            {/* D-401 — loudness target. Off leaves the mix exactly as the tracks sum. */}
+            <div className="flex flex-col gap-1.5">
+              <Label>Audio loudness</Label>
+              <div className="flex items-center gap-2">
+                <Select value={loudnessChoice} onValueChange={(v) => setLoudnessChoice(v as LoudnessChoice)}>
+                  <SelectTrigger className="h-9 flex-1">
+                    <SelectValue>{LOUDNESS_LABELS[loudnessChoice]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(LOUDNESS_LABELS) as LoudnessChoice[]).map((k) => (
+                      <SelectItem key={k} value={k}>
+                        {LOUDNESS_LABELS[k]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {loudnessChoice === 'custom' && (
+                  <>
+                    <Input
+                      type="number"
+                      step="any"
+                      className="w-20"
+                      aria-label="Target loudness (LUFS)"
+                      value={customLufs}
+                      onChange={(e) => setCustomLufs(e.target.value)}
+                    />
+                    <span className="text-xs text-text-secondary">LUFS</span>
+                    <Input
+                      type="number"
+                      step="any"
+                      className="w-20"
+                      aria-label="True-peak ceiling (dBTP)"
+                      value={customPeak}
+                      onChange={(e) => setCustomPeak(e.target.value)}
+                    />
+                    <span className="text-xs text-text-secondary">dBTP</span>
+                  </>
+                )}
+              </div>
+              {loudnessChoice !== 'off' && loudnessChoice !== 'custom' && (
+                <p className="text-[11px] text-text-secondary/70">
+                  Measures the finished mix, then applies one gain and a true-peak limiter to reach{' '}
+                  {LOUDNESS_PRESETS[loudnessChoice].integratedLufs} LUFS with peaks under{' '}
+                  {LOUDNESS_PRESETS[loudnessChoice].truePeakDbtp} dBTP. The picture is not re-encoded.
+                </p>
+              )}
             </div>
 
             {/* per-clip overrides — fit / freeze (export-time-only, B-074/D-188).
@@ -498,6 +577,11 @@ export function EditorExportDialog() {
                         </div>
                         {/* D-362 — the real percentage while it renders. */}
                         <JobProgress job={job} />
+                        {job.loudnessReport && (
+                          <span className="mt-1 text-[10px] text-text-secondary tabular-nums">
+                            {loudnessSummary(job.loudnessReport)}
+                          </span>
+                        )}
                       </div>
                     ))}
                   </div>

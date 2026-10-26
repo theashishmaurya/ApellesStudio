@@ -2300,7 +2300,7 @@
     },
     {
       "name": "editor_export",
-      "description": "Render the open project's ENTIRE multi-track timeline \u2014 every visible\n    video track/clip, composited in z-order (track 0 on top), cropped,\n    keyframed and speed-adjusted \u2014 to a single output file via ffmpeg. This\n    is the only Edit-tab tool that produces a real output file;\n    `editor_get_timeline` and every `editor_set_*`/`editor_add_*` tool above\n    only change in-memory state.\n\n    `width`/`height` are the output composition's pixel size (every clip's\n    `position_x`/`position_y`/`scale` from `editor_set_clip_transform` are\n    fractions of this). `fps` defaults to the timeline's own rate.\n    `speed_overrides` is `{clip_id: multiplier}` (e.g. `{\"clip-abc\": 1.2}`)\n    \u2014 an EXPORT-TIME-ONLY speed change; it does not touch the clip's stored\n    trim/duration, so scrubbing it in the GUI still plays at 1x.\n\n    **`scale` is a WIDTH fraction of the output composition, not a box\n    shape (B-074)** \u2014 read this before compositing more than one clip onto\n    a track/canvas. `overlay_width = width * clip.scale` always; the\n    overlay's HEIGHT depends on `fit_overrides` (`{clip_id: \"fit\" |\n    \"stretch\"}`, EXPORT-TIME-ONLY, mirrors `speed_overrides`'s own shape):\n    `\"fit\"` (the default for any clip with no entry here) lets ffmpeg\n    compute height from the clip's own real, post-crop aspect ratio \u2014 the\n    overlay is correctly proportioned, undistorted, and generally will NOT\n    exactly fill a target box unless you chose `width`/`height`/`scale` to\n    make it so. `\"stretch\"` forces height to `height * clip.scale` too \u2014\n    i.e. the overlay ALWAYS has exactly the OUTPUT canvas's own aspect\n    ratio, at any `scale`, regardless of the source's real shape (correct\n    for a same-aspect picture-in-picture bubble, or a deliberate distort\n    effect; wrong for fitting arbitrary footage into a differently-shaped\n    region). Concretely: a full-width/half-height stacked layout (two clips,\n    one per half of a 9:16 canvas) is mathematically impossible to get\n    undistorted via `\"stretch\"` for ANY canvas size, because that box's\n    aspect ratio necessarily differs from the canvas's own \u2014 use `\"fit\"`\n    (the default) for that layout, and compute `position_y` yourself from\n    the clip's own known resolution (`editor_import_media`'s probe result)\n    to center or top-align the resulting box within its slot; ffmpeg\n    round-trips height to the nearest even pixel count under `\"fit\"`, so\n    treat the exact rendered height as approximate when computing that\n    offset.\n\n    **`source_start`/`duration`/a keyframe's `frame` are all in the CLIP's\n    OWN native source frame rate (B-075), not this export's `fps`** \u2014\n    handled automatically as long as the clip has `source_fps` set (true for\n    any clip placed via `editor_add_clip`), never something you need to\n    convert yourself.\n\n    `freeze_overrides` (`{clip_id: true}`, EXPORT-TIME-ONLY, D-188, mirrors\n    `speed_overrides`'s own shape) holds a clip's own real LAST FRAME, frozen,\n    for the rest of the export's total runtime instead of it simply\n    disappearing once its own content ends \u2014 e.g. a shorter/sped-up clip\n    stacked next to a longer one that keeps playing. A clip already at or\n    past the overall total runtime is unaffected (no-op, never a\n    negative-duration hold).\n\n    D-197: real audio now mixes into the output automatically \u2014 every\n    visible audio-track clip (gain/D-057, ducking/D-149, fade/D-147) plus a\n    video clip's own embedded audio (unless A/V-linked, D-129, or its\n    source isn't known to have audio), summed and soft-limited. No new\n    parameter needed; read `editor_get_capabilities`'s `export.v1_scope`\n    entry for the one real caveat (an unprobed video source's embedded audio\n    conservatively defaults to silent).\n\n    **This call blocks, and on a real project it WILL exceed the 20s frontend\n    round trip \u2014 which is expected, and is not the export failing** (D-362,\n    fixes B-231). A minutes-long export outlives that budget, so the bridge\n    answers `ok: false` with a \"no reply from the frontend\" error while the\n    render carries on and succeeds. On the `\"compositor\"` renderer this tool\n    handles that for you: it then polls `editor_export_status` until the\n    render really settles, and returns THAT outcome, so what you get back is\n    the export's own answer rather than the timeout's. Call\n    `editor_export_status` yourself at any point to watch progress, or to pick\n    a render back up if this call is interrupted. The `\"filter\"` renderer\n    reports no progress at all \u2014 nothing outside ffmpeg knows where it is \u2014 so\n    there a timeout really does leave the output file as your only signal.\n\n    **`renderer` (D-350) \u2014 which engine composites the picture.**\n    `\"compositor\"` renders every frame through the app's OWN live-preview\n    compositor and pipes it into one ffmpeg process that only compresses and\n    muxes; `\"filter\"` (the default, and everything described above) compiles\n    the whole composite into an ffmpeg `-filter_complex` graph with one `-i`\n    per clip. Prefer `\"compositor\"` for a HEAVILY CUT timeline \u2014 the filter\n    path's memory and thread use both scale with the clip count\n    (B-228/B-229/B-230: a real ~79-clip 4K project reached 56 GB and 3,065\n    threads on one process), while the render path opens exactly one input\n    whatever the clip count, and it is by construction the same picture the\n    Edit tab previews. It is opt-in while it is phase 1: it does NOT yet\n    support `speed_overrides`, `fit_overrides` or `freeze_overrides` (all\n    EXPORT-TIME-ONLY knobs the live compositor has no notion of) and REFUSES\n    rather than silently ignoring one.",
+      "description": "Render the open project's ENTIRE multi-track timeline \u2014 every visible\n    video track/clip, composited in z-order (track 0 on top), cropped,\n    keyframed and speed-adjusted \u2014 to a single output file via ffmpeg. This\n    is the only Edit-tab tool that produces a real output file;\n    `editor_get_timeline` and every `editor_set_*`/`editor_add_*` tool above\n    only change in-memory state.\n\n    `width`/`height` are the output composition's pixel size (every clip's\n    `position_x`/`position_y`/`scale` from `editor_set_clip_transform` are\n    fractions of this). `fps` defaults to the timeline's own rate.\n    `speed_overrides` is `{clip_id: multiplier}` (e.g. `{\"clip-abc\": 1.2}`)\n    \u2014 an EXPORT-TIME-ONLY speed change; it does not touch the clip's stored\n    trim/duration, so scrubbing it in the GUI still plays at 1x.\n\n    **`scale` is a WIDTH fraction of the output composition, not a box\n    shape (B-074)** \u2014 read this before compositing more than one clip onto\n    a track/canvas. `overlay_width = width * clip.scale` always; the\n    overlay's HEIGHT depends on `fit_overrides` (`{clip_id: \"fit\" |\n    \"stretch\"}`, EXPORT-TIME-ONLY, mirrors `speed_overrides`'s own shape):\n    `\"fit\"` (the default for any clip with no entry here) lets ffmpeg\n    compute height from the clip's own real, post-crop aspect ratio \u2014 the\n    overlay is correctly proportioned, undistorted, and generally will NOT\n    exactly fill a target box unless you chose `width`/`height`/`scale` to\n    make it so. `\"stretch\"` forces height to `height * clip.scale` too \u2014\n    i.e. the overlay ALWAYS has exactly the OUTPUT canvas's own aspect\n    ratio, at any `scale`, regardless of the source's real shape (correct\n    for a same-aspect picture-in-picture bubble, or a deliberate distort\n    effect; wrong for fitting arbitrary footage into a differently-shaped\n    region). Concretely: a full-width/half-height stacked layout (two clips,\n    one per half of a 9:16 canvas) is mathematically impossible to get\n    undistorted via `\"stretch\"` for ANY canvas size, because that box's\n    aspect ratio necessarily differs from the canvas's own \u2014 use `\"fit\"`\n    (the default) for that layout, and compute `position_y` yourself from\n    the clip's own known resolution (`editor_import_media`'s probe result)\n    to center or top-align the resulting box within its slot; ffmpeg\n    round-trips height to the nearest even pixel count under `\"fit\"`, so\n    treat the exact rendered height as approximate when computing that\n    offset.\n\n    **`source_start`/`duration`/a keyframe's `frame` are all in the CLIP's\n    OWN native source frame rate (B-075), not this export's `fps`** \u2014\n    handled automatically as long as the clip has `source_fps` set (true for\n    any clip placed via `editor_add_clip`), never something you need to\n    convert yourself.\n\n    `freeze_overrides` (`{clip_id: true}`, EXPORT-TIME-ONLY, D-188, mirrors\n    `speed_overrides`'s own shape) holds a clip's own real LAST FRAME, frozen,\n    for the rest of the export's total runtime instead of it simply\n    disappearing once its own content ends \u2014 e.g. a shorter/sped-up clip\n    stacked next to a longer one that keeps playing. A clip already at or\n    past the overall total runtime is unaffected (no-op, never a\n    negative-duration hold).\n\n    D-197: real audio now mixes into the output automatically \u2014 every\n    visible audio-track clip (gain/D-057, ducking/D-149, fade/D-147) plus a\n    video clip's own embedded audio (unless A/V-linked, D-129, or its\n    source isn't known to have audio), summed and soft-limited. No new\n    parameter needed; read `editor_get_capabilities`'s `export.v1_scope`\n    entry for the one real caveat (an unprobed video source's embedded audio\n    conservatively defaults to silent).\n\n    **This call blocks, and on a real project it WILL exceed the 20s frontend\n    round trip \u2014 which is expected, and is not the export failing** (D-362,\n    fixes B-231). A minutes-long export outlives that budget, so the bridge\n    answers `ok: false` with a \"no reply from the frontend\" error while the\n    render carries on and succeeds. On the `\"compositor\"` renderer this tool\n    handles that for you: it then polls `editor_export_status` until the\n    render really settles, and returns THAT outcome, so what you get back is\n    the export's own answer rather than the timeout's. Call\n    `editor_export_status` yourself at any point to watch progress, or to pick\n    a render back up if this call is interrupted. The `\"filter\"` renderer\n    reports no progress at all \u2014 nothing outside ffmpeg knows where it is \u2014 so\n    there a timeout really does leave the output file as your only signal.\n\n    **Loudness target (D-401) \u2014 `loudness_preset` / `loudness_lufs` /\n    `true_peak_dbtp`.** By default the mix is written at whatever level the\n    tracks sum to (often far too quiet for a platform: a real 15-minute export\n    measured -21.6 LUFS). Pass `loudness_preset` `\"youtube\"` (-14 LUFS /\n    -1 dBTP), `\"broadcast\"` (EBU R128, -23 LUFS / -1 dBTP) or `\"podcast\"`\n    (-16 LUFS / -1 dBTP) to have the finished file measured (EBU R128) and\n    corrected with one linear gain plus an oversampled true-peak limiter, then\n    re-measured; `\"off\"` (the default) does nothing and leaves the output\n    byte-identical to before. For a custom spec give `loudness_lufs` (-40 to\n    -5) and optionally `true_peak_dbtp` (-9 to 0, default -1) INSTEAD of a\n    preset \u2014 giving both is refused. The video stream is copied, never\n    re-encoded; only the audio is rewritten (AAC 192k). The result's\n    `loudness` object reports `before` and `after` (`integratedLufs`,\n    `truePeakDbtp`, `loudnessRangeLu`), `gainDb`, `attempts` and `targetMet`;\n    on the `\"compositor\"` renderer `editor_export_status` shows a\n    `normalising` phase and carries the same `loudness` report. A silent or\n    audio-less export is left untouched and says so in `loudness.skipped`.\n\n    **`renderer` (D-350) \u2014 which engine composites the picture.**\n    `\"compositor\"` renders every frame through the app's OWN live-preview\n    compositor and pipes it into one ffmpeg process that only compresses and\n    muxes; `\"filter\"` (the default, and everything described above) compiles\n    the whole composite into an ffmpeg `-filter_complex` graph with one `-i`\n    per clip. Prefer `\"compositor\"` for a HEAVILY CUT timeline \u2014 the filter\n    path's memory and thread use both scale with the clip count\n    (B-228/B-229/B-230: a real ~79-clip 4K project reached 56 GB and 3,065\n    threads on one process), while the render path opens exactly one input\n    whatever the clip count, and it is by construction the same picture the\n    Edit tab previews. It is opt-in while it is phase 1: it does NOT yet\n    support `speed_overrides`, `fit_overrides` or `freeze_overrides` (all\n    EXPORT-TIME-ONLY knobs the live compositor has no notion of) and REFUSES\n    rather than silently ignoring one.",
       "inputSchema": {
         "properties": {
           "out_path": {
@@ -2391,6 +2391,48 @@
             ],
             "default": null,
             "title": "Renderer"
+          },
+          "loudness_preset": {
+            "anyOf": [
+              {
+                "enum": [
+                  "youtube",
+                  "broadcast",
+                  "podcast",
+                  "off"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Loudness Preset"
+          },
+          "loudness_lufs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Loudness Lufs"
+          },
+          "true_peak_dbtp": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "True Peak Dbtp"
           }
         },
         "required": [
@@ -13085,7 +13127,10 @@
         "freeze_overrides": {
           "k_editor_export.freeze_overrides": true
         },
-        "renderer": "compositor"
+        "renderer": "compositor",
+        "loudness_preset": "off",
+        "loudness_lufs": -6.39,
+        "true_peak_dbtp": -19.6
       },
       "requests": [
         {
@@ -13104,7 +13149,10 @@
             "freezeOverrides": {
               "k_editor_export.freeze_overrides": true
             },
-            "renderer": "compositor"
+            "renderer": "compositor",
+            "loudnessPreset": "off",
+            "loudnessLufs": -6.39,
+            "truePeakDbtp": -19.6
           },
           "timeout_ms": 20000
         }

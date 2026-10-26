@@ -4,6 +4,25 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **D-401: export loudness target (roadmap 0c done).** `editor_export` can normalise the finished file to a preset (YouTube -14 LUFS / -1 dBTP, broadcast -23, podcast -16, custom) on both export paths: a Rust post-pass in `apelles-media::loudness` measures with ebur128, applies one linear gain plus a 4x-oversampled limiter, re-measures and corrects (video stream copied). Export dialog select + `loudness_preset` / `loudness_lufs` / `true_peak_dbtp` MCP params. Measured: a -41 LUFS mix lands at -14.2 LUFS / -1.1 dBTP.
+
+- **2026-10-26** — **B-265 (stale dev module): second look, no new cause.** Ruled out Vite pre-bundling (no `@apelles/*` in the dep cache) and any config override; the remaining suspect is the web content process replacement of B-274. No code change.
+
+- **2026-10-26** — **B-267 (mitigated, unconfirmed live): an Edit timeline mounted while its tab is hidden is re-measured once when shown.** Candidate cause: the library's AutoSizer measured 0 px under `display: none` and rendered no rows. `useViewportWidth` bumps a key once on first visibility; remains open until checked on a restarted app.
+
+- **2026-10-26** — **B-274 (partly fixed): the Edit webview no longer allocates a whole-clip waveform canvas, and a killed web process is reported.** The canvas now backs only the visible span (<= 4096 px) instead of tens of MB per long clip; a webview that reloads without unloading raises a persistent warning and a log event. Write-ahead journaling and the live heap measurement remain open.
+
+- **2026-10-26** — **B-272 (second half): a refetch can no longer overwrite a newer local edit.** `timelineStore.load()` discarded nothing before, so a window-focus refetch during the 400 ms save debounce replaced fresh edits with the older backend copy (39 of 62 volume changes reverted). It now keeps the store when a write was owed.
+
+- **2026-10-26** — **D-400: find and import CC sound effects and music from Openverse over MCP.** `editor_search_audio` / `editor_import_audio` / `editor_get_credits` (195 tools): CC0 + CC BY by default, NC/ND always refused with a reason, imports land in `assets/audio/` with a `CREDITS.json` entry, credits come back as paste-ready description text. MCP-first by the owner's call (no GUI panel). New crate `apelles-audio-library`; a network call only when a tool asks.
+
+- **2026-10-26** — **B-272 fixed: a control-bridge op runs exactly once.** Every registry subscription now announces a fresh instance id and the control server addresses each `chroma://request` to one (`target`); a listener leaked across a reload ignores it. Shared `newBridgeClaim` in `@apelles/bridge` replaces four copies.
+
+- **2026-10-26** — **B-270 fixed: `editor_get_timeline` reports each clip's `highlights`** (`[]` when none), so an agent reads back what `editor_set_clip_highlights` wrote. Both MCP docstrings and the parity corpus updated.
+
+- **2026-10-26** — **B-271 fixed: clip highlights no longer clone the source still every frame.** `chroma/highlight_draw.rs` keeps one working copy per clip, redraws only the stroke rows, and reuses the finished picture once every sweep is done: 240 frames of a 2880×1620 still with 2 highlights went 500.6 ms → 137.6 ms.
+- **2026-10-26** — Black October final exported (1080p24, 15:14, compositor, 41 min on the debug build). Roadmap 0c: an export loudness target, since the -14 LUFS YouTube master had to be normalised by hand.
+
 - **2026-10-26** — **B-275 fixed:** the Openverse client waits on a slow server (15 s connect, 90 s idle, no total cap) and names a timeout as one. Live after the merge: B-272 (one op = one marker) and B-270 (62 highlights in `editor_get_timeline`) confirmed.
 
 - **2026-10-26** — Black October final exported (1080p24, 15:14, compositor, 41 min on the debug build). Roadmap 0c: an export loudness target, since the -14 LUFS YouTube master had to be normalised by hand.

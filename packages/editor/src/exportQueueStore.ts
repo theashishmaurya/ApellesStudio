@@ -28,6 +28,7 @@ import { create } from 'zustand';
 import { compileEditorExportArgs, readTimelineExportStatus, runCompiledExport } from './editorExport';
 import type { TimelineExportStatus } from './editorExport';
 import type { TimelineRenderPlan } from './timelinePipeExport';
+import type { LoudnessReport, LoudnessTarget } from './loudness';
 
 /** How often a running compositor job's real progress is re-read (D-362).
  *
@@ -57,6 +58,10 @@ export interface ExportJob {
    *  reason `args` is — a job must run the path it was queued for, even if the
    *  timeline or the dialog's choice has changed since. */
   render?: TimelineRenderPlan;
+  /** D-401 — the loudness target frozen at enqueue, like `args`. */
+  loudness?: LoudnessTarget;
+  /** D-401 — measured before/after loudness once the job is done. */
+  loudnessReport?: LoudnessReport;
   status: ExportJobStatus;
   /** D-362 — this job's LIVE progress while it runs on the compositor path,
    *  polled from the renderer's own counters (`editor_export_status`'s exact
@@ -151,9 +156,9 @@ function runNext(): void {
     }));
   };
 
-  runCompiledExport(next.args, next.render, next.outPath)
+  runCompiledExport(next.args, next.render, next.outPath, next.loudness)
     .then((outcome) => {
-      settle({ status: outcome.ok ? 'done' : 'failed', error: outcome.error });
+      settle({ status: outcome.ok ? 'done' : 'failed', error: outcome.error, loudnessReport: outcome.loudness });
     })
     .catch((e: unknown) => {
       settle({ status: 'failed', error: String((e as Error)?.message ?? e) });
@@ -173,6 +178,7 @@ export const useExportQueueStore = create<ExportQueueState>((set) => ({
       outPath: compiled.outPath,
       args: compiled.args,
       render: compiled.render,
+      loudness: compiled.loudness,
       status: 'queued',
       progress: null,
       error: null,

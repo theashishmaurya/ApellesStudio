@@ -356,6 +356,20 @@ pub enum ExportRenderer {
     Compositor,
 }
 
+/// `editor_export`'s `loudness_preset` — the delivery spec the finished mix is
+/// normalised to (D-401). Mirrors `mcp/schemas.py`'s `LoudnessPreset`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+pub enum LoudnessPreset {
+    #[serde(rename = "youtube")]
+    Youtube,
+    #[serde(rename = "broadcast")]
+    Broadcast,
+    #[serde(rename = "podcast")]
+    Podcast,
+    #[serde(rename = "off")]
+    Off,
+}
+
 /// One segment boundary in a clip speed ramp (`set_clip_speed`).
 ///
 /// "From this SOURCE frame onward, play at this speed." Source frames are absolute in

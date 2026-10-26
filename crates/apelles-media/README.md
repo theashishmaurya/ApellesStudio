@@ -64,6 +64,10 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
     window through `audio::open_source`/`DecodedSource`. One source, not a mix
     — see D-232.
 
+## Loudness (D-401)
+
+`loudness` measures a finished file (ebur128 with true peak), applies one linear gain plus an oversampled `alimiter`, remuxes with the video stream copied, re-measures and corrects until the target is met within tolerance. Used by both export paths; silent files are left untouched.
+
 ## What it does NOT do
 
 - **Own any `#[tauri::command]`.** A real `tauri-macros` constraint, not
