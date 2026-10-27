@@ -6,6 +6,15 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-410 — A reloaded page restores the open project and tab from the backend's memory
+
+**decided (2026-10-27, fixing B-277)** · builds on D-402 (edit journal) and B-274 (termination handling)
+
+- **Context.** The page (webview JS) can be replaced while the Rust process lives on: macOS terminating the web content process (B-274's hook reloads it) or a dev full reload. The new page always opened the launcher, so the journal's recovered edits appeared only once the user reopened the project by hand.
+- **Options.** (a) `sessionStorage`/`localStorage` in the page: a content-process kill is exactly the event that may lose it (B-274 left "sessionStorage survives a web process replacement" unverified), and `localStorage` would also reopen on a cold launch. (b) Persist "last open project" to disk and reopen on every launch: changes cold-launch behaviour, which always opens the launcher (and B-007 made the tab deliberately session-only). (c) **The backend's in-memory state**: `state::current_project()` already survives a reload, is `None` on a cold launch, and is cleared by "‹ Projects" (B-170); add only the active tab beside it.
+- **Choice: (c).** `chroma::page_session` keeps the active tab (the page reports every switch with `chroma_page_session_set_tab`, only after its own restore has read the previous value) and answers `chroma_page_session_get` → `{project, activeTab}`. At start-up `app/src/utils/pageSessionRestore.ts` (once per page load) shows the remembered tab and reopens the project through `useSessionStore.openProject`, the launcher's own action; the existing identity bridge in `Root.tsx` then loads the Edit timeline, whose first load replays the journal and raises "Restored N changes". A project that cannot be reopened (moved, deleted) clears the backend binding and shows a persistent error naming it over the launcher; a concurrent `open_project` that won the race is left alone; a project the page already has open is never replaced.
+- **Why.** No new persistence, no change to a cold launch, and the state that must survive a dead page lives in the process that survives it. Not covered: an in-memory "Untitled" session (no project on disk) and the Motion tab's unsaved manifest text (component state, not journaled; roadmap follow-up).
+
 ## D-409 — Custom Remotion components, certified into the catalog and used as data
 
 **decided (2026-10-27, owner: "we should be able to do custom animation build new catalogs, custom things and then certify it as data point :) and use it")** · Phase 5 of `docs/notes/motion-authoring-mcp.md` · **partially reverses that note's (and D-407's) "Sandboxed user JS: rejected" bullet — see "Why this is not the rejected option" below**

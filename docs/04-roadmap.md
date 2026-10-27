@@ -256,6 +256,8 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 
 0f. ~~**Music edits by story beat**~~ **done (D-408, 2026-10-27)** (gap #1 of `docs/notes/reference-teardown-lewis-jackson-polymarket.md`). Dropouts / stop-time breaths / dry sections as one `music_edits` op anchored to frames or transcript words; `editor_music_edit`, `editor_propose_music_edits`, `editor_list_music_edits`, `editor_apply_music_edits` in both MCP servers; the Music edits library panel (review list, In/Out, breath) and a right-click menu on the Index panel's transcript lines and markers; `apelles-sound-design` §1.3 uses it. Open: verify live in the running app; a timeline-clip context menu on the bed itself; drawing proposed dropouts on the bed in the timeline before they are applied (Premiere Remix's on-clip edit marks).
 
+0g. **Unsaved Motion edits survive a page reload** (found 2026-10-27 scoping B-277/D-410). A reload now reopens the project and tab and the Edit journal (D-402) replays unsaved timeline edits, but the Motion tab's editing state (manifest text, `dirty`) is component state in `useMotionManifest` with an explicit save, so a web content process termination or a dev full reload still drops unsaved Motion edits. Needs a D-NNN: a Motion journal like D-402, or autosaving the manifest. Also not restored: an in-memory "Untitled" session (no project on disk).
+
 0. **Export through the app's own compositor instead of an ffmpeg filter graph — D-350.**
    Moved here from "Later" 2026-09-18 when **phase 1 shipped**. Origin: B-228/B-229/B-230
    found and fixed three measured resource pathologies in `editor_export`'s ffmpeg

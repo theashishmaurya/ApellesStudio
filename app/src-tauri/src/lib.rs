@@ -2343,6 +2343,8 @@ pub fn run() {
             chroma::edit_journal::chroma_edit_journal_append,
             chroma::edit_journal::chroma_edit_journal_read,
             chroma::webview_lifecycle::chroma_webview_take_termination,
+            chroma::page_session::chroma_page_session_get,
+            chroma::page_session::chroma_page_session_set_tab,
             chroma::edit::chroma_timeline_frame,
             chroma::grade_lut::chroma_timeline_grade_luts,
             chroma::edit::chroma_timeline_clip_geometry,

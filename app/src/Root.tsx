@@ -19,6 +19,7 @@ import { pageStart, takeWebviewTermination, trackEvent, useMediaPoolStore, watch
 import { useKeymapStore } from '@apelles/keymap';
 import { setProjectIdentityAlertSink } from '@apelles/store';
 import { useTranslation } from 'react-i18next';
+import { invoke } from '@tauri-apps/api/core';
 import App from './App';
 import { MOTION_TAB_ENABLED } from './buildFeatures';
 import AgentActivityDock from './components/chroma/AgentActivityDock';
@@ -26,6 +27,29 @@ import ProjectLauncher from './components/chroma/ProjectLauncher';
 import { SourcesPanel } from './components/chroma/SourcesPanel';
 import { selectProjectKey, useSessionStore } from './store/useSessionStore';
 import { useSettingsStore } from './store/useSettingsStore';
+import {
+  reportActiveTab,
+  restoreFailureMessage,
+  restorePageSessionOnce,
+  type PageSessionDeps,
+} from './utils/pageSessionRestore';
+
+/** B-277/D-410 — what the reload restore drives: the app's own session store
+ *  and the shell's tab, through the same actions the launcher and the tab bar
+ *  use. Not exported (this module exports components only, D-201). */
+function pageSessionDeps(): PageSessionDeps {
+  return {
+    invoke: (cmd, args) => invoke(cmd, args),
+    isProjectOpen: () => {
+      const s = useSessionStore.getState();
+      return !!s.projectPath || !!s.projectName;
+    },
+    openProject: (path) => useSessionStore.getState().openProject(path),
+    activeTab: () => useShellStore.getState().activeTab,
+    setActiveTab: (tab) => useShellStore.getState().setActiveTab(tab),
+    availableTabs: MOTION_TAB_ENABLED ? ['edit', 'motion', 'colorist'] : ['edit', 'colorist'],
+  };
+}
 
 /**
  * `Root` — the app's composition root component (D-039), and *only* that.
@@ -47,7 +71,10 @@ import { useSettingsStore } from './store/useSettingsStore';
  * The app opens on the project launcher with no tab bar; opening/creating a
  * project sets `useSessionStore.projectPath` (or, for a loose-clip quick-open,
  * `projectName` = 'Untitled'), which flips the shell into the 3-tab layout.
- * "‹ Projects" calls `closeProject()` to come back.
+ * "‹ Projects" calls `closeProject()` to come back. A page that REPLACES a live
+ * one (B-277/D-410: a web content process termination, a dev full reload)
+ * skips the launcher: it reopens the project the backend still has open, on
+ * the tab it was left on (`utils/pageSessionRestore.ts`).
  *
  * B-007: every tab stays mounted from boot (D-039), including underneath the
  * launcher, so the Edit tab's own mount never coincides with a project
@@ -338,6 +365,43 @@ export function Root() {
       stop();
     };
   }, []);
+
+  // B-277/D-410 — a page that replaces a live one (a web content process
+  // termination, a dev full reload) reopens the project that was open, on the
+  // tab it was left on. The backend remembers both, in memory only, so a cold
+  // launch still opens on the launcher. Reopening sets the project identity the
+  // bridges above hand to the Edit timeline store, whose first load replays the
+  // edit journal and raises the "Restored N changes" notice below. Once per
+  // page load (cached on `window`), so StrictMode's double mount opens it once.
+  useEffect(() => {
+    let cancelled = false;
+    void restorePageSessionOnce(window, pageSessionDeps()).then((outcome) => {
+      if (cancelled) return;
+      if (outcome.kind === 'reopened') {
+        trackEvent('page_session_restored', { tab: outcome.tab });
+        console.info(
+          `[page-session] reopened "${outcome.project.name}" on the ${outcome.tab} tab after the page reloaded`,
+        );
+      } else if (outcome.kind === 'failed') {
+        const message = restoreFailureMessage(outcome);
+        console.error(`[page-session] ${message}`);
+        toast.error(message, { toastId: 'page-session-restore-failed', autoClose: false });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // B-277/D-410 — keep the backend's copy of the tab current for the next
+  // page. Only after the restore has read the previous one (so the default tab
+  // this page starts on never overwrites it), and the tab is read when it is
+  // sent, so the last report is always the tab on screen.
+  useEffect(() => {
+    void restorePageSessionOnce(window, pageSessionDeps()).then(() =>
+      reportActiveTab(pageSessionDeps().invoke, useShellStore.getState().activeTab),
+    );
+  }, [activeTab]);
 
   // D-402 — say how many unsaved edits the journal put back, whatever the
   // reason the previous page died (a crash the hook never saw included).

@@ -167,6 +167,7 @@ pub mod motion_components;
 pub mod motion_job;
 pub mod motion_presets;
 pub mod ocr;
+pub mod page_session;
 pub mod playback;
 pub mod project;
 pub mod relight;
