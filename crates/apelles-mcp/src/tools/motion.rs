@@ -6,7 +6,7 @@
 //!  a headless Chrome and the Motion engine's `node_modules` — none of which the
 //!  release bundle carries yet. Until the on-demand toolchain download lands, the beta
 //!  build hides the Motion tab, and this server is built `--no-default-features` so it
-//!  does not advertise 47 tools no tab is mounted to answer. Same shape as `debug.rs`:
+//!  does not advertise 52 tools no tab is mounted to answer. Same shape as `debug.rs`:
 //!  one gate on the module declaration (gating the `use` lines instead breaks the
 //!  `#[tool]` attributes), and a real empty twin of [`router`] so `server.rs` reads the
 //!  same either way. The feature is on by default, so dev builds and the test suite
@@ -30,13 +30,13 @@ pub fn router() -> rmcp::handler::server::router::tool::ToolRouter<crate::Apelle
 #[cfg(test)]
 mod tests {
     /// The gate is the whole tab: with Motion every tool here is a `motion_*` tool (and
-    /// there are 47 of them), without it the router is empty and nothing else in the
+    /// there are 52 of them), without it the router is empty and nothing else in the
     /// server advertises a `motion_*` name either.
     #[test]
     fn the_motion_feature_gates_exactly_the_motion_tools() {
         let mine = super::router().list_all();
         assert!(mine.iter().all(|t| t.name.starts_with("motion_")));
-        let expected = if cfg!(feature = "motion") { 47 } else { 0 };
+        let expected = if cfg!(feature = "motion") { 52 } else { 0 };
         assert_eq!(mine.len(), expected);
 
         let others = crate::tools::colorist::router()

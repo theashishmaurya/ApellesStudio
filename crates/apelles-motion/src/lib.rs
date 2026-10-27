@@ -25,7 +25,9 @@
 //!
 //! **Status:** D-046 — the render-bridge MVP. See `crates/apelles-motion/README.md`.
 
+pub mod assets;
 pub mod job;
+pub mod still;
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -58,6 +60,10 @@ pub struct RenderRequest {
     /// itself before this request is ever built — duplicating that scene
     /// math in Rust would just drift from the one real source of it.
     pub frame_range: Option<(u32, u32)>,
+    /// D-404 — the project's asset folder, served to the engine as `public/`
+    /// (Remotion's `--public-dir`), which is where an `image` layer's
+    /// `sha256:` id resolves. `None` passes no flag.
+    pub public_dir: Option<PathBuf>,
 }
 
 impl RenderRequest {
@@ -72,6 +78,7 @@ impl RenderRequest {
             output_path: output_path.into(),
             composition_id: "Animation".to_string(),
             frame_range: None,
+            public_dir: None,
         }
     }
 
@@ -79,6 +86,12 @@ impl RenderRequest {
     /// comment for why this takes raw frame numbers, not a scene reference.
     pub fn with_frame_range(mut self, start: u32, end: u32) -> Self {
         self.frame_range = Some((start, end));
+        self
+    }
+
+    /// D-404 — serve `dir` as the engine's `public/` folder.
+    pub fn with_public_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.public_dir = Some(dir.into());
         self
     }
 }
@@ -127,7 +140,59 @@ pub fn build_command(req: &RenderRequest) -> Command {
     if let Some((start, end)) = req.frame_range {
         cmd.arg(format!("--frames={start}-{end}"));
     }
+    if let Some(public) = &req.public_dir {
+        cmd.arg(format!("--public-dir={}", public.display()));
+    }
     cmd
+}
+
+/// Give one `remotion` invocation its own HTTP port.
+///
+/// `remotion render` / `still` serve the bundle over a local HTTP server and,
+/// without `--port`, look for a free port starting at 3000. That check is not
+/// atomic across processes: two invocations started together (a preview while
+/// a scene renders, two previews) can settle on the same port, and one then
+/// loads the other's bundle. Seen live in the preview determinism tests: a
+/// 404 for the other bundle's `index.html`, and with two valid bundles it would
+/// render the wrong composition without any error. The OS hands out a distinct
+/// ephemeral port here, released just before `remotion` binds it; the OS does
+/// not reissue a just-released ephemeral port at once, so the window left is
+/// negligible.
+pub fn with_own_port(mut cmd: Command) -> Result<Command, ChromaError> {
+    let port = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .and_then(|listener| listener.local_addr())
+        .map_err(|e| {
+            ChromaError::Invalid(format!("could not reserve a local port for remotion: {e}"))
+        })?
+        .port();
+    cmd.arg(format!("--port={port}"));
+    Ok(cmd)
+}
+
+/// Run a `remotion` command built by `build` on its own port
+/// ([`with_own_port`]), retrying once on a fresh port if `remotion` reports the
+/// port as taken (the sub-millisecond window between releasing the reserved
+/// port and `remotion` binding it). A second clash is returned as the failed
+/// run it is, never as a render of something else.
+pub fn output_with_own_port(
+    build: impl Fn() -> Command,
+) -> Result<std::process::Output, ChromaError> {
+    let spawn = |cmd: Command| {
+        let mut cmd = cmd;
+        cmd.output()
+            .map_err(|e| ChromaError::Invalid(format!("failed to spawn npx: {e}")))
+    };
+    let first = spawn(with_own_port(build())?)?;
+    if first.status.success() || !port_was_taken(&first.stderr) {
+        return Ok(first);
+    }
+    spawn(with_own_port(build())?)
+}
+
+/// Whether `remotion`'s stderr says its HTTP server could not bind.
+fn port_was_taken(stderr: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(stderr);
+    text.contains("EADDRINUSE") || text.contains("address already in use")
 }
 
 /// Validate, then run the render synchronously (blocks until `npx` exits).
@@ -135,9 +200,7 @@ pub fn build_command(req: &RenderRequest) -> Command {
 /// Tauri command `chroma_motion_render` does).
 pub fn run_render(req: &RenderRequest) -> Result<RenderOutcome, ChromaError> {
     validate_request(req)?;
-    let output = build_command(req)
-        .output()
-        .map_err(|e| ChromaError::Invalid(format!("failed to spawn npx: {e}")))?;
+    let output = output_with_own_port(|| build_command(req))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -160,7 +223,7 @@ pub fn run_render(req: &RenderRequest) -> Result<RenderOutcome, ChromaError> {
 
 /// The last `n` lines of `s` — enough context to explain a failure without
 /// dumping a whole bundler log into an error string.
-fn tail(s: &str, n: usize) -> String {
+pub(crate) fn tail(s: &str, n: usize) -> String {
     let lines: Vec<&str> = s.lines().collect();
     let start = lines.len().saturating_sub(n);
     lines[start..].join("\n")
@@ -213,6 +276,43 @@ mod tests {
                 "--frames=120-299",
             ]
         );
+    }
+
+    #[test]
+    fn build_command_passes_the_asset_folder_as_public_dir() {
+        let req = RenderRequest::new("/engine", "/tmp/manifest.json", "/tmp/out.mp4")
+            .with_public_dir("/p.chroma/motion/assets");
+        let args: Vec<String> = build_command(&req)
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("--public-dir=/p.chroma/motion/assets")
+        );
+    }
+
+    #[test]
+    fn a_taken_port_is_recognised_from_remotion_stderr() {
+        assert!(port_was_taken(
+            b"Error: listen EADDRINUSE: address already in use 127.0.0.1:50825"
+        ));
+        assert!(!port_was_taken(b"Error: Cannot find module"));
+    }
+
+    #[test]
+    fn with_own_port_appends_a_distinct_port_each_time() {
+        let req = RenderRequest::new("/engine", "/tmp/manifest.json", "/tmp/out.mp4");
+        let port_of = |cmd: Command| -> u16 {
+            cmd.get_args()
+                .filter_map(|a| a.to_str()?.strip_prefix("--port=")?.parse().ok())
+                .next()
+                .unwrap_or(0)
+        };
+        let a = port_of(with_own_port(build_command(&req)).expect("port a"));
+        let b = port_of(with_own_port(build_command(&req)).expect("port b"));
+        assert!(a > 0 && b > 0, "a --port flag is appended: {a} {b}");
+        assert_ne!(a, b, "two invocations get two ports");
     }
 
     #[test]

@@ -99,6 +99,40 @@ const CATALOG: Record<PrimitiveUse, CatalogEntry> = {
     description: 'The Claude mobile app screen: header, message thread, tool and document cards, input bar. Animates through several conversations over one scene.',
     in3d: false,
   },
+  // D-405 — the brand building blocks.
+  image: {
+    use: 'image',
+    name: 'Image',
+    description:
+      'A project asset — a logo, a screenshot, a product shot — in a box, with fit, corner radius and border. Import the file first (it is stored by content hash, never by path).',
+    in3d: false,
+  },
+  icon: {
+    use: 'icon',
+    name: 'Icon',
+    description: 'Any Phosphor icon by name and weight (thin to duotone), sized and coloured — for icon rows, feature lists and badges.',
+    in3d: false,
+  },
+  shape: {
+    use: 'shape',
+    name: 'Shape',
+    description:
+      'A rect, rounded rect, ellipse, polygon, star or line with a solid or gradient fill and a stroke that can draw on. Cards, badges, underlines, dividers.',
+    in3d: false,
+  },
+  counter: {
+    use: 'counter',
+    name: 'Counter',
+    description: 'A number that counts from one value to another with a prefix, suffix and thousands separators — the stat beat ("10,000+ teams").',
+    in3d: false,
+  },
+  group: {
+    use: 'group',
+    name: 'Group',
+    description:
+      'Layers that move, time and clip together: children start relative to the group, its transform moves them all, and a shape or text mask clips them (a logo reveal, a photo inside a word).',
+    in3d: false,
+  },
   plot: {
     use: 'plot',
     name: 'Plot',
@@ -276,6 +310,27 @@ export function defaultLayerFor(use: PrimitiveUse): Record<string, unknown> {
               },
             ],
           },
+        ],
+      };
+    // D-405. `image` has no default `src` on purpose: an image IS its asset,
+    // so the Catalog row imports a file first (`motion_import_asset`) and
+    // inserts with that id; inserting this fragment alone does not validate,
+    // and the refusal says to add `src`.
+    case 'image':
+      return { use: 'image', at: 0, x: 760, y: 340, w: 400, h: 400, fit: 'contain', enter: 'fade' };
+    case 'icon':
+      return { use: 'icon', at: 0, name: 'rocket-launch', weight: 'duotone', size: 160, x: 880, y: 460, enter: 'pop' };
+    case 'shape':
+      return { use: 'shape', at: 0, shape: 'roundrect', x: 660, y: 390, w: 600, h: 300, radius: 32, enter: 'fade' };
+    case 'counter':
+      return { use: 'counter', at: 0, dur: 1.5, from: 0, to: 10000, suffix: '+', size: 160, x: 960, y: 460, align: 'center' };
+    case 'group':
+      return {
+        use: 'group',
+        at: 0,
+        children: [
+          { use: 'shape', shape: 'roundrect', x: 660, y: 390, w: 600, h: 300, radius: 32 },
+          { use: 'text', text: 'Group', x: 960, y: 500, align: 'center', size: 72 },
         ],
       };
     case 'particleflow':

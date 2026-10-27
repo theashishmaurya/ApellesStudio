@@ -108,6 +108,7 @@ import { InspectorEmptyState, InspectorSection } from '@apelles/inspector';
 // field behaviour instead of a second hand-written copy of it.
 import { useNumberField } from '@apelles/ui/number-scrub';
 import { EaseFieldControl } from './EaseCurveEditor';
+import { AssetFieldControl, IconFieldControl } from './BrandFieldControls';
 import { checkSceneRename } from './editLinks';
 import type { MotionEditLinks } from './motionOps';
 import { layerLabel, type Selection } from './LayerList';
@@ -297,6 +298,14 @@ function FieldControl({
 
   if (spec.kind === 'ease') {
     return <EaseFieldControl spec={spec} value={value} onCommit={onCommit} />;
+  }
+
+  // D-404/D-405 — the asset picker and the icon picker.
+  if (spec.kind === 'asset') {
+    return <AssetFieldControl spec={spec} value={value} onCommit={onCommit} />;
+  }
+  if (spec.kind === 'icon') {
+    return <IconFieldControl spec={spec} value={value} onCommit={onCommit} />;
   }
 
   if (spec.kind === 'number') {

@@ -95,6 +95,55 @@ export async function getRenderJobStatus(): Promise<MotionRenderStatus> {
   }
 }
 
+/** D-403 — render still frames of `manifest` (absolute composition frames)
+ *  through the backend's Remotion `still` path; one PNG, or a contact sheet of
+ *  several. `manifest` is the document as the caller has it, unsaved or not. */
+export async function previewFrames(req: {
+  manifest: unknown;
+  frames: number[];
+  scale: number;
+  label: string;
+}): Promise<{ path: string; width: number; height: number; columns: number; rows: number }> {
+  try {
+    return await invoke('chroma_motion_preview_frame', req);
+  } catch (e) {
+    rethrow(e);
+  }
+}
+
+/** D-404 — one imported project asset (`apelles_motion::assets::AssetRecord`). */
+export interface MotionAssetRecord {
+  /** what a manifest writes: `sha256:<hex>.<ext>` */
+  id: string;
+  fileName: string;
+  path: string;
+  bytes: number;
+  /** `false` when the same content was already in the project */
+  copied: boolean;
+  width: number | null;
+  height: number | null;
+}
+
+/** D-404 — copy an image into the open project's asset folder, named by the
+ *  SHA-256 of its bytes; resolves to the id a manifest uses. */
+export async function importAsset(path: string): Promise<MotionAssetRecord> {
+  try {
+    return await invoke<MotionAssetRecord>('chroma_motion_import_asset', { path });
+  } catch (e) {
+    rethrow(e);
+  }
+}
+
+/** D-404 — the open project's asset folder (made readable by the webview, so
+ *  the live preview can show `image` layers through `convertFileSrc`). */
+export async function getAssetsDir(): Promise<string> {
+  try {
+    return await invoke<string>('chroma_motion_assets_dir');
+  } catch (e) {
+    rethrow(e);
+  }
+}
+
 /** Tell the backend a finished scene has been taken into Sources. */
 export async function acknowledgeRenderedScene(sceneId: string): Promise<void> {
   try {

@@ -27,6 +27,16 @@ Still real:
 
 ## Open
 
+## B-278 — two `remotion` runs at once could collide: a shared default port, and bundle pruning that deleted a bundle still in use
+
+status: **fixed** (2026-10-27, before D-403's merge) · severity: **major** (a preview could fail mid-run, or with two valid bundles on one port render another composition without any error) · area: `crates/apelles-motion/src/{lib,still}.rs`
+
+- **found:** 2026-10-27, validating D-403/D-405. The real-render determinism tests (`preview_render`, `--ignored`) passed one at a time but 2 of 4 failed when run in parallel, with a 404 for the other bundle's `index.html` and then `EISDIR`.
+- **cause 1:** `remotion render` / `still` serve the bundle over local HTTP and, without `--port`, search for a free port from 3000. That search is not atomic across processes, so two runs started together could share a port and load each other's bundle.
+- **cause 2:** `ensure_bundle` deleted every other `bundle-*` directory after building a new one. A concurrent preview with a different fingerprint (another asset folder, or engine code changed in between) lost its bundle mid-run.
+- **fix:** every `remotion` render and still gets its own OS-assigned port (`with_own_port`), with one retry on a fresh port if `remotion` still reports `EADDRINUSE` (`output_with_own_port`); a second clash is an error, never a render of something else. Bundles are marked on each use, and only those unused for 10 minutes are pruned (`BUNDLE_STALE_AFTER`).
+- **verification:** `preview_render` 4/4 in parallel, three runs in a row (each render twice, matching SHA-256); unit tests for the port flag and the `EADDRINUSE` detection; `apelles-motion` lib 28/28; clippy clean.
+
 ## B-277 — after the web content process is killed, the reloaded app opens no project, so the recovered edits only appear once the user reopens it
 
 status: **open** · severity: **major** (nothing is lost — D-402 replays the journal — but the user lands with no project open and can reasonably think the work is gone) · area: the reload path after `on_web_content_process_terminate` (`app/src-tauri/src/chroma/webview_lifecycle.rs`), the page's start-up project restore, `packages/editor/src/editJournal.ts`

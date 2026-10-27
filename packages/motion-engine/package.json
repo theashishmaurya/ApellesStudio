@@ -15,6 +15,8 @@
     "@remotion/media": "4.0.519",
     "@remotion/motion-blur": "^4.0.519",
     "@remotion/noise": "^4.0.519",
+    "@remotion/paths": "4.0.519",
+    "@remotion/shapes": "4.0.519",
     "@remotion/three": "4.0.519",
     "@remotion/transitions": "^4.0.519",
     "@remotion/zod-types": "4.0.519",

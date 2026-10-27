@@ -1,0 +1,629 @@
+[
+  {
+    "createdAt": "2026-10-25T16:10:11.824Z",
+    "id": "mlp-od3swkue",
+    "layer": {
+      "active": [
+        {
+          "at": 0.7,
+          "i": 0
+        },
+        {
+          "at": 4.6,
+          "i": -1
+        }
+      ],
+      "at": 0.15,
+      "cardH": 210,
+      "cardW": 430,
+      "gap": 0,
+      "items": [
+        " "
+      ],
+      "tilt": 0,
+      "transform": {
+        "blur": 16,
+        "keys": [
+          {
+            "at": 0.7,
+            "blur": 0,
+            "opacity": 0
+          },
+          {
+            "at": 1.1,
+            "blur": -16,
+            "ease": [
+              0.16,
+              1,
+              0.3,
+              1
+            ],
+            "opacity": 0.55
+          }
+        ],
+        "opacity": 0.45
+      },
+      "use": "layers",
+      "x": 277.5,
+      "y": 620
+    },
+    "name": "Reveal card — blurred until its cue",
+    "use": "layers"
+  },
+  {
+    "createdAt": "2026-10-25T16:10:12.760Z",
+    "id": "mlp-sf2osy2k",
+    "layer": {
+      "align": "center",
+      "at": 0.15,
+      "font": "\"Instrument Sans\", system-ui, sans-serif",
+      "maxWidth": 350,
+      "preset": "fade-up",
+      "size": 40,
+      "text": "What PHP2Shell actually is",
+      "transform": {
+        "blur": 16,
+        "keys": [
+          {
+            "at": 0.7,
+            "blur": 0,
+            "opacity": 0
+          },
+          {
+            "at": 1.1,
+            "blur": -16,
+            "ease": [
+              0.16,
+              1,
+              0.3,
+              1
+            ],
+            "opacity": 0.55
+          }
+        ],
+        "opacity": 0.45
+      },
+      "use": "text",
+      "x": 277.5,
+      "y": 574
+    },
+    "name": "Reveal card label — blur to sharp",
+    "use": "text"
+  },
+  {
+    "createdAt": "2026-10-25T16:10:13.629Z",
+    "id": "mlp-6l1s33pn",
+    "layer": {
+      "at": 0.05,
+      "edges": [
+        {
+          "directed": true,
+          "from": "php",
+          "to": "wp"
+        },
+        {
+          "directed": true,
+          "from": "php",
+          "to": "dr"
+        },
+        {
+          "directed": true,
+          "from": "php",
+          "to": "jo"
+        },
+        {
+          "directed": true,
+          "from": "php",
+          "to": "ma"
+        }
+      ],
+      "enter": {
+        "at": 0.05,
+        "stagger": 0.08
+      },
+      "height": 1080,
+      "highlight": [
+        {
+          "at": 0.1,
+          "dur": 10,
+          "id": "php"
+        },
+        {
+          "at": 0.9,
+          "dur": 10,
+          "id": "wp"
+        },
+        {
+          "at": 2,
+          "dur": 10,
+          "id": "dr"
+        },
+        {
+          "at": 3,
+          "dur": 10,
+          "id": "jo"
+        },
+        {
+          "at": 3.9,
+          "dur": 10,
+          "id": "ma"
+        }
+      ],
+      "nodeR": 78,
+      "nodes": [
+        {
+          "id": "php",
+          "label": "PHP",
+          "x": 960,
+          "y": 300
+        },
+        {
+          "id": "wp",
+          "label": "WordPress",
+          "x": 330,
+          "y": 760
+        },
+        {
+          "id": "dr",
+          "label": "Drupal",
+          "x": 750,
+          "y": 760
+        },
+        {
+          "id": "jo",
+          "label": "Joomla",
+          "x": 1170,
+          "y": 760
+        },
+        {
+          "id": "ma",
+          "label": "Magento",
+          "x": 1590,
+          "y": 760
+        }
+      ],
+      "pulses": [
+        {
+          "at": 0.55,
+          "from": "php",
+          "to": "wp"
+        },
+        {
+          "at": 1.65,
+          "from": "php",
+          "to": "dr"
+        },
+        {
+          "at": 2.65,
+          "from": "php",
+          "to": "jo"
+        },
+        {
+          "at": 3.55,
+          "from": "php",
+          "to": "ma"
+        }
+      ],
+      "use": "graph",
+      "width": 1920
+    },
+    "name": "Tree — one root, branches lit in turn",
+    "use": "graph"
+  },
+  {
+    "createdAt": "2026-10-25T16:10:14.291Z",
+    "id": "mlp-0tyh4d6x",
+    "layer": {
+      "at": 0.1,
+      "edges": [
+        {
+          "from": "a1",
+          "to": "a11",
+          "weight": 0.5
+        },
+        {
+          "from": "a11",
+          "to": "a19",
+          "weight": 0.5
+        },
+        {
+          "from": "a19",
+          "to": "a21",
+          "weight": 0.5
+        },
+        {
+          "from": "a21",
+          "to": "o20",
+          "weight": 0.5
+        },
+        {
+          "from": "o20",
+          "to": "o21",
+          "weight": 0.5
+        }
+      ],
+      "enter": {
+        "at": 0.2,
+        "stagger": 0.12
+      },
+      "height": 1080,
+      "highlight": [
+        {
+          "at": 3.4,
+          "dur": 30,
+          "id": "a1"
+        },
+        {
+          "at": 11.8,
+          "dur": 30,
+          "id": "a11"
+        },
+        {
+          "at": 23.2,
+          "dur": 30,
+          "id": "a19"
+        },
+        {
+          "at": 29,
+          "dur": 30,
+          "id": "a21"
+        }
+      ],
+      "nodeR": 50,
+      "nodes": [
+        {
+          "id": "a1",
+          "label": "Aug 1",
+          "x": 260,
+          "y": 470
+        },
+        {
+          "id": "a11",
+          "label": "Aug 11",
+          "x": 560,
+          "y": 470
+        },
+        {
+          "id": "a19",
+          "label": "Aug 19",
+          "x": 860,
+          "y": 470
+        },
+        {
+          "id": "a21",
+          "label": "Aug 21",
+          "x": 1160,
+          "y": 470
+        },
+        {
+          "id": "o20",
+          "label": "Oct 20",
+          "x": 1460,
+          "y": 470
+        },
+        {
+          "id": "o21",
+          "label": "Oct 21",
+          "x": 1720,
+          "y": 470
+        }
+      ],
+      "pulses": [
+        {
+          "at": 11.6,
+          "from": "a1",
+          "to": "a11"
+        },
+        {
+          "at": 23,
+          "from": "a11",
+          "to": "a19"
+        },
+        {
+          "at": 28.8,
+          "from": "a19",
+          "to": "a21"
+        }
+      ],
+      "use": "graph",
+      "width": 1920
+    },
+    "name": "Timeline — dated nodes lit in turn",
+    "use": "graph"
+  },
+  {
+    "createdAt": "2026-10-25T18:40:13.921Z",
+    "id": "mlp-2qmsahtg",
+    "layer": {
+      "at": 0.1,
+      "edgeTone": "ink",
+      "edgeWidth": 5,
+      "edges": [
+        {
+          "directed": true,
+          "from": "att",
+          "to": "php"
+        }
+      ],
+      "enter": {
+        "at": 0.1,
+        "stagger": 0.15
+      },
+      "height": 1080,
+      "highlight": [
+        {
+          "at": 6.2,
+          "dur": 30,
+          "id": "att"
+        },
+        {
+          "at": 8.5,
+          "dur": 3.4,
+          "id": "php"
+        },
+        {
+          "at": 25.8,
+          "dur": 6,
+          "id": "php"
+        }
+      ],
+      "nodeR": 80,
+      "nodes": [
+        {
+          "icon": "attacker",
+          "id": "att",
+          "label": "Attacker",
+          "x": 300,
+          "y": 470
+        },
+        {
+          "icon": "server",
+          "id": "php",
+          "label": "PHP server",
+          "x": 930,
+          "y": 470
+        }
+      ],
+      "pulses": [
+        {
+          "at": 6.5,
+          "dur": 1,
+          "from": "att",
+          "label": "request",
+          "to": "php"
+        },
+        {
+          "at": 12.3,
+          "dur": 1,
+          "from": "att",
+          "label": "next request",
+          "to": "php"
+        },
+        {
+          "at": 20.4,
+          "dur": 1,
+          "dy": 0,
+          "from": "php",
+          "keep": true,
+          "label": "password",
+          "to": "att"
+        },
+        {
+          "at": 21.3,
+          "dur": 1,
+          "dy": 44,
+          "from": "php",
+          "keep": true,
+          "label": "API key",
+          "to": "att"
+        },
+        {
+          "at": 25.6,
+          "dur": 1,
+          "from": "att",
+          "label": "command",
+          "to": "php"
+        }
+      ],
+      "use": "graph",
+      "width": 1920
+    },
+    "name": "Attack flow — attacker → server, stolen data back",
+    "use": "graph"
+  },
+  {
+    "createdAt": "2026-10-25T18:40:14.721Z",
+    "id": "mlp-s6q6n0hi",
+    "layer": {
+      "at": 8.4,
+      "cell": 56,
+      "cols": 8,
+      "dur": 1.3,
+      "gap": 10,
+      "preset": "fill-in",
+      "rows": 5,
+      "use": "matrix",
+      "x": 1250,
+      "y": 310
+    },
+    "name": "Server memory — fills on cue",
+    "use": "matrix"
+  },
+  {
+    "createdAt": "2026-10-25T18:40:15.537Z",
+    "id": "mlp-k4zag6xy",
+    "layer": {
+      "at": 13.6,
+      "cell": 56,
+      "cols": 8,
+      "gap": 10,
+      "highlight": [
+        {
+          "at": 13.7,
+          "c": 2,
+          "dur": 30,
+          "r": 1
+        },
+        {
+          "at": 13.8,
+          "c": 6,
+          "dur": 30,
+          "r": 3
+        },
+        {
+          "at": 13.9,
+          "c": 7,
+          "dur": 30,
+          "r": 0
+        },
+        {
+          "at": 14,
+          "c": 1,
+          "dur": 30,
+          "r": 4
+        },
+        {
+          "at": 14.1,
+          "c": 4,
+          "dur": 30,
+          "r": 2
+        },
+        {
+          "at": 14.2,
+          "c": 5,
+          "dur": 30,
+          "r": 3
+        }
+      ],
+      "preset": "highlight",
+      "rows": 5,
+      "use": "matrix",
+      "x": 1250,
+      "y": 310
+    },
+    "name": "Server memory — leaked cells light up",
+    "use": "matrix"
+  },
+  {
+    "createdAt": "2026-10-25T18:40:16.252Z",
+    "id": "mlp-qlsans75",
+    "layer": {
+      "at": 0.05,
+      "edgeTone": "ink",
+      "edgeWidth": 5,
+      "edges": [
+        {
+          "directed": true,
+          "from": "php",
+          "to": "wp"
+        },
+        {
+          "directed": true,
+          "from": "php",
+          "to": "dr"
+        },
+        {
+          "directed": true,
+          "from": "php",
+          "to": "jo"
+        },
+        {
+          "directed": true,
+          "from": "php",
+          "to": "ma"
+        }
+      ],
+      "enter": {
+        "at": 0.05,
+        "stagger": 0.08
+      },
+      "height": 1080,
+      "highlight": [
+        {
+          "at": 0.1,
+          "dur": 10,
+          "id": "php"
+        },
+        {
+          "at": 0.9,
+          "dur": 10,
+          "id": "wp"
+        },
+        {
+          "at": 2,
+          "dur": 10,
+          "id": "dr"
+        },
+        {
+          "at": 3,
+          "dur": 10,
+          "id": "jo"
+        },
+        {
+          "at": 3.9,
+          "dur": 10,
+          "id": "ma"
+        }
+      ],
+      "nodeR": 78,
+      "nodes": [
+        {
+          "id": "php",
+          "label": "PHP",
+          "x": 960,
+          "y": 300
+        },
+        {
+          "id": "wp",
+          "label": "WordPress",
+          "x": 330,
+          "y": 760
+        },
+        {
+          "id": "dr",
+          "label": "Drupal",
+          "x": 750,
+          "y": 760
+        },
+        {
+          "id": "jo",
+          "label": "Joomla",
+          "x": 1170,
+          "y": 760
+        },
+        {
+          "id": "ma",
+          "label": "Magento",
+          "x": 1590,
+          "y": 760
+        }
+      ],
+      "pulses": [
+        {
+          "at": 0.55,
+          "from": "php",
+          "to": "wp"
+        },
+        {
+          "at": 1.65,
+          "from": "php",
+          "to": "dr"
+        },
+        {
+          "at": 2.65,
+          "from": "php",
+          "to": "jo"
+        },
+        {
+          "at": 3.55,
+          "from": "php",
+          "to": "ma"
+        }
+      ],
+      "use": "graph",
+      "width": 1920
+    },
+    "name": "Tree — one root, branches lit in turn (v2, filled nodes)",
+    "use": "graph"
+  }
+]

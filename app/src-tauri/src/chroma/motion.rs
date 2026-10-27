@@ -98,6 +98,109 @@ pub fn chroma_motion_save_manifest(manifest: Value) -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+/// D-403 — the rendered preview, as `motion_preview_frame` reports it.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MotionPreviewResult {
+    pub path: String,
+    pub width: u32,
+    pub height: u32,
+    pub columns: u32,
+    pub rows: u32,
+}
+
+/// D-403 — render still frames of `manifest` (the Remotion `still` path, through
+/// `apelles_motion::still`) and return the PNG: one frame, or a contact sheet of
+/// several. `frames` are ABSOLUTE composition frames — the frontend owns the
+/// scene math, the same split as the render job (D-398).
+///
+/// `manifest` is the document as the caller has it, NOT the sidecar on disk: an
+/// agent previews unsaved or entirely uncommitted edits through this. It is
+/// written beside the output as `<label>.props.json` (a fixed name per label, not
+/// a temp file, so nothing here depends on the clock). The engine bundle is
+/// cached under `motion/cache/preview/` by content fingerprint, so only the first
+/// preview after an engine change pays for webpack.
+#[tauri::command]
+pub async fn chroma_motion_preview_frame(
+    manifest: Value,
+    frames: Vec<u32>,
+    scale: f64,
+    label: String,
+) -> Result<MotionPreviewResult, String> {
+    let dir = current_project_dir()?;
+    tokio::task::spawn_blocking(move || {
+        let out_dir = dir.join("motion").join("previews");
+        std::fs::create_dir_all(&out_dir)
+            .map_err(|e| format!("create {}: {e}", out_dir.display()))?;
+        let props = out_dir.join(format!(
+            "{}.props.json",
+            label.replace(
+                |c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_',
+                "_"
+            )
+        ));
+        let text = serde_json::to_string(&manifest).map_err(|e| e.to_string())?;
+        std::fs::write(&props, text).map_err(|e| format!("write {}: {e}", props.display()))?;
+        let req = apelles_motion::still::PreviewRequest {
+            engine_dir: engine_dir(),
+            cache_dir: dir.join("motion").join("cache").join("preview"),
+            out_dir,
+            manifest_path: props,
+            frames,
+            scale,
+            label,
+            // D-404 — the asset folder is the engine's `public/` (when the project
+            // has imported any asset at all).
+            public_dir: Some(apelles_motion::assets::assets_dir(&dir)).filter(|d| d.is_dir()),
+        };
+        let outcome = apelles_motion::still::render_preview(&req).map_err(|e| e.to_string())?;
+        Ok(MotionPreviewResult {
+            path: outcome.path.to_string_lossy().to_string(),
+            width: outcome.width,
+            height: outcome.height,
+            columns: outcome.columns,
+            rows: outcome.rows,
+        })
+    })
+    .await
+    .map_err(|e| format!("preview task: {e}"))?
+}
+
+/// D-404 — copy an image into the open project's asset folder, named by the
+/// SHA-256 of its bytes, and return the `sha256:` id a manifest uses
+/// (`apelles_motion::assets::import_asset`). Importing the same file twice
+/// returns the same id and writes nothing.
+#[tauri::command]
+pub async fn chroma_motion_import_asset(
+    path: String,
+) -> Result<apelles_motion::assets::AssetRecord, String> {
+    let dir = current_project_dir()?;
+    tokio::task::spawn_blocking(move || {
+        apelles_motion::assets::import_asset(
+            Path::new(&path),
+            &apelles_motion::assets::assets_dir(&dir),
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("import task: {e}"))?
+}
+
+/// D-404 — the open project's asset folder, made readable by the webview so
+/// the live preview can show `image` layers (`convertFileSrc`). The asset
+/// protocol's static scope only covers the thumbnail cache; a project can live
+/// anywhere, so its folder is allowed at runtime, for this folder only.
+#[tauri::command]
+pub fn chroma_motion_assets_dir(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+    let dir = apelles_motion::assets::assets_dir(&current_project_dir()?);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    app.asset_protocol_scope()
+        .allow_directory(&dir, false)
+        .map_err(|e| format!("allow {}: {e}", dir.display()))?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MotionRenderResult {
@@ -190,12 +293,24 @@ pub(super) fn render_scene_file(
         std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
     }
     let staging = staging_path(out);
-    let req = RenderRequest::new(
+    let mut req = RenderRequest::new(
         engine_dir(),
         manifest_snapshot.to_path_buf(),
         staging.clone(),
     )
     .with_frame_range(frame_range.0, frame_range.1);
+    // D-404 — the project's assets are the engine's `public/`. Derived from the
+    // OUTPUT's project (`<project>/motion/renders/<id>.mp4`), the same project the
+    // snapshot belongs to.
+    if let Some(assets) = out
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .map(apelles_motion::assets::assets_dir)
+        .filter(|d| d.is_dir())
+    {
+        req = req.with_public_dir(assets);
+    }
 
     // B-202 — the log trail: whatever any caller polls, the app log names the
     // scene that failed and why.

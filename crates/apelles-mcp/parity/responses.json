@@ -6,7 +6,7 @@
     "named entries exist only for ops whose envelope the MCP layer post-processes",
     "(save_grade merges `result` up a level; editor_export strips `result.args`; export",
     "polls export_progress; inspect_color renders two images) or reads off disk",
-    "(debug_screenshot). Nothing here models app behaviour — see stub_control.py.",
+    "(debug_screenshot, motion_preview_frame). Nothing here models app behaviour — see stub_control.py.",
     "The 1x1 JPEG/PNG payloads are real, decodable images so the image path is honest."
   ],
   "__default__": {
@@ -70,5 +70,10 @@
     "ok": true,
     "error": null,
     "result": { "path": "__FIXTURE_PNG__", "width": 1, "height": 1, "window": "main" }
+  },
+  "motion_preview_frame": {
+    "ok": true,
+    "error": null,
+    "result": { "path": "__FIXTURE_PNG__", "width": 1, "height": 1, "columns": 1, "rows": 1, "sceneId": "hook" }
   }
 }

@@ -1,0 +1,118 @@
+{
+  "title": "How Transformers Actually Work — visual overlay (pilot)",
+  "fps": 30,
+  "grain": true,
+  "vignette": 0.3,
+  "scenes": [
+    {
+      "id": "hook-prompt",
+      "dur": 5,
+      "camera": [
+        { "at": 0, "zoom": 1 },
+        { "at": 2.5, "zoom": 1 },
+        { "at": 3.6, "x": 960, "y": 690, "zoom": 1.45 }
+      ],
+      "layers": [
+        { "use": "text", "text": "one message, three asks", "preset": "fade-up", "at": 0.2, "x": 960, "y": 150, "align": "center", "size": 46 },
+        { "use": "text", "text": "1.  summarize this", "preset": "mask-up", "at": 0.6, "x": 620, "y": 360, "size": 44 },
+        { "use": "text", "text": "2.  pull out the action items", "preset": "mask-up", "at": 1.1, "x": 620, "y": 500, "size": 44 },
+        { "use": "text", "text": "3.  flag anything that looks off", "preset": "mask-up", "at": 1.6, "x": 620, "y": 640, "size": 44, "color": "#9a9aa4" },
+        { "use": "emphasis", "preset": "scribble", "at": 3.4, "dur": 1.6, "color": "#e5484d", "box": [590, 590, 720, 110] }
+      ]
+    },
+    {
+      "id": "what-is-attention",
+      "dur": 4,
+      "layers": [
+        { "use": "text", "text": "which part matters — right now?", "preset": "stroke-on", "at": 0.3, "x": 960, "y": 480, "align": "center", "size": 72 }
+      ]
+    },
+    {
+      "id": "self-attention",
+      "dur": 6,
+      "layers": [
+        { "use": "text", "text": "self-attention", "preset": "fade-up", "at": 0.1, "x": 960, "y": 110, "align": "center", "size": 44 },
+        { "use": "text", "text": "every word checks every other word", "preset": "fade-up", "at": 0.4, "x": 960, "y": 175, "align": "center", "size": 30, "color": "#9a9aa4" },
+        { "use": "graph", "at": 0,
+          "nodes": [
+            { "id": "a", "label": "summarize" },
+            { "id": "b", "label": "this" },
+            { "id": "c", "label": "action" },
+            { "id": "d", "label": "items" },
+            { "id": "e", "label": "flag" },
+            { "id": "f", "label": "off" }
+          ],
+          "edges": [
+            { "from": "a", "to": "b" }, { "from": "a", "to": "c" }, { "from": "a", "to": "e" },
+            { "from": "b", "to": "c" }, { "from": "b", "to": "d" }, { "from": "c", "to": "d" },
+            { "from": "c", "to": "e" }, { "from": "d", "to": "f" }, { "from": "e", "to": "f" }
+          ],
+          "enter": { "at": 0.4, "stagger": 0.18 },
+          "pulses": [
+            { "from": "a", "to": "c", "at": 2.2 }, { "from": "b", "to": "d", "at": 2.6 },
+            { "from": "c", "to": "e", "at": 3.0 }, { "from": "e", "to": "f", "at": 3.4 },
+            { "from": "d", "to": "f", "at": 3.8 }, { "from": "a", "to": "e", "at": 4.2 }
+          ],
+          "highlight": [ { "id": "c", "at": 2.0, "dur": 1.4 }, { "id": "f", "at": 3.3, "dur": 1.6 } ],
+          "seed": 5 }
+      ]
+    },
+    {
+      "id": "encoder-decoder",
+      "dur": 6,
+      "layers": [
+        { "use": "text", "text": "encoder builds a picture · decoder writes word by word", "preset": "fade-up", "at": 0.2, "x": 960, "y": 120, "align": "center", "size": 34 },
+        { "use": "layers", "at": 0.4, "y": 580, "cardW": 680,
+          "items": [
+            { "label": "read the whole message", "sublabel": "encoder" },
+            { "label": "build the internal picture", "sublabel": "self-attention" },
+            { "label": "write one word", "sublabel": "decoder" },
+            { "label": "glance back · repeat", "sublabel": "× many heads" }
+          ],
+          "active": [ { "at": 1.4, "i": 0 }, { "at": 2.6, "i": 1 }, { "at": 3.6, "i": 2 }, { "at": 4.6, "i": 3 } ],
+          "callout": "several heads at once" }
+      ]
+    },
+    {
+      "id": "lost-in-the-middle",
+      "dur": 5,
+      "layers": [
+        { "use": "text", "text": "\"lost in the middle\"", "preset": "fade-up", "at": 0.2, "x": 960, "y": 150, "align": "center", "size": 48 },
+        { "use": "text", "text": "attention is highest at the start and the end", "preset": "fade-up", "at": 0.6, "x": 960, "y": 215, "align": "center", "size": 28, "color": "#9a9aa4" },
+        { "use": "matrix", "at": 1.0, "rows": 1, "cols": 12, "cell": 118, "preset": "heatmap", "dur": 1.4,
+          "values": [[1.0, 0.9, 0.72, 0.4, 0.22, 0.12, 0.1, 0.18, 0.34, 0.62, 0.86, 1.0]],
+          "accent": "#e5484d", "y": 470 },
+        { "use": "text", "text": "your 3rd ask sat right here", "preset": "fade-up", "at": 2.6, "x": 960, "y": 640, "align": "center", "size": 30, "color": "#5b8def" },
+        { "use": "emphasis", "preset": "ring", "at": 2.8, "dur": 2.0, "color": "#5b8def", "box": [820, 410, 280, 120] }
+      ]
+    },
+    {
+      "id": "the-fix",
+      "dur": 5,
+      "layers": [
+        { "use": "text", "text": "so — work with attention, not against it", "preset": "fade-up", "at": 0.2, "x": 960, "y": 120, "align": "center", "size": 36 },
+        { "use": "layers", "at": 0.5, "y": 560, "cardW": 720,
+          "items": [
+            "put the important ask first",
+            "or repeat it at the very end",
+            "one numbered list, not a run-on"
+          ],
+          "active": [ { "at": 1.6, "i": 0 }, { "at": 2.8, "i": 1 }, { "at": 4.0, "i": 2 } ] }
+      ]
+    },
+    {
+      "id": "zoom-out",
+      "dur": 5,
+      "scene3d": {
+        "camera": [
+          { "at": 0, "pos": [0, 0, 13], "look": [0, 0, 0] },
+          { "at": 5, "pos": [3.5, 2.5, 10], "look": [0, 0.5, 0] }
+        ],
+        "children": [
+          { "use": "particleflow", "preset": "converge", "shape": "sphere", "shapeSize": 2.6, "at": 0.2, "dur": 3.0, "count": 1500, "color": "#5b8def", "seed": 3 },
+          { "use": "particleflow", "preset": "stream", "from": [-7, 0, 0], "to": [7, 0, 0], "count": 900, "color": "#e5484d" }
+        ]
+      }
+    }
+  ]
+}

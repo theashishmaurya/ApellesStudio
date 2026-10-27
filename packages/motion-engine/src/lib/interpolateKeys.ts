@@ -32,6 +32,45 @@ const cb = (c: readonly [number, number, number, number]) =>
   Easing.bezier(c[0], c[1], c[2], c[3]);
 
 /**
+ * D-405 — the part of `interpolateKeys` that does not care what is being
+ * interpolated: sort, pick the two keys around `frame` (clamping before the
+ * first and after the last), and the eased progress `t` between them, eased by
+ * the DESTINATION key's `ease` (or `fallbackEase`). Extracted so a colour track
+ * (`anim.ts`, through Remotion's `interpolateColors`) moves on exactly the same
+ * timing as a numeric one. `interpolateKeys` below is this plus a per-field lerp,
+ * behaviour unchanged.
+ */
+export function keySegment<K extends KeyframeBase>(
+  keys: readonly K[],
+  frame: number,
+  fallbackEase: readonly [number, number, number, number],
+): { a: K; b: K; t: number } {
+  const sorted = [...keys].sort((x, y) => x.at - y.at);
+  const first = sorted[0];
+  let a = first;
+  let b = first;
+  for (let i = 0; i < sorted.length; i++) {
+    if (sorted[i].at <= frame) {
+      a = sorted[i];
+      b = sorted[i + 1] ?? sorted[i];
+    }
+  }
+  if (first === undefined || frame <= first.at) {
+    a = first;
+    b = first;
+  }
+  const t =
+    a === undefined || b === undefined || a.at === b.at
+      ? 1
+      : interpolate(frame, [a.at, b.at], [0, 1], {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+          easing: cb(b.ease ?? fallbackEase),
+        });
+  return { a, b, t };
+}
+
+/**
  * @param keys      the keyframe array, `at` already converted to FRAMES
  *                   (callers convert from the manifest's seconds via
  *                   `Math.round(at * fps)`, exactly as `Video.tsx` already
@@ -67,30 +106,10 @@ export function interpolateKeys<
     return { ...out, at: k.at, ease: k.ease ?? fallbackEase };
   };
 
-  const sorted = [...keys].sort((a, b) => a.at - b.at).map(resolve);
-  const first = sorted[0] ?? resolve({ at: 0 } as KeyframeBase & Partial<Record<Fields, number>>);
-
-  let a = first;
-  let b = first;
-  for (let i = 0; i < sorted.length; i++) {
-    if (sorted[i].at <= frame) {
-      a = sorted[i];
-      b = sorted[i + 1] ?? sorted[i];
-    }
-  }
-  if (frame <= first.at) {
-    a = first;
-    b = first;
-  }
-
-  const t =
-    a.at === b.at
-      ? 1
-      : interpolate(frame, [a.at, b.at], [0, 1], {
-          extrapolateLeft: "clamp",
-          extrapolateRight: "clamp",
-          easing: cb(b.ease as readonly [number, number, number, number]),
-        });
+  // No keys at all resolves to the defaults, exactly as before the extraction.
+  const resolved =
+    keys.length > 0 ? keys.map(resolve) : [resolve({ at: 0 } as KeyframeBase & Partial<Record<Fields, number>>)];
+  const { a, b, t } = keySegment(resolved, frame, fallbackEase);
 
   const out = {} as Record<Fields, number>;
   for (const f of fields) {

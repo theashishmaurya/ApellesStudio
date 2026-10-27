@@ -72,6 +72,7 @@ import {
   type MotionOps,
   type MotionOpsApi,
   type MotionPlayer,
+  type MotionPreviewRequest,
 } from './motionOps';
 import { sizeFields } from './propCatalog';
 import type { Selection } from './LayerList';
@@ -162,6 +163,10 @@ function harness(initial: Manifest = sample) {
   const themeLib: { current: ThemeDef[] } = { current: [] };
   const themeCommitOk = { value: true };
 
+  // D-403 — the still-frame backend, faked: every request is recorded and a
+  // fixed contact-sheet answer comes back.
+  const previews: MotionPreviewRequest[] = [];
+
   const ops: MotionOps = createMotionOps({
     api: () => api,
     selections: () => state.selections,
@@ -188,6 +193,10 @@ function harness(initial: Manifest = sample) {
         return true;
       },
     }),
+    preview: async (req) => {
+      previews.push(req);
+      return { path: '/p/.chroma/motion/previews/x.png', width: 960, height: 540, columns: req.frames.length, rows: 1 };
+    },
   });
 
   return {
@@ -205,6 +214,7 @@ function harness(initial: Manifest = sample) {
     presetWrites,
     presetCommitOk,
     presetNow,
+    previews,
     unmountPlayer: () => {
       player = null;
     },
@@ -275,16 +285,23 @@ const ALL_OPS = [
   'motion_save_layer_preset',
   'motion_add_layer_from_preset',
   'motion_delete_layer_preset',
+  // D-403
+  'motion_validate',
+  'motion_insert_layers',
+  'motion_set_scene',
+  'motion_preview_frame',
+  // D-404
+  'motion_import_asset',
 ];
 
 // ---------------------------------------------------------------------------
 
 describe('the registry itself', () => {
-  it('exposes exactly the 47 documented ops, all motion_-prefixed', () => {
+  it('exposes exactly the 52 documented ops, all motion_-prefixed', () => {
     const { ops } = harness();
     const names = Object.keys(ops).sort();
     expect(names).toEqual([...ALL_OPS].sort());
-    expect(names).toHaveLength(47);
+    expect(names).toHaveLength(52);
     expect(names.every((n) => n.startsWith('motion_'))).toBe(true);
   });
 
@@ -324,12 +341,12 @@ describe('the registry itself', () => {
     expect(h.render).not.toHaveBeenCalled();
   });
 
-  it('the orientation reads report no-project instead of erroring on it', () => {
+  it('the orientation reads report no-project instead of erroring on it', async () => {
     const h = harness();
     h.state.loadState = 'no-project';
     h.state.manifest = null;
     for (const op of ORIENTATION_OPS) {
-      const r = h.run(op, {});
+      const r = await h.runAsync(op, {});
       expect(r.error, `${op} should answer, not refuse`).toBeUndefined();
     }
     const state = h.run('motion_get_state');
@@ -339,10 +356,10 @@ describe('the registry itself', () => {
     expect(state.fps).toBeNull();
   });
 
-  it('every mutating op refuses when the manifest has not parsed yet', () => {
+  it('every mutating op refuses when the manifest has not parsed yet', async () => {
     const h = harness();
     h.state.manifest = null;
-    expect(h.run('motion_add_layer', { scene_index: 0, use: 'text' }).error).toBe('no manifest loaded yet');
+    expect((await h.runAsync('motion_add_layer', { scene_index: 0, use: 'text' })).error).toBe('no manifest loaded yet');
     expect(h.run('motion_set_layer_field', sel(TEXT_L0)).error).toBe('no manifest loaded yet');
     expect(h.commits).toHaveLength(0);
   });
@@ -487,7 +504,7 @@ describe('reads', () => {
    * anywhere in `motionOps.ts`. This test would fail if either new primitive
    * were reachable from the GUI Catalog panel but not from an agent.
    */
-  it('exposes the D-258 device/chat pair to an agent with no new tool', () => {
+  it('exposes the D-258 device/chat pair to an agent with no new tool', async () => {
     const h = harness();
     const prims = h.run('motion_list_primitives').primitives as Record<string, unknown>[];
 
@@ -517,7 +534,7 @@ describe('reads', () => {
     for (const use of ['deviceframe', 'claudechat']) {
       const hh = harness();
       const before = (hh.run('motion_list_layers', { scene_index: 0 }).layers as unknown[]).length;
-      const res = hh.run('motion_add_layer', { scene_index: 0, use });
+      const res = await hh.runAsync('motion_add_layer', { scene_index: 0, use });
       expect(res.error).toBeUndefined();
       expect((hh.run('motion_list_layers', { scene_index: 0 }).layers as unknown[]).length).toBe(
         before + 1,
@@ -933,9 +950,9 @@ describe('scenes', () => {
 // ---------------------------------------------------------------------------
 
 describe('layers', () => {
-  it('motion_add_layer runs the SAME addLayer the Catalog panel calls', () => {
+  it('motion_add_layer runs the SAME addLayer the Catalog panel calls', async () => {
     const h = harness();
-    const r = h.run('motion_add_layer', { scene_index: 0, use: 'text' });
+    const r = await h.runAsync('motion_add_layer', { scene_index: 0, use: 'text' });
     const expected = addLayer(sample, 0, 'text');
     expect(h.current().scenes[0].layers).toHaveLength(3);
     expect(r.addedUse).toBe('text');
@@ -945,10 +962,10 @@ describe('layers', () => {
     expect(h.commits[0].label).toBe('Add text layer');
   });
 
-  it('motion_add_layer rejects an unknown use and a bad scene', () => {
+  it('motion_add_layer rejects an unknown use and a bad scene', async () => {
     const h = harness();
-    expect(h.run('motion_add_layer', { scene_index: 0, use: 'sparkles' }).error).toMatch(/use must be one of/);
-    expect(h.run('motion_add_layer', { scene_index: 9, use: 'text' }).error).toMatch(/no scene at index 9/);
+    expect((await h.runAsync('motion_add_layer', { scene_index: 0, use: 'sparkles' })).error).toMatch(/use must be one of/);
+    expect((await h.runAsync('motion_add_layer', { scene_index: 9, use: 'text' })).error).toMatch(/no scene at index 9/);
     expect(h.commits).toHaveLength(0);
   });
 
@@ -1301,9 +1318,9 @@ describe('transform', () => {
     expect(h.current()).toEqual(setLayerSize(sample, EMPH_L1, 640, 200));
   });
 
-  it('B-213 — a matrix\'s `w`/`h` mean the same thing on every surface: the op, motion_list_layers, and motion_list_primitives\' catalog note', () => {
+  it('B-213 — a matrix\'s `w`/`h` mean the same thing on every surface: the op, motion_list_layers, and motion_list_primitives\' catalog note', async () => {
     const h = harness();
-    const added = h.run('motion_add_layer', { scene_index: 0, use: 'matrix' });
+    const added = await h.runAsync('motion_add_layer', { scene_index: 0, use: 'matrix' });
     const matrixSel = added.selection as Selection;
     const afterAdd = h.current();
 
@@ -1418,10 +1435,10 @@ describe('transform', () => {
     );
   });
 
-  it('motion_distribute_layers === distributeSelections and needs 3+', () => {
+  it('motion_distribute_layers === distributeSelections and needs 3+', async () => {
     const h = harness();
     // scene 0 has 2 layers; add a third so distribute has something real
-    h.run('motion_add_layer', { scene_index: 0, use: 'text' });
+    await h.runAsync('motion_add_layer', { scene_index: 0, use: 'text' });
     const withThree = h.current();
     const three = [TEXT_L0, EMPH_L1, { sceneIndex: 0, target: { kind: 'layer', index: 2 } } as Selection];
     h.run('motion_distribute_layers', { selections: three.map(sel), axis: 'horizontal' });
@@ -1850,9 +1867,9 @@ describe('navigation, persistence and render', () => {
 // ---------------------------------------------------------------------------
 
 describe('the undo contract (D-140)', () => {
-  it('every mutating op commits exactly once, with a human-readable label', () => {
+  it('every mutating op commits exactly once, with a human-readable label', async () => {
     const h = harness();
-    h.run('motion_add_layer', { scene_index: 0, use: 'text' });
+    await h.runAsync('motion_add_layer', { scene_index: 0, use: 'text' });
     h.run('motion_set_layer_field', { ...sel(TEXT_L0), key: 'text', value: 'x' });
     h.run('motion_set_layer_position', { ...sel(TEXT_L0), x: 1, y: 2 });
     expect(h.commits.map((c) => c.label)).toEqual(['Add text layer', 'Set text', 'Set layer position']);
@@ -1869,7 +1886,7 @@ describe('the undo contract (D-140)', () => {
     expect(h.commits).toHaveLength(0);
   });
 
-  it('a refused op never commits — no partial writes anywhere', () => {
+  it('a refused op never commits — no partial writes anywhere', async () => {
     const h = harness();
     const refusals: [string, Record<string, unknown>][] = [
       ['motion_add_layer', { scene_index: 0, use: 'nope' }],
@@ -1884,7 +1901,7 @@ describe('the undo contract (D-140)', () => {
       ['motion_duplicate_scene', { scene_index: 9 }],
     ];
     for (const [op, args] of refusals) {
-      const r = h.run(op, args);
+      const r = await h.runAsync(op, args);
       expect(r.error, `${op} should refuse`).toBeTruthy();
     }
     expect(h.commits).toHaveLength(0);
@@ -2247,5 +2264,224 @@ describe('saved components (D-332)', () => {
     await h.runAsync('motion_add_layer_from_preset', { scene_index: 2, preset_id: id });
     const kids = h.current().scenes[2].scene3d!.children;
     expect(kids.at(-1)).toMatchObject({ use: 'particleflow' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-403 — authoring as data: validate, insert, set scene, preview, refusals
+// ---------------------------------------------------------------------------
+
+describe('D-403 — motion_validate', () => {
+  it('validates the live manifest when given nothing', async () => {
+    const h = harness();
+    expect((await h.runAsync('motion_validate'))).toEqual({ checked: 'live manifest', ok: true, loads: true, issues: [] });
+  });
+
+  it('reports layer issues with path, code, expected and hint', async () => {
+    const h = harness();
+    const r = await h.runAsync('motion_validate', { layers: [{ use: 'text', text: 'x', colour: 'red', size: 'big' }] });
+    expect(r.ok).toBe(false);
+    const issues = r.issues as { path: string; code: string; hint?: string }[];
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: 'layers[0].size', code: 'invalid_type' }),
+        expect.objectContaining({ path: 'layers[0].colour', code: 'unrecognized_key', hint: 'did you mean "color"?' }),
+      ]),
+    );
+  });
+
+  it('validates a scene under its index, and refuses two inputs at once', async () => {
+    const h = harness();
+    const r = await h.runAsync('motion_validate', { scene: { id: 's', dur: -1 }, scene_index: 3 });
+    expect((r.issues as { path: string }[])[0].path).toBe('scenes[3].dur');
+    expect((await h.runAsync('motion_validate', { scene: {}, layers: [] })).error).toMatch(/at most one/);
+  });
+
+  it('never commits', async () => {
+    const h = harness();
+    await h.runAsync('motion_validate', { manifest: { title: 'x' } });
+    expect(h.commits).toHaveLength(0);
+  });
+});
+
+describe('D-403 — motion_insert_layers', () => {
+  const card = [
+    { use: 'text', id: 'headline', text: 'Ship it', size: 90, x: 200, y: 300 },
+    { use: 'emphasis', preset: 'ring', box: [180, 260, 600, 160], at: 0.5, dur: 1 },
+    { use: 'labelbox', position: [0, 0, 0] },
+  ];
+
+  it('inserts every layer in ONE commit, 3D children routed to scene3d, own ids kept', async () => {
+    const h = harness();
+    const before = h.current().scenes[0].layers!.length;
+    const r = await h.runAsync('motion_insert_layers', { scene_index: 0, layers: card });
+    expect(r.error).toBeUndefined();
+    expect(h.commits).toHaveLength(1);
+    const scene = h.current().scenes[0];
+    expect(scene.layers!.length).toBe(before + 2);
+    expect(scene.layers![before]).toMatchObject({ use: 'text', id: 'headline' });
+    expect(scene.scene3d!.children.at(-1)).toMatchObject({ use: 'labelbox' });
+    expect((r.selections as Selection[]).map((s) => s.target.kind)).toEqual(['layer', 'layer', 'scene3d-child']);
+  });
+
+  it('inserts at an index', async () => {
+    const h = harness();
+    await h.runAsync('motion_insert_layers', { scene_index: 0, layers: [card[0]], at: 0 });
+    expect(h.current().scenes[0].layers![0]).toMatchObject({ id: 'headline' });
+  });
+
+  it('re-mints an id that collides with one already in the scene', async () => {
+    const h = harness();
+    await h.runAsync('motion_insert_layers', { scene_index: 0, layers: [card[0]] });
+    await h.runAsync('motion_insert_layers', { scene_index: 0, layers: [card[0]] });
+    const ids = h.current().scenes[0].layers!.map((l) => l.id).filter(Boolean);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('refuses an invalid fragment with the issue list and commits nothing', async () => {
+    const h = harness();
+    const r = await h.runAsync('motion_insert_layers', { scene_index: 0, layers: [{ use: 'text', txt: 'x' }] });
+    expect(r.error).toMatch(/^refused: layers did not validate/);
+    const issues = r.issues as { path: string; code: string }[];
+    expect(issues.map((i) => `${i.code}@${i.path}`)).toEqual(
+      expect.arrayContaining(['missing_field@layers[0].text', 'unrecognized_key@layers[0].txt']),
+    );
+    expect(h.commits).toHaveLength(0);
+  });
+
+  it('dry_run validates and reports without committing', async () => {
+    const h = harness();
+    const r = await h.runAsync('motion_insert_layers', { scene_index: 0, layers: card, dry_run: true });
+    expect(r).toMatchObject({ dryRun: true, ok: true, count: 3 });
+    expect(h.commits).toHaveLength(0);
+  });
+});
+
+describe('D-403 — motion_set_scene', () => {
+  it('replaces a scene in one commit and keeps its id when the fragment omits one', async () => {
+    const h = harness();
+    const r = await h.runAsync('motion_set_scene', {
+      scene_index: 0,
+      scene: { dur: 3, bg: '#101010', layers: [{ use: 'text', text: 'only this' }] },
+    });
+    expect(r.error).toBeUndefined();
+    expect(h.commits).toHaveLength(1);
+    expect(h.current().scenes[0]).toMatchObject({ id: 'hook', dur: 3, bg: '#101010' });
+    expect(h.current().scenes[0].layers).toHaveLength(1);
+    expect(h.current().scenes[0].camera).toBeUndefined();
+  });
+
+  it('appends a scene at scene_index = scene count', async () => {
+    const h = harness();
+    const n = h.current().scenes.length;
+    const r = await h.runAsync('motion_set_scene', { scene_index: n, scene: { id: 'outro', dur: 2 } });
+    expect(r).toMatchObject({ appended: true, sceneId: 'outro' });
+    expect(h.current().scenes).toHaveLength(n + 1);
+  });
+
+  it('refuses a rename onto an existing scene id', async () => {
+    const h = harness();
+    const r = await h.runAsync('motion_set_scene', { scene_index: 0, scene: { id: 'stack', dur: 2 } });
+    expect(r.error).toBeDefined();
+    expect(h.commits).toHaveLength(0);
+  });
+
+  it('refuses an invalid scene with issues, and an unknown scene key', async () => {
+    const h = harness();
+    const r = await h.runAsync('motion_set_scene', { scene_index: 0, scene: { dur: 2, backgroud: '#000' } });
+    expect((r.issues as { path: string; hint?: string }[])[0]).toMatchObject({
+      path: 'scenes[0].backgroud',
+      code: 'unrecognized_key',
+    });
+    expect(h.commits).toHaveLength(0);
+  });
+});
+
+describe('D-403 — motion_add_layer with props', () => {
+  it('lays props over the Catalog default in one commit', async () => {
+    const h = harness();
+    const r = await h.runAsync('motion_add_layer', { scene_index: 0, use: 'text', props: { text: 'Hello', size: 120 } });
+    expect(r.error).toBeUndefined();
+    const added = h.current().scenes[0].layers!.at(-1)!;
+    expect(added).toMatchObject({ use: 'text', text: 'Hello', size: 120, preset: 'fade-up' });
+    expect(h.commits).toHaveLength(1);
+  });
+
+  it('refuses a typo in props with the issue list', async () => {
+    const h = harness();
+    const r = await h.runAsync('motion_add_layer', { scene_index: 0, use: 'text', props: { sise: 120 } });
+    expect((r.issues as { path: string; hint?: string }[])[0]).toMatchObject({ path: 'props[0].sise', hint: 'did you mean "size"?' });
+    expect(h.commits).toHaveLength(0);
+  });
+});
+
+describe('D-403 — every mutating op refuses a document that would not load', () => {
+  it('motion_set_layer_field with a wrong-typed known prop returns issues, commits nothing', () => {
+    const h = harness();
+    const r = h.run('motion_set_layer_field', { ...sel(TEXT_L0), key: 'size', value: 'huge' });
+    expect(r.error).toMatch(/^refused: the result would not be a valid manifest/);
+    expect((r.issues as { path: string }[])[0].path).toBe('scenes[0].layers[0].size');
+    expect(h.commits).toHaveLength(0);
+  });
+
+  it('an unknown key is still written with a warning (existing behaviour)', () => {
+    const h = harness();
+    const r = h.run('motion_set_layer_field', { ...sel(TEXT_L0), key: 'futureProp', value: 1 });
+    expect(r.warning).toBeDefined();
+    expect(h.commits).toHaveLength(1);
+  });
+});
+
+describe('D-403 — motion_preview_frame', () => {
+  it('previews the scene midpoint by default, as an absolute frame', async () => {
+    const h = harness();
+    const r = await h.runAsync('motion_preview_frame', { scene_index: 1 });
+    expect(r.error).toBeUndefined();
+    // scene 1 starts after scene 0's 4s = 120 frames; its 6s = 180 frames, midpoint 90.
+    expect(h.previews[0].frames).toEqual([210]);
+    expect(h.previews[0].scale).toBe(0.5);
+    expect(r).toMatchObject({ path: '/p/.chroma/motion/previews/x.png', sceneId: 'stack' });
+  });
+
+  it('takes seconds within the scene, clamps past the end with a warning', async () => {
+    const h = harness();
+    const r = await h.runAsync('motion_preview_frame', { scene_index: 0, at_seconds: [0, 1, 99], scale: 0.25 });
+    expect(h.previews[0].frames).toEqual([0, 30, 119]);
+    expect(h.previews[0].scale).toBe(0.25);
+    expect(r.warning).toMatch(/clamped/);
+  });
+
+  it('previews an UNCOMMITTED manifest without touching the document', async () => {
+    const h = harness();
+    const draft = structuredClone(sample);
+    draft.scenes[0].bg = '#ff0000';
+    const r = await h.runAsync('motion_preview_frame', { scene_index: 0, frames: [5], manifest: draft });
+    expect(r.previewedUncommitted).toBe(true);
+    expect(h.previews[0].manifest.scenes[0].bg).toBe('#ff0000');
+    expect(h.commits).toHaveLength(0);
+  });
+
+  it('refuses an uncommitted manifest that does not load, with issues', async () => {
+    const h = harness();
+    const r = await h.runAsync('motion_preview_frame', { scene_index: 0, manifest: { title: 'x', scenes: [] } });
+    expect(r.issues).toBeDefined();
+    expect(h.previews).toHaveLength(0);
+  });
+
+  it('refuses more frames than a contact sheet holds', async () => {
+    const h = harness();
+    const r = await h.runAsync('motion_preview_frame', { scene_index: 0, frames: Array.from({ length: 13 }, (_, i) => i) });
+    expect(r.error).toMatch(/at most 12/);
+  });
+});
+
+describe('D-403 — motion_list_primitives publishes propsSchema', () => {
+  it('every primitive carries a closed JSON Schema whose use is its own', () => {
+    const h = harness();
+    const prims = h.run('motion_list_primitives').primitives as { use: string; propsSchema: Record<string, unknown> }[];
+    for (const p of prims) {
+      expect(p.propsSchema.additionalProperties).toBe(false);
+      expect((p.propsSchema.properties as Record<string, { const: string }>).use.const).toBe(p.use);
+    }
   });
 });

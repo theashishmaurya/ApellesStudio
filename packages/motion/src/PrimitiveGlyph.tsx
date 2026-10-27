@@ -13,7 +13,19 @@
  * panel, now shared rather than re-derived). One glyph set, two consumers,
  * per CLAUDE.md's "if two places need it, extract it."
  */
+import { BoundingBoxIcon, HashIcon, ImageIcon, ShapesIcon, SmileyIcon } from '@phosphor-icons/react';
 import type { PrimitiveUse } from './catalog';
+
+/** D-405 — the brand primitives' glyphs are real Phosphor icons (the repo's one
+ *  icon library, CLAUDE.md); the older hand-drawn glyphs below predate that
+ *  rule. Same 24px box and `currentColor` as the rest. */
+const PHOSPHOR_GLYPHS = {
+  image: ImageIcon,
+  icon: SmileyIcon,
+  shape: ShapesIcon,
+  counter: HashIcon,
+  group: BoundingBoxIcon,
+} as const;
 
 export function PrimitiveGlyph({ use }: { use: PrimitiveUse }) {
   const common = {
@@ -27,6 +39,11 @@ export function PrimitiveGlyph({ use }: { use: PrimitiveUse }) {
     strokeLinejoin: 'round' as const,
     'aria-hidden': true,
   };
+
+  if (use in PHOSPHOR_GLYPHS) {
+    const Glyph = PHOSPHOR_GLYPHS[use as keyof typeof PHOSPHOR_GLYPHS];
+    return <Glyph size={24} weight="light" aria-hidden />;
+  }
 
   switch (use) {
     case 'text':

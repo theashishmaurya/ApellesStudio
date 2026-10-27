@@ -71,6 +71,10 @@ pub const AI_MASK_TIMEOUT_MS: u64 = 180_000;
 /// plus one 10s `429` wait, and a download of a long track takes longer.
 pub const AUDIO_LIBRARY_TIMEOUT_MS: u64 = 120_000;
 
+/// Motion still frames (D-403): the first preview after an engine change runs a webpack
+/// bundle (~20 s) before ~1-2 s per frame, up to 12 frames.
+pub const MOTION_PREVIEW_TIMEOUT_MS: u64 = 180_000;
+
 // D-318's recut detectors used to have a `RECUT_TIMEOUT_MS = 180_000` here, on
 // the reasoning that a cold decode of a long 4K source is not 20s-fast. B-188
 // proved that far too optimistic — a real 16.5-minute 4K file took 244s and

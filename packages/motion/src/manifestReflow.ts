@@ -144,6 +144,13 @@ const EXTRA_FIELDS: Record<string, Array<{ key: string; axis: 'x' | 'y' | 'u' }>
   layers: [{ key: 'gap', axis: 'u' }],
   graph: [{ key: 'nodeR', axis: 'u' }],
   claudechat: [{ key: 'radius', axis: 'u' }],
+  // D-405 — the brand primitives' lengths. `x`/`y`/`w`/`h` move through
+  // `positionFields`/`sizeFields` above; an icon's `size` and a counter's are
+  // type-like (`'u'`, D-372's reasoning), radii and strokes are lengths.
+  image: [{ key: 'radius', axis: 'u' }, { key: 'borderWidth', axis: 'u' }],
+  icon: [{ key: 'size', axis: 'u' }],
+  shape: [{ key: 'radius', axis: 'u' }, { key: 'strokeWidth', axis: 'u' }],
+  counter: [{ key: 'size', axis: 'u' }],
 };
 
 function factorFor(axis: 'x' | 'y' | 'u', f: ReflowFactors): number {
@@ -221,6 +228,25 @@ function reflowLayer(layer: Layer, f: ReflowFactors): number {
           if (scaleField(key, 'y', f.sy)) moved++;
         }
       }
+    }
+  }
+
+  // D-405 — a group's children are world-px layers like any other, and its
+  // mask is a world-px box (or a text anchor with a type size).
+  if (use === 'group') {
+    if (Array.isArray(raw.children)) {
+      for (const child of raw.children as Layer[]) {
+        if (child && typeof child === 'object') moved += reflowLayer(child, f);
+      }
+    }
+    const mask = raw.mask as Raw | undefined;
+    if (mask && typeof mask === 'object') {
+      if (scaleField(mask, 'x', f.sx)) moved++;
+      if (scaleField(mask, 'y', f.sy)) moved++;
+      if (scaleField(mask, 'w', f.sx)) moved++;
+      if (scaleField(mask, 'h', f.sy)) moved++;
+      if (scaleField(mask, 'radius', f.su)) moved++;
+      if (scaleField(mask, 'size', f.su)) moved++;
     }
   }
 

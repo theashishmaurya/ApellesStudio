@@ -247,6 +247,12 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    - **Use:** read by the in-app agent and by every MCP session as default choices; cited when a choice is made ("using your usual -14 dB music duck").
    - **Rules:** local-first (stays on the machine unless the user exports it); the user can see, edit and delete every line; distillation runs on explicit events (export, accept/reject, a correction), never as hidden telemetry; human-and-AI parity (a GUI view/editor plus MCP `taste_get` / `taste_note` / `taste_forget`).
 
+0e. **Motion authoring from MCP: new graphics and templates as data, not code** (owner, 2026-10-26; design `docs/notes/motion-authoring-mcp.md`).
+   - [x] Phase 0 — per-primitive schemas, `motion_validate`, `motion_insert_layers`, `motion_set_scene`, `motion_add_layer(props)`, `propsSchema`, `motion_preview_frame` + GUI (Insert as JSON, Still). **D-403, 2026-10-27.**
+   - [x] Phase 1 — brand primitives (`image` + hashed assets, `icon`, `shape`, `counter`, `group`), `anim` property tracks + GUI (pickers, nested group rows). **D-404/D-405, 2026-10-27.** Open: selecting a child inside a group; asset garbage collection; preview bundle shared across projects.
+   - [ ] Phase 2 — templates (`templateDef.ts`, library, 7 MCP tools, GUI, starters).
+   - [ ] Phase 3 — `path`, `repeater`, `textonpath`. Phase 4 — Lottie import (no expressions).
+
 0. **Export through the app's own compositor instead of an ffmpeg filter graph — D-350.**
    Moved here from "Later" 2026-09-18 when **phase 1 shipped**. Origin: B-228/B-229/B-230
    found and fixed three measured resource pathologies in `editor_export`'s ffmpeg

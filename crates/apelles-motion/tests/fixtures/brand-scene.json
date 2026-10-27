@@ -1,0 +1,185 @@
+{
+  "title": "Brand reel",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "scenes": [
+    {
+      "id": "intro",
+      "dur": 1
+    },
+    {
+      "id": "brand",
+      "dur": 4,
+      "bg": "#0b0d12",
+      "layers": [
+        {
+          "use": "group",
+          "id": "logo-reveal",
+          "at": 0.1,
+          "mask": {
+            "kind": "roundrect",
+            "x": 560,
+            "y": 140,
+            "w": 0,
+            "h": 420,
+            "radius": 48
+          },
+          "anim": {
+            "mask.w": [
+              {
+                "at": 0,
+                "v": 0
+              },
+              {
+                "at": 0.8,
+                "v": 800,
+                "ease": [
+                  0.16,
+                  1,
+                  0.3,
+                  1
+                ]
+              }
+            ]
+          },
+          "children": [
+            {
+              "use": "shape",
+              "shape": "roundrect",
+              "x": 560,
+              "y": 140,
+              "w": 800,
+              "h": 420,
+              "radius": 48,
+              "enter": "none",
+              "gradient": {
+                "type": "linear",
+                "angle": 25,
+                "stops": [
+                  {
+                    "at": 0,
+                    "color": "#1d2433"
+                  },
+                  {
+                    "at": 1,
+                    "color": "#3a2a5c"
+                  }
+                ]
+              }
+            },
+            {
+              "use": "image",
+              "src": "sha256:4ecf4910b2061560dcbdcd647dd84a652721db9b936b8270141c4fa4ffdfc784.svg",
+              "x": 610,
+              "y": 190,
+              "w": 320,
+              "h": 320,
+              "fit": "contain",
+              "enter": "pop",
+              "at": 0.3
+            },
+            {
+              "use": "text",
+              "text": "Acme Labs",
+              "x": 960,
+              "y": 310,
+              "size": 64,
+              "preset": "fade-up",
+              "at": 0.5,
+              "color": "#ffffff"
+            }
+          ]
+        },
+        {
+          "use": "counter",
+          "id": "stat",
+          "at": 1,
+          "dur": 1.2,
+          "from": 0,
+          "to": 12500,
+          "suffix": "+",
+          "thousands": true,
+          "size": 150,
+          "x": 960,
+          "y": 640,
+          "align": "center",
+          "color": "#f5c542",
+          "anim": {
+            "color": [
+              {
+                "at": 1,
+                "v": "#ffffff"
+              },
+              {
+                "at": 2.2,
+                "v": "#f5c542"
+              }
+            ]
+          }
+        },
+        {
+          "use": "text",
+          "id": "stat-label",
+          "text": "teams shipping faster",
+          "x": 960,
+          "y": 800,
+          "size": 40,
+          "align": "center",
+          "preset": "fade-up",
+          "at": 1.4
+        },
+        {
+          "use": "icon",
+          "id": "icon-1",
+          "name": "rocket-launch",
+          "weight": "duotone",
+          "size": 96,
+          "x": 732,
+          "y": 880,
+          "color": "#ffffff",
+          "at": 1.8,
+          "enter": "pop"
+        },
+        {
+          "use": "icon",
+          "id": "icon-2",
+          "name": "lightning",
+          "weight": "duotone",
+          "size": 96,
+          "x": 912,
+          "y": 880,
+          "color": "#ffffff",
+          "at": 2,
+          "enter": "pop"
+        },
+        {
+          "use": "icon",
+          "id": "icon-3",
+          "name": "shield-check",
+          "weight": "duotone",
+          "size": 96,
+          "x": 1092,
+          "y": 880,
+          "color": "#ffffff",
+          "at": 2.2,
+          "enter": "pop"
+        },
+        {
+          "use": "shape",
+          "id": "underline",
+          "shape": "line",
+          "x": 700,
+          "y": 1000,
+          "w": 520,
+          "h": 0,
+          "stroke": "#f5c542",
+          "strokeWidth": 6,
+          "at": 2.4,
+          "enter": "draw",
+          "enterDur": 0.6
+        }
+      ]
+    }
+  ]
+}
