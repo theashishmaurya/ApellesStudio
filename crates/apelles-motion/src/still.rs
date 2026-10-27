@@ -38,6 +38,12 @@ const SHEET_BG: [u8; 4] = [16, 16, 18, 255];
 /// Hex characters of the engine fingerprint used in the bundle directory name.
 const FINGERPRINT_CHARS: usize = 16;
 const BUNDLE_PREFIX: &str = "bundle-";
+/// Another bundle is deleted only once nothing has used it for this long. A
+/// preview reads its bundle for seconds (at most 12 stills of ~1.5 s), and a
+/// concurrent preview can carry a different fingerprint (a different asset
+/// folder, or engine code changed in between); deleting every other bundle at
+/// once removed one still in use (a 404 / EISDIR mid-preview, found 2026-10-27).
+const BUNDLE_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 /// Serialises bundle builds within this process (see [`ensure_bundle`]).
 static BUNDLE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -101,6 +107,11 @@ fn run(mut cmd: Command, what: &str) -> Result<(), ChromaError> {
     let output = cmd
         .output()
         .map_err(|e| ChromaError::Invalid(format!("failed to spawn npx for {what}: {e}")))?;
+    finish(output, what)
+}
+
+/// Turn a finished `remotion` run into `Ok` or a named error with its stderr tail.
+fn finish(output: std::process::Output, what: &str) -> Result<(), ChromaError> {
     if output.status.success() {
         return Ok(());
     }
@@ -177,7 +188,7 @@ pub fn engine_fingerprint(
 /// The bundle for the engine as it is now, under `cache_root`: reused when one
 /// with the current fingerprint exists, otherwise built (into a staging
 /// directory, then renamed into place, so a half-written bundle is never
-/// reused) and every older `bundle-*` sibling removed.
+/// reused); other `bundle-*` siblings unused for `BUNDLE_STALE_AFTER` are removed.
 pub fn ensure_bundle(
     engine_dir: &Path,
     cache_root: &Path,
@@ -189,6 +200,7 @@ pub fn ensure_bundle(
     let fp = engine_fingerprint(engine_dir, public_dir)?;
     let dir = cache_root.join(format!("{BUNDLE_PREFIX}{fp}"));
     if dir.join("index.html").is_file() {
+        mark_used(&dir);
         return Ok(dir);
     }
     std::fs::create_dir_all(cache_root)
@@ -208,17 +220,31 @@ pub fn ensure_bundle(
     }
     std::fs::rename(&staging, &dir)
         .map_err(|e| ChromaError::Invalid(format!("move bundle into {}: {e}", dir.display())))?;
-    // Older bundles are dead weight (tens of MB each); a failure to delete one
-    // costs disk, not correctness, so it is not an error.
+    mark_used(&dir);
+    // Older bundles are dead weight (tens of MB each), but one may still be in
+    // use by a concurrent preview, so only those unused for BUNDLE_STALE_AFTER
+    // go. A failure to delete one costs disk, not correctness: not an error.
     if let Ok(entries) = std::fs::read_dir(cache_root) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with(BUNDLE_PREFIX) && entry.path() != dir {
+            let stale = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age >= BUNDLE_STALE_AFTER);
+            if name.starts_with(BUNDLE_PREFIX) && entry.path() != dir && stale {
                 let _ = std::fs::remove_dir_all(entry.path());
             }
         }
     }
     Ok(dir)
+}
+
+/// Record that `dir` was just used, so pruning leaves it alone for a while.
+/// Best effort: a failure only makes the bundle eligible for pruning sooner.
+fn mark_used(dir: &Path) {
+    let _ = std::fs::File::open(dir).and_then(|f| f.set_modified(std::time::SystemTime::now()));
 }
 
 /// Where the tiles go in a contact sheet of `n` frames: `(columns, rows)`.
@@ -349,7 +375,10 @@ pub fn render_preview(req: &PreviewRequest) -> Result<PreviewOutcome, ChromaErro
             scale: req.scale,
             composition_id: "Animation".to_string(),
         };
-        run(build_still_command(&still), "still")?;
+        finish(
+            crate::output_with_own_port(|| build_still_command(&still))?,
+            "still",
+        )?;
         tiles.push(tile);
     }
 
