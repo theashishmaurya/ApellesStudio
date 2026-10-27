@@ -5,7 +5,7 @@ import { Video } from "./engine/Video";
 import type { Manifest } from "./engine/schema";
 import { CustomRendererProvider } from "./custom/renderer";
 import { CodeRenderer } from "./custom/runtime";
-import { metadataFromManifest } from "./engine/build";
+import { animationDefaultProps, metadataFromManifest } from "./engine/build";
 import { sample } from "./engine/sample";
 import { HelloWorld } from "./compositions/HelloWorld";
 import { PrimitivesDemo } from "./compositions/PrimitivesDemo";
@@ -41,6 +41,19 @@ export const RemotionRoot: React.FC = () => {
     <>
       <Composition
         id="Animation"
+        component={RenderedVideo}
+        defaultProps={animationDefaultProps}
+        calculateMetadata={({ props }) => metadataFromManifest(props)}
+        durationInFrames={300}
+        fps={motion.fps}
+        width={1920}
+        height={1080}
+      />
+      {/* B-281 — the engine sample, for the Studio only. A separate
+          composition so its grain and vignette can never be merged into a real
+          `Animation` render as defaults. */}
+      <Composition
+        id="AnimationSample"
         component={RenderedVideo}
         defaultProps={sample}
         calculateMetadata={({ props }) => metadataFromManifest(props)}
