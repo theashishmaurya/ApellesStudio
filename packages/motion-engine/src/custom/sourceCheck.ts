@@ -14,6 +14,10 @@
  *     that reach them anyway (`constructor`, `__proto__`) — each refused with
  *     a hint pointing at the deterministic way (`random(seed)` and
  *     `useCurrentFrame()` from `remotion`).
+ *     **roughjs** (D-412) is allowed only seeded: it draws from `Math.random`
+ *     unless it is given a non-zero `seed`, so every drawing call on a rough
+ *     generator/svg/canvas must pass an options object with `seed` (or the
+ *     generator must be created with `options: { seed }`) — `rough_unseeded`.
  *  3. **Types** — the source type-checks in strict mode against the real
  *     `remotion` / React types in this package's `node_modules` and the
  *     component contract (`componentApi.ts`, imported as `@apelles/component`),
@@ -135,6 +139,7 @@ function isValueReference(node: ts.Identifier): boolean {
 function walk(sf: ts.SourceFile, issues: ValidationIssue[], warnings: ValidationIssue[]): boolean {
   let hasDefault = false;
   const allowed = new Set<string>(ALLOWED_COMPONENT_IMPORTS);
+  const rough = roughBindings(sf);
   const refuse = (node: ts.Node, code: string, message: string, hint?: string) =>
     issues.push({ path: where(sf, node.getStart(sf)), code, message, ...(hint ? { hint } : {}) });
 
@@ -164,6 +169,8 @@ function walk(sf: ts.SourceFile, issues: ValidationIssue[], warnings: Validation
       if (mods.includes(ts.SyntaxKind.ExportKeyword) && mods.includes(ts.SyntaxKind.DefaultKeyword)) hasDefault = true;
     } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
       refuse(node, "dynamic_import", "dynamic import() is not allowed", "import statically from the allowlist");
+    } else if (ts.isCallExpression(node) && rough.imports.size > 0 && roughDrawWithoutSeed(node, rough)) {
+      refuse(node, "rough_unseeded", `${(node.expression as ts.PropertyAccessExpression).name.text}() has no fixed seed, so it differs on every render`, ROUGH_HINT);
     } else if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword) {
       refuse(node, "banned_global", "import.meta reaches outside the component", GLOBAL_HINT);
     } else if (ts.isWithStatement(node)) {
@@ -203,6 +210,88 @@ function walk(sf: ts.SourceFile, issues: ValidationIssue[], warnings: Validation
   };
   visit(sf);
   return hasDefault;
+}
+
+/** The rough.js drawing methods: each takes an options object last. */
+const ROUGH_DRAW_METHODS = new Set(["rectangle", "line", "circle", "ellipse", "linearPath", "polygon", "arc", "curve", "path"]);
+/** The rough.js factories whose result draws. */
+const ROUGH_FACTORIES = new Set(["generator", "svg", "canvas"]);
+const ROUGH_HINT =
+  "roughjs draws from Math.random unless given a non-zero seed: pass { seed: 7 } (any fixed non-zero number) in the options, or create the generator with rough.generator({ options: { seed: 7 } })";
+
+interface RoughBindings {
+  /** local names of the `roughjs` import */
+  imports: Set<string>;
+  /** variables holding a generator/svg/canvas; value: created with a default seed */
+  drawers: Map<string, boolean>;
+}
+
+/** Does an object literal name a `seed` itself? A spread is not trusted to
+ *  supply one (it cannot be checked), and a literal `seed: 0` is refused
+ *  (0 means "random"). */
+function objectHasSeed(obj: ts.ObjectLiteralExpression): boolean {
+  return obj.properties.some((p) => {
+    if (ts.isSpreadAssignment(p)) return false;
+    if (!p.name || !ts.isIdentifier(p.name) || p.name.text !== "seed") return false;
+    return !(ts.isPropertyAssignment(p) && ts.isNumericLiteral(p.initializer) && Number(p.initializer.text) === 0);
+  });
+}
+
+/** Is `e` a call of a rough factory (`rough.generator(...)`)? */
+function roughFactoryCall(e: ts.Expression | undefined, imports: Set<string>): ts.CallExpression | undefined {
+  let x = e;
+  while (x && (ts.isParenthesizedExpression(x) || ts.isAsExpression(x) || ts.isNonNullExpression(x))) x = x.expression;
+  if (!x || !ts.isCallExpression(x) || !ts.isPropertyAccessExpression(x.expression)) return undefined;
+  const target = x.expression;
+  return ts.isIdentifier(target.expression) && imports.has(target.expression.text) && ROUGH_FACTORIES.has(target.name.text) ? x : undefined;
+}
+
+/** Was a factory call given `{ options: { seed } }`? */
+function factorySeeded(call: ts.CallExpression): boolean {
+  for (const arg of call.arguments) {
+    if (!ts.isObjectLiteralExpression(arg)) continue;
+    for (const p of arg.properties) {
+      if (ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === "options" && ts.isObjectLiteralExpression(p.initializer)) {
+        return objectHasSeed(p.initializer);
+      }
+    }
+  }
+  return false;
+}
+
+/** Find the file's rough.js usage before the main walk. */
+function roughBindings(sf: ts.SourceFile): RoughBindings {
+  const imports = new Set<string>();
+  const drawers = new Map<string, boolean>();
+  const visit = (n: ts.Node): void => {
+    if (ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier) && n.moduleSpecifier.text === "roughjs") {
+      const c = n.importClause;
+      if (c?.name) imports.add(c.name.text);
+      if (c?.namedBindings && ts.isNamespaceImport(c.namedBindings)) imports.add(c.namedBindings.name.text);
+    } else if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name)) {
+      const call = roughFactoryCall(n.initializer, imports);
+      if (call) drawers.set(n.name.text, factorySeeded(call));
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return { imports, drawers };
+}
+
+/** Is `call` a rough.js drawing call that would draw from `Math.random`? */
+function roughDrawWithoutSeed(call: ts.CallExpression, rough: RoughBindings): boolean {
+  const callee = call.expression;
+  if (!ts.isPropertyAccessExpression(callee) || !ROUGH_DRAW_METHODS.has(callee.name.text)) return false;
+  const recv = callee.expression;
+  let seededByDefault = false;
+  if (ts.isIdentifier(recv) && rough.drawers.has(recv.text)) {
+    seededByDefault = rough.drawers.get(recv.text) === true;
+  } else if (!roughFactoryCall(recv, rough.imports)) {
+    return false;
+  }
+  const last = call.arguments[call.arguments.length - 1];
+  const own = last !== undefined && ts.isObjectLiteralExpression(last) && objectHasSeed(last);
+  return !own && !seededByDefault;
 }
 
 /** The strict compiler options a component is type-checked under. */

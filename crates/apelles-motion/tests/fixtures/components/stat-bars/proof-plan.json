@@ -1,0 +1,210 @@
+{
+  "manifest": {
+    "title": "certification proof: stat-bars@1",
+    "width": 1400,
+    "height": 800,
+    "fps": 30,
+    "grain": false,
+    "vignette": false,
+    "components": {
+      "stat-bars@1": {
+        "id": "stat-bars",
+        "name": "Stat bars",
+        "description": "Horizontal bars grow to their values on a d3 scale, each with a counting value label; the largest bar is highlighted.",
+        "tags": [
+          "data",
+          "chart",
+          "stats"
+        ],
+        "props": [
+          {
+            "id": "title",
+            "type": "text",
+            "label": "Title",
+            "default": "Share of viewers",
+            "constraints": {
+              "maxLen": 60
+            }
+          },
+          {
+            "id": "values",
+            "type": "list",
+            "label": "Values",
+            "default": [
+              72,
+              58,
+              41,
+              26
+            ],
+            "required": true,
+            "constraints": {
+              "min": 0,
+              "max": 1000000,
+              "minItems": 1,
+              "maxItems": 8,
+              "itemType": "number"
+            }
+          },
+          {
+            "id": "labels",
+            "type": "list",
+            "label": "Labels",
+            "default": [
+              "Mobile",
+              "Desktop",
+              "TV",
+              "Tablet"
+            ],
+            "constraints": {
+              "maxLen": 16,
+              "maxItems": 8
+            }
+          },
+          {
+            "id": "format",
+            "type": "enum",
+            "label": "Value format",
+            "description": "number: 1,234; compact: 1.2k; percent: the value followed by %.",
+            "default": "percent",
+            "constraints": {
+              "options": [
+                "number",
+                "compact",
+                "percent"
+              ]
+            }
+          },
+          {
+            "id": "barColor",
+            "type": "color",
+            "label": "Bar colour",
+            "description": "Unset: the theme's accent."
+          },
+          {
+            "id": "highlightColor",
+            "type": "color",
+            "label": "Highlight colour",
+            "description": "Unset: the theme's signal colour."
+          }
+        ],
+        "size": {
+          "w": 1400,
+          "h": 800
+        },
+        "duration": 3,
+        "version": 1,
+        "sourceHash": "626429c1d27715be1c983c945f8f7b65319440b5c268499a713ff0fec5a9e682",
+        "codeHash": "4f4bfd0a1e399071264f65a415cd1171730bd106426b08aa5738c9fd065dc488",
+        "code": "sha256:4f4bfd0a1e399071264f65a415cd1171730bd106426b08aa5738c9fd065dc488.js",
+        "source": "sha256:626429c1d27715be1c983c945f8f7b65319440b5c268499a713ff0fec5a9e682.tsx"
+      }
+    },
+    "scenes": [
+      {
+        "id": "proof-defaults",
+        "dur": 3,
+        "layers": [
+          {
+            "use": "custom",
+            "id": "component",
+            "component": "stat-bars@1",
+            "x": 0,
+            "y": 0
+          }
+        ]
+      },
+      {
+        "id": "proof-min",
+        "dur": 3,
+        "layers": [
+          {
+            "use": "custom",
+            "id": "component",
+            "component": "stat-bars@1",
+            "x": 0,
+            "y": 0,
+            "props": {
+              "title": "A",
+              "values": [
+                0
+              ],
+              "labels": [
+                "A"
+              ],
+              "format": "number"
+            }
+          }
+        ]
+      },
+      {
+        "id": "proof-max",
+        "dur": 3,
+        "layers": [
+          {
+            "use": "custom",
+            "id": "component",
+            "component": "stat-bars@1",
+            "x": 0,
+            "y": 0,
+            "props": {
+              "title": "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+              "values": [
+                1000000,
+                999999,
+                999998,
+                999997,
+                999996,
+                999995,
+                999994,
+                999993
+              ],
+              "labels": [
+                "WWWWWWWWWWWWWWWW",
+                "WWWWWWWWWWWWWWWW",
+                "WWWWWWWWWWWWWWWW",
+                "WWWWWWWWWWWWWWWW",
+                "WWWWWWWWWWWWWWWW",
+                "WWWWWWWWWWWWWWWW",
+                "WWWWWWWWWWWWWWWW",
+                "WWWWWWWWWWWWWWWW"
+              ],
+              "format": "percent",
+              "barColor": "#22d3ee",
+              "highlightColor": "#22d3ee"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "variants": [
+    {
+      "name": "defaults",
+      "frames": [
+        0,
+        30,
+        59,
+        89
+      ]
+    },
+    {
+      "name": "min",
+      "frames": [
+        90,
+        120,
+        149,
+        179
+      ]
+    },
+    {
+      "name": "max",
+      "frames": [
+        180,
+        210,
+        239,
+        269
+      ]
+    }
+  ],
+  "scale": 0.34285714285714286
+}

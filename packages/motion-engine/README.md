@@ -74,6 +74,15 @@ against `codeHash`, evaluates once with an allowlist-only `require`), and
 webview imports reaches `runtime.tsx`. The full design, the security boundary and what was
 verified are in D-409.
 
+What a component may import is one list, `custom/allowlist.ts`: react, remotion, the
+`@remotion/*` shapes/paths/noise/animation-utils/three packages, three, react-three-fiber,
+d3-force, d3-scale, d3-shape, d3-array, d3-interpolate, d3-format and roughjs (D-412). roughjs
+draws from `Math.random` unless given a non-zero `seed`, so the static check refuses any rough
+drawing call without one (`rough_unseeded`). `@remotion/skia` is deliberately not allowed (it
+needs a global bundler override and a React Native stack; D-412). The shipped built-ins
+(`components/`) are `particle-logo-burst`, `bar-line-chart`, `sketch-callout` (roughjs) and
+`stat-bars` (d3).
+
 ## Commands
 
 ```bash

@@ -37,6 +37,12 @@ import * as remotionThree from "@remotion/three";
 import * as three from "three";
 import * as reactThreeFiber from "@react-three/fiber";
 import * as d3Force from "d3-force";
+import * as d3Scale from "d3-scale";
+import * as d3Shape from "d3-shape";
+import * as d3Array from "d3-array";
+import * as d3Interpolate from "d3-interpolate";
+import * as d3Format from "d3-format";
+import rough from "roughjs";
 import { assetFileName } from "../lib/assetId";
 import type { AllowedComponentImport } from "./allowlist";
 import type { ComponentProps } from "./componentApi";
@@ -60,6 +66,13 @@ const MODULES: Record<AllowedComponentImport, unknown> = {
   three,
   "@react-three/fiber": reactThreeFiber,
   "d3-force": d3Force,
+  "d3-scale": d3Scale,
+  "d3-shape": d3Shape,
+  "d3-array": d3Array,
+  "d3-interpolate": d3Interpolate,
+  "d3-format": d3Format,
+  // roughjs is a default export; the shape a CommonJS `require` of it must have
+  roughjs: { __esModule: true, default: rough },
   "@apelles/component": {},
 };
 

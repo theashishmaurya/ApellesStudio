@@ -1,0 +1,16 @@
+{
+  "id": "sketch-callout",
+  "name": "Sketch callout",
+  "description": "A hand-drawn box, circle, underline or arrow draws on around a label, wobbling like a marker (roughjs, fixed seed).",
+  "tags": ["annotation", "callout", "hand-drawn"],
+  "props": [
+    { "id": "text", "type": "text", "label": "Label", "default": "Look here", "required": true, "constraints": { "minLen": 1, "maxLen": 40 } },
+    { "id": "shape", "type": "enum", "label": "Shape", "default": "box", "constraints": { "options": ["box", "circle", "underline", "arrow"] } },
+    { "id": "seed", "type": "number", "label": "Seed", "description": "Change it for a different, still deterministic, wobble.", "default": 7, "constraints": { "min": 1, "max": 9999, "integer": true } },
+    { "id": "roughness", "type": "number", "label": "Roughness", "description": "How shaky the marker is; 0 draws clean lines.", "default": 1.4, "constraints": { "min": 0, "max": 4 } },
+    { "id": "color", "type": "color", "label": "Stroke colour", "description": "Unset: the theme's signal colour." },
+    { "id": "textColor", "type": "color", "label": "Text colour", "description": "Unset: the theme's text colour." }
+  ],
+  "size": { "w": 1200, "h": 400 },
+  "duration": 2.5
+}

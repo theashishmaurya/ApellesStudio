@@ -172,3 +172,76 @@ export default function C({ props }: ComponentProps<{ count: number }>) {
     expect(compileComponent(GOOD)).toBe(compileComponent(GOOD));
   });
 });
+
+describe("checkComponentSource — roughjs must be seeded (D-412)", () => {
+  const rough = (body: string) => `import rough from "roughjs";
+import { AbsoluteFill } from "remotion";
+export default function C() {
+  ${body}
+  return <AbsoluteFill />;
+}
+`;
+  const refused = (body: string) => ast(rough(body)).issues.filter((i) => i.code === "rough_unseeded");
+
+  it("refuses a drawing call with no options, or options without a seed, naming the fix", () => {
+    const none = refused("const g = rough.generator(); const d = g.rectangle(0, 0, 10, 10);");
+    expect(none).toHaveLength(1);
+    expect(none[0].path).toMatch(/^source:4:\d+$/);
+    expect(none[0].hint).toMatch(/seed/);
+    expect(refused("const g = rough.generator(); g.line(0, 0, 5, 5, { roughness: 1 });")).toHaveLength(1);
+    expect(refused("const d = rough.generator().circle(5, 5, 9);")).toHaveLength(1);
+  });
+
+  it("refuses a literal seed of 0, which roughjs treats as random", () => {
+    expect(refused("const g = rough.generator(); g.ellipse(5, 5, 9, 4, { seed: 0 });")).toHaveLength(1);
+  });
+
+  it("does not trust a spread to carry the seed", () => {
+    expect(refused("const o = { seed: 3 }; const g = rough.generator(); g.path('M0 0L5 5', { ...o, stroke: 'x' });")).toHaveLength(1);
+  });
+
+  it("accepts a seeded call (with a spread beside it) and a seeded generator", () => {
+    expect(refused("const g = rough.generator(); g.rectangle(0, 0, 10, 10, { seed: 7 });")).toEqual([]);
+    expect(refused("const o = { roughness: 3 }; const g = rough.generator(); g.path('M0 0L5 5', { seed: 2, ...o });")).toEqual([]);
+    expect(refused("const g = rough.generator({ options: { seed: 5 } }); g.line(0, 0, 5, 5);")).toEqual([]);
+  });
+
+  it("leaves same-named methods on other objects alone", () => {
+    const r = ast(`import rough from "roughjs";
+import { AbsoluteFill } from "remotion";
+export default function C() {
+  const o = { line: (a: number) => a, rectangle: (a: number) => a };
+  o.line(1); o.rectangle(2);
+  return <AbsoluteFill />;
+}
+`);
+    expect(r.issues).toEqual([]);
+  });
+
+  it("compiles a seeded rough component", () => {
+    const r = checkComponentSource(rough("const g = rough.generator(); const d = g.rectangle(0, 0, 10, 10, { seed: 7 }); void d;"), ENGINE);
+    expect(r.issues).toEqual([]);
+    expect(r.code).toContain('require("roughjs")');
+  }, 30_000);
+});
+
+describe("checkComponentSource — d3 modules (D-412)", () => {
+  it("type-checks and compiles scale, shape, array, interpolate and format", () => {
+    const r = checkComponentSource(
+      `import { scaleLinear } from "d3-scale";
+import { line } from "d3-shape";
+import { max } from "d3-array";
+import { interpolateRgb } from "d3-interpolate";
+import { format } from "d3-format";
+export default function C() {
+  const x = scaleLinear().domain([0, max([1, 4]) ?? 1]).range([0, 100]);
+  const d = line<number>().x((v) => x(v)).y(() => 0)([1, 2]) ?? "";
+  return <div>{d}{interpolateRgb("red", "blue")(0.5)}{format(",.0f")(1234)}</div>;
+}
+`,
+      ENGINE,
+    );
+    expect(r.issues).toEqual([]);
+    expect(r.code).toContain('require("d3-scale")');
+  }, 30_000);
+});
