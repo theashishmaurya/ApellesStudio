@@ -82,6 +82,10 @@ async function wordContext(
     return { error: 'a word anchor needs word_track — the voice track you read with editor_get_word_transcript' };
   }
   if (!viewId) return { error: 'a word anchor needs view_id — the viewId editor_get_word_transcript returned' };
+  // B-279: the words come from the voice, so the edit's own track must be a different one.
+  if (wordTrack === a?.track) {
+    return { error: `track ${wordTrack} is the voice the words come from — a music edit acts on the bed track, not word_track` };
+  }
   const resolved = resolveWordViewInput(tl, { track: wordTrack }, false);
   if ('error' in resolved) return resolved;
   if ('pending' in resolved) {

@@ -49,7 +49,7 @@ function bed(id: string, start: number, duration: number, extra: Partial<Clip> =
   };
 }
 
-function tl(...tracks: Array<{ kind: 'video' | 'audio'; clips: Clip[]; locked?: boolean }>): Timeline {
+function tl(...tracks: Array<{ kind: 'video' | 'audio'; clips: Clip[]; locked?: boolean; duck_from?: number }>): Timeline {
   return { id: 'tl', name: 'T', rate: { num: FPS, den: 1 }, tracks: tracks.map((t) => ({ gain: 1, ...t })) };
 }
 
@@ -176,6 +176,15 @@ describe('checkMusicEdit — refusals', () => {
   it('refuses an A/V-linked clip (a picture\'s own sound)', () => {
     const linked = tl(voice, { kind: 'audio', clips: [bed('m', 0, 100, { link_group: 'g' }), bed('n', 200, 10)] });
     expect(reason(linked, range(1, 10, 20))).toMatch(/A\/V-linked/);
+  });
+  it('refuses the voice — a track other tracks duck under (B-279)', () => {
+    const ducked = tl(
+      voice,
+      { kind: 'audio', clips: [bed('vo', 0, 400)] },
+      { kind: 'audio', clips: [bed('m', 0, 400)], duck_from: 1 },
+    );
+    expect(reason(ducked, range(1, 10, 20))).toMatch(/track 1 is the voice — track 2 ducks under it/);
+    expect(reason(ducked, range(2, 10, 20))).toBeNull();
   });
   it('refuses a range that would remove the whole bed', () => {
     expect(reason(t, range(1, 0, 400))).toMatch(/whole bed/);

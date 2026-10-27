@@ -27,6 +27,15 @@ Still real:
 
 ## Open
 
+## B-279 — a D-408 music edit aimed at the voice track cut the voice
+
+status: **fixed** (2026-10-27, live-verifying D-408) · severity: **major** (a mistyped `track` silently cut words out of the voiceover; undo recovered it) · area: `packages/editor/src/timeline.ts` (`checkMusicEdit`), `packages/editor/src/musicEditOps.ts` (`wordContext`)
+
+- **found:** 2026-10-27, smoke-testing D-408 over the bridge in a scratch project. `editor_music_edit(track=2, start_frame=10, end_frame=20)` on the VO track was applied: the voice clip split and frames 10..20 were removed. The checks only refused non-audio, locked, A/V-linked and empty ranges, so any audio track counted as a bed.
+- **fix:** the reducer's pre-flight (used by the GUI and both MCP servers) refuses a track that another track ducks under, naming it as the voice; a word-anchored edit refuses when `track` equals `word_track`, since the words come from the voice.
+- **still possible, by design:** a voice track that nothing ducks under, addressed by frames, cannot be told from a bed (the timeline does not mark a track as voice). The `apelles-sound-design` skill always sets ducking on the bed, which arms the guard.
+- **verification:** unit test (ducked voice refused, its bed allowed) and an op-layer test (`track == word_track` refused); editor suite 2362/2362; `tsc` editor 3 (baseline).
+
 ## B-278 — two `remotion` runs at once could collide: a shared default port, and bundle pruning that deleted a bundle still in use
 
 status: **fixed** (2026-10-27, before D-403's merge) · severity: **major** (a preview could fail mid-run, or with two valid bundles on one port render another composition without any error) · area: `crates/apelles-motion/src/{lib,still}.rs`
@@ -42,6 +51,7 @@ status: **fixed** (2026-10-27, before D-403's merge) · severity: **major** (a p
 status: **open** · severity: **major** (nothing is lost — D-402 replays the journal — but the user lands with no project open and can reasonably think the work is gone) · area: the reload path after `on_web_content_process_terminate` (`app/src-tauri/src/chroma/webview_lifecycle.rs`), the page's start-up project restore, `packages/editor/src/editJournal.ts`
 
 - **found:** 2026-10-26, live-verifying B-274. 3 `editor_set_clip_audio` edits, then `kill -9` of the WebKit content process. The app logged the termination at `warn`, reloaded and raised the notice, but came back with no project open (`editor_get_timeline`: "no timeline — open a project first"). The 3 edits replayed (volume 0.3, saved; the journal emptied) only after `open_project`.
+- **also seen:** 2026-10-27, a plain dev page reload (Vite full reload after `main.tsx` changed) also lands with no project open; the journal again restored the unsaved bed clip once the project was reopened. Same start-up restore gap.
 - **expected:** a termination reload reopens the project that was open, on the tab that was active, and replays the journal straight away, with the "Restored N changes" notice in view.
 
 ## B-276 — a new project with no explicit frame size refuses `editor_export`: "no clip to derive a composition size from", even with a still on a video track

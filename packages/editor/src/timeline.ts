@@ -2544,6 +2544,14 @@ export function checkMusicEdit(
     };
   }
   if (tr.locked) return { ok: false, reason: `track ${e.track} is locked` };
+  // B-279: a track other tracks duck under is the voice, never the bed.
+  const duckers = tl.tracks.flatMap((t, i) => (i !== e.track && t.duck_from === e.track ? [i] : []));
+  if (duckers.length > 0) {
+    return {
+      ok: false,
+      reason: `track ${e.track} is the voice — track${duckers.length > 1 ? 's' : ''} ${duckers.join(', ')} duck${duckers.length > 1 ? '' : 's'} under it — a music edit acts on the bed, not the voice`,
+    };
+  }
   const overlapping: number[] = [];
   tr.clips.forEach((c, i) => {
     if (c.start_frame < e.end && endFrame(c, fps) > e.start) overlapping.push(i);

@@ -313,6 +313,8 @@ describe('editor_music_edit — one edit now', () => {
     expect(silent.error).toMatch(/no music clip under frames 500..520/);
     const video = await callOp('editor_music_edit', { track: 0, startFrame: 5, endFrame: 20 });
     expect(video.error).toMatch(/video track/);
+    const ownWords = await callOp('editor_music_edit', { track: 1, firstWord: 0, lastWord: 1, wordTrack: 1, viewId: 'x' });
+    expect(ownWords.error).toMatch(/track 1 is the voice the words come from/);
     expect(bedClips()).toHaveLength(1);
   });
 });
