@@ -71,6 +71,7 @@ export function CatalogPanel({
   onAddPreset,
   onDeletePreset,
   onInsertJson,
+  catalogError = null,
 }: {
   targetSceneId: string | null;
   onAdd: (use: PrimitiveUse) => void;
@@ -86,7 +87,9 @@ export function CatalogPanel({
   onDeletePreset?: (presetId: string) => void;
   /** D-403 — land a pasted JSON fragment (layers or a whole scene) through
    *  the same plan the MCP ops use; returns the refusal to show, or null. */
-  onInsertJson?: (mode: InsertJsonMode, value: unknown) => MotionRefusal | null;
+  onInsertJson?: (mode: InsertJsonMode, value: unknown) => Promise<MotionRefusal | null>;
+  /** D-404 — why the last insert failed (an image import), shown in the panel. */
+  catalogError?: string | null;
 }) {
   const saved = presetsForDisplay(presets);
 
@@ -108,6 +111,11 @@ export function CatalogPanel({
            section is hidden entirely when the library is empty rather than
            showing an empty-state box, so the panel is unchanged for anyone who
            has never saved one. */}
+        {catalogError && (
+          <p className="text-[10px] text-red-400 border border-red-500/40 rounded px-2 py-1" role="alert">
+            {catalogError}
+          </p>
+        )}
         {presetError && (
           <p className="text-[10px] text-red-400 border border-red-500/40 rounded px-2 py-1">
             Components: {presetError}

@@ -7299,6 +7299,23 @@
       }
     },
     {
+      "name": "motion_import_asset",
+      "description": "Bring an image (a logo, a screenshot, a product shot) into the project so\n    an `image` layer can show it (D-404).\n\n    The file is copied into the project's own asset folder\n    (`<project>.chroma/motion/assets/`) and named by the SHA-256 of its bytes.\n    The answer's `id` -- `sha256:<64 hex>.<ext>` -- is what an `image` layer's\n    `src` takes; a manifest NEVER holds a file path, so the document renders\n    the same on any machine and a later change to the original file cannot\n    change a render. Importing the same bytes again returns the same `id` and\n    writes nothing (`copied: false`).\n\n    Accepted: png, jpg/jpeg, webp, gif, svg. Returns `{id, fileName, path,\n    bytes, copied, width, height, layerExample}` (`width`/`height` are null\n    for an svg); `layerExample` is a minimal layer using it.\n\n    Args:\n        path: absolute path to the image file.",
+      "inputSchema": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object",
+        "title": "motion_import_assetArguments"
+      }
+    },
+    {
       "name": "motion_insert_layers",
       "description": "Insert WHOLE layers into one scene in ONE undoable step (D-403) -- the\n    way to build a graphic as data instead of `motion_add_layer` plus a field\n    call per property.\n\n    Each layer is a full manifest fragment `{use, ...props}` validated against\n    its primitive's `propsSchema` (`motion_list_primitives`); unknown keys are\n    refused. If ANY layer has an issue, nothing is inserted and the answer\n    carries `issues` `[{path, code, message, expected, hint}]` (paths like\n    `layers[1].size`) -- the same list `motion_validate` gives.\n\n    Placement follows the primitive: 2D layers go into `scene.layers` (at\n    index `at`, default on top = the end; later layers paint over earlier\n    ones), 3D primitives into `scene.scene3d.children` (created with a\n    default camera when absent). A layer keeps the `id` you give it when that\n    id is free in the scene, so you can address your own layers by name\n    afterwards; otherwise one is minted. Times are SECONDS within the scene.\n\n    Returns `{sceneIndex, count, selections}` -- one selection per inserted\n    layer, in order. `dry_run=true` validates and reports without changing\n    anything.\n\n    Args:\n        scene_index: which scene.\n        layers: the layers, e.g. `[{\"use\": \"text\", \"id\": \"headline\", \"text\":\n            \"Ship it\", \"size\": 96, \"x\": 200, \"y\": 300}]`.\n        at: index in `scene.layers` for the 2D layers (default: the end).\n        dry_run: validate only.",
       "inputSchema": {
@@ -9922,7 +9939,7 @@
     },
     {
       "name": "motion_validate",
-      "description": "Dry-run the Motion schema (D-403): check a whole `manifest`, one\n    `scene`, or a list of `layers` WITHOUT changing anything. Pass at most one\n    of the three; pass none to check the live document in the app.\n\n    Returns `{checked, ok, loads, issues}`:\n      * `ok` -- no issue at all, unknown keys included. This is what\n        `motion_insert_layers` / `motion_set_scene` / `motion_add_layer(props)`\n        require, so a fragment that is `ok` here will be accepted there.\n      * `loads` -- the app would accept it as-is (types of known fields are\n        right). Existing project files may load with unknown keys; authoring\n        refuses them because an unknown key is almost always a typo that\n        renders as nothing.\n      * `issues` -- `[{path, code, message, expected, hint}]`. `path` reads\n        like `scenes[0].layers[2].size`; `code` is stable (`invalid_type`,\n        `missing_field`, `invalid_value`, `unrecognized_key`, `unknown_use`,\n        `too_small`, ...); `expected` is what would have been accepted (a type,\n        the enum's options, the known keys); `hint` is a concrete fix such as\n        `did you mean \"color\"?`.\n\n    Every mutating `motion_*` tool returns this same `issues` list when it\n    refuses, so you can fix a call from its answer alone.\n\n    Args:\n        manifest: a whole manifest `{title, width?, height?, fps?, scenes}`.\n        scene: one scene `{id?, dur, layers?, camera?, scene3d?, bg?, ...}`.\n        layers: a list of layers, each `{use, ...props}` (see each primitive's\n            `propsSchema` in `motion_list_primitives`).\n        scene_index: with `scene`, report paths under `scenes[scene_index]`.",
+      "description": "Dry-run the Motion schema (D-403): check a whole `manifest`, one\n    `scene`, or a list of `layers` WITHOUT changing anything. Pass at most one\n    of the three; pass none to check the live document in the app.\n\n    Returns `{checked, ok, loads, issues}`:\n      * `ok` -- no issue at all, unknown keys included. This is what\n        `motion_insert_layers` / `motion_set_scene` / `motion_add_layer(props)`\n        require, so a fragment that is `ok` here will be accepted there.\n      * `loads` -- the app would accept it as-is (types of known fields are\n        right). Existing project files may load with unknown keys; authoring\n        refuses them because an unknown key is almost always a typo that\n        renders as nothing.\n      * `issues` -- `[{path, code, message, expected, hint}]`. `path` reads\n        like `scenes[0].layers[2].size`; `code` is stable (`invalid_type`,\n        `missing_field`, `invalid_value`, `unrecognized_key`, `unknown_use`,\n        `unknown_icon`, `too_small`, ...); `expected` is what would have been accepted (a type,\n        the enum's options, the known keys); `hint` is a concrete fix such as\n        `did you mean \"color\"?`.\n\n    Every mutating `motion_*` tool returns this same `issues` list when it\n    refuses, so you can fix a call from its answer alone.\n\n    Args:\n        manifest: a whole manifest `{title, width?, height?, fps?, scenes}`.\n        scene: one scene `{id?, dur, layers?, camera?, scene3d?, bg?, ...}`.\n        layers: a list of layers, each `{use, ...props}` (see each primitive's\n            `propsSchema` in `motion_list_primitives`).\n        scene_index: with `scene`, report paths under `scenes[scene_index]`.",
       "inputSchema": {
         "properties": {
           "manifest": {
@@ -17197,6 +17214,29 @@
         {
           "op": "motion_get_state",
           "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_import_asset",
+      "case": "minimal",
+      "arguments": {
+        "path": "v_motion_import_asset.path"
+      },
+      "requests": [
+        {
+          "op": "motion_import_asset",
+          "args": {
+            "path": "v_motion_import_asset.path"
+          },
           "timeout_ms": 20000
         }
       ],

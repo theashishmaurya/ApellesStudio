@@ -16,8 +16,14 @@
  * conflict every file in this package works around (see `Button.tsx`).
  */
 import { useState } from 'react';
-import { validateLayers, validateScene, type ValidationIssue } from '@apelles/motion-engine/src/engine/validate';
-import type { MotionRefusal } from './authoring';
+import {
+  iconIssues,
+  validateLayers,
+  validateScene,
+  withIssues,
+  type ValidationIssue,
+} from '@apelles/motion-engine/src/engine/validate';
+import { iconNamesFor, type MotionRefusal } from './authoring';
 
 export type InsertJsonMode = 'layers' | 'scene';
 
@@ -28,7 +34,7 @@ export function InsertJsonBox({
   onInsert,
 }: {
   disabled: boolean;
-  onInsert: (mode: InsertJsonMode, value: unknown) => MotionRefusal | null;
+  onInsert: (mode: InsertJsonMode, value: unknown) => Promise<MotionRefusal | null>;
 }) {
   const [mode, setMode] = useState<InsertJsonMode>('layers');
   const [text, setText] = useState('');
@@ -43,13 +49,17 @@ export function InsertJsonBox({
     }
   };
 
-  const check = () => {
+  const check = async () => {
     const parsed = parse();
     if (!parsed.ok) return;
-    const result =
+    const value = mode === 'layers' && !Array.isArray(parsed.value) ? [parsed.value] : parsed.value;
+    const base =
       mode === 'layers'
-        ? validateLayers(Array.isArray(parsed.value) ? parsed.value : [parsed.value])
-        : validateScene({ id: 'scene', ...(parsed.value as Record<string, unknown>) });
+        ? validateLayers(value)
+        : validateScene({ id: 'scene', ...(value as Record<string, unknown>) });
+    // D-405 — the same icon-name pass `motion_validate` runs.
+    const icons = await iconNamesFor(value);
+    const result = icons ? withIssues(base, iconIssues(value, icons, mode === 'layers' ? ['layers'] : ['scene'])) : base;
     setStatus(
       result.ok
         ? { kind: 'ok', message: 'valid' }
@@ -57,10 +67,10 @@ export function InsertJsonBox({
     );
   };
 
-  const insert = () => {
+  const insert = async () => {
     const parsed = parse();
     if (!parsed.ok) return;
-    const refusal = onInsert(mode, parsed.value);
+    const refusal = await onInsert(mode, parsed.value);
     if (refusal) {
       setStatus({ kind: 'error', message: refusal.issues.length > 0 ? `${refusal.issues.length} issue(s)` : refusal.error, issues: refusal.issues });
       return;
@@ -112,7 +122,7 @@ export function InsertJsonBox({
         <div className="flex gap-1">
           <button
             type="button"
-            onClick={check}
+            onClick={() => void check()}
             disabled={text.trim() === ''}
             className="h-6 flex-1 rounded border border-border-color text-[10px] text-text-secondary hover:text-text-primary disabled:opacity-40"
           >
@@ -120,7 +130,7 @@ export function InsertJsonBox({
           </button>
           <button
             type="button"
-            onClick={insert}
+            onClick={() => void insert()}
             disabled={disabled || text.trim() === ''}
             className="h-6 flex-1 rounded border border-dashed border-border-color text-[10px] text-text-secondary hover:text-text-primary hover:border-accent disabled:opacity-40"
           >

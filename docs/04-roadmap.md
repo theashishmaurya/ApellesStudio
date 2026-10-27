@@ -249,7 +249,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 
 0e. **Motion authoring from MCP: new graphics and templates as data, not code** (owner, 2026-10-26; design `docs/notes/motion-authoring-mcp.md`).
    - [x] Phase 0 — per-primitive schemas, `motion_validate`, `motion_insert_layers`, `motion_set_scene`, `motion_add_layer(props)`, `propsSchema`, `motion_preview_frame` + GUI (Insert as JSON, Still). **D-403, 2026-10-27.**
-   - [ ] Phase 1 — brand primitives (`image` + hashed assets, `icon`, `shape`, `counter`, `group`), `anim` property tracks.
+   - [x] Phase 1 — brand primitives (`image` + hashed assets, `icon`, `shape`, `counter`, `group`), `anim` property tracks + GUI (pickers, nested group rows). **D-404/D-405, 2026-10-27.** Open: selecting a child inside a group; asset garbage collection; preview bundle shared across projects.
    - [ ] Phase 2 — templates (`templateDef.ts`, library, 7 MCP tools, GUI, starters).
    - [ ] Phase 3 — `path`, `repeater`, `textonpath`. Phase 4 — Lottie import (no expressions).
 

@@ -441,6 +441,11 @@ pub struct MotionValidateArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionImportAssetArgs {
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct MotionInsertLayersArgs {
     pub scene_index: i64,
     pub layers: Vec<serde_json::Map<String, Value>>,
@@ -1157,7 +1162,7 @@ impl ApellesMcp {
       * `issues` -- `[{path, code, message, expected, hint}]`. `path` reads
         like `scenes[0].layers[2].size`; `code` is stable (`invalid_type`,
         `missing_field`, `invalid_value`, `unrecognized_key`, `unknown_use`,
-        `too_small`, ...); `expected` is what would have been accepted (a type,
+        `unknown_icon`, `too_small`, ...); `expected` is what would have been accepted (a type,
         the enum's options, the known keys); `hint` is a concrete fix such as
         `did you mean "color"?`.
 
@@ -1181,6 +1186,35 @@ impl ApellesMcp {
             .put("layers", p.layers)
             .put("scene_index", p.scene_index);
         let env = self.op("motion_validate", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_import_asset",
+        description = r#"Bring an image (a logo, a screenshot, a product shot) into the project so
+    an `image` layer can show it (D-404).
+
+    The file is copied into the project's own asset folder
+    (`<project>.chroma/motion/assets/`) and named by the SHA-256 of its bytes.
+    The answer's `id` -- `sha256:<64 hex>.<ext>` -- is what an `image` layer's
+    `src` takes; a manifest NEVER holds a file path, so the document renders
+    the same on any machine and a later change to the original file cannot
+    change a render. Importing the same bytes again returns the same `id` and
+    writes nothing (`copied: false`).
+
+    Accepted: png, jpg/jpeg, webp, gif, svg. Returns `{id, fileName, path,
+    bytes, copied, width, height, layerExample}` (`width`/`height` are null
+    for an svg); `layerExample` is a minimal layer using it.
+
+    Args:
+        path: absolute path to the image file."#
+    )]
+    pub async fn motion_import_asset(
+        &self,
+        Parameters(p): Parameters<MotionImportAssetArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("path", p.path);
+        let env = self.op("motion_import_asset", args).await?;
         Ok(render::json_text(&env))
     }
 

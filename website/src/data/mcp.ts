@@ -82,8 +82,8 @@ export interface ToolGroup {
  * (D-398) and `motion_define_theme` / `motion_list_themes` / `motion_delete_theme`
  * (D-399) (Motion 43 → 47). Re-counted against the real file.
  *
- * 192 → 199 on 2026-10-27 (D-403): `motion_validate`, `motion_insert_layers`,
- * `motion_set_scene`, `motion_preview_frame` (Motion 47 → 51), plus D-400's three
+ * 192 → 200 on 2026-10-27 (D-403, D-404): `motion_validate`, `motion_insert_layers`,
+ * `motion_set_scene`, `motion_preview_frame`, `motion_import_asset` (Motion 47 → 52), plus D-400's three
  * Openverse audio tools that pass added without a re-count (Edit 83 → 86).
  * Re-counted against the real file.
  *
@@ -100,8 +100,8 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 199,
-  shipped: 187,
+  all: 200,
+  shipped: 188,
   debugOnly: 12,
 } as const;
 
@@ -161,7 +161,7 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
   },
   {
     name: 'Motion',
-    count: 51,
+    count: 52,
     blurb:
       'The motion-graphics room, closed as a gap on 2026-09-09 (D-257/D-259/D-260) after a year of being this surface’s sharpest shortfall. Scenes and layers from a real primitive catalog, per-layer keyframes with bezier easing, 2D and 3D cameras, align and distribute, and a Remotion render that emits one video file per scene.',
     sample: [

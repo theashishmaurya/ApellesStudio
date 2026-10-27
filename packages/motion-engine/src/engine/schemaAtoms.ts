@@ -13,6 +13,7 @@
  * answered by a synchronous schema.
  */
 import { z } from "zod";
+import { ASSET_ID_PATTERN } from "../lib/assetId";
 
 /** The marker `colorSchema` registers under, read back by `isColorSchema` (and
  *  published to agents as JSON Schema `format: "color"`). */
@@ -74,3 +75,8 @@ export const easeCurve = z
     ([x1, , x2]) => x1 >= 0 && x1 <= 1 && x2 >= 0 && x2 <= 1,
     'ease x1/x2 must be within [0,1]',
   );
+
+/** D-404 — a project asset by content hash: `sha256:<64 hex>.<ext>`. */
+export const assetIdSchema = z
+  .string()
+  .regex(ASSET_ID_PATTERN, "an asset id from motion_import_asset: sha256:<64 hex>.<png|jpg|jpeg|webp|gif|svg>");

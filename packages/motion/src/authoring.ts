@@ -17,7 +17,8 @@
 import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
 import { formatIssues, validateLayers, validateScene, type ValidationIssue } from '@apelles/motion-engine/src/engine/validate';
 import { manifestSchema } from '@apelles/motion-engine/src/engine/schema';
-import { issuesFromZod } from '@apelles/motion-engine/src/engine/validate';
+import { containsIcon, iconIssues, issuesFromZod } from '@apelles/motion-engine/src/engine/validate';
+import { loadPhosphorIcons } from '@apelles/motion-engine/src/lib/phosphorIcons';
 import { insertLayers, replaceScene } from './manifestEdit';
 import { checkSceneRename } from './editLinks';
 import type { Selection } from './LayerList';
@@ -50,6 +51,14 @@ export function fragmentRefusal(what: string, issues: ValidationIssue[]): Motion
  *  a real one (B-242/D-371's same trick in `motion_add_scene`). */
 export const NEW_SCENE_ID_PLACEHOLDER = '/new-scene';
 
+/** D-405 — the installed Phosphor names, loaded only when `fragment` has an
+ *  `icon` layer somewhere (so a fragment without one never pays for the
+ *  library); `undefined` otherwise. What the plans' `iconNames` takes. */
+export async function iconNamesFor(fragment: unknown): Promise<ReadonlySet<string> | undefined> {
+  if (!containsIcon(fragment)) return undefined;
+  return new Set((await loadPhosphorIcons()).keys());
+}
+
 export type PlanResult<T> = ({ ok: true; manifest: Manifest } & T) | ({ ok: false } & MotionRefusal);
 
 /** Validate `layers` strictly and insert them into scene `sceneIndex` (2D at
@@ -59,6 +68,7 @@ export function planInsertLayers(
   sceneIndex: number,
   layers: unknown,
   at?: number,
+  iconNames?: ReadonlySet<string>,
 ): PlanResult<{ selections: Selection[]; count: number }> {
   if (!manifest.scenes[sceneIndex]) {
     return { ok: false, error: `no scene at index ${sceneIndex} (0..${manifest.scenes.length - 1})`, issues: [] };
@@ -67,7 +77,8 @@ export function planInsertLayers(
     return { ok: false, error: 'layers (non-empty array of layer objects, each with a "use") required', issues: [] };
   }
   const checked = validateLayers(layers);
-  if (!checked.ok) return { ok: false, ...fragmentRefusal('layers', checked.issues) };
+  const issues = [...checked.issues, ...(iconNames ? iconIssues(layers, iconNames, ['layers']) : [])];
+  if (issues.length > 0) return { ok: false, ...fragmentRefusal('layers', issues) };
   const { manifest: next, selections } = insertLayers(manifest, sceneIndex, layers as Record<string, unknown>[], at);
   const refused = refusalFor(next);
   if (refused) return { ok: false, ...refused };
@@ -82,6 +93,7 @@ export function planSetScene(
   sceneIndex: number,
   scene: unknown,
   links: MotionEditLinks | undefined,
+  iconNames?: ReadonlySet<string>,
 ): PlanResult<{ appended: boolean }> {
   const appending = sceneIndex === manifest.scenes.length;
   if (!appending && !manifest.scenes[sceneIndex]) {
@@ -98,7 +110,8 @@ export function planSetScene(
   // `id` is optional here (kept or generated), so validate a copy that has one.
   const fallbackId = appending ? 'new-scene' : manifest.scenes[sceneIndex].id;
   const checked = validateScene({ id: fallbackId, ...raw }, sceneIndex);
-  if (!checked.ok) return { ok: false, ...fragmentRefusal('scene', checked.issues) };
+  const issues = [...checked.issues, ...(iconNames ? iconIssues(raw, iconNames, ['scenes', sceneIndex]) : [])];
+  if (issues.length > 0) return { ok: false, ...fragmentRefusal('scene', issues) };
 
   if (typeof raw.id === 'string' && (appending || raw.id !== manifest.scenes[sceneIndex].id)) {
     const scenes = appending ? [...manifest.scenes, { id: NEW_SCENE_ID_PLACEHOLDER }] : manifest.scenes;

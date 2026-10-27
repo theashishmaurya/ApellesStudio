@@ -113,7 +113,7 @@
  * moved onto that wrapper, which also widens the reorder drop target to the
  * full row.
  */
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { CopyIcon, FilmSlateIcon, PlusIcon, TrashIcon, VideoCameraIcon } from '@phosphor-icons/react';
 import type { Manifest, Layer } from '@apelles/motion-engine/src/engine/schema';
@@ -234,8 +234,42 @@ export function layerLabel(layer: Layer): string {
     const text = raw.text as string;
     return `text: "${text.length > 24 ? text.slice(0, 24) + '…' : text}"`;
   }
+  // D-405 — the brand primitives name what they show.
+  if (layer.use === 'icon' && typeof raw.name === 'string') return `icon: ${raw.name}`;
+  if (layer.use === 'counter' && typeof raw.to === 'number') {
+    return `counter: ${typeof raw.prefix === 'string' ? raw.prefix : ''}${raw.to}${typeof raw.suffix === 'string' ? raw.suffix : ''}`;
+  }
+  if (layer.use === 'shape') return `shape: ${typeof raw.shape === 'string' ? raw.shape : 'rect'}`;
+  if (layer.use === 'group') {
+    const n = Array.isArray(raw.children) ? raw.children.length : 0;
+    return `group (${n} layer${n === 1 ? '' : 's'})`;
+  }
   return layer.use;
 }
+
+/**
+ * D-405 — a group's children, as indented rows under the group's own row, so
+ * the structure is visible and each child is recognisable (its thumbnail-free
+ * label, nested groups further indented). A child row SELECTS ITS TOP-LEVEL
+ * GROUP: the selection model (and every `motion_*` op's addressing) reaches a
+ * scene's layers, not the inside of a group, so the group is what the
+ * Inspector edits — its `children` field holds the child layers. This is the
+ * same thing a click on a group child in the canvas selects (`Video.tsx`).
+ */
+export function groupChildRows(
+  layer: Layer,
+  depth: number,
+): { key: string; label: string; depth: number }[] {
+  const raw = layer as unknown as Record<string, unknown>;
+  if (layer.use !== 'group' || !Array.isArray(raw.children)) return [];
+  return (raw.children as Layer[]).flatMap((child, i) => [
+    { key: `${depth}-${i}`, label: layerLabel(child), depth },
+    ...groupChildRows(child, depth + 1).map((r) => ({ ...r, key: `${depth}-${i}/${r.key}` })),
+  ]);
+}
+
+/** px of indent per group depth in the layer list. */
+const GROUP_INDENT_PX = 12;
 
 /** the row button's own look, WITHOUT a width — `rowBase` (a row with
  *  nothing beside it) pins it to the full width; a row that also carries
@@ -867,7 +901,23 @@ export function LayerList({
         <div key={scene.id} className="flex flex-col gap-0.5">
           {row(si, { kind: 'scene' }, scene.id, false, 0, sceneActions(si), editLinks?.[scene.id])}
           {scene.camera && row(si, { kind: 'camera' }, 'Camera', true, cameraKeyCount(scene))}
-          {scene.layers?.map((layer, li) => layerRow(si, 'layer', li, layer, layerKeyCount(layer)))}
+          {scene.layers?.map((layer, li) => (
+            <Fragment key={`layer-${li}`}>
+              {layerRow(si, 'layer', li, layer, layerKeyCount(layer))}
+              {groupChildRows(layer, 1).map((child) => (
+                <button
+                  key={`group-${li}-${child.key}`}
+                  type="button"
+                  title="A layer inside this group; selecting it selects the group"
+                  className={`${rowBase} text-text-secondary/80 text-[10px]`}
+                  style={{ paddingLeft: 16 + child.depth * GROUP_INDENT_PX }}
+                  onClick={() => onSelect({ sceneIndex: si, target: { kind: 'layer', index: li, id: layer.id } })}
+                >
+                  {child.label}
+                </button>
+              ))}
+            </Fragment>
+          ))}
           {/* the drop-line for "append after the last layer" — there is no
              row AT `list.length` to draw a top border on, so this is drawn
              as its own bottom border on the last row instead. */}

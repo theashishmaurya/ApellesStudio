@@ -63,6 +63,17 @@ fn render_twice(
         let outcome = render_preview(&req).expect("preview renders");
         grid = (outcome.columns, outcome.rows);
         digests.push(sha256_hex(&outcome.path));
+        // To LOOK at what was rendered (the hashes only prove it is stable):
+        // `APELLES_PREVIEW_KEEP=<dir>` copies each first-run PNG there.
+        if let (0, Ok(keep)) = (run, std::env::var("APELLES_PREVIEW_KEEP")) {
+            let stem = manifest
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let frames_label: Vec<String> = frames.iter().map(u32::to_string).collect();
+            let dest = Path::new(&keep).join(format!("{stem}-{}.png", frames_label.join("_")));
+            std::fs::copy(&outcome.path, dest).expect("keep a copy");
+        }
     }
     (digests[0].clone(), digests[1].clone(), grid)
 }
@@ -83,4 +94,62 @@ fn several_frames_come_back_as_one_deterministic_contact_sheet() {
     println!("sample.json contact sheet: {a}");
     assert_eq!(a, b);
     assert_eq!(grid, (4, 2));
+}
+
+/// D-404 — a temp project asset folder holding the fixture logo, imported the
+/// real way (`assets::import_asset`), and its id.
+fn asset_folder() -> (tempfile::TempDir, PathBuf, String) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let assets = dir.path().join("p.chroma/motion/assets");
+    let record = apelles_motion::assets::import_asset(&fixture("logo.svg"), &assets)
+        .expect("import the logo");
+    (dir, assets, record.id)
+}
+
+/// D-405 — each new primitive (image, icon, shape, counter, group) is one scene
+/// of `brand-primitives.json`; render one frame of each twice and compare.
+#[test]
+#[ignore = "needs Node + the engine's node_modules + headless Chrome"]
+fn each_brand_primitive_renders_identically_twice() {
+    let (dir, assets, logo_id) = asset_folder();
+    let hash = logo_id
+        .trim_start_matches("sha256:")
+        .trim_end_matches(".svg")
+        .to_string();
+    let text = std::fs::read_to_string(fixture("brand-primitives.json"))
+        .expect("read fixture")
+        .replace("LOGO_HASH", &hash);
+    let manifest = dir.path().join("brand-primitives.json");
+    std::fs::write(&manifest, text).expect("write manifest");
+    // Scenes are 1 s at 30 fps, in this order; frame 20 of each is mid-entrance
+    // or mid-animation, where a non-deterministic input would show.
+    for (i, name) in ["image", "icon", "shape", "counter", "group"]
+        .iter()
+        .enumerate()
+    {
+        let frame = u32::try_from(i).expect("index") * 30 + 20;
+        let (a, b, _) = render_twice(&manifest, &[frame], Some(assets.clone()));
+        println!("{name} (frame {frame}): {a}");
+        assert_eq!(a, b, "{name}: same frame twice must be identical");
+    }
+}
+
+/// D-405 — the end-to-end proof's second half: the document
+/// `packages/motion/src/brandScene.e2e.test.ts` built through the op layer is
+/// rendered for real (a contact sheet of the reveal, the count and the icon
+/// row), twice.
+#[test]
+#[ignore = "needs Node + the engine's node_modules + headless Chrome"]
+fn the_agent_built_brand_scene_renders_identically_twice() {
+    let (_dir, assets, logo_id) = asset_folder();
+    let text = std::fs::read_to_string(fixture("brand-scene.json")).expect("read fixture");
+    assert!(
+        text.contains(&logo_id),
+        "the op layer's asset id must be the Rust importer's id for the same file"
+    );
+    // Scene "brand" starts at frame 30; 0.4 s / 1.6 s / 3.5 s into it.
+    let (a, b, grid) = render_twice(&fixture("brand-scene.json"), &[42, 78, 135], Some(assets));
+    println!("brand-scene.json contact sheet: {a}");
+    assert_eq!(a, b);
+    assert_eq!(grid, (3, 1));
 }

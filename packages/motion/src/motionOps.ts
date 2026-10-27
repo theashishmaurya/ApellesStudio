@@ -169,6 +169,7 @@ import { checkSceneRename } from './editLinks';
 // D-403 — the validated-fragment plans this registry and the GUI share.
 import {
   fragmentRefusal,
+  iconNamesFor,
   NEW_SCENE_ID_PLACEHOLDER,
   planInsertLayers,
   planSetScene,
@@ -181,8 +182,11 @@ import { layerLabel, type Selection } from './LayerList';
 import { sceneDurationFrames, sceneStartFrame, totalFrames } from '@apelles/motion-engine/src/engine/build';
 import { manifestSchema, type Cam2dKey, type Cam3dKey, type Manifest, type ThemeName, type TransformKey } from '@apelles/motion-engine/src/engine/schema';
 import {
+  iconIssues,
   issuesFromZod,
   validateLayers,
+  withIssues,
+  type ValidationResult,
   validateManifest,
   validateScene,
 } from '@apelles/motion-engine/src/engine/validate';
@@ -192,6 +196,7 @@ import type { ThemeDef } from '@apelles/motion-engine/src/themeDef';
 import { buildThemeDef, findNamedTheme, removeTheme, upsertTheme } from './themeLibrary';
 import type { LoadState, ReloadOutcome, RenderOptions, RenderOutcome, SaveOutcome } from './useMotionManifest';
 import type { MotionRenderStatus } from './renderLoop';
+import type { MotionAssetRecord } from './manifestIO';
 
 /**
  * The slice of `useMotionManifest()`'s return value these ops actually use.
@@ -273,6 +278,10 @@ export interface MotionOpsContext {
    *  then refuses cleanly). Injected for the same reason `presets` is: it is a
    *  Tauri call, and this factory stays Tauri-free. */
   preview?: (req: MotionPreviewRequest) => Promise<MotionPreviewResult>;
+  /** D-404 — copy a file into the project's asset folder by content hash
+   *  (`chroma_motion_import_asset`), or `undefined` when nothing supplies it
+   *  (the op then refuses cleanly). Injected for the same reason `preview` is. */
+  importAsset?: (path: string) => Promise<MotionAssetRecord>;
 }
 
 /** D-399 — the ops layer's window onto the saved-theme library. */
@@ -926,6 +935,22 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       camera3dKeyFields: CAM3D_KEY_FIELDS,
     }),
 
+    /**
+     * D-404 — copy an image into the project's asset folder, named by the
+     * SHA-256 of its bytes, and return the `sha256:<hex>.<ext>` id an `image`
+     * layer's `src` takes. Importing the same file twice returns the same id
+     * and writes nothing. The manifest never holds a path.
+     */
+    motion_import_asset: async (a) => {
+      const cur = api();
+      if (cur.loadState === 'no-project') return { error: 'no project open — open one in the Colorist tab' };
+      const path = a?.path;
+      if (typeof path !== 'string' || path.length === 0) return { error: 'path (absolute path to an image file) required' };
+      if (!ctx.importAsset) return { error: 'asset import is not available in this build' };
+      const record = await ctx.importAsset(path);
+      return { ...record, layerExample: { use: "image", src: record.id } };
+    },
+
     // ---- scenes -------------------------------------------------------
 
     /**
@@ -1446,7 +1471,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
 
     /** insert a schema-valid default instance of a primitive into a scene —
      *  the Catalog panel's own action (`MotionTab.tsx`'s `onCatalogAdd`). */
-    motion_add_layer: (a) => {
+    motion_add_layer: async (a) => {
       const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
@@ -1475,7 +1500,8 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
           return { error: 'props may not set "use" (that is the use argument) or "id" (minted for you)' };
         }
         const merged = { ...defaultLayerFor(use as PrimitiveUse), ...props, use };
-        const checked = validateLayers([merged], ['props']);
+        const icons = await iconNamesFor(merged);
+        const checked = withIssues(validateLayers([merged], ['props']), icons ? iconIssues([merged], icons, ['props']) : []);
         if (!checked.ok) return fragmentRefusal('props', checked.issues);
       }
 
@@ -1498,21 +1524,28 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * Each issue is `{path, code, message, expected?, hint?}`, the same list a
      * refused mutating op returns. Mutates nothing.
      */
-    motion_validate: (a) => {
+    motion_validate: async (a) => {
       const given = (['manifest', 'scene', 'layers'] as const).filter((k) => a?.[k] !== undefined && a[k] !== null);
       if (given.length > 1) return { error: 'pass at most one of manifest, scene, layers' };
       const which = given[0];
-      if (which === 'manifest') return { checked: 'manifest', ...validateManifest(a.manifest) };
+      // D-405 — plus the semantic pass a schema cannot make: icon names that
+      // exist in the installed library (loaded only when there is an icon).
+      const withIcons = async (data: unknown, result: ValidationResult, root: (string | number)[]) => {
+        const icons = await iconNamesFor(data);
+        return icons ? withIssues(result, iconIssues(data, icons, root)) : result;
+      };
+      if (which === 'manifest') return { checked: 'manifest', ...(await withIcons(a.manifest, validateManifest(a.manifest), [])) };
       if (which === 'scene') {
         const raw = arg(a, 'scene_index', 'sceneIndex');
         const sceneIndex = raw === undefined || raw === null ? undefined : Math.round(Number(raw));
-        return { checked: 'scene', ...validateScene(a.scene, sceneIndex) };
+        const root = sceneIndex === undefined ? ['scene'] : ['scenes', sceneIndex];
+        return { checked: 'scene', ...(await withIcons(a.scene, validateScene(a.scene, sceneIndex), root)) };
       }
-      if (which === 'layers') return { checked: 'layers', ...validateLayers(a.layers) };
+      if (which === 'layers') return { checked: 'layers', ...(await withIcons(a.layers, validateLayers(a.layers), ['layers'])) };
       const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
-      return { checked: 'live manifest', ...validateManifest(guard.manifest) };
+      return { checked: 'live manifest', ...(await withIcons(guard.manifest, validateManifest(guard.manifest), [])) };
     },
 
     /**
@@ -1521,7 +1554,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * (unknown keys refused); the resulting document must load. `dry_run`
      * validates and reports what would be inserted without committing.
      */
-    motion_insert_layers: (a) => {
+    motion_insert_layers: async (a) => {
       const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
@@ -1535,7 +1568,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         if (!Number.isFinite(at)) return { error: 'at must be an integer index into scene.layers' };
       }
 
-      const plan = planInsertLayers(guard.manifest, sceneIndex, a?.layers, at);
+      const plan = planInsertLayers(guard.manifest, sceneIndex, a?.layers, at, await iconNamesFor(a?.layers));
       if (!plan.ok) return { error: plan.error, ...(plan.issues.length > 0 ? { issues: plan.issues } : {}) };
       const { selections, count } = plan;
       if (a?.dry_run === true || a?.dryRun === true) return { dryRun: true, ok: true, sceneIndex, count, selections };
@@ -1551,14 +1584,14 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * `motion_set_scene_field` (`checkSceneRename`, D-371). `dry_run`
      * validates without committing.
      */
-    motion_set_scene: (a) => {
+    motion_set_scene: async (a) => {
       const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
 
       const sceneIndex = Math.round(Number(arg(a, 'scene_index', 'sceneIndex')));
       if (!Number.isFinite(sceneIndex)) return { error: 'scene_index (integer) required' };
-      const plan = planSetScene(guard.manifest, sceneIndex, a?.scene, ctx.editLinks?.());
+      const plan = planSetScene(guard.manifest, sceneIndex, a?.scene, ctx.editLinks?.(), await iconNamesFor(a?.scene));
       if (!plan.ok) return { error: plan.error, ...(plan.issues.length > 0 ? { issues: plan.issues } : {}) };
       const next = plan.manifest;
       const result = {

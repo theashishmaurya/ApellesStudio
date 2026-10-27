@@ -14,6 +14,10 @@ import { LabelBox, LayerStack } from "../primitives/Scene3D";
 import { DeviceFrame } from "../primitives/DeviceFrame";
 import { ClaudeChat } from "../primitives/ClaudeChat";
 import { Plot } from "../primitives/Plot";
+import { Image } from "../primitives/Image";
+import { Icon } from "../primitives/Icon";
+import { Shape } from "../primitives/Shape";
+import { Counter } from "../primitives/Counter";
 import { resolveActiveStep } from "../lib/chatLayout";
 import type { Active, Layer } from "./schema";
 
@@ -42,6 +46,14 @@ const generic: Adapter = (raw, fps) => {
     ...(at !== undefined ? { start: f(at as number, fps) } : {}),
     ...(dur !== undefined ? { dur: f(dur as number, fps) } : {}),
   };
+};
+
+/** D-405 — `generic` plus `enterDur` (seconds in the manifest) in frames, the
+ *  one extra timing field the brand primitives share. */
+const withEnter: Adapter = (raw, fps, frame) => {
+  const g = generic(raw, fps, frame);
+  if (typeof raw.enterDur === "number") g.enterDur = f(raw.enterDur, fps);
+  return g;
 };
 
 const REGISTRY: Record<
@@ -152,6 +164,14 @@ const REGISTRY: Record<
       return g;
     },
   },
+
+  // D-405 — the brand building blocks. `counter`'s `dur` is the count's own
+  // length, which `generic` already converts; `group` is not here: it is a
+  // container, rendered by `Video.tsx`'s `renderLayers` itself.
+  image: { component: Image as React.FC<Record<string, unknown>>, adapt: withEnter },
+  icon: { component: Icon as React.FC<Record<string, unknown>>, adapt: withEnter },
+  shape: { component: Shape as React.FC<Record<string, unknown>>, adapt: withEnter },
+  counter: { component: Counter as React.FC<Record<string, unknown>>, adapt: generic },
 
   particleflow: { component: ParticleFlow as React.FC<Record<string, unknown>>, adapt: generic },
   labelbox: { component: LabelBox as React.FC<Record<string, unknown>>, adapt: generic },

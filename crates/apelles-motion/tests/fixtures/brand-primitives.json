@@ -1,0 +1,61 @@
+{
+  "title": "D-405 brand primitives, one per scene",
+  "width": 1280,
+  "height": 720,
+  "fps": 30,
+  "scenes": [
+    {
+      "id": "image",
+      "dur": 1,
+      "bg": "#0b0d12",
+      "layers": [
+        { "use": "image", "src": "sha256:LOGO_HASH.svg", "x": 440, "y": 160, "w": 400, "h": 400, "fit": "contain", "radius": 32, "borderWidth": 4, "borderColor": "#f5c542", "at": 0, "enter": "pop" }
+      ]
+    },
+    {
+      "id": "icon",
+      "dur": 1,
+      "bg": "#0b0d12",
+      "layers": [
+        { "use": "icon", "name": "rocket-launch", "weight": "duotone", "size": 200, "x": 340, "y": 260, "color": "#ffffff", "at": 0 },
+        { "use": "icon", "name": "chart-line-up", "weight": "bold", "size": 200, "x": 740, "y": 260, "color": "#f5c542", "at": 0.2, "enter": "rise" }
+      ]
+    },
+    {
+      "id": "shape",
+      "dur": 1,
+      "bg": "#0b0d12",
+      "layers": [
+        { "use": "shape", "shape": "roundrect", "x": 80, "y": 200, "w": 320, "h": 320, "radius": 48, "gradient": { "type": "linear", "angle": 30, "stops": [{ "at": 0, "color": "#5b8def" }, { "at": 1, "color": "#a259ff" }] } },
+        { "use": "shape", "shape": "star", "x": 480, "y": 200, "w": 320, "h": 320, "points": 5, "innerRadius": 0.45, "fill": "#f5c542", "stroke": "#ffffff", "strokeWidth": 6 },
+        { "use": "shape", "shape": "ellipse", "x": 880, "y": 200, "w": 320, "h": 320, "fill": "transparent", "stroke": "#e5484d", "strokeWidth": 10, "enter": "draw", "enterDur": 1 },
+        { "use": "shape", "shape": "line", "x": 80, "y": 600, "w": 1120, "h": 0, "stroke": "#ffffff", "strokeWidth": 4, "anim": { "strokeProgress": [{ "at": 0, "v": 0 }, { "at": 1, "v": 1 }] } }
+      ]
+    },
+    {
+      "id": "counter",
+      "dur": 1,
+      "bg": "#0b0d12",
+      "layers": [
+        { "use": "counter", "from": 0, "to": 1234567.89, "decimals": 2, "prefix": "$", "thousands": true, "size": 120, "x": 640, "y": 300, "align": "center", "color": "#ffffff", "at": 0, "dur": 1 }
+      ]
+    },
+    {
+      "id": "group",
+      "dur": 1,
+      "bg": "#0b0d12",
+      "layers": [
+        {
+          "use": "group",
+          "at": 0,
+          "mask": { "kind": "text", "text": "BRAND", "x": 640, "y": 220, "size": 260, "weight": 900, "align": "center" },
+          "transform": { "x": 0, "y": 0, "keys": [{ "at": 0, "y": 20 }, { "at": 1, "y": 0 }] },
+          "children": [
+            { "use": "shape", "shape": "rect", "x": 0, "y": 0, "w": 1280, "h": 720, "enter": "none", "gradient": { "type": "linear", "angle": 0, "stops": [{ "at": 0, "color": "#f5c542" }, { "at": 1, "color": "#e5484d" }] } },
+            { "use": "group", "at": 0.2, "mask": { "kind": "ellipse", "x": 940, "y": 120, "w": 200, "h": 200 }, "children": [ { "use": "shape", "shape": "rect", "x": 900, "y": 100, "w": 300, "h": 300, "fill": "#5b8def", "enter": "none" } ] }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -61,6 +61,13 @@ is left). It has no threads and renders nothing; the app's worker
 transitions. Persistence is an atomic JSON write beside the project. `blake3` hashes the
 snapshot (already in the tree via `apelles-media`).
 
+## Assets (D-404)
+
+`src/assets.rs`: `import_asset` copies an image into `<project>.chroma/motion/assets/` named
+by the SHA-256 of its bytes (`sha2`, already in the tree) and returns the `sha256:<hex>.<ext>`
+id a manifest uses; idempotent, atomic. `RenderRequest::with_public_dir` / `PreviewRequest.public_dir`
+serve that folder as Remotion's `public/`.
+
 ## Still frames (D-403)
 
 `src/still.rs` is `motion_preview_frame`'s backend: `build_still_command` (the twin of

@@ -37,10 +37,21 @@ const ALL_USES: PrimitiveUse[] = [
   'deviceframe',
   'claudechat',
   'plot',
+  // D-405
+  'image',
+  'icon',
+  'shape',
+  'counter',
+  'group',
   'particleflow',
   'labelbox',
   'layerstack',
 ];
+
+/** D-405 — `image` ships without a `src` (the Catalog imports a file first),
+ *  so the schema-validity checks give it one, as the Catalog row does. */
+const withAsset = (use: PrimitiveUse, fragment: Record<string, unknown>) =>
+  use === 'image' ? { ...fragment, src: `sha256:${'a'.repeat(64)}.png` } : fragment;
 
 /** a minimal 2D-only manifest — no `scene3d`, so 3D inserts must create one */
 const flat = (): Manifest =>
@@ -74,7 +85,7 @@ describe('catalog coverage', () => {
 describe('defaultLayerFor — schema validity', () => {
   it.each(ALL_USES)('produces a fragment the engine schema accepts: %s', (use) => {
     const entry = catalogEntry(use);
-    const fragment = defaultLayerFor(use);
+    const fragment = withAsset(use, defaultLayerFor(use));
     const doc = entry.in3d
       ? {
           title: 't',
@@ -180,7 +191,9 @@ describe('addLayer — insertion', () => {
   });
 
   it.each(ALL_USES)('leaves the whole manifest schema-valid after inserting %s', (use) => {
-    const { manifest } = addLayer(flat(), 0, use);
+    // `image` is inserted with the asset the Catalog row imported (D-405).
+    const props = use === 'image' ? { src: `sha256:${'a'.repeat(64)}.png` } : undefined;
+    const { manifest } = addLayer(flat(), 0, use, props);
     const parsed = manifestSchema.safeParse(manifest);
     expect(parsed.success, JSON.stringify(parsed.success ? {} : parsed.error.issues)).toBe(true);
   });

@@ -25,6 +25,7 @@
 //!
 //! **Status:** D-046 — the render-bridge MVP. See `crates/apelles-motion/README.md`.
 
+pub mod assets;
 pub mod job;
 pub mod still;
 
@@ -59,6 +60,10 @@ pub struct RenderRequest {
     /// itself before this request is ever built — duplicating that scene
     /// math in Rust would just drift from the one real source of it.
     pub frame_range: Option<(u32, u32)>,
+    /// D-404 — the project's asset folder, served to the engine as `public/`
+    /// (Remotion's `--public-dir`), which is where an `image` layer's
+    /// `sha256:` id resolves. `None` passes no flag.
+    pub public_dir: Option<PathBuf>,
 }
 
 impl RenderRequest {
@@ -73,6 +78,7 @@ impl RenderRequest {
             output_path: output_path.into(),
             composition_id: "Animation".to_string(),
             frame_range: None,
+            public_dir: None,
         }
     }
 
@@ -80,6 +86,12 @@ impl RenderRequest {
     /// comment for why this takes raw frame numbers, not a scene reference.
     pub fn with_frame_range(mut self, start: u32, end: u32) -> Self {
         self.frame_range = Some((start, end));
+        self
+    }
+
+    /// D-404 — serve `dir` as the engine's `public/` folder.
+    pub fn with_public_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.public_dir = Some(dir.into());
         self
     }
 }
@@ -127,6 +139,9 @@ pub fn build_command(req: &RenderRequest) -> Command {
     ]);
     if let Some((start, end)) = req.frame_range {
         cmd.arg(format!("--frames={start}-{end}"));
+    }
+    if let Some(public) = &req.public_dir {
+        cmd.arg(format!("--public-dir={}", public.display()));
     }
     cmd
 }
@@ -213,6 +228,20 @@ mod tests {
                 "--props=/tmp/manifest.json",
                 "--frames=120-299",
             ]
+        );
+    }
+
+    #[test]
+    fn build_command_passes_the_asset_folder_as_public_dir() {
+        let req = RenderRequest::new("/engine", "/tmp/manifest.json", "/tmp/out.mp4")
+            .with_public_dir("/p.chroma/motion/assets");
+        let args: Vec<String> = build_command(&req)
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("--public-dir=/p.chroma/motion/assets")
         );
     }
 

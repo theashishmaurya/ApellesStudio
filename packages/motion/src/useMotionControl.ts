@@ -108,7 +108,7 @@ import type { PlayerRef } from '@remotion/player';
 import { createMotionOps, type MotionOpsApi, type MotionEditLinks } from './motionOps';
 import { useMotionLayerPresetStore } from './layerPresetIO';
 import { useMotionThemeLibraryStore } from './themeLibraryIO';
-import { previewFrames } from './manifestIO';
+import { importAsset, previewFrames } from './manifestIO';
 import type { Selection } from './LayerList';
 import type { MotionCanvasMeasureApi } from './MotionPreview';
 import type { useMotionManifest } from './useMotionManifest';
@@ -238,6 +238,8 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
       }),
       // D-403 — still frames through the backend's Remotion `still` path.
       preview: (req) => previewFrames(req),
+      // D-404 — the content-hash asset import.
+      importAsset: (path) => importAsset(path),
     });
 
     // B-272 — this subscription's identity; see `useEditorControl.ts`.

@@ -1,4 +1,4 @@
-# Motion authoring from MCP — new graphics and templates as data, not code (Phase 0 built, D-403; Phases 1-4 design)
+# Motion authoring from MCP — new graphics and templates as data, not code (Phases 0-1 built, D-403/D-404/D-405; Phases 2-4 design)
 
 Owner request (2026-10-26): "look into a way to create new catalog / motion graphics from MCP
 directly instead of tweaking the code." Context: Apelles' founder/brand-video studio direction needs
@@ -19,7 +19,19 @@ each phase needs its own D-NNN when built (numbers below are provisional; D-402 
   preview bundle is cached per project under `motion/cache/preview/`, keyed by a content
   fingerprint of the engine sources; `propCatalog` is TESTED against the schemas
   (`propCatalog.schema.test.ts`, both directions) rather than derived from them.
-- Phases 1-4: design below, not built.
+- **Phase 1 — built (D-404/D-405, 2026-10-27).** `image` (assets copied into
+  `motion/assets/<sha256>.<ext>`, ids `sha256:<hex>.<ext>`, `--public-dir` for renders and
+  previews, `convertFileSrc` in the player), `icon` (Phosphor by kebab name, the library
+  loaded by dynamic `import()` with `delayRender`), `shape` (`@remotion/shapes` +
+  `@remotion/paths`), `counter`, `group` (relative `at`, transform, rect/roundrect/ellipse or
+  text mask via an SVG `clipPath`, depth ≤ 4), `anim` tracks (absolute values; one level into
+  object props, e.g. `mask.w`). `motion_import_asset`; icon names validated against the
+  installed library. GUI: Catalog rows, asset/icon pickers, Property tracks field, nested group
+  rows (a child row selects its group). Proof: `packages/motion/src/brandScene.e2e.test.ts` +
+  `crates/apelles-motion/tests/preview_render.rs`. Deviations: shape masks use CSS `clip-path`
+  and text masks an SVG `clipPath` (not CSS `mask`); a group child cannot be selected on its own
+  yet.
+- Phases 2-4: design below, not built.
 
 ## What existed before Phase 0 (checked in the code, 2026-10-26)
 

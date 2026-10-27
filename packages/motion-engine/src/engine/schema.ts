@@ -26,8 +26,15 @@
 import { z } from "zod";
 import { THEME_NAMES } from "../design";
 import { themeDefSchema } from "../themeDef";
-import { activeSchema, easeCurve, vec3 } from "./schemaAtoms";
-import { PRIMITIVE_PROPS, type PrimitiveUse } from "./primitiveProps";
+import { activeSchema, easeCurve, isColorSchema, vec3 } from "./schemaAtoms";
+import { defOf, optionFor, unwrap } from "./zodIntrospect";
+import {
+  IN3D_USES,
+  MAX_GROUP_DEPTH,
+  PRIMITIVE_PROPS,
+  type LeafPrimitiveUse,
+  type PrimitiveUse,
+} from "./primitiveProps";
 
 /**
  * B-059 fix (`docs/BUGS.md`) — `ease` was genuinely supported by `Camera.tsx`
@@ -159,6 +166,22 @@ const layerTransform = z.object({
 });
 
 /**
+ * D-405 — `anim` property tracks: `{"<prop>": [{at, v, ease?}]}` on any layer.
+ * Each track animates one of the layer's OWN numeric or colour props (or one
+ * level into an object prop, `"mask.w"`) through absolute values `v` at times
+ * `at` (SECONDS, scene-relative — or relative to the enclosing group's start),
+ * eased into each key by that key's `ease`, exactly like a camera or transform
+ * key (`../lib/interpolateKeys.ts`'s `keySegment`); a colour moves through
+ * Remotion's `interpolateColors`. Before the first key the first value holds,
+ * after the last the last. Values are ABSOLUTE, not deltas (unlike
+ * `transform.keys`): a colour has no meaningful delta. Which props a track may
+ * target is checked against the primitive's schema (`checkAnim` below).
+ */
+const animKey = z.object({ at: z.number(), v: z.union([z.number(), z.string()]), ease: easeCurve.optional() });
+export const animSchema = z.record(z.string(), z.array(animKey).min(1));
+export type AnimTracks = z.infer<typeof animSchema>;
+
+/**
  * The fields EVERY layer carries, whatever its `use` — the generic adapter's
  * timing plus the D-157 transform wrapper. Joined with each primitive's own
  * props (`primitiveProps.ts`) to make one option of the layer union below.
@@ -184,18 +207,165 @@ const layerBase = {
   active: activeSchema.optional(),
   /** D-157 — see `layerTransform`'s own doc comment above. */
   transform: layerTransform.optional(),
+  /** D-405 — see `animSchema` above. */
+  anim: animSchema.optional(),
 };
 
 /** The fields every layer carries, by name — what `validate.ts` and the
  *  Inspector treat as "not a primitive prop". */
 export const LAYER_BASE_KEYS = ["use", ...Object.keys(layerBase)] as const;
 
+/** What an `anim` track may target: a numeric prop, or a colour one. */
+export type AnimKind = "number" | "color";
+
+/** The kind of the prop at `path` (`"size"`, `"mask.w"`) in `shape`, given the
+ *  layer's own data (to pick a union option), or `null` when it is not an
+ *  animatable prop. Exported for the Inspector's track editor and for tests. */
+export function animKindAt(
+  shape: Record<string, z.ZodType>,
+  layer: Record<string, unknown>,
+  path: string,
+): AnimKind | null {
+  const segs = path.split(".");
+  if (segs.length === 0 || segs.length > 2) return null;
+  let schema: z.ZodType | undefined = shape[segs[0]];
+  if (schema && segs.length === 2) {
+    const parent = unwrap(schema);
+    const def = defOf(parent);
+    const holder =
+      def.type === "union" ? optionFor(def, layer[segs[0]]) : def.type === "object" ? parent : undefined;
+    schema = holder ? defOf(unwrap(holder)).shape?.[segs[1]] : undefined;
+  }
+  if (!schema) return null;
+  const leaf = unwrap(schema);
+  if (defOf(leaf).type === "number") return "number";
+  if (isColorSchema(leaf)) return "color";
+  return null;
+}
+
+/** `superRefine` body: every `anim` track targets an animatable prop of this
+ *  primitive and carries values of the matching kind. */
+function checkAnim(
+  use: string,
+  shape: Record<string, z.ZodType>,
+  layer: Record<string, unknown>,
+  ctx: z.RefinementCtx,
+) {
+  const anim = layer.anim;
+  if (!anim || typeof anim !== "object") return;
+  for (const [path, keys] of Object.entries(anim as Record<string, unknown>)) {
+    const kind = animKindAt(shape, layer, path);
+    if (!kind) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["anim", path],
+        message: `"${path}" is not a numeric or colour prop of ${use}, so it cannot be animated`,
+      });
+      continue;
+    }
+    if (!Array.isArray(keys)) continue;
+    keys.forEach((k, i) => {
+      const v = (k as { v?: unknown }).v;
+      if (kind === "number" ? typeof v !== "number" : typeof v !== "string") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["anim", path, i, "v"],
+          message: `"${path}" is a ${kind} prop, so v must be a ${kind === "number" ? "number" : "colour string"}`,
+        });
+      }
+    });
+  }
+}
+
 /** One option of the layer union: `use` fixed to this primitive, the shared
  *  base, and the primitive's own props. A LOOSE object — see
  *  `primitiveProps.ts`'s header for why loading never refuses or strips an
  *  unknown key, and where unknown keys are reported instead. */
-const layerOf = <U extends PrimitiveUse>(use: U) =>
-  z.looseObject({ use: z.literal(use), ...layerBase, ...PRIMITIVE_PROPS[use] });
+const layerOf = <U extends LeafPrimitiveUse>(use: U) => {
+  const shape = PRIMITIVE_PROPS[use] as Record<string, z.ZodType>;
+  return z
+    .looseObject({ use: z.literal(use), ...layerBase, ...PRIMITIVE_PROPS[use] })
+    .superRefine((layer, ctx) => checkAnim(use, shape, layer, ctx));
+};
+
+/**
+ * D-405 — a `group`'s clip: a shape (the group shows only inside it) or text
+ * (the group shows only through the letters — a logo knocked out of a
+ * gradient, a photo inside a word). Coordinates are the group's own world px;
+ * every number can be animated (`anim: {"mask.w": [...]}` wipes a reveal).
+ */
+const groupMask = z.discriminatedUnion("kind", [
+  z.looseObject({
+    kind: z.enum(["rect", "roundrect", "ellipse"]),
+    x: z.number(),
+    y: z.number(),
+    w: z.number(),
+    h: z.number(),
+    radius: z.number().optional(),
+  }),
+  z.looseObject({
+    kind: z.literal("text"),
+    text: z.string(),
+    x: z.number(),
+    y: z.number(),
+    size: z.number().optional(),
+    font: z.string().optional(),
+    weight: z.number().optional(),
+    letterSpacing: z.number().optional(),
+    align: z.enum(["left", "center", "right"]).optional(),
+  }),
+]);
+
+/** The group's own props (beside `children`, which recurse). */
+const GROUP_PROPS = { mask: groupMask.optional() };
+
+/** How deep `layer`'s groups nest (1 for a group with no group children). */
+function groupDepth(layer: { use?: unknown; children?: unknown }): number {
+  if (layer.use !== "group" || !Array.isArray(layer.children)) return 0;
+  return 1 + Math.max(0, ...layer.children.map((c) => groupDepth(c as { use?: unknown; children?: unknown })));
+}
+
+/** A layer as the group's `children` getter types it: the recursion is
+ *  annotated with this loose shape, which is what lets TypeScript infer the
+ *  union without a circular-type error. */
+type AnyLayer = { use: string; [key: string]: unknown };
+
+/**
+ * D-405 — `group`: layers that move, time and clip together. Its `children`
+ * are ordinary 2D layers (any primitive but the three.js ones, groups
+ * included, nesting at most `MAX_GROUP_DEPTH` deep) whose `at` times are
+ * RELATIVE to the group's own `at`; the group's `transform` (and its `anim`
+ * tracks on `mask.*`) apply to all of them at once; `mask` clips them. Paint
+ * order inside is array order, as in a scene.
+ */
+const groupLayer = z
+  .looseObject({
+    use: z.literal("group"),
+    ...layerBase,
+    ...GROUP_PROPS,
+    get children(): z.ZodArray<z.ZodType<AnyLayer>> {
+      return z.array(layerSchema as unknown as z.ZodType<AnyLayer>);
+    },
+  })
+  .superRefine((layer, ctx) => {
+    checkAnim("group", GROUP_PROPS, layer, ctx);
+    layer.children.forEach((child, i) => {
+      if (IN3D_USES.includes(child.use as PrimitiveUse)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["children", i, "use"],
+          message: `"${child.use}" is a 3D primitive and cannot sit in a group (groups are 2D)`,
+        });
+      }
+    });
+    if (groupDepth(layer) > MAX_GROUP_DEPTH) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["children"],
+        message: `groups nest at most ${MAX_GROUP_DEPTH} deep`,
+      });
+    }
+  });
 
 /** `use` → that primitive's whole layer schema. Typed against
  *  `PrimitiveUse`, so a primitive added to `PRIMITIVE_PROPS` without an
@@ -212,16 +382,27 @@ export const LAYER_SCHEMAS = {
   // full-bleed or inside a frame, and neither requires the other.
   deviceframe: layerOf("deviceframe"),
   claudechat: layerOf("claudechat"),
+  // D-405 — the brand building blocks.
+  image: layerOf("image"),
+  icon: layerOf("icon"),
+  shape: layerOf("shape"),
+  counter: layerOf("counter"),
   // D-333 — a plotted curve with a labelled reference baseline. Distinct
   // from `graph` (a d3-force node-link diagram) and `matrix` (a cell
   // grid): neither can express "the shape of this curve, read against
   // this line", which is what an accuracy/loss/scaling beat needs.
   plot: layerOf("plot"),
+  group: groupLayer,
   // scene3d children:
   particleflow: layerOf("particleflow"),
   labelbox: layerOf("labelbox"),
   layerstack: layerOf("layerstack"),
 } satisfies Record<PrimitiveUse, z.ZodType>;
+
+/** The props shape a primitive's `anim` tracks are checked against. */
+export function primitivePropShape(use: PrimitiveUse): Record<string, z.ZodType> {
+  return use === "group" ? GROUP_PROPS : (PRIMITIVE_PROPS[use] as Record<string, z.ZodType>);
+}
 
 type LayerOption = (typeof LAYER_SCHEMAS)[PrimitiveUse];
 
@@ -253,7 +434,14 @@ export const sceneSchema = z.object({
   scene3d: z
     .object({
       camera: z.array(cam3dKey).min(1),
-      children: z.array(layer),
+      // D-405 — a `group` is a 2D container; the three.js canvas cannot draw it.
+      children: z.array(layer).superRefine((children, ctx) => {
+        children.forEach((c, i) => {
+          if (c.use === "group") {
+            ctx.addIssue({ code: "custom", path: [i, "use"], message: "a group is 2D and cannot be a scene3d child" });
+          }
+        });
+      }),
     })
     .optional(),
   /** cross-fade into this scene, in seconds (default hard cut) */

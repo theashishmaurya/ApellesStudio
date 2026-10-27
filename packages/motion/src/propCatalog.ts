@@ -42,7 +42,19 @@
  * instead of reusing `VecFieldControl`.
  */
 
-export type FieldKind = 'number' | 'string' | 'boolean' | 'color' | 'select' | 'json' | 'vec' | 'ease';
+export type FieldKind =
+  | 'number'
+  | 'string'
+  | 'boolean'
+  | 'color'
+  | 'select'
+  | 'json'
+  | 'vec'
+  | 'ease'
+  /** D-404 — a content-hash asset id, edited with the asset picker */
+  | 'asset'
+  /** D-405 — a Phosphor icon name, edited with the icon picker */
+  | 'icon';
 
 export interface FieldSpec {
   /** the exact manifest JSON key this field reads/writes */
@@ -80,6 +92,9 @@ const timingFields: FieldSpec[] = [
   { key: 'at', label: 'Start (s)', kind: 'number', group: 'timing' },
   { key: 'dur', label: 'Duration (s)', kind: 'number', group: 'timing' },
   { key: 'active', label: 'Active (index or schedule)', kind: 'json', group: 'timing' },
+  // D-405 — `anim` property tracks, any layer: absolute values over time for a
+  // numeric or colour prop (one level into an object prop: "mask.w").
+  { key: 'anim', label: 'Property tracks {"prop": [{at, v, ease?}]}', kind: 'json', group: 'timing' },
 ];
 
 /** primitive `use:` → its own manifest-level fields (NOT including the
@@ -124,6 +139,68 @@ const PRIMITIVE_FIELDS: Record<string, FieldSpec[]> = {
     { key: 'accent', label: 'Accent color', kind: 'color', group: 'fill' },
     { key: 'x', label: 'X', kind: 'number', group: 'layout' },
     { key: 'y', label: 'Y', kind: 'number', group: 'layout' },
+  ],
+  // D-405 — the brand building blocks.
+  image: [
+    { key: 'src', label: 'Image', kind: 'asset', group: 'source' },
+    { key: 'x', label: 'X', kind: 'number', group: 'layout' },
+    { key: 'y', label: 'Y', kind: 'number', group: 'layout' },
+    { key: 'w', label: 'Width', kind: 'number', group: 'layout' },
+    { key: 'h', label: 'Height', kind: 'number', group: 'layout' },
+    { key: 'fit', label: 'Fit', kind: 'select', options: ['cover', 'contain', 'fill'], group: 'layout' },
+    { key: 'radius', label: 'Corner radius', kind: 'number', group: 'fill' },
+    { key: 'borderWidth', label: 'Border width', kind: 'number', group: 'fill' },
+    { key: 'borderColor', label: 'Border color', kind: 'color', group: 'fill' },
+    { key: 'enter', label: 'Entrance', kind: 'select', options: ['none', 'fade', 'pop', 'rise', 'draw'], group: 'timing' },
+    { key: 'enterDur', label: 'Entrance (s)', kind: 'number', step: 0.1, group: 'timing' },
+  ],
+  icon: [
+    { key: 'name', label: 'Icon', kind: 'icon', group: 'source' },
+    { key: 'weight', label: 'Weight', kind: 'select', options: ['thin', 'light', 'regular', 'bold', 'fill', 'duotone'], group: 'fill' },
+    { key: 'size', label: 'Size', kind: 'number', group: 'layout' },
+    { key: 'color', label: 'Color', kind: 'color', group: 'fill' },
+    { key: 'x', label: 'X', kind: 'number', group: 'layout' },
+    { key: 'y', label: 'Y', kind: 'number', group: 'layout' },
+    { key: 'enter', label: 'Entrance', kind: 'select', options: ['none', 'fade', 'pop', 'rise', 'draw'], group: 'timing' },
+    { key: 'enterDur', label: 'Entrance (s)', kind: 'number', step: 0.1, group: 'timing' },
+  ],
+  shape: [
+    { key: 'shape', label: 'Shape', kind: 'select', options: ['rect', 'roundrect', 'ellipse', 'polygon', 'star', 'line'], group: 'source' },
+    { key: 'x', label: 'X', kind: 'number', group: 'layout' },
+    { key: 'y', label: 'Y', kind: 'number', group: 'layout' },
+    { key: 'w', label: 'Width (line: dx)', kind: 'number', group: 'layout' },
+    { key: 'h', label: 'Height (line: dy)', kind: 'number', group: 'layout' },
+    { key: 'radius', label: 'Corner radius', kind: 'number', group: 'layout' },
+    { key: 'points', label: 'Points / sides', kind: 'number', group: 'source' },
+    { key: 'innerRadius', label: 'Star inner radius (0-1)', kind: 'number', step: 0.05, group: 'source' },
+    { key: 'fill', label: 'Fill', kind: 'color', group: 'fill' },
+    { key: 'fillOpacity', label: 'Fill opacity', kind: 'number', step: 0.05, group: 'fill' },
+    { key: 'gradient', label: 'Gradient {type: linear|radial, angle?, stops: [{at 0-1, color}]}', kind: 'json', group: 'fill' },
+    { key: 'stroke', label: 'Stroke', kind: 'color', group: 'fill' },
+    { key: 'strokeWidth', label: 'Stroke width', kind: 'number', group: 'fill' },
+    { key: 'strokeProgress', label: 'Stroke drawn (0-1)', kind: 'number', step: 0.05, group: 'fill' },
+    { key: 'enter', label: 'Entrance', kind: 'select', options: ['none', 'fade', 'pop', 'rise', 'draw'], group: 'timing' },
+    { key: 'enterDur', label: 'Entrance (s)', kind: 'number', step: 0.1, group: 'timing' },
+  ],
+  counter: [
+    { key: 'from', label: 'From', kind: 'number', group: 'content' },
+    { key: 'to', label: 'To', kind: 'number', group: 'content' },
+    { key: 'decimals', label: 'Decimals', kind: 'number', group: 'content' },
+    { key: 'thousands', label: 'Thousands separator', kind: 'boolean', group: 'content' },
+    { key: 'prefix', label: 'Prefix', kind: 'string', group: 'content' },
+    { key: 'suffix', label: 'Suffix', kind: 'string', group: 'content' },
+    { key: 'ease', label: 'Count ease', kind: 'ease', group: 'timing' },
+    { key: 'size', label: 'Size', kind: 'number', group: 'fill' },
+    { key: 'color', label: 'Color', kind: 'color', group: 'fill' },
+    { key: 'weight', label: 'Weight', kind: 'number', group: 'fill' },
+    { key: 'font', label: 'Font', kind: 'string', group: 'fill' },
+    { key: 'align', label: 'Align', kind: 'select', options: ['left', 'center', 'right'], group: 'layout' },
+    { key: 'x', label: 'X', kind: 'number', group: 'layout' },
+    { key: 'y', label: 'Y', kind: 'number', group: 'layout' },
+  ],
+  group: [
+    { key: 'children', label: 'Children (layers; their at is relative to the group)', kind: 'json', group: 'content' },
+    { key: 'mask', label: 'Mask {kind: rect|roundrect|ellipse, x, y, w, h, radius?} or {kind: text, text, x, y, size?, font?, weight?}', kind: 'json', group: 'source' },
   ],
   plot: [
     { key: 'values', label: 'Values', kind: 'json', group: 'content' },
@@ -382,6 +459,9 @@ export function positionFields(use: string): PositionKind | undefined {
   // writes back absolute ones, so the anchor's meaning stays the
   // primitive's own business — see `setLayerPosition` in `manifestEdit.ts`.)
   if (use === 'deviceframe' || use === 'claudechat') return 'xy';
+  // D-405 — every brand primitive with a box has plain world-px `x`/`y`. A
+  // `group` has none of its own: it moves by its transform.
+  if (use === 'image' || use === 'icon' || use === 'shape' || use === 'counter') return 'xy';
   if (use === 'emphasis') return 'box-xy';
   return undefined;
 }
@@ -450,6 +530,8 @@ export function sizeFields(use: string): SizeKind | undefined {
   // `scale` over a fixed model body, which is what `'scale'` exists for.
   if (use === 'claudechat') return { kind: 'wh', w: 'width', h: 'height' };
   if (use === 'deviceframe') return { kind: 'scale', key: 'scale' };
+  // D-405 — `image` and `shape` are boxes with independent `w`/`h`.
+  if (use === 'image' || use === 'shape') return { kind: 'wh', w: 'w', h: 'h' };
   if (use === 'emphasis') return { kind: 'box-wh' };
   if (use === 'matrix')
     return {

@@ -30,7 +30,10 @@
  * shapes so the two cannot drift).
  */
 import { z } from "zod";
-import { colorSchema, seconds, vec2, vec3, vec4 } from "./schemaAtoms";
+import { assetIdSchema, colorSchema, easeCurve, seconds, vec2, vec3, vec4 } from "./schemaAtoms";
+import { ENTER_PRESETS } from "../lib/enter";
+import { PHOSPHOR_WEIGHTS } from "../lib/phosphorIcons";
+import { SHAPE_KINDS } from "../primitives/shapeKinds";
 
 /** D-395's graph-node icon vocabulary, by ROLE. `Graph.tsx`'s `GRAPH_ICONS`
  *  map is typed against this list, so a name here without a glyph there (or
@@ -88,9 +91,25 @@ const chatMessage = o({
   at: seconds().optional(),
 });
 
+/** D-405 — the entrance the brand primitives share (`../lib/enter.ts`). */
+const enterProps = () => ({
+  enter: z.enum(ENTER_PRESETS).optional(),
+  /** seconds the entrance takes */
+  enterDur: seconds().optional(),
+});
+
+/** D-405 — a Phosphor icon name as phosphoricons.com writes it (`rocket-launch`).
+ *  Whether the name EXISTS in the installed library is checked by
+ *  `motion_validate`'s semantic pass, which can load the library. */
+export const ICON_NAME_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+const gradientStop = o({ at: z.number().min(0).max(1), color: colorSchema() });
+
 /**
  * `use` → its manifest-level props (NOT the shared layer fields). Insertion
  * order is the catalogue's display order; the 3D children come last.
+ * `group` (D-405) is not here: its `children` are layers, so it is defined
+ * beside the layer union in `schema.ts`.
  */
 export const PRIMITIVE_PROPS = {
   text: {
@@ -216,6 +235,70 @@ export const PRIMITIVE_PROPS = {
     fontSerif: str(),
     fontSans: str(),
   },
+  // D-405 — the brand building blocks.
+  image: {
+    /** a content-hash asset id from `motion_import_asset` (D-404) */
+    src: assetIdSchema,
+    x: num(),
+    y: num(),
+    w: num(),
+    h: num(),
+    fit: z.enum(["cover", "contain", "fill"]).optional(),
+    radius: num(),
+    borderWidth: num(),
+    borderColor: color(),
+    ...enterProps(),
+  },
+  icon: {
+    name: z.string().regex(ICON_NAME_PATTERN, "a Phosphor icon name in kebab-case, e.g. rocket-launch"),
+    weight: z.enum(PHOSPHOR_WEIGHTS as [string, ...string[]]).optional(),
+    size: num(),
+    color: color(),
+    x: num(),
+    y: num(),
+    ...enterProps(),
+  },
+  shape: {
+    shape: z.enum(SHAPE_KINDS).optional(),
+    x: num(),
+    y: num(),
+    w: num(),
+    h: num(),
+    /** corner radius (roundrect, polygon, star) */
+    radius: num(),
+    /** polygon sides / star points */
+    points: num(),
+    /** star inner radius as a fraction of the outer, 0..1 */
+    innerRadius: num(),
+    fill: color(),
+    fillOpacity: num(),
+    gradient: o({
+      type: z.enum(["linear", "radial"]),
+      angle: num(),
+      stops: z.array(gradientStop).min(2),
+    }).optional(),
+    stroke: color(),
+    strokeWidth: num(),
+    /** 0..1 of the outline drawn */
+    strokeProgress: num(),
+    ...enterProps(),
+  },
+  counter: {
+    from: num(),
+    to: z.number(),
+    decimals: num(),
+    thousands: bool(),
+    prefix: str(),
+    suffix: str(),
+    ease: easeCurve.optional(),
+    size: num(),
+    color: color(),
+    weight: num(),
+    font: str(),
+    align: z.enum(["left", "center", "right"]).optional(),
+    x: num(),
+    y: num(),
+  },
   plot: {
     values: z.array(z.number()),
     xLabels: z.array(z.string()).optional(),
@@ -265,7 +348,23 @@ export const PRIMITIVE_PROPS = {
   },
 } as const;
 
-export type PrimitiveUse = keyof typeof PRIMITIVE_PROPS;
+/** every primitive with a props shape here (all but `group`). */
+export type LeafPrimitiveUse = keyof typeof PRIMITIVE_PROPS;
+/** every `use` a layer may have. */
+export type PrimitiveUse = LeafPrimitiveUse | "group";
 
-/** every primitive's `use`, in catalogue order. */
-export const PRIMITIVE_USES = Object.keys(PRIMITIVE_PROPS) as PrimitiveUse[];
+/** every primitive's `use`, in catalogue order (`group` after the 2D leaves). */
+export const PRIMITIVE_USES: PrimitiveUse[] = (() => {
+  const leaves = Object.keys(PRIMITIVE_PROPS) as LeafPrimitiveUse[];
+  const firstDeep = leaves.indexOf("particleflow");
+  return [...leaves.slice(0, firstDeep), "group", ...leaves.slice(firstDeep)];
+})();
+
+/** the three.js primitives: they live in `scene.scene3d.children` only, and may
+ *  not sit in a `group` (a 2D container). */
+export const IN3D_USES: readonly PrimitiveUse[] = ["particleflow", "labelbox", "layerstack"];
+
+/** D-405 — the deepest a `group` may nest (a group in a group in a group in a
+ *  group). Deeper structures are refused: they are almost always a generation
+ *  bug, and every level is another render wrapper. */
+export const MAX_GROUP_DEPTH = 4;

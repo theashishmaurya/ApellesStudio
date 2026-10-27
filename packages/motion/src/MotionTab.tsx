@@ -80,7 +80,7 @@ import { KeyframeTimeline } from './KeyframeTimeline';
 import { LayerList, sameSelectionArray, type Selection } from './LayerList';
 import { InspectorPanel } from './InspectorPanel';
 import { CatalogPanel } from './CatalogPanel';
-import { planInsertLayers, planSetScene, type MotionRefusal } from './authoring';
+import { iconNamesFor, planInsertLayers, planSetScene, type MotionRefusal } from './authoring';
 import { ManifestEditor } from './ManifestEditor';
 import {
   addLayer,
@@ -98,6 +98,10 @@ import type { PrimitiveUse } from './catalog';
 import { useMotionManifest, type SceneRenderResult } from './useMotionManifest';
 import { useMotionControl } from './useMotionControl';
 import { previewFrames } from './manifestIO';
+import { useMotionAssetResolver } from './assetResolver';
+import { pickAndImportImage } from './BrandFieldControls';
+import { useMotionProjectStore } from './motionProjectStore';
+import { AssetResolverProvider } from '@apelles/motion-engine/src/lib/assets';
 import type { MotionEditLinks } from './motionOps';
 import { PanelGroup, ResizablePanel, ResizableHandle } from './resizable';
 
@@ -167,6 +171,11 @@ export function MotionTab({
   // D-403 — the "Still" button's state: the human half of
   // `motion_preview_frame` (same backend command, same Remotion `still` path).
   const [still, setStill] = useState<{ busy: boolean; path?: string; error?: string }>({ busy: false });
+  // D-404 — how the player (and the layer thumbnails) reach the project's
+  // imported assets: Tauri's asset protocol over `motion/assets/`.
+  const openProjectPath = useMotionProjectStore((s) => s.openProjectPath);
+  const resolveAsset = useMotionAssetResolver(openProjectPath);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
   // D-332 — the saved-component library. Read here, ABOVE the `loadState`
   // early returns below, because these are hooks: reading them further down
   // beside the handlers that use them put them after those returns and broke
@@ -401,6 +410,23 @@ export function MotionTab({
   // the one place the document is serialized.
   const onCatalogAdd = (use: PrimitiveUse) => {
     if (!m.manifest || targetSceneIndex === null) return;
+    // D-404 — an image IS its asset: pick and import a file first, then insert
+    // with its content-hash id (the same import `motion_import_asset` runs).
+    if (use === 'image') {
+      setCatalogError(null);
+      const sceneIndex = targetSceneIndex;
+      void pickAndImportImage().then(
+        (record) => {
+          const cur = m.manifest;
+          if (!record || !cur) return;
+          const { manifest: next, selection: added } = addLayer(cur, sceneIndex, 'image', { src: record.id });
+          m.commit(next, 'Add image layer');
+          if (added) onSelect(added);
+        },
+        (e: unknown) => setCatalogError(e instanceof Error ? e.message : String(e)),
+      );
+      return;
+    }
     const { manifest: next, selection: added } = addLayer(m.manifest, targetSceneIndex, use);
     m.setText(JSON.stringify(next, null, 2));
     if (added) onSelect(added);
@@ -442,19 +468,21 @@ export function MotionTab({
    *  through the SAME plan `motion_insert_layers` / `motion_set_scene` use
    *  (`authoring.ts`), so the human and the agent get one set of checks and
    *  one undoable edit. Returns the refusal for the box to show, or `null`. */
-  const onInsertJson = (mode: 'layers' | 'scene', value: unknown): MotionRefusal | null => {
+  const onInsertJson = async (mode: 'layers' | 'scene', value: unknown): Promise<MotionRefusal | null> => {
     if (!m.manifest || targetSceneIndex === null) {
       return { error: 'no scene to insert into', issues: [] };
     }
+    // D-405 — icon names are checked against the installed library, as the ops do.
+    const icons = await iconNamesFor(value);
     if (mode === 'layers') {
       const layers = Array.isArray(value) ? value : [value];
-      const plan = planInsertLayers(m.manifest, targetSceneIndex, layers);
+      const plan = planInsertLayers(m.manifest, targetSceneIndex, layers, undefined, icons);
       if (!plan.ok) return plan;
       m.commit(plan.manifest, plan.count === 1 ? 'Insert layer' : `Insert ${plan.count} layers`);
       if (plan.selections[0]) onSelect(plan.selections[0]);
       return null;
     }
-    const plan = planSetScene(m.manifest, targetSceneIndex, value, editLinks);
+    const plan = planSetScene(m.manifest, targetSceneIndex, value, editLinks, icons);
     if (!plan.ok) return plan;
     m.commit(plan.manifest, 'Replace scene');
     return null;
@@ -493,6 +521,7 @@ export function MotionTab({
   };
 
   return (
+    <AssetResolverProvider resolve={resolveAsset}>
     <div className="h-full w-full min-h-0 bg-bg-primary flex flex-col">
       {/* D-172 — the always-visible toolbar: the `</>` manifest toggle
           (with an error-state border when a parse error exists and the
@@ -742,6 +771,7 @@ export function MotionTab({
                     onAddPreset={onAddPreset}
                     onDeletePreset={onDeletePreset}
                     onInsertJson={onInsertJson}
+                    catalogError={catalogError}
                   />
                 )}
             </div>
@@ -778,5 +808,6 @@ export function MotionTab({
       </PanelGroup>
       </div>
     </div>
+    </AssetResolverProvider>
   );
 }

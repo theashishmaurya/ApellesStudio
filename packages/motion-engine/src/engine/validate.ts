@@ -25,6 +25,9 @@
  */
 import { z } from "zod";
 import { layerSchema, manifestSchema, sceneSchema } from "./schema";
+import { defOf, optionFor, unwrap } from "./zodIntrospect";
+
+export { defOf, unwrap };
 
 export interface ValidationIssue {
   /** where, as `scenes[0].layers[2].size` (empty string for the root). */
@@ -94,64 +97,8 @@ export function closest(word: string, candidates: readonly string[]): string | u
 // walking a zod schema alongside the data
 // --------------------------------------------------------------------------
 
-/** zod 4's internal definition, read through a narrow structural type rather
- *  than `any`: only the fields this walker uses. */
-interface Def {
-  type: string;
-  shape?: Record<string, z.ZodType>;
-  element?: z.ZodType;
-  items?: z.ZodType[];
-  rest?: z.ZodType | null;
-  innerType?: z.ZodType;
-  in?: z.ZodType;
-  options?: z.ZodType[];
-  discriminator?: string;
-  getter?: () => z.ZodType;
-  valueType?: z.ZodType;
-}
-
-export function defOf(schema: z.ZodType): Def {
-  return (schema as unknown as { def: Def }).def;
-}
-
-/** strip the wrappers that do not change what a value looks like. */
-export function unwrap(schema: z.ZodType): z.ZodType {
-  let s = schema;
-  for (;;) {
-    const d = defOf(s);
-    if (
-      (d.type === "optional" || d.type === "nullable" || d.type === "default" || d.type === "readonly" ||
-        d.type === "catch" || d.type === "nonoptional" || d.type === "prefault") &&
-      d.innerType
-    ) {
-      s = d.innerType;
-    } else if (d.type === "lazy" && d.getter) {
-      s = d.getter();
-    } else if (d.type === "pipe" && d.in) {
-      s = d.in;
-    } else {
-      return s;
-    }
-  }
-}
-
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-/** For a union, the option `data` belongs to: by discriminator when there is
- *  one, else the first option it parses under, else `undefined`. */
-function pickOption(def: Def, data: unknown): z.ZodType | undefined {
-  const options = def.options ?? [];
-  if (def.discriminator && isPlainObject(data)) {
-    const want = data[def.discriminator];
-    return options.find((opt) => {
-      const shape = defOf(unwrap(opt)).shape;
-      const lit = shape?.[def.discriminator as string];
-      return lit !== undefined && lit.safeParse(want).success;
-    });
-  }
-  return options.find((opt) => opt.safeParse(data).success);
 }
 
 /** The object keys `schema` declares at `data`, or `undefined` when the
@@ -161,7 +108,7 @@ function objectKeys(schema: z.ZodType, data: unknown): string[] | undefined {
   const d = defOf(s);
   if (d.type === "object" && d.shape) return Object.keys(d.shape);
   if (d.type === "union") {
-    const opt = pickOption(d, data);
+    const opt = optionFor(d, data);
     return opt ? objectKeys(opt, data) : undefined;
   }
   return undefined;
@@ -206,7 +153,7 @@ export function unknownKeyIssues(schema: z.ZodType, data: unknown, path: PathSeg
   } else if (d.type === "record" && d.valueType && isPlainObject(data)) {
     for (const [k, v] of Object.entries(data)) out.push(...unknownKeyIssues(d.valueType, v, [...path, k]));
   } else if (d.type === "union") {
-    const opt = pickOption(d, data);
+    const opt = optionFor(d, data);
     if (opt) out.push(...unknownKeyIssues(opt, data, path));
   }
   return out;
@@ -227,7 +174,7 @@ function schemaAt(schema: z.ZodType, data: unknown, path: readonly PathSeg[]): z
     let u = unwrap(s);
     let d = defOf(u);
     if (d.type === "union") {
-      const opt = pickOption(d, v);
+      const opt = optionFor(d, v);
       if (!opt) return undefined;
       u = unwrap(opt);
       d = defOf(u);
@@ -391,4 +338,50 @@ export function formatIssues(issues: readonly ValidationIssue[]): string {
   return issues
     .map((i) => `${i.path || "(root)"}: ${i.message}${i.hint ? ` (${i.hint})` : ""}`)
     .join("\n");
+}
+
+/**
+ * D-405 — the semantic check a schema cannot make synchronously: every `icon`
+ * layer (at any depth, group children included) names an icon that exists in
+ * the installed Phosphor library. `known` is that library's names
+ * (`../lib/phosphorIcons.ts`'s map keys), loaded by the caller. Issues carry
+ * `code: "unknown_icon"` and the nearest real name as a hint.
+ */
+export function iconIssues(data: unknown, known: ReadonlySet<string>, root: PathSeg[] = []): ValidationIssue[] {
+  const out: ValidationIssue[] = [];
+  const names = [...known];
+  const walk = (v: unknown, path: PathSeg[]) => {
+    if (Array.isArray(v)) {
+      v.forEach((item, i) => walk(item, [...path, i]));
+      return;
+    }
+    if (!isPlainObject(v)) return;
+    if (v.use === "icon" && typeof v.name === "string" && !known.has(v.name)) {
+      const near = closest(v.name, names);
+      out.push({
+        path: formatPath([...path, "name"]),
+        code: "unknown_icon",
+        message: `"${v.name}" is not a Phosphor icon`,
+        hint: near ? `did you mean "${near}"?` : "names are phosphoricons.com's, in kebab-case (rocket-launch)",
+      });
+    }
+    for (const [k, child] of Object.entries(v)) walk(child, [...path, k]);
+  };
+  walk(data, root);
+  return out;
+}
+
+/** does `data` contain an `icon` layer anywhere? (whether to load the library) */
+export function containsIcon(data: unknown): boolean {
+  if (Array.isArray(data)) return data.some(containsIcon);
+  if (!isPlainObject(data)) return false;
+  if (data.use === "icon") return true;
+  return Object.values(data).some(containsIcon);
+}
+
+/** `result` with `extra` issues added (a semantic pass after the schema). */
+export function withIssues(result: ValidationResult, extra: readonly ValidationIssue[]): ValidationResult {
+  if (extra.length === 0) return result;
+  const issues = [...result.issues, ...extra];
+  return { ok: false, loads: result.loads, issues };
 }

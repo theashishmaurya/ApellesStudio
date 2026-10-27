@@ -66,7 +66,9 @@ describe('existing manifests keep loading (D-403)', () => {
 
   it('every Catalog default validates clean in its own container', () => {
     for (const e of catalogEntries) {
-      const layer = defaultLayerFor(e.use);
+      // D-405 — `image` has no default `src`: the Catalog imports a file first.
+      const base = defaultLayerFor(e.use);
+      const layer = e.use === 'image' ? { ...base, src: `sha256:${'a'.repeat(64)}.png` } : base;
       const scene = e.in3d
         ? { id: 's', dur: 4, scene3d: { camera: [{ at: 0, pos: [0, 0, 12] }], children: [layer] } }
         : { id: 's', dur: 4, layers: [layer] };

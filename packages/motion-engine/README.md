@@ -291,6 +291,19 @@ move-drag's position pair and does not extend to resize.
 
 `node.icon` draws a real Phosphor icon tile for an infrastructure role (`GRAPH_ICONS` in `primitives/Graph.tsx`: client, server, database, cloud, gateway, reverse-proxy, load-balancer, firewall, attacker, …). `pulse.label` rides a packet; `keep`/`dy` leave it under the destination. `edgeWidth`/`edgeTone` make edges read on a light ground. A fully pinned graph is drawn exactly where pinned (B-266).
 
+## Brand building blocks (D-404/D-405)
+
+`primitives/Image.tsx` (an asset by `sha256:` id, resolved through `lib/assets.tsx`'s
+injected resolver: `staticFile` in a render, `convertFileSrc` in the app),
+`primitives/Icon.tsx` (Phosphor by kebab name; `lib/phosphorIcons.ts` loads the library with a
+dynamic `import()` and the frame waits with `delayRender`), `primitives/Shape.tsx`
+(`@remotion/shapes` outlines, gradients, `@remotion/paths` draw-on), `primitives/Counter.tsx`
+(locale-free `formatCount`), and `group`, rendered by `engine/Video.tsx` itself (`GroupNode`:
+a `Sequence` from the group's `at`, a CSS `clip-path` or an SVG text `clipPath`; children carry
+no `data-motion-layer`, so a click selects the group). `lib/enter.ts` is the shared entrance;
+`lib/anim.ts` applies `anim` property tracks before the adapter, on the same `keySegment`
+timing as camera and transform keys.
+
 ## Per-primitive prop schemas and validation (D-403)
 
 The layer schema is a discriminated union on `use` (`engine/schema.ts`'s `layerSchema`,

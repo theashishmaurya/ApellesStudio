@@ -7153,7 +7153,7 @@ def motion_validate(
       * `issues` -- `[{path, code, message, expected, hint}]`. `path` reads
         like `scenes[0].layers[2].size`; `code` is stable (`invalid_type`,
         `missing_field`, `invalid_value`, `unrecognized_key`, `unknown_use`,
-        `too_small`, ...); `expected` is what would have been accepted (a type,
+        `unknown_icon`, `too_small`, ...); `expected` is what would have been accepted (a type,
         the enum's options, the known keys); `hint` is a concrete fix such as
         `did you mean "color"?`.
 
@@ -7178,6 +7178,30 @@ def motion_validate(
     if scene_index is not None:
         args["scene_index"] = scene_index
     return json.dumps(_op("motion_validate", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_import_asset(path: str) -> str:
+    """Bring an image (a logo, a screenshot, a product shot) into the project so
+    an `image` layer can show it (D-404).
+
+    The file is copied into the project's own asset folder
+    (`<project>.chroma/motion/assets/`) and named by the SHA-256 of its bytes.
+    The answer's `id` -- `sha256:<64 hex>.<ext>` -- is what an `image` layer's
+    `src` takes; a manifest NEVER holds a file path, so the document renders
+    the same on any machine and a later change to the original file cannot
+    change a render. Importing the same bytes again returns the same `id` and
+    writes nothing (`copied: false`).
+
+    Accepted: png, jpg/jpeg, webp, gif, svg. Returns `{id, fileName, path,
+    bytes, copied, width, height, layerExample}` (`width`/`height` are null
+    for an svg); `layerExample` is a minimal layer using it.
+
+    Args:
+        path: absolute path to the image file."""
+    import json
+
+    return json.dumps(_op("motion_import_asset", path=path), indent=2, default=str)
 
 
 @mcp.tool()

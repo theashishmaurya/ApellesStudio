@@ -17,8 +17,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
-import { PRIMITIVE_PROPS, PRIMITIVE_USES } from '@apelles/motion-engine/src/engine/primitiveProps';
-import { LAYER_BASE_KEYS } from '@apelles/motion-engine/src/engine/schema';
+import { PRIMITIVE_USES } from '@apelles/motion-engine/src/engine/primitiveProps';
+import { LAYER_BASE_KEYS, LAYER_SCHEMAS, primitivePropShape } from '@apelles/motion-engine/src/engine/schema';
 import { isColorSchema } from '@apelles/motion-engine/src/engine/schemaAtoms';
 import { defOf, unwrap } from '@apelles/motion-engine/src/engine/validate';
 import { fieldsForPrimitive, type FieldSpec } from './propCatalog';
@@ -61,6 +61,9 @@ function kindMismatch(field: FieldSpec, schema: z.ZodType): string | null {
       return ['array', 'object', 'union', 'record', 'tuple'].includes(type) ? null : `json field over a ${type}`;
     case 'ease':
       return type === 'tuple' ? null : `ease over a ${type}`;
+    case 'asset':
+    case 'icon':
+      return type === 'string' ? null : `${field.kind} over a ${type}`;
   }
 }
 
@@ -71,7 +74,8 @@ describe('propCatalog matches the per-primitive schemas (D-403)', () => {
 
   for (const use of PRIMITIVE_USES) {
     it(`${use}: every Inspector field is a real prop of the matching type`, () => {
-      const shape = PRIMITIVE_PROPS[use] as Record<string, z.ZodType>;
+      // the whole layer object's shape: a group's `children` live there, beside its props
+      const shape = defOf(unwrap(LAYER_SCHEMAS[use])).shape ?? {};
       for (const field of ownFields(use)) {
         const schema = shape[field.key];
         expect(schema, `${use}.${field.key} is not in the schema`).toBeDefined();
@@ -81,7 +85,7 @@ describe('propCatalog matches the per-primitive schemas (D-403)', () => {
 
     it(`${use}: every schema prop has an Inspector field`, () => {
       const keys = ownFields(use).map((f) => f.key);
-      for (const prop of Object.keys(PRIMITIVE_PROPS[use])) {
+      for (const prop of Object.keys(primitivePropShape(use)).concat(use === 'group' ? ['children'] : [])) {
         expect(keys, `${use}.${prop} has no Inspector field`).toContain(prop);
       }
     });

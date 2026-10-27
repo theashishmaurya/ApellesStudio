@@ -3,8 +3,8 @@
  * Registered as the `Animation` composition in Root.tsx (duration + size come
  * from the manifest via calculateMetadata).
  */
-import React from "react";
-import { AbsoluteFill, Series, useCurrentFrame } from "remotion";
+import React, { useId } from "react";
+import { AbsoluteFill, Sequence, Series, useCurrentFrame, useVideoConfig } from "remotion";
 import { Camera } from "../primitives/Camera";
 import { interpolateKeys } from "../lib/interpolateKeys";
 import { Scene3D } from "../primitives/Scene3D";
@@ -14,7 +14,8 @@ import { resolveManifestTheme } from "../themeDef";
 import { ThemeProvider, useTheme } from "../ThemeContext";
 import { ensureThemeFonts } from "../themeFonts";
 import { lookup } from "./registry";
-import type { Manifest, Scene as SceneT } from "./schema";
+import { applyAnim } from "../lib/anim";
+import type { Layer, LayerTransform, Manifest, Scene as SceneT } from "./schema";
 
 /**
  * `data-motion-layer="<sceneIndex>.<layerIndex>"` (D-155, `docs/notes/
@@ -66,10 +67,27 @@ import type { Manifest, Scene as SceneT } from "./schema";
  * `Math.round(at * fps)`, matching the camera's own conversion one branch up
  * in `TwoD` below.
  */
-const renderLayers = (layers: SceneT["layers"], fps: number, frame: number, sceneIndex: number) =>
-  (layers ?? []).map((l, i) => {
-    const { component: C, adapt } = lookup(l.use);
-    const props = adapt(l as unknown as Record<string, unknown>, fps, frame);
+type RawLayer = { use: string; transform?: LayerTransform; [key: string]: unknown };
+
+/**
+ * D-405 — `renderLayers` takes `layerKey` for a layer's `data-motion-layer`
+ * address. At scene level it is the layer's own `<scene>.<index>`; inside a
+ * `group` it is `null`, so a click on a group's child resolves (through
+ * `.closest('[data-motion-layer]')`) to the GROUP — the one thing the layer
+ * list and every `motion_*` op can address today. `anim` tracks are applied
+ * first (`../lib/anim.ts`), so an animated prop reaches the adapter, the
+ * transform and the group's mask already at this frame's value; a layer with
+ * no `anim` is passed through as the same object.
+ */
+const renderLayers = (
+  layers: readonly RawLayer[] | undefined,
+  fps: number,
+  frame: number,
+  sceneIndex: number,
+  layerKey: ((i: number) => string) | null = (i) => `${sceneIndex}.${i}`,
+): React.ReactNode[] =>
+  (layers ?? []).map((l0, i) => {
+    const l = applyAnim(l0, frame, fps);
     const t = l.transform;
     let tx = t?.x ?? 0;
     let ty = t?.y ?? 0;
@@ -93,6 +111,15 @@ const renderLayers = (layers: SceneT["layers"], fps: number, frame: number, scen
       topacity += delta.opacity;
       tblur += delta.blur;
     }
+    const content =
+      l.use === "group" ? (
+        <GroupNode layer={l} fps={fps} sceneIndex={sceneIndex} />
+      ) : (
+        (() => {
+          const { component: C, adapt } = lookup(l.use as Layer["use"]);
+          return <C {...adapt(l, fps, frame)} />;
+        })()
+      );
     // D-393 — a Gaussian blur radius in px; `undefined` (no `filter` at all)
     // whenever it resolves to <= 0, so a layer that never blurs renders exactly
     // as it did before the field existed.
@@ -123,21 +150,105 @@ const renderLayers = (layers: SceneT["layers"], fps: number, frame: number, scen
               }
         }
       >
-        <C {...props} />
+        {content}
       </div>
     ) : (
-      <C {...props} />
+      content
     );
     return (
-      <div key={`${l.use}-${i}`} data-motion-layer={`${sceneIndex}.${i}`} style={{ display: "contents" }}>
+      <div
+        key={`${l.use}-${i}`}
+        data-motion-layer={layerKey ? layerKey(i) : undefined}
+        style={{ display: "contents" }}
+      >
         {node}
       </div>
     );
   });
 
+/** D-405 — a group's `mask` as a CSS `clip-path` for a shape, or `null` for a
+ *  text mask (which needs an SVG `<clipPath>`, see `GroupNode`). Coordinates
+ *  are world px; `W`/`H` are the canvas, which the group's wrapper fills. */
+function shapeClipPath(mask: Record<string, unknown>, W: number, H: number): string | null {
+  const n = (k: string) => (typeof mask[k] === "number" ? (mask[k] as number) : 0);
+  const [x, y, w, h, r] = [n("x"), n("y"), n("w"), n("h"), n("radius")];
+  if (mask.kind === "ellipse") return `ellipse(${w / 2}px ${h / 2}px at ${x + w / 2}px ${y + h / 2}px)`;
+  if (mask.kind === "rect" || mask.kind === "roundrect") {
+    const round = mask.kind === "roundrect" ? ` round ${r}px` : "";
+    return `inset(${y}px ${W - x - w}px ${H - y - h}px ${x}px${round})`;
+  }
+  return null;
+}
+
+/** The group's children at the group's LOCAL frame (inside its `Sequence`). */
+const GroupChildren: React.FC<{ layers: readonly RawLayer[]; fps: number; sceneIndex: number }> = ({
+  layers,
+  fps,
+  sceneIndex,
+}) => {
+  const frame = useCurrentFrame();
+  return <>{renderLayers(layers, fps, frame, sceneIndex, null)}</>;
+};
+
+/**
+ * D-405 — one `group`: its children inside a `Sequence` that starts at the
+ * group's `at` (so their own `at`s, and every primitive's `useCurrentFrame`,
+ * are relative to it) and ends after its `dur` when one is set, clipped by its
+ * `mask`. The group's `transform` is applied by `renderLayers` around this,
+ * exactly as for any layer, so it moves all of its children at once.
+ *
+ * A text mask is an SVG `<clipPath>` holding a `<text>`, referenced by
+ * `clip-path: url(#…)`: the letters use the document's own (theme) fonts, which
+ * an SVG image or a mask image could not load. Its id comes from `useId`,
+ * which is stable for a given tree, so a render is deterministic.
+ */
+const GroupNode: React.FC<{ layer: RawLayer; fps: number; sceneIndex: number }> = ({ layer, fps, sceneIndex }) => {
+  const { width: W, height: H } = useVideoConfig();
+  const theme = useTheme();
+  const clipId = `group-clip-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const start = typeof layer.at === "number" ? Math.round(layer.at * fps) : 0;
+  const dur = typeof layer.dur === "number" ? Math.max(1, Math.round(layer.dur * fps)) : undefined;
+  const children = (Array.isArray(layer.children) ? layer.children : []) as RawLayer[];
+  const mask = layer.mask && typeof layer.mask === "object" ? (layer.mask as Record<string, unknown>) : null;
+  const shapeClip = mask ? shapeClipPath(mask, W, H) : null;
+  const textMask = mask && mask.kind === "text" ? mask : null;
+  const anchor = textMask?.align === "center" ? "middle" : textMask?.align === "right" ? "end" : "start";
+  return (
+    <Sequence from={start} durationInFrames={dur} layout="none">
+      {textMask && (
+        <svg width={0} height={0} style={{ position: "absolute" }} aria-hidden>
+          <clipPath id={clipId} clipPathUnits="userSpaceOnUse">
+            <text
+              x={typeof textMask.x === "number" ? textMask.x : 0}
+              y={typeof textMask.y === "number" ? textMask.y : 0}
+              dominantBaseline="hanging"
+              textAnchor={anchor}
+              fontFamily={typeof textMask.font === "string" ? textMask.font : theme.fontDisplay}
+              fontSize={typeof textMask.size === "number" ? textMask.size : 160}
+              fontWeight={typeof textMask.weight === "number" ? textMask.weight : 800}
+              letterSpacing={typeof textMask.letterSpacing === "number" ? textMask.letterSpacing : undefined}
+            >
+              {typeof textMask.text === "string" ? textMask.text : ""}
+            </text>
+          </clipPath>
+        </svg>
+      )}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          clipPath: textMask ? `url(#${clipId})` : (shapeClip ?? undefined),
+        }}
+      >
+        <GroupChildren layers={children} fps={fps} sceneIndex={sceneIndex} />
+      </div>
+    </Sequence>
+  );
+};
+
 const TwoD: React.FC<{ scene: SceneT; fps: number; sceneIndex: number }> = ({ scene, fps, sceneIndex }) => {
   const frame = useCurrentFrame();
-  const nodes = renderLayers(scene.layers, fps, frame, sceneIndex);
+  const nodes = renderLayers(scene.layers as RawLayer[] | undefined, fps, frame, sceneIndex);
   if (scene.camera && scene.camera.length) {
     const keys = scene.camera.map((k) => ({ ...k, at: Math.round(k.at * fps) }));
     return <Camera keys={keys}>{nodes}</Camera>;
