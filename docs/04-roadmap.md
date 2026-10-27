@@ -300,6 +300,12 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    - **Media in and out:** large uploads don't fit through chat; use signed upload links to the person's Mac/relay (or a cloud bucket in (b)), and return rendered files as links or a publish step (0i).
    - **Safety:** per-user auth, scoped tokens, rate limits, an audit log of agent actions (the edit journal helps), no destructive tool without confirmation.
 
+0l. **Edit by text: cut words, fillers and gaps from the transcript, in the app** (owner, 2026-10-28: *"why using the remap.py? do we not have these things inbuilt? why external code?"*). Found editing "Five Levels of Claude Code": retakes and silences have real tools (D-380, D-319), but filler/fluff removal by word and gap tightening had to be done with throwaway scripts outside the app, and their padding bug left 16 fragments of deleted words that had to be found and cut again — the case for a real, tested op. Not built; next free D-number:
+   - `editor_get_word_transcript` also returns each word's **timeline** start/end (today only source seconds, so nothing maps a word to where it plays after a cut).
+   - `editor_cut_words(view_id, ranges, tighten_gaps_ms?)`: cut word-index ranges as ONE undo step, padding that never crosses into another word (kept or deleted), optional tightening of every gap above N ms to a natural breath; reports exactly what was cut.
+   - GUI: select words in the Index panel transcript and delete (Descript-style), fillers ("uh", "um", "like", "okay", stutters) highlighted for one-click removal with review.
+   - Tests including the fragment case (a deleted word adjacent to kept words with padding).
+
 0j. ~~**Music-driven motion: "use your own music; tell Claude which beats the big move should hit"**~~ **built (D-413, 2026-10-27)** (owner, from tip 2 of `scratch/reference-reels/ian-tang-claude-motion-tips.md`). Design and measurements: `docs/notes/music-driven-motion.md`.
    - [x] Beat analysis `apelles-beat` (tempo, beats, downbeats/bars, accents), on-device, deterministic, cached by content hash; measured against ground truth and librosa (`eval/beats/`).
    - [x] Edit: a track's beats as the timeline's beat grid (metronome toggle, beat lane), drags / trims / playhead snap to beats (magnet toggle), "Snap cuts to beats" as one undo step; `editor_detect_beats`, `editor_set_beat_grid`, `editor_snap_cuts_to_beats`.
