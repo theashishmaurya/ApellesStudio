@@ -260,6 +260,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -1487,8 +1488,27 @@ export function TimelinePane() {
    *  the timeline library's own scrollable content width is derived from
    *  `scaleWidth` (i.e. from `pxPerSec`), so a `setScrollLeft` issued before
    *  React has re-rendered with the new zoom would be clamped against the OLD
-   *  content width and silently lose the anchor on every zoom-in. */
-  useEffect(() => {
+   *  content width and silently lose the anchor on every zoom-in.
+   *
+   *  B-291 — and it has to be a LAYOUT effect, never a passive one. The
+   *  library keeps its scroll position in two places that echo each other
+   *  inside the commit phase: its `ScrollSync` state, and the edit-area
+   *  `Grid`, which reports its position up from `componentDidUpdate` while
+   *  the edit area pushes `ScrollSync`'s value back down from a
+   *  `useLayoutEffect`. If one render changes the two to DIFFERENT values,
+   *  every commit swaps them, forever: React stops it with "Maximum update
+   *  depth exceeded" and, with no boundary above the timeline, the whole
+   *  window went blank. A write from a passive effect can produce exactly
+   *  that render: a busy WebKit frame lets the next pinch event land between
+   *  the write and the render that applies it (anchoring on a `scrollLeft`
+   *  that has not caught up), and React flushes that zoom's passive effect —
+   *  its own write — after the edit area has pushed the first value down but
+   *  before the grid has reported it back. Written here, in the zoom's own
+   *  commit, the write and the library's push/report round trip finish in
+   *  one synchronous chain before any input or passive effect can run, and
+   *  the layout already has the new zoom's widths (the library's own layout
+   *  effects, children of this component, run before this one). */
+  useLayoutEffect(() => {
     const anchor = zoomAnchorRef.current;
     if (!anchor) return;
     zoomAnchorRef.current = null;
