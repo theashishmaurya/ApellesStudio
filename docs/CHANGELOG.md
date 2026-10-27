@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-27** — Roadmap **0i**: publish straight to YouTube and Instagram (long-form, Shorts, Reels), opt-in, owner request.
+
 - **2026-10-27** — **D-411 owner decisions:** the MCP client is the only judge of clip moments (no local heuristic); shorts are timelines in the same project; one call stops at built timelines; files and timelines are both sources; Openverse never automatic. Clipper Phase 0 (timelines that can be shorts) started.
 
 - **2026-10-27** — **Automatic Clipper designed (D-411, proposed; `docs/notes/automatic-clipper.md`, roadmap 0h):** shorts (9:16/1:1/4:5) and a trailer from one long video in one MCP call. The app generates sentence-aligned candidates and refuses any cut off a sentence boundary; the MCP client judges, with a local heuristic when no agent is connected. Outputs are timelines in the same project. Reframing uses Apple Vision. Eight phases; Phase 0 (per-timeline output size, timeline MCP tools) comes first. Research: Opus Clip, Descript, Riverside, CapCut, Vizard, Submagic, Premiere Auto Reframe, FCP Smart Conform. No code.

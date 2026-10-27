@@ -269,6 +269,13 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    - [ ] Phase 7 — polish: hook title, CTA end card, optional bed and punch-ins on shorts, export all aspects, burned-in-subtitle warning, fillers option, optional local-LLM judge kept only if it beats the heuristic. *(routine)*
    - Open owner questions (recommendations in the note §12): no-agent judge, where shorts live, does the one call render, automatic Openverse music, timeline sources in Phase 1.
 
+0i. **Publish straight to YouTube and Instagram, long-form and shorts** (owner, 2026-10-27: *"we need export to youtube directly / and instagram as well and short"*). After an export, upload the file to the person's own channel or account, for human and AI (an Export-dialog "Publish" step and MCP tools, e.g. `editor_publish` + status). Not built; needs a D-NNN. Scope to settle in that D:
+   - **Opt-in network call** (CLAUDE.md local-first): off until the person connects an account; the render stays local, only the upload leaves the machine. OAuth tokens in the macOS Keychain, never in the project.
+   - **YouTube:** YouTube Data API v3 resumable `videos.insert` (title, description incl. the D-400 credits text, tags, category, privacy/scheduled publish, thumbnail via `thumbnails.set`, made-for-kids flag). Shorts are ordinary uploads that are vertical/square and within YouTube's Shorts length limit; check current limits and upload quota (units per upload) when building. Unverified apps are limited to private uploads until Google's app audit passes; plan for that.
+   - **Instagram:** the Instagram Graph API content publishing flow (Reels for vertical video; feed video) needs a Professional (Business or Creator) account. Check how the current API takes a local file (resumable upload vs. a public `video_url`) and its rate limits and spec (aspect, length, codecs) when building.
+   - Presets that match each platform's spec (9:16 1080×1920 for Shorts/Reels, -14 LUFS for YouTube per D-401), a per-platform caption/description template, and batch publishing of Clipper shorts (0h).
+   - Later candidates: TikTok Content Posting API, LinkedIn, X.
+
 0. **Export through the app's own compositor instead of an ffmpeg filter graph — D-350.**
    Moved here from "Later" 2026-09-18 when **phase 1 shipped**. Origin: B-228/B-229/B-230
    found and fixed three measured resource pathologies in `editor_export`'s ffmpeg
