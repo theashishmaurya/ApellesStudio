@@ -1,0 +1,15 @@
+{
+  "name": "@apelles/beats",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "description": "Apelles beat-grid maths (D-413): the beat-analysis types `chroma_detect_beats` answers with, nearest-beat snapping, and the cue grammar that maps named moves to beats (\"downbeat 1\", \"next strong beat\", \"every beat between\"). Pure TypeScript: no Tauri, no React, no store; both the Edit and the Motion tab depend on it.",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
+}

@@ -13,7 +13,7 @@
  * answered by a synchronous schema.
  */
 import { z } from "zod";
-import { ASSET_ID_PATTERN } from "../lib/assetId";
+import { ASSET_ID_PATTERN, AUDIO_ASSET_ID_PATTERN } from "../lib/assetId";
 
 /** The marker `colorSchema` registers under, read back by `isColorSchema` (and
  *  published to agents as JSON Schema `format: "color"`). */
@@ -80,3 +80,8 @@ export const easeCurve = z
 export const assetIdSchema = z
   .string()
   .regex(ASSET_ID_PATTERN, "an asset id from motion_import_asset: sha256:<64 hex>.<png|jpg|jpeg|webp|gif|svg>");
+
+/** D-413 — an AUDIO asset by content hash (a soundtrack). */
+export const audioAssetIdSchema = z
+  .string()
+  .regex(AUDIO_ASSET_ID_PATTERN, "an audio asset id from motion_set_soundtrack / motion_import_asset: sha256:<64 hex>.<mp3|wav|m4a|aac|flac|ogg>");

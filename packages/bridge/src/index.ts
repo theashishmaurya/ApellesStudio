@@ -8,10 +8,14 @@
  * Status: D-039 migration step 1 stub, still mostly unfilled — its first real
  * content is the D-044 media-pool store (`./media`), joined by D-315's AI-env
  * bootstrap state (`./aiEnv`), which is here because it is the one seam both
- * `app/src` and `packages/editor` can read.
+ * `app/src` and `packages/editor` can read, and D-413's beat-analysis binding
+ * (`./beats`), which the Edit and Motion tabs share.
  */
 
 export { useMediaPoolStore } from './media';
+
+export { beatEntry, beatKey, detectBeats, useBeatStore, useBeats } from './beats';
+export type { BeatEntry, BeatQuery } from './beats';
 export type { MediaItem, MediaVideoInfo, MediaImageInfo } from './media';
 
 export { trackEvent } from './telemetry';

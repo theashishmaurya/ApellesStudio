@@ -202,3 +202,76 @@ fn the_agent_filled_stat_counter_renders_identically_twice() {
     assert_eq!(a, b);
     assert_eq!(grid, (3, 1));
 }
+
+/// D-413 — a soundtrack never changes a pixel: the sample document rendered
+/// with no soundtrack, with one that is only monitored (`render` unset, the
+/// default) and with one that is rendered in (`render: true`) gives the same
+/// contact sheet bytes.
+#[test]
+#[ignore = "needs Node + the engine's node_modules + headless Chrome"]
+fn a_soundtrack_never_changes_pixels() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let assets = dir.path().join("p.chroma/motion/assets");
+    // Two seconds of a quiet 440 Hz tone as a 16-bit mono WAV.
+    let rate = 22_050u32;
+    let samples: Vec<i16> = (0..rate * 2)
+        .map(|i| ((i as f32 * 440.0 * std::f32::consts::TAU / rate as f32).sin() * 3000.0) as i16)
+        .collect();
+    let mut wav = Vec::new();
+    let data_len = (samples.len() * 2) as u32;
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&rate.to_le_bytes());
+    wav.extend_from_slice(&(rate * 2).to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_len.to_le_bytes());
+    for s in samples {
+        wav.extend_from_slice(&s.to_le_bytes());
+    }
+    let song = dir.path().join("song.wav");
+    std::fs::write(&song, wav).expect("write wav");
+    let record = apelles_motion::assets::import_asset(&song, &assets).expect("import the song");
+
+    let base: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(fixture("sample.json")).expect("read sample"),
+    )
+    .expect("parse sample");
+    let frames = [0, 30, 90];
+    let mut digests = Vec::new();
+    for (label, soundtrack) in [
+        ("none", None),
+        (
+            "monitored",
+            Some(serde_json::json!({"src": record.id, "volume": 0.5})),
+        ),
+        (
+            "rendered",
+            Some(serde_json::json!({"src": record.id, "volume": 0.5, "render": true})),
+        ),
+    ] {
+        let mut doc = base.clone();
+        if let (Some(st), Some(obj)) = (soundtrack, doc.as_object_mut()) {
+            obj.insert("soundtrack".into(), st);
+        }
+        let path = dir.path().join(format!("soundtrack-{label}.json"));
+        std::fs::write(&path, doc.to_string()).expect("write manifest");
+        let (a, b, _) = render_twice(&path, &frames, Some(assets.clone()));
+        println!("soundtrack {label}: {a}");
+        assert_eq!(a, b, "{label}: same frames twice must be identical");
+        digests.push(a);
+    }
+    assert_eq!(
+        digests[0], digests[1],
+        "a monitored soundtrack changed pixels"
+    );
+    assert_eq!(
+        digests[0], digests[2],
+        "a rendered-in soundtrack changed pixels"
+    );
+}

@@ -1,6 +1,6 @@
 ---
 name: apelles-sound-design
-description: Add or change music and sound effects on an Apelles Edit timeline the way a sound editor would - an edited music bed with dropouts on story beats, sparse well-chosen effects, a levelled voice, a -14 LUFS master - sourcing only openly licensed audio (Openverse CC0 / CC BY via Apelles' MCP tools) with credits, picking sounds by measured character, and checking the mix with a measured report plus five moments to listen to. Use whenever a task involves music, a soundtrack, SFX / sound effects, whooshes, risers, ducking, or the audio mix of an Apelles project. Not for voice clean-up or retake cutting (apelles-retake-review), and not for grading.
+description: Add or change music and sound effects on an Apelles Edit timeline the way a sound editor would - an edited music bed with dropouts on story beats, sparse well-chosen effects, a levelled voice, a -14 LUFS master - sourcing only openly licensed audio (Openverse CC0 / CC BY via Apelles' MCP tools) with credits, picking sounds by measured character, and checking the mix with a measured report plus five moments to listen to. Use whenever a task involves music, a soundtrack, SFX / sound effects, whooshes, risers, ducking, the audio mix of an Apelles project, or timing cuts / Motion moves to the beat of the music. Not for voice clean-up or retake cutting (apelles-retake-review), and not for grading.
 ---
 
 # Apelles sound design
@@ -107,6 +107,31 @@ clipping files.
 - **Read every change back** from `editor_get_timeline` (volumes, fades, ducking) before reporting
   it done. Count clips per track and compare with what you meant to place.
 - Never edit `packages/` or a Motion manifest while a Motion render runs.
+
+## 4b. Motion and cuts to music (D-413)
+
+"Music sets pacing and mood; tell the agent which beats the big move should hit." When the music
+drives the picture rather than sitting under it:
+
+- **Pick the track first, then time to it.** The tempo decides the pacing (an airy 72 BPM and a
+  punchy 128 BPM make the same shapes feel different), so choose and set the music before timing
+  anything. Motion: `motion_set_soundtrack(path=...)` (one track for the whole document, `offset`
+  = where in the song the video starts). Edit: `editor_detect_beats(track=<music track>)`.
+- **Read the beats before choosing cues.** `motion_get_beats(scene_index)` / the `beats` of
+  `editor_detect_beats`: tempo, bars, which beats are strong. If the tempo is half or double what
+  you hear in the genre, pass `tempo_hint` / `tempo_hint_bpm` and re-read. Downbeats are a
+  heuristic: on music without clear bar lines, check the first few by ear (or the waveform).
+- **Big moves on downbeats.** The hero reveal on `downbeat 1`, the scale-up LANDING (`anchor:
+  "end"`) on the `next strong beat`, a scene change on a bar line. `motion_time_to_music` takes
+  the whole set as named moves in one call (one undo step); cuts on the Edit timeline go there with
+  `editor_snap_cuts_to_beats` (rolls, so nothing else moves).
+- **Accents on beats, not every beat.** Smaller moves (`every beat between reveal and scale`) on
+  the beats between the big ones. Leave space: a move on every single beat reads as a metronome,
+  not as edited. Two or three accents per bar at most; let some bars breathe.
+- **Read back.** `motion_get_beats` + `motion_get_manifest` (or `editor_get_timeline`) after
+  timing; preview a still at a downbeat (`motion_preview_frame`) to see the move landed.
+- The soundtrack is a timing reference: `render` stays false when the scenes are cut together
+  under one bed on the Edit timeline (where the mix, ducking and loudness of section 1 apply).
 
 ## 5. Check the mix: measured report + five moments to listen to
 

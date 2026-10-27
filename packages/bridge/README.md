@@ -58,3 +58,8 @@ D-045/D-046 media-pool store, now consumed by a real panel (D-046's
 `src/media.test.ts` covers the pool's project-identity input (B-083/D-203);
 `src/aiEnv.test.ts` covers the D-315 status vocabulary and the rule that
 nothing in it ever reports a control as unusable.
+
+- `detectBeats` / `useBeats` / `useBeatStore` (`src/beats.ts`, D-413) — the one binding over
+  `chroma_detect_beats` (musical beat analysis, `apelles-beat`) and its session cache keyed by
+  (path, meter, tempo hint), with in-flight requests shared. The Edit tab's beat grid and the
+  Motion tab's soundtrack both read beats through it; the types and maths are `@apelles/beats`.

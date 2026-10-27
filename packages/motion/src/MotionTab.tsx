@@ -69,7 +69,7 @@
  * layer identity" prerequisite (§1g of the research doc) actually pay off
  * for a LIVE multi-selection, not just a theoretical one.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PlayerRef } from '@remotion/player';
 import { sceneDurationFrames, sceneStartFrame } from '@apelles/motion-engine/src/engine/build';
 import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
@@ -112,6 +112,8 @@ import { ensureComponents, insertCustomLayer } from './customComponentActions';
 import type { CustomComponentsSectionProps } from './CustomComponentsSection';
 import { CustomProxyProvider } from './customProxy';
 import { useMotionAssetResolver } from './assetResolver';
+import { useSoundtrackBeats } from './useSoundtrackBeats';
+import { compositionBeats } from './musicTiming';
 import { pickAndImportImage } from './BrandFieldControls';
 import { useMotionProjectStore } from './motionProjectStore';
 import { AssetResolverProvider } from '@apelles/motion-engine/src/lib/assets';
@@ -200,6 +202,14 @@ export function MotionTab({
   // imported assets: Tauri's asset protocol over `motion/assets/`.
   const openProjectPath = useMotionProjectStore((s) => s.openProjectPath);
   const resolveAsset = useMotionAssetResolver(openProjectPath);
+  // D-413 — the soundtrack's beats on the composition, for the keyframe
+  // timeline's beat lines and key snapping.
+  const soundtrackBeats = useSoundtrackBeats(m.manifest);
+  const soundtrackAnalysis = soundtrackBeats.status === 'ready' ? soundtrackBeats.analysis : null;
+  const timelineBeats = useMemo(
+    () => (m.manifest && soundtrackAnalysis ? compositionBeats(m.manifest, soundtrackAnalysis) : null),
+    [m.manifest, soundtrackAnalysis],
+  );
   const [catalogError, setCatalogError] = useState<string | null>(null);
   // D-332 — the saved-component library. Read here, ABOVE the `loadState`
   // early returns below, because these are hooks: reading them further down
@@ -857,6 +867,7 @@ export function MotionTab({
                 onTransientChange={setTransientManifest}
                 onCommit={m.commit}
                 activeSceneIndex={activeSceneIndex}
+                beats={timelineBeats}
               />
             </ResizablePanel>
           </PanelGroup>

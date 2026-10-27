@@ -30,13 +30,13 @@ pub fn router() -> rmcp::handler::server::router::tool::ToolRouter<crate::Apelle
 #[cfg(test)]
 mod tests {
     /// The gate is the whole tab: with Motion every tool here is a `motion_*` tool (and
-    /// there are 65 of them), without it the router is empty and nothing else in the
+    /// there are 69 of them), without it the router is empty and nothing else in the
     /// server advertises a `motion_*` name either.
     #[test]
     fn the_motion_feature_gates_exactly_the_motion_tools() {
         let mine = super::router().list_all();
         assert!(mine.iter().all(|t| t.name.starts_with("motion_")));
-        let expected = if cfg!(feature = "motion") { 65 } else { 0 };
+        let expected = if cfg!(feature = "motion") { 69 } else { 0 };
         assert_eq!(mine.len(), expected);
 
         let others = crate::tools::colorist::router()

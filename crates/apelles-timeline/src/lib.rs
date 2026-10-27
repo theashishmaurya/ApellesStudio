@@ -554,6 +554,32 @@ pub struct Track {
     /// defaults".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption_style: Option<CaptionStyle>,
+    /// **D-413 — this track's music sets the timeline's beat grid.** Present
+    /// means "draw this track's beats on the timeline and let edits snap to
+    /// them"; the analysis itself (tempo, beats, downbeats) is derived from the
+    /// clips' source files by `apelles-beat` and cached by content, never
+    /// stored here. Only the two analysis parameters a person can change live
+    /// on the track, so a reopened project draws the same grid.
+    ///
+    /// On the track, not the timeline: tracks have no ids, and a track flag
+    /// moves with its track when tracks are reordered (an index on the
+    /// timeline would silently point at another track). At most one track
+    /// carries it; the frontend's `set_beat_grid` op clears the others.
+    ///
+    /// This crate never reads it: the grid is an editing aid, not a render
+    /// input. `None` round-trips a pre-D-413 project byte-identically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beat_grid: Option<BeatGrid>,
+}
+
+/// The analysis parameters of a track's beat grid (D-413). Both optional:
+/// absent means `apelles-beat`'s defaults (4 beats a bar, the 120 BPM prior).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct BeatGrid {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meter: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tempo_hint_bpm: Option<f64>,
 }
 
 /// Which blend a [`Transition`] performs (D-226).
@@ -790,6 +816,7 @@ impl Default for Track {
             // means "the defaults" on a subtitle track. No migration value
             // needed, exactly `Clip::caption`'s own reasoning.
             caption_style: None,
+            beat_grid: None,
         }
     }
 }
@@ -5083,6 +5110,32 @@ mod tests {
         let json = serde_json::to_string(&t).unwrap();
         let back: Timeline = serde_json::from_str(&json).unwrap();
         assert_eq!(back.tracks[0].gain, 0.5);
+    }
+
+    /// D-413 — a track's beat grid round-trips, and a track without one
+    /// writes no key (a pre-D-413 project is byte-identical).
+    #[test]
+    fn track_beat_grid_round_trips_and_absent_writes_no_key() -> Result<(), serde_json::Error> {
+        let mut t = Timeline::from_shots(&shots());
+        let plain = serde_json::to_string(&t)?;
+        assert!(!plain.contains("beat_grid"));
+        t.tracks[0].beat_grid = Some(BeatGrid {
+            meter: Some(3),
+            tempo_hint_bpm: Some(72.0),
+        });
+        let json = serde_json::to_string(&t)?;
+        let back: Timeline = serde_json::from_str(&json)?;
+        assert_eq!(
+            back.tracks[0].beat_grid,
+            Some(BeatGrid {
+                meter: Some(3),
+                tempo_hint_bpm: Some(72.0)
+            })
+        );
+        let bare: Timeline =
+            serde_json::from_str(&json.replace(r#""meter":3,"tempo_hint_bpm":72.0"#, ""))?;
+        assert_eq!(bare.tracks[0].beat_grid, Some(BeatGrid::default()));
+        Ok(())
     }
 
     // --- Clip::media_id (unify-clip-model doc) -------------------------------

@@ -18,6 +18,12 @@ dragging a pool item in from the shell's Sources panel.
   (also double-click), Duplicate (independent copy, grades copied), Size (project
   size or a delivery preset), Delete (confirmed, not undoable). A timeline with its
   own size shows it on its tab (`9:16`).
+- `beatGrid.ts` / `beatOps.ts` / `useTimelineBeats.ts` / `TimelineBeats.tsx` (D-413) — the
+  timeline's beat grid: the track with `beat_grid` set, its clips' beats placed on timeline
+  frames (through trim, position, native rate and speed ramp), the `set_beat_grid` / `rolls`
+  ops behind `editor_detect_beats`, `editor_set_beat_grid` and `editor_snap_cuts_to_beats`, the
+  beat lane, and the snapping `TimelinePane` applies to clip drags, edge trims and the playhead
+  (toolbar magnet; the track header's metronome toggles the grid).
 - `TimelineOutputForm` (D-411 Phase 0) — "This timeline" in the Project Settings
   panel: the open timeline's own output size (project size / preset / custom),
   through the store's `setTimelineOutput`.

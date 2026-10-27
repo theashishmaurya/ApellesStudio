@@ -13,7 +13,7 @@
 //!       3. what comes back to the client: the rendered MCP content blocks.
 //!
 //! WHY IT IS SHAPED LIKE THIS
-//!     The corpus covers all 224 tools including the destructive ones, because it was
+//!     The corpus covers all 231 tools including the destructive ones, because it was
 //!     captured against a stub control server rather than a real app — the boundary
 //!     under test is what the MCP layer sends and renders, which is entirely on this
 //!     side of the app. No Apelles app is needed to run this, and none should be.

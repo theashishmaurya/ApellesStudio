@@ -26,6 +26,22 @@ use crate::server::ApellesMcp;
 // Argument defaults — the Python signature's own, so an omitted argument reaches the
 // frontend with the value it always did. A `value` that defaults to null is how these
 // tools express "clear this field", so null is a real default here, not a missing one.
+fn default_motion_set_soundtrack_clear() -> bool {
+    false
+}
+
+fn default_motion_time_to_music_dry_run() -> bool {
+    false
+}
+
+fn default_motion_snap_to_beats_include_camera() -> bool {
+    false
+}
+
+fn default_motion_snap_to_beats_dry_run() -> bool {
+    false
+}
+
 fn default_motion_set_project_settings_reflow() -> bool {
     true
 }
@@ -554,6 +570,69 @@ pub struct MotionValidateArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MotionImportAssetArgs {
     pub path: String,
+}
+
+/// D-413 — the document's soundtrack.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionSetSoundtrackArgs {
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub asset: Option<String>,
+    #[serde(default)]
+    pub offset: Option<f64>,
+    #[serde(default)]
+    pub volume: Option<f64>,
+    #[serde(default)]
+    pub render: Option<bool>,
+    #[serde(default)]
+    pub meter: Option<i64>,
+    #[serde(default)]
+    pub tempo_hint: Option<f64>,
+    #[serde(default = "default_motion_set_soundtrack_clear")]
+    pub clear: bool,
+}
+
+/// D-413 — one scene's soundtrack beats.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionGetBeatsArgs {
+    pub scene_index: i64,
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+/// D-413 — named moves timed to the soundtrack's beats.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionTimeToMusicArgs {
+    pub scene_index: i64,
+    #[schemars(schema_with = "untyped_list_schema")]
+    pub moves: Vec<Value>,
+    #[serde(default = "default_motion_time_to_music_dry_run")]
+    pub dry_run: bool,
+}
+
+/// D-413 — keys snapped to the soundtrack's beats.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionSnapToBeatsArgs {
+    pub scene_index: i64,
+    #[serde(default)]
+    pub layers: Option<Vec<String>>,
+    #[serde(default)]
+    pub track: Option<String>,
+    #[serde(default)]
+    pub to: Option<String>,
+    #[serde(default)]
+    pub tolerance_s: Option<f64>,
+    #[serde(default = "default_motion_snap_to_beats_include_camera")]
+    pub include_camera: bool,
+    #[serde(default = "default_motion_snap_to_beats_dry_run")]
+    pub dry_run: bool,
+}
+
+/// The schema of a parameter the Python tool declares as a bare `list`
+/// (`items: {}`), which `Vec<Value>` alone would publish more narrowly.
+fn untyped_list_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({ "type": "array", "items": {} })
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1805,6 +1884,161 @@ impl ApellesMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new().set("path", p.path);
         let env = self.op("motion_import_asset", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_set_soundtrack",
+        description = r#"Set the document's soundtrack — the music its moves are timed to — and
+    analyse its beats (D-413). One undo step. ONE track for the whole document:
+    music time at composition second t is `offset + t`, in every scene.
+
+    - `path` — an audio file to import (mp3, wav, m4a, aac, flac, ogg); it is
+      copied into the project by content hash, like an image. Or `asset` — an
+      audio asset id already imported. Omit both to change the other fields
+      of the current soundtrack.
+    - `offset` — seconds INTO the song at which the video starts.
+    - `volume` — 0..1, for the player and a render.
+    - `render` — mux the music into the rendered scene files (default false:
+      it is a timing reference, and scenes are usually cut together under one
+      bed on the Edit timeline). The live player always plays it.
+    - `meter` (2..7, default 4) and `tempo_hint` (30..300 BPM) — the beat
+      analysis parameters, stored in the document.
+    - `clear` — remove the soundtrack.
+
+    Answers the soundtrack, `tempoBpm`, and per scene its beat and downbeat
+    counts and first downbeat (scene seconds) — read `motion_get_beats` next.
+    Audio never changes a rendered pixel."#
+    )]
+    pub async fn motion_set_soundtrack(
+        &self,
+        Parameters(p): Parameters<MotionSetSoundtrackArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .put("path", p.path)
+            .put("asset", p.asset)
+            .put("offset", p.offset)
+            .put("volume", p.volume)
+            .put("render", p.render)
+            .put("meter", p.meter)
+            .put("tempo_hint", p.tempo_hint)
+            .put_if("clear", p.clear);
+        let env = self
+            .op_with(
+                "motion_set_soundtrack",
+                crate::BEAT_ANALYSIS_TIMEOUT_MS,
+                args,
+            )
+            .await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_get_beats",
+        description = r#"The soundtrack's beats inside one scene, in SCENE seconds (D-413):
+    `[{n, at, bar, beat, downbeat, strong, strength}]`, `n` counting from 1
+    within the scene — the numbers the cues of `motion_time_to_music` use.
+    `kind`: `beat` (default), `downbeat` or `strong`. Refused when the
+    document has no soundtrack (`motion_set_soundtrack`)."#
+    )]
+    pub async fn motion_get_beats(
+        &self,
+        Parameters(p): Parameters<MotionGetBeatsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("scene_index", p.scene_index)
+            .put("kind", p.kind);
+        let env = self
+            .op_with("motion_get_beats", crate::BEAT_ANALYSIS_TIMEOUT_MS, args)
+            .await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_time_to_music",
+        description = r#"Time named moves to the soundtrack's beats in one scene, as ONE undo
+    step (D-413). E.g. "time the hero reveal to the first downbeat, land the
+    scale-up on the next strong beat, smaller accents on the beats between":
+
+        moves = [
+          {"name": "reveal",  "cue": "downbeat 1",       "layer": "hero", "track": "enter"},
+          {"name": "scale",   "cue": "next strong beat", "layer": "hero", "track": "transform", "anchor": "end"},
+          {"name": "accents", "cue": "every beat between", "layers": ["dot1", "dot2"], "track": "enter"},
+        ]
+
+    Each move: `name`; `cue`; `layer` (id or index; a group, a template
+    instance or a custom component is one layer) or `layers` (several, each
+    one item); `track` — which keys: `all` (transform + anim, default),
+    `transform`, `anim`, `anim:<prop>` (e.g. `anim:props.count`), `enter`
+    (the layer's start, `at`) or `camera` (the scene's 2D camera, no layer);
+    `keys` — `all` (default), `first`, `last` or indices in time order;
+    `anchor` — `start` (default: the move's first key goes on the beat) or
+    `end` (its last key LANDS on the beat). The move's other keys shift with
+    its anchor, so a move keeps its own timing.
+
+    Cues (1-based, counted within the scene; kind = beat | downbeat | strong
+    beat): `beat N`, `downbeat N`, `strong beat N`, `bar N`, `bar N beat M`,
+    `first <kind>`, `last <kind>`, `next <kind>` (after the previous
+    single-beat move), `next <kind> after <move>`, `every <kind> between`
+    (strictly between the two single-beat moves listed before it; items are
+    spread evenly over those beats), `every <kind> between <a> and <b>`.
+
+    Refused, naming the move, when a cue has no such beat, a key would leave
+    the scene or pass another key, or two moves claim one key. `dry_run`
+    answers the plan without changing anything. Read `motion_get_beats` first."#
+    )]
+    pub async fn motion_time_to_music(
+        &self,
+        Parameters(p): Parameters<MotionTimeToMusicArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("scene_index", p.scene_index)
+            .set("moves", p.moves)
+            .put_if("dry_run", p.dry_run);
+        let env = self
+            .op_with(
+                "motion_time_to_music",
+                crate::BEAT_ANALYSIS_TIMEOUT_MS,
+                args,
+            )
+            .await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_snap_to_beats",
+        description = r#"Move every key of the chosen layers onto its nearest soundtrack beat
+    within `tolerance_s` (default 0.1 s), as ONE undo step (D-413) — the
+    keyframe timeline's magnet, in bulk.
+
+    - `layers` — layer ids; default every layer in the scene.
+    - `track` — `all` (default), `transform`, `anim`, `anim:<prop>`, `enter`.
+    - `to` — `beat` (default), `downbeat` or `strong`.
+    - `include_camera` — the scene's 2D camera keys too.
+    - `dry_run` — report, change nothing.
+
+    A key with no beat close enough, or whose beat is taken by its neighbour,
+    stays where it is and says why."#
+    )]
+    pub async fn motion_snap_to_beats(
+        &self,
+        Parameters(p): Parameters<MotionSnapToBeatsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("scene_index", p.scene_index)
+            .put("layers", p.layers)
+            .put("track", p.track)
+            .put("to", p.to)
+            .put("tolerance_s", p.tolerance_s)
+            .put_if("include_camera", p.include_camera)
+            .put_if("dry_run", p.dry_run);
+        let env = self
+            .op_with(
+                "motion_snap_to_beats",
+                crate::BEAT_ANALYSIS_TIMEOUT_MS,
+                args,
+            )
+            .await?;
         Ok(render::json_text(&env))
     }
 

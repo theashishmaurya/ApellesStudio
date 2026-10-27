@@ -219,6 +219,9 @@ inclusion, no longer a silent video).
 > > | `editor_propose_music_edits` | A batch of beat edits (kind, reason, anchor) stored for the person's review in the Music edits panel; replaces the bed's set; nothing is cut. A stale `view_id` is refused. |
 > > | `editor_list_music_edits` | The review list as the person left it: each edit's status (pending / accepted / rejected), adjusted frames, and any reason it cannot land now. |
 > > | `editor_apply_music_edits` | Apply the accepted edits (plus pending, when asked) as **one undo entry**; applied rows leave the list. |
+> > | `editor_detect_beats` | **D-413 — the music's beat grid.** Tempo, beats, downbeats and accents of a track's music (on-device, cached by content), in timeline frames; by default shows the track's grid so the GUI's drags, trims and playhead snap to it. Nothing is cut. |
+> > | `editor_set_beat_grid` | Show / hide a track's beat grid (the track header's metronome); one undo entry. |
+> > | `editor_snap_cuts_to_beats` | Roll every cut on a track onto its nearest beat as **one undo entry** (dry run available); a cut too far from a beat or without media handle is left with its reason. |
 > >
 > > **`clip` is OPTIONAL on all four of the silence/retake detectors (D-343,
 > > fixes B-216; the two D-349 dark-region tools are the exception and require

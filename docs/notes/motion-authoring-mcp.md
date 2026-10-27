@@ -45,6 +45,11 @@ each phase needs its own D-NNN when built (numbers below are provisional; D-402 
   (`<use>-<n>`, scene named after the template), not randomly; refill across template versions
   needs `upgrade`; the "make slot" toggle became a field list with "expose" checkboxes in the save
   form (one place, the Essential Graphics / Figma Properties pattern; reasoning in D-407).
+- **Timing to music — built (D-413, 2026-10-27), alongside the phases.** A document soundtrack
+  (`manifest.soundtrack`, an audio asset by content hash), its beats on the keyframe timeline, and
+  `motion_time_to_music`: named moves on layers, groups, template instances and custom
+  components' `anim` tracks (`anim:props.<id>`) mapped to beats by cues (`downbeat 1`, `next
+  strong beat`, `every beat between`). Details: `docs/notes/music-driven-motion.md`.
 - **Phase 5 — built (D-409, 2026-10-27): custom Remotion components, certified into the catalog.**
   Owner (2026-10-27): "we should be able to do custom animation build new catalogs, custom things
   and then certify it as data point :) and use it" — for what primitives cannot express (particle

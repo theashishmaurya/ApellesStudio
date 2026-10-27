@@ -1887,6 +1887,93 @@
       }
     },
     {
+      "name": "editor_detect_beats",
+      "description": "Find the beats of the music on a track \u2014 tempo, every beat, the\n    downbeats (bar starts) and how hard each beat hits \u2014 and, by default, show\n    them as the timeline's beat grid (one undo step), so drags, trims and the\n    playhead snap to them in the GUI (D-413).\n\n    - `track` \u2014 required: the track holding the music (usually an audio\n      track). Every clip on it is analysed from its file, and its beats are\n      placed through the clip's trim, position and speed, so a bed cut by\n      music edits keeps its beats where they are heard.\n    - `meter` \u2014 beats per bar, 2..7 (default 4; 3 for a waltz).\n    - `tempo_hint_bpm` \u2014 30..300: where the tempo estimate looks first. Pass\n      it when the answer came back at half or double the real tempo.\n    - `show` \u2014 set this track as the timeline's beat grid (default true).\n    - `kind` \u2014 which beats to return: `beat` (default), `downbeat` or `strong`\n      (a downbeat or a beat that hits hard).\n    - `start_frame` / `end_frame` \u2014 only beats in this timeline window.\n    - `force` \u2014 re-analyse even if this exact file was analysed before.\n\n    Answers `tempoBpm`, `meter`, `beatSpacingFrames`, per-file facts and\n    `beats`: `[{frame, bar, beat, downbeat, strong, strength, clip}]` in\n    TIMELINE frames (at most 1000; narrow the window or the kind for more).\n    Downbeats are a heuristic (low-end onsets + harmonic change): right on\n    music that marks its bars, possibly a beat off on music that does not.\n    Nothing is cut.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "meter": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Meter"
+          },
+          "tempo_hint_bpm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tempo Hint Bpm"
+          },
+          "show": {
+            "default": true,
+            "title": "Show",
+            "type": "boolean"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kind"
+          },
+          "start_frame": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start Frame"
+          },
+          "end_frame": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Frame"
+          },
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "track"
+        ],
+        "type": "object",
+        "title": "editor_detect_beatsArguments"
+      }
+    },
+    {
       "name": "editor_detect_dark_regions",
       "description": "Find the stretches of a clip where **there is speech nobody transcribed**\n    (D-349, fixes the transcription half of B-216).\n\n    The ASR's whole-file pass does not merely mis-hear some utterances \u2014 it can\n    emit no words for them, inside a window it is otherwise reading\n    confidently. There is no error, no warning and no low-confidence score to\n    filter on, so the transcript reads plausibly and is missing a sentence.\n    Measured on real footage with Parakeet: 19 dropped stretches (about 93 s)\n    across three sources.\n\n    This tool crosses the two signals the app already has \u2014 the acoustic VAD\n    (\"is anyone talking\") and the transcript (\"what was read\") \u2014 and reports\n    where they disagree.\n\n    - `track` / `clip` \u2014 required. Only the clip's own trimmed source range is\n      scanned. (No whole-track sweep: unlike the other two detectors, the\n      answer here is normally consumed by `editor_detect_retakes`, which runs\n      this automatically over every clip it groups.)\n    - `min_dark_secs` \u2014 how much unaccounted-for speech a stretch must hold\n      before it is flagged (default 1.2). Measured on a plateau: 1.0 to 1.5 give\n      the same answer on both test files.\n    - `max_word_secs` \u2014 a transcript word LONGER than this contributes no\n      coverage. The default is NO bound: Parakeet cannot stretch a word across\n      a hole, so there is nothing for a bound to catch. Pass a real value (e.g.\n      2.0) only for a transcript from an aligner that can smear one word over\n      a silent stretch.\n    - `rms_floor_scale` \u2014 multiplier on the amplitude floor (default 1.0). The\n      floor is calibrated **per file** from the quietest speech this recording's\n      own transcript read correctly, never a constant \u2014 mic, gain and room\n      differ per shoot. Below 1.0 trades precision for recall.\n\n    `state: \"done\"` carries `regions`, each in the same three frame spaces\n    `editor_detect_silences` returns, plus the `stretch\u2026` bounds it was found in\n    and its `rmsPeak`. It also carries `rmsFloor` / `calibrationSpans` /\n    `gatedOut`: **`rmsFloor: null` means the range held too few\n    well-transcribed utterances to calibrate a gate, so the answer is ungated**\n    and \"no regions\" is weaker evidence than usual. Otherwise start-then-poll\n    like the other two \u2014 `editor_detect_dark_regions_status` with the same\n    arguments.\n\n    **Nothing is cut and nothing is re-transcribed by this tool** \u2014 it reports.\n    `editor_detect_retakes` is what re-reads these windows in isolation and\n    splices the recovered words into the transcript it groups.",
       "inputSchema": {
@@ -4438,6 +4525,52 @@
       }
     },
     {
+      "name": "editor_set_beat_grid",
+      "description": "Show a track's beats as the timeline's beat grid, or hide the grid\n    (`track` omitted / null) \u2014 the track header's metronome toggle (D-413).\n    One undo step; only one track carries the grid. `meter` (2..7) and\n    `tempo_hint_bpm` (30..300) are the analysis parameters, stored on the\n    track. Use `editor_detect_beats` to also read the beats back.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Track"
+          },
+          "meter": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Meter"
+          },
+          "tempo_hint_bpm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tempo Hint Bpm"
+          }
+        },
+        "type": "object",
+        "title": "editor_set_beat_gridArguments"
+      }
+    },
+    {
       "name": "editor_set_caption",
       "description": "Change one existing caption's text. Newlines are allowed (that is what\n    makes it a caption rather than a title).\n\n    Refused if `track`/`clip` names something that is not a caption, or if the\n    track is locked. A caption's TIMING is its clip's own timing \u2014 move or trim\n    it with the ordinary clip tools (`editor_move_clip`, `editor_trim_clip`,\n    `editor_split_clip`), which all work on a caption exactly as on any other\n    clip.",
       "inputSchema": {
@@ -6183,6 +6316,67 @@
       }
     },
     {
+      "name": "editor_snap_cuts_to_beats",
+      "description": "Roll every cut on a track onto its nearest beat of the timeline's beat\n    grid, as ONE undo step (D-413). A roll moves the edit point between two\n    touching clips: the outgoing clip ends later or earlier and the incoming\n    one starts there, so nothing else moves and the sequence keeps its length.\n\n    - `track` \u2014 the track whose cuts to move (e.g. the picture track); the\n      grid itself comes from the track `editor_detect_beats` / the metronome\n      toggle set (refused when there is none).\n    - `to` \u2014 `beat` (default), `downbeat` or `strong`.\n    - `max_shift_frames` \u2014 how far a cut may move (default: half the beat\n      spacing, so every cut reaches its nearest beat).\n    - `clips` \u2014 only the cuts after these clip indices (the OUTGOING clip).\n    - `dry_run` \u2014 report what would move, change nothing.\n\n    Answers per cut `{clip, fromFrame, toFrame}` or `toFrame: null` with a\n    `reason` (already on a beat, too far, not enough media handle to roll).",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "To"
+          },
+          "max_shift_frames": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Shift Frames"
+          },
+          "clips": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Clips"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "track"
+        ],
+        "type": "object",
+        "title": "editor_snap_cuts_to_beatsArguments"
+      }
+    },
+    {
       "name": "editor_split_clip",
       "description": "Split one clip on the timeline into two, at an exact TIMELINE frame.\n    `track`/`clip` are the 0-based indices from `get_timeline`.",
       "inputSchema": {
@@ -7924,6 +8118,35 @@
         ],
         "type": "object",
         "title": "motion_duplicate_sceneArguments"
+      }
+    },
+    {
+      "name": "motion_get_beats",
+      "description": "The soundtrack's beats inside one scene, in SCENE seconds (D-413):\n    `[{n, at, bar, beat, downbeat, strong, strength}]`, `n` counting from 1\n    within the scene \u2014 the numbers the cues of `motion_time_to_music` use.\n    `kind`: `beat` (default), `downbeat` or `strong`. Refused when the\n    document has no soundtrack (`motion_set_soundtrack`).",
+      "inputSchema": {
+        "properties": {
+          "scene_index": {
+            "title": "Scene Index",
+            "type": "integer"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kind"
+          }
+        },
+        "required": [
+          "scene_index"
+        ],
+        "type": "object",
+        "title": "motion_get_beatsArguments"
       }
     },
     {
@@ -10910,6 +11133,211 @@
           }
         },
         "title": "motion_set_selectionArguments"
+      }
+    },
+    {
+      "name": "motion_set_soundtrack",
+      "description": "Set the document's soundtrack \u2014 the music its moves are timed to \u2014 and\n    analyse its beats (D-413). One undo step. ONE track for the whole document:\n    music time at composition second t is `offset + t`, in every scene.\n\n    - `path` \u2014 an audio file to import (mp3, wav, m4a, aac, flac, ogg); it is\n      copied into the project by content hash, like an image. Or `asset` \u2014 an\n      audio asset id already imported. Omit both to change the other fields\n      of the current soundtrack.\n    - `offset` \u2014 seconds INTO the song at which the video starts.\n    - `volume` \u2014 0..1, for the player and a render.\n    - `render` \u2014 mux the music into the rendered scene files (default false:\n      it is a timing reference, and scenes are usually cut together under one\n      bed on the Edit timeline). The live player always plays it.\n    - `meter` (2..7, default 4) and `tempo_hint` (30..300 BPM) \u2014 the beat\n      analysis parameters, stored in the document.\n    - `clear` \u2014 remove the soundtrack.\n\n    Answers the soundtrack, `tempoBpm`, and per scene its beat and downbeat\n    counts and first downbeat (scene seconds) \u2014 read `motion_get_beats` next.\n    Audio never changes a rendered pixel.",
+      "inputSchema": {
+        "properties": {
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Path"
+          },
+          "asset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Asset"
+          },
+          "offset": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Offset"
+          },
+          "volume": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Volume"
+          },
+          "render": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Render"
+          },
+          "meter": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Meter"
+          },
+          "tempo_hint": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tempo Hint"
+          },
+          "clear": {
+            "default": false,
+            "title": "Clear",
+            "type": "boolean"
+          }
+        },
+        "type": "object",
+        "title": "motion_set_soundtrackArguments"
+      }
+    },
+    {
+      "name": "motion_snap_to_beats",
+      "description": "Move every key of the chosen layers onto its nearest soundtrack beat\n    within `tolerance_s` (default 0.1 s), as ONE undo step (D-413) \u2014 the\n    keyframe timeline's magnet, in bulk.\n\n    - `layers` \u2014 layer ids; default every layer in the scene.\n    - `track` \u2014 `all` (default), `transform`, `anim`, `anim:<prop>`, `enter`.\n    - `to` \u2014 `beat` (default), `downbeat` or `strong`.\n    - `include_camera` \u2014 the scene's 2D camera keys too.\n    - `dry_run` \u2014 report, change nothing.\n\n    A key with no beat close enough, or whose beat is taken by its neighbour,\n    stays where it is and says why.",
+      "inputSchema": {
+        "properties": {
+          "scene_index": {
+            "title": "Scene Index",
+            "type": "integer"
+          },
+          "layers": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Layers"
+          },
+          "track": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Track"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "To"
+          },
+          "tolerance_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tolerance S"
+          },
+          "include_camera": {
+            "default": false,
+            "title": "Include Camera",
+            "type": "boolean"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "scene_index"
+        ],
+        "type": "object",
+        "title": "motion_snap_to_beatsArguments"
+      }
+    },
+    {
+      "name": "motion_time_to_music",
+      "description": "Time named moves to the soundtrack's beats in one scene, as ONE undo\n    step (D-413). E.g. \"time the hero reveal to the first downbeat, land the\n    scale-up on the next strong beat, smaller accents on the beats between\":\n\n        moves = [\n          {\"name\": \"reveal\",  \"cue\": \"downbeat 1\",       \"layer\": \"hero\", \"track\": \"enter\"},\n          {\"name\": \"scale\",   \"cue\": \"next strong beat\", \"layer\": \"hero\", \"track\": \"transform\", \"anchor\": \"end\"},\n          {\"name\": \"accents\", \"cue\": \"every beat between\", \"layers\": [\"dot1\", \"dot2\"], \"track\": \"enter\"},\n        ]\n\n    Each move: `name`; `cue`; `layer` (id or index; a group, a template\n    instance or a custom component is one layer) or `layers` (several, each\n    one item); `track` \u2014 which keys: `all` (transform + anim, default),\n    `transform`, `anim`, `anim:<prop>` (e.g. `anim:props.count`), `enter`\n    (the layer's start, `at`) or `camera` (the scene's 2D camera, no layer);\n    `keys` \u2014 `all` (default), `first`, `last` or indices in time order;\n    `anchor` \u2014 `start` (default: the move's first key goes on the beat) or\n    `end` (its last key LANDS on the beat). The move's other keys shift with\n    its anchor, so a move keeps its own timing.\n\n    Cues (1-based, counted within the scene; kind = beat | downbeat | strong\n    beat): `beat N`, `downbeat N`, `strong beat N`, `bar N`, `bar N beat M`,\n    `first <kind>`, `last <kind>`, `next <kind>` (after the previous\n    single-beat move), `next <kind> after <move>`, `every <kind> between`\n    (strictly between the two single-beat moves listed before it; items are\n    spread evenly over those beats), `every <kind> between <a> and <b>`.\n\n    Refused, naming the move, when a cue has no such beat, a key would leave\n    the scene or pass another key, or two moves claim one key. `dry_run`\n    answers the plan without changing anything. Read `motion_get_beats` first.",
+      "inputSchema": {
+        "properties": {
+          "scene_index": {
+            "title": "Scene Index",
+            "type": "integer"
+          },
+          "moves": {
+            "items": {},
+            "title": "Moves",
+            "type": "array"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "scene_index",
+          "moves"
+        ],
+        "type": "object",
+        "title": "motion_time_to_musicArguments"
       }
     },
     {
@@ -14134,6 +14562,67 @@
       ]
     },
     {
+      "tool": "editor_detect_beats",
+      "case": "minimal",
+      "arguments": {
+        "track": 42
+      },
+      "requests": [
+        {
+          "op": "editor_detect_beats",
+          "args": {
+            "track": 42,
+            "show": true
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_detect_beats",
+      "case": "full",
+      "arguments": {
+        "track": 42,
+        "meter": 84,
+        "tempo_hint_bpm": -8.35,
+        "show": false,
+        "kind": "v_editor_detect_beats.kind",
+        "start_frame": 9,
+        "end_frame": 37,
+        "force": true
+      },
+      "requests": [
+        {
+          "op": "editor_detect_beats",
+          "args": {
+            "track": 42,
+            "show": false,
+            "meter": 84,
+            "tempoHintBpm": -8.35,
+            "kind": "v_editor_detect_beats.kind",
+            "startFrame": 9,
+            "endFrame": 37,
+            "force": true
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "editor_detect_dark_regions",
       "case": "minimal",
       "arguments": {
@@ -16348,6 +16837,54 @@
       ]
     },
     {
+      "tool": "editor_set_beat_grid",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "editor_set_beat_grid",
+          "args": {
+            "track": null
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_set_beat_grid",
+      "case": "full",
+      "arguments": {
+        "track": 94,
+        "meter": 54,
+        "tempo_hint_bpm": 19.19
+      },
+      "requests": [
+        {
+          "op": "editor_set_beat_grid",
+          "args": {
+            "track": 94,
+            "meter": 54,
+            "tempoHintBpm": 19.19
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "editor_set_caption",
       "case": "minimal",
       "arguments": {
@@ -17499,6 +18036,64 @@
             "delta": 20
           },
           "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_snap_cuts_to_beats",
+      "case": "minimal",
+      "arguments": {
+        "track": 30
+      },
+      "requests": [
+        {
+          "op": "editor_snap_cuts_to_beats",
+          "args": {
+            "track": 30
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_snap_cuts_to_beats",
+      "case": "full",
+      "arguments": {
+        "track": 30,
+        "to": "v_editor_snap_cuts_to_beats.to",
+        "max_shift_frames": 58,
+        "clips": [
+          13
+        ],
+        "dry_run": true
+      },
+      "requests": [
+        {
+          "op": "editor_snap_cuts_to_beats",
+          "args": {
+            "track": 30,
+            "to": "v_editor_snap_cuts_to_beats.to",
+            "maxShiftFrames": 58,
+            "clips": [
+              13
+            ],
+            "dryRun": true
+          },
+          "timeout_ms": 120000
         }
       ],
       "isError": false,
@@ -18943,6 +19538,54 @@
             "scene_index": 83
           },
           "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_get_beats",
+      "case": "minimal",
+      "arguments": {
+        "scene_index": 28
+      },
+      "requests": [
+        {
+          "op": "motion_get_beats",
+          "args": {
+            "scene_index": 28
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_get_beats",
+      "case": "full",
+      "arguments": {
+        "scene_index": 28,
+        "kind": "v_motion_get_beats.kind"
+      },
+      "requests": [
+        {
+          "op": "motion_get_beats",
+          "args": {
+            "scene_index": 28,
+            "kind": "v_motion_get_beats.kind"
+          },
+          "timeout_ms": 120000
         }
       ],
       "isError": false,
@@ -21210,6 +21853,182 @@
             ]
           },
           "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_set_soundtrack",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "motion_set_soundtrack",
+          "args": {},
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_set_soundtrack",
+      "case": "full",
+      "arguments": {
+        "path": "v_motion_set_soundtrack.path",
+        "asset": "v_motion_set_soundtrack.asset",
+        "offset": 38.33,
+        "volume": 1.98,
+        "render": false,
+        "meter": 1,
+        "tempo_hint": 25.29,
+        "clear": false
+      },
+      "requests": [
+        {
+          "op": "motion_set_soundtrack",
+          "args": {
+            "path": "v_motion_set_soundtrack.path",
+            "asset": "v_motion_set_soundtrack.asset",
+            "offset": 38.33,
+            "volume": 1.98,
+            "render": false,
+            "meter": 1,
+            "tempo_hint": 25.29
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_snap_to_beats",
+      "case": "minimal",
+      "arguments": {
+        "scene_index": 31
+      },
+      "requests": [
+        {
+          "op": "motion_snap_to_beats",
+          "args": {
+            "scene_index": 31
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_snap_to_beats",
+      "case": "full",
+      "arguments": {
+        "scene_index": 31,
+        "layers": [
+          "v_motion_snap_to_beats.layers[0]"
+        ],
+        "track": "v_motion_snap_to_beats.track",
+        "to": "v_motion_snap_to_beats.to",
+        "tolerance_s": -40.24,
+        "include_camera": true,
+        "dry_run": true
+      },
+      "requests": [
+        {
+          "op": "motion_snap_to_beats",
+          "args": {
+            "scene_index": 31,
+            "layers": [
+              "v_motion_snap_to_beats.layers[0]"
+            ],
+            "track": "v_motion_snap_to_beats.track",
+            "to": "v_motion_snap_to_beats.to",
+            "tolerance_s": -40.24,
+            "include_camera": true,
+            "dry_run": true
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_time_to_music",
+      "case": "minimal",
+      "arguments": {
+        "scene_index": 88,
+        "moves": [
+          "any_motion_time_to_music.moves[0]"
+        ]
+      },
+      "requests": [
+        {
+          "op": "motion_time_to_music",
+          "args": {
+            "scene_index": 88,
+            "moves": [
+              "any_motion_time_to_music.moves[0]"
+            ]
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_time_to_music",
+      "case": "full",
+      "arguments": {
+        "scene_index": 88,
+        "moves": [
+          "any_motion_time_to_music.moves[0]"
+        ],
+        "dry_run": false
+      },
+      "requests": [
+        {
+          "op": "motion_time_to_music",
+          "args": {
+            "scene_index": 88,
+            "moves": [
+              "any_motion_time_to_music.moves[0]"
+            ]
+          },
+          "timeout_ms": 120000
         }
       ],
       "isError": false,

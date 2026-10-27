@@ -17,7 +17,7 @@ Owner: *"Lets do it bigger one with Motion, we will take some time to get the mo
 - [ ] **Remotion licence settled** for the founder-studio business: Remotion is free for individuals and companies of up to 3 people; a larger for-profit company needs a Remotion company licence. Confirm with the owner before tagging.
 - [ ] **Unsaved Motion edits survive a reload** (0g).
 - [x] Authoring as data, templates, custom components, rough.js/d3 (D-403..D-407, D-409, D-412); export matches the player (B-281/B-282).
-- [ ] Music-driven motion (beat sync), in progress.
+- [x] Music-driven motion (beat sync): on-device beat analysis, the Edit tab's beat grid + snapping + "snap cuts to beats", Motion's soundtrack + beat lines + key snapping + "time to music", seven MCP tools (D-413, 0j). Live check in the app still to do.
 - [ ] Brand kit (colours, fonts, motion style, references across all tabs).
 - [ ] Automatic Clipper Phases 1-2 (shorts from one agent call; D-411).
 - [ ] A full release-checklist run on the installed app (`docs/releases/README.md`), notes in `docs/releases/v0.4.0.md`.
@@ -290,6 +290,13 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    - **Instagram:** the Instagram Graph API content publishing flow (Reels for vertical video; feed video) needs a Professional (Business or Creator) account. Check how the current API takes a local file (resumable upload vs. a public `video_url`) and its rate limits and spec (aspect, length, codecs) when building.
    - Presets that match each platform's spec (9:16 1080×1920 for Shorts/Reels, -14 LUFS for YouTube per D-401), a per-platform caption/description template, and batch publishing of Clipper shorts (0h).
    - Later candidates: TikTok Content Posting API, LinkedIn, X.
+
+0j. ~~**Music-driven motion: "use your own music; tell Claude which beats the big move should hit"**~~ **built (D-413, 2026-10-27)** (owner, from tip 2 of `scratch/reference-reels/ian-tang-claude-motion-tips.md`). Design and measurements: `docs/notes/music-driven-motion.md`.
+   - [x] Beat analysis `apelles-beat` (tempo, beats, downbeats/bars, accents), on-device, deterministic, cached by content hash; measured against ground truth and librosa (`eval/beats/`).
+   - [x] Edit: a track's beats as the timeline's beat grid (metronome toggle, beat lane), drags / trims / playhead snap to beats (magnet toggle), "Snap cuts to beats" as one undo step; `editor_detect_beats`, `editor_set_beat_grid`, `editor_snap_cuts_to_beats`.
+   - [x] Motion: a document soundtrack (content-hashed audio, plays in the player, rendered in only when asked, pixels unchanged), beats on the keyframe timeline with key snapping, "Time to music" + "Snap keys to beats" in the Inspector; `motion_set_soundtrack`, `motion_get_beats`, `motion_time_to_music`, `motion_snap_to_beats`.
+   - [ ] Verify live in the running app (beat lane, snapping, soundtrack playback in the player, the Inspector forms).
+   - [ ] Later: beat lines drawn on the music clip itself; per-section tempo (a tempo map); downbeat correction by hand (shift the bar phase); the sound-design reminder hook firing on the beat tools.
 
 0. **Export through the app's own compositor instead of an ffmpeg filter graph — D-350.**
    Moved here from "Later" 2026-09-18 when **phase 1 shipped**. Origin: B-228/B-229/B-230

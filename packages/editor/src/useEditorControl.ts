@@ -223,6 +223,9 @@ import { DETECT_GRACE_MS, settleWithin } from './settle';
 import { getWordTranscript, proposeRetakes, retranscribeWords } from './retakeProposalOps';
 // D-408 — music edits by story beat; the panel calls the same functions.
 import { applyMusicEditsOp, listMusicEdits, musicEditNow, proposeMusicEdits } from './musicEditOps';
+// D-413 — the beat grid: the same functions the track header's metronome and
+// the toolbar's "Snap cuts to beats" call.
+import { detectTrackBeats, setBeatGridOp, snapCutsToBeatsOp } from './beatOps';
 import { detectedForGate, gateDetectorGroups, type DetectorGateResult } from './detectorGate';
 
 /** What a retake answer says about the gate behind its `status` (D-382). */
@@ -664,6 +667,8 @@ export function timelineDto(tl: Timeline) {
       duckDb: t.duck_db ?? 0,
       duckAttackMs: t.duck_attack_ms ?? DEFAULT_DUCK_ATTACK_MS,
       duckReleaseMs: t.duck_release_ms ?? DEFAULT_DUCK_RELEASE_MS,
+      // D-413 — present only on the one track whose beats are shown.
+      ...(t.beat_grid ? { beatGrid: t.beat_grid } : {}),
       // D-226 — this track's transitions, in cut order, alongside its clips so
       // `editor_get_timeline` stays one call for "what is on this timeline".
       transitions: transitionsOf(t).map(transitionDto),
@@ -5629,6 +5634,27 @@ export function useEditorControl(): void {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
         return applyMusicEditsOp(tl, a);
+      },
+
+      // ---- beats (D-413) ----------------------------------------------------
+      // Analyse a track's music and show its beat grid; show/hide the grid;
+      // roll every cut on a track onto its nearest beat as one undo step.
+      editor_detect_beats: async (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        return await detectTrackBeats(tl, a);
+      },
+
+      editor_set_beat_grid: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        return setBeatGridOp(tl, a);
+      },
+
+      editor_snap_cuts_to_beats: async (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        return await snapCutsToBeatsOp(tl, a);
       },
 
       editor_ripple_delete_ranges: (a) => {

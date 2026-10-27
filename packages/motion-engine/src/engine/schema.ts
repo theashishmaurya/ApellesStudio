@@ -26,7 +26,7 @@
 import { z } from "zod";
 import { THEME_NAMES } from "../design";
 import { themeDefSchema } from "../themeDef";
-import { activeSchema, easeCurve, isColorSchema, vec3 } from "./schemaAtoms";
+import { activeSchema, audioAssetIdSchema, easeCurve, isColorSchema, vec3 } from "./schemaAtoms";
 import { defOf, optionFor, unwrap } from "./zodIntrospect";
 import {
   IN3D_USES,
@@ -599,6 +599,35 @@ function checkCustomLayers(
   }
 }
 
+/**
+ * D-413 — the document's soundtrack: the music its moves are timed to. ONE
+ * track for the whole document, because a Motion document is one continuous
+ * piece cut into scenes (`<Video>`'s `Series`), so music time at composition
+ * second `t` is `offset + t` in every scene alike.
+ *
+ * - `src` — an audio asset (content hash, D-404), so the beats a scene was
+ *   timed to cannot change under it.
+ * - `offset` — seconds INTO the music at which the document starts.
+ * - `volume` — `0..1`, for the player and (when rendered) the render.
+ * - `render` — whether the music is muxed into the rendered scene files.
+ *   Default `false`: the soundtrack is a timing and monitoring reference, and
+ *   scenes are usually cut together under one bed on the Edit timeline, where
+ *   per-scene music would restart at every cut. The player always plays it.
+ * - `meter`, `tempoHint` — the beat analysis parameters (`apelles-beat`), kept
+ *   in the document so the same document always yields the same beats.
+ *
+ * Audio never changes a pixel: a render's frames are identical with or
+ * without it (`preview_render.rs` pins the hashes).
+ */
+export const soundtrackSchema = z.object({
+  src: audioAssetIdSchema,
+  offset: z.number().min(0).optional(),
+  volume: z.number().min(0).max(1).optional(),
+  render: z.boolean().optional(),
+  meter: z.number().int().min(2).max(7).optional(),
+  tempoHint: z.number().min(30).max(300).optional(),
+});
+
 export const manifestSchema = z.object({
   title: z.string(),
   width: z.number().default(1920),
@@ -619,6 +648,8 @@ export const manifestSchema = z.object({
    *  the document renders the same whether or not the library still has it.
    *  The compiled modules they name live in the project's asset folder. */
   components: z.record(z.string(), componentRefSchema).optional(),
+  /** D-413 — see `soundtrackSchema`. */
+  soundtrack: soundtrackSchema.optional(),
   scenes: z.array(sceneSchema).min(1),
 }).superRefine((m, ctx) => {
   checkCustomLayers(m, ctx);
@@ -641,6 +672,7 @@ export const manifestSchema = z.object({
 });
 
 export type Manifest = z.infer<typeof manifestSchema>;
+export type Soundtrack = z.infer<typeof soundtrackSchema>;
 export type { ThemeName } from "../design";
 export type Scene = z.infer<typeof sceneSchema>;
 export type Layer = z.infer<typeof layer>;

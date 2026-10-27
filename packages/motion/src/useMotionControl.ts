@@ -110,7 +110,7 @@ import { useMotionLayerPresetStore } from './layerPresetIO';
 import { useMotionThemeLibraryStore } from './themeLibraryIO';
 import { useMotionTemplateLibraryStore } from './templateLibraryIO';
 import { componentAccess } from './customComponentLibraryIO';
-import { importAsset, previewFrames } from './manifestIO';
+import { importAsset, previewFrames, soundtrackBeats } from './manifestIO';
 import type { Selection } from './LayerList';
 import type { MotionCanvasMeasureApi } from './MotionPreview';
 import type { useMotionManifest } from './useMotionManifest';
@@ -250,6 +250,8 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
       preview: (req) => previewFrames(req),
       // D-404 — the content-hash asset import.
       importAsset: (path) => importAsset(path),
+      // D-413 — the soundtrack's beats, through the bridge's shared cache.
+      soundtrackBeats: (st) => soundtrackBeats(st),
       // D-407 — the template library, read the same way.
       templates: () => ({
         list: () => useMotionTemplateLibraryStore.getState().templates,

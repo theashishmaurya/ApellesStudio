@@ -8,10 +8,13 @@
 //! disk did (CLAUDE.md's render determinism rule), and importing the same file
 //! twice is a no-op that returns the same id.
 //!
+//! D-413 added audio: a soundtrack is imported the same way, so the music a
+//! scene is timed to is pinned by content exactly as its logo is.
+//!
 //! **What it does NOT do:** resolve an id to a URL (the engine does that,
 //! `packages/motion-engine/src/lib/assets.tsx`), garbage-collect assets no
 //! manifest references any more, or accept anything but the image formats the
-//! engine can draw.
+//! engine can draw and the audio formats its renderer (Chromium) can play.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -21,6 +24,19 @@ use sha2::{Digest, Sha256};
 
 /// The extensions an image asset may have — the engine's `ASSET_IMAGE_EXTENSIONS`.
 pub const IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "webp", "gif", "svg"];
+
+/// D-413 — the extensions an audio asset (a soundtrack) may have: what both
+/// Chromium (the renderer and the live player) and `apelles-media`'s decoder
+/// (the beat analysis) read — the engine's `ASSET_AUDIO_EXTENSIONS`.
+pub const AUDIO_EXTENSIONS: [&str; 6] = ["mp3", "wav", "m4a", "aac", "flac", "ogg"];
+
+/// What an asset is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AssetKind {
+    Image,
+    Audio,
+}
 
 /// `<project>.chroma/motion/assets`.
 pub fn assets_dir(project_dir: &Path) -> PathBuf {
@@ -38,6 +54,8 @@ pub struct AssetRecord {
     /// Its absolute path.
     pub path: PathBuf,
     pub bytes: u64,
+    /// D-413 — an image or a soundtrack.
+    pub kind: AssetKind,
     /// `false` when the same content was already in the folder.
     pub copied: bool,
     /// Pixel size for a raster image, when it can be read.
@@ -67,19 +85,23 @@ pub fn sha256_file(path: &Path) -> Result<String, ChromaError> {
         .collect())
 }
 
-/// The file's extension, lowercased, if it is one the engine can draw.
-fn image_extension(path: &Path) -> Result<String, ChromaError> {
+/// The file's extension, lowercased, and its kind, if it is one the engine
+/// can draw or play.
+fn asset_extension(path: &Path) -> Result<(String, AssetKind), ChromaError> {
     let ext = path
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
     if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
-        Ok(ext)
+        Ok((ext, AssetKind::Image))
+    } else if AUDIO_EXTENSIONS.contains(&ext.as_str()) {
+        Ok((ext, AssetKind::Audio))
     } else {
         Err(ChromaError::Unsupported(format!(
-            "{}: not an image asset (expected one of {})",
+            "{}: not an image or audio asset (expected one of {}, {})",
             path.display(),
-            IMAGE_EXTENSIONS.join(", ")
+            IMAGE_EXTENSIONS.join(", "),
+            AUDIO_EXTENSIONS.join(", ")
         )))
     }
 }
@@ -94,7 +116,7 @@ pub fn import_asset(source: &Path, assets_dir: &Path) -> Result<AssetRecord, Chr
             source.display()
         )));
     }
-    let ext = image_extension(source)?;
+    let (ext, kind) = asset_extension(source)?;
     let hex = sha256_file(source)?;
     let file_name = format!("{hex}.{ext}");
     let dest = assets_dir.join(&file_name);
@@ -113,7 +135,7 @@ pub fn import_asset(source: &Path, assets_dir: &Path) -> Result<AssetRecord, Chr
     let bytes = std::fs::metadata(&dest)
         .map_err(|e| ChromaError::Invalid(format!("stat {}: {e}", dest.display())))?
         .len();
-    let (width, height) = if ext == "svg" {
+    let (width, height) = if ext == "svg" || kind == AssetKind::Audio {
         (None, None)
     } else {
         match image::image_dimensions(&dest) {
@@ -126,6 +148,7 @@ pub fn import_asset(source: &Path, assets_dir: &Path) -> Result<AssetRecord, Chr
         file_name,
         path: dest,
         bytes,
+        kind,
         copied,
         width,
         height,
@@ -207,6 +230,18 @@ mod tests {
         std::fs::write(&b, "<svg />")?;
         let assets = dir.path().join("assets");
         assert_ne!(import_asset(&a, &assets)?.id, import_asset(&b, &assets)?.id);
+        Ok(())
+    }
+
+    #[test]
+    fn imports_a_soundtrack_as_audio() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let src = dir.path().join("Bed.MP3");
+        std::fs::write(&src, b"ID3 not really an mp3")?;
+        let rec = import_asset(&src, &dir.path().join("assets"))?;
+        assert_eq!(rec.kind, AssetKind::Audio);
+        assert!(rec.id.ends_with(".mp3"));
+        assert_eq!((rec.width, rec.height), (None, None));
         Ok(())
     }
 

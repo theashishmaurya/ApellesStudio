@@ -12,6 +12,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
+import type { FileBeats } from '@apelles/beats';
+import { detectBeats } from '@apelles/bridge';
+import { assetFileName } from '@apelles/motion-engine/src/lib/assetId';
+import type { Soundtrack } from '@apelles/motion-engine/src/engine/schema';
+
 import type { MotionRenderStatus, SceneRenderJob } from './renderLoop';
 
 /** The exact message `motion.rs::current_project_dir` rejects with. */
@@ -118,6 +123,8 @@ export interface MotionAssetRecord {
   fileName: string;
   path: string;
   bytes: number;
+  /** D-413 — an image or a soundtrack (absent from builds before D-413). */
+  kind?: 'image' | 'audio';
   /** `false` when the same content was already in the project */
   copied: boolean;
   width: number | null;
@@ -132,6 +139,18 @@ export async function importAsset(path: string): Promise<MotionAssetRecord> {
   } catch (e) {
     rethrow(e);
   }
+}
+
+/** D-413 — the beats of a soundtrack: its asset file in the open project's
+ *  asset folder, analysed through `@apelles/bridge`'s shared, cached
+ *  `detectBeats` (the same binding the Edit tab reads its grid through). */
+export async function soundtrackBeats(soundtrack: Pick<Soundtrack, 'src' | 'meter' | 'tempoHint'>): Promise<FileBeats> {
+  const dir = await getAssetsDir();
+  return detectBeats({
+    path: `${dir.replace(/[\\/]+$/, '')}/${assetFileName(soundtrack.src)}`,
+    meter: soundtrack.meter ?? null,
+    tempoHintBpm: soundtrack.tempoHint ?? null,
+  });
 }
 
 /** D-404 — the open project's asset folder (made readable by the webview, so

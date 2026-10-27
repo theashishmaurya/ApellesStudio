@@ -2459,6 +2459,7 @@ pub fn run() {
             chroma::media_understanding::chroma_media_understanding_load,
             chroma::media_understanding::chroma_media_understanding_save,
             chroma::speech::chroma_detect_silences,
+            chroma::beats::chroma_detect_beats,
             chroma::speech::chroma_detect_retakes,
             chroma::speech::chroma_detect_dark_regions,
             chroma::retake_proposals::chroma_retake_word_view,

@@ -180,7 +180,9 @@ import {
 export type { MotionRefusal };
 import { layerLabel, type Selection } from './LayerList';
 import { sceneDurationFrames, sceneStartFrame, totalFrames } from '@apelles/motion-engine/src/engine/build';
-import { manifestSchema, type Cam2dKey, type Cam3dKey, type Manifest, type ThemeName, type TransformKey } from '@apelles/motion-engine/src/engine/schema';
+import { manifestSchema, type Cam2dKey, type Cam3dKey, type Manifest, type Soundtrack, type ThemeName, type TransformKey } from '@apelles/motion-engine/src/engine/schema';
+import type { FileBeats } from '@apelles/beats';
+import { createMusicOps } from './musicOps';
 import {
   iconIssues,
   issuesFromZod,
@@ -328,6 +330,11 @@ export interface MotionOpsContext {
    *  supplies it (the component ops then refuse cleanly and a custom layer
    *  cannot be inserted). Injected for the same reason `presets` is. */
   components?: () => MotionComponentAccess;
+  /** D-413 — the beats of a soundtrack (`chroma_detect_beats` on its asset
+   *  file, through `@apelles/bridge`'s cache), or `undefined` when nothing
+   *  supplies it (the beat ops then refuse cleanly). Injected for the same
+   *  reason `preview` is. */
+  soundtrackBeats?: (soundtrack: Soundtrack) => Promise<FileBeats>;
 }
 
 /** D-407 — the ops layer's window onto the template library. */
@@ -818,6 +825,18 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
   };
 
   return guardOps({
+    // ---- soundtrack and beats (D-413, `musicOps.ts`) ----------------------
+    ...createMusicOps({
+      manifest: () => api().manifest,
+      noManifest: () => {
+        const g = requireManifest(api());
+        return isErr(g) ? g : null;
+      },
+      commit: (next, label) => api().commit(next, label),
+      importAsset: ctx.importAsset,
+      soundtrackBeats: ctx.soundtrackBeats,
+    }),
+
     // ---- reads --------------------------------------------------------
 
     /** the live in-editor manifest (parsed, not necessarily saved — the same

@@ -6,12 +6,13 @@
 # `crates/*` are Apelles' own layered crates (thin-shell / fat-core, D-039):
 # pure domain models with no wgpu / ffmpeg, GPU + media I/O isolated below them.
 #
-# 11 crates exist today, all real and load-bearing: apelles-{types,gpu,
+# 12 crates exist today, all real and load-bearing: apelles-{types,gpu,
 # media,timeline,grade-model,project,motion,ai} from extraction waves 1-3
 # (2026-09-05), plus apelles-mcp (D-312), the MCP tool surface replacing
 # `mcp/server.py`, and apelles-speech (D-318), the read-only silence + retake
 # detectors behind the Edit tab's recut panel, and apelles-audio-library (D-400),
-# Openverse audio search/import. Still future: apelles-grade,
+# Openverse audio search/import, and apelles-beat (D-413), musical beat
+# analysis for the Edit beat grid and Motion's soundtrack. Still future: apelles-grade,
 # apelles-compositor, apelles-agent. The live table and each crate's boundary
 # are in `crates/README.md`.
 

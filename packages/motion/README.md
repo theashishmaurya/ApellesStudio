@@ -306,6 +306,20 @@ GUI-creation gap; D-155–D-159 closed the largest on-canvas-manipulation
 gap; D-160/D-161/D-162/D-163 are four of four steps toward a real keyframe
 timeline — the curve/easing editor remains, Phase 5b's own final piece.
 
+## Soundtrack and time to music (D-413)
+
+`musicTiming.ts` (pure): the soundtrack's beats on the composition and per scene
+(`compositionBeats`, `sceneBeats`), `timeToMusic` (named moves → `@apelles/beats`' cue grammar →
+key times for a layer's transform keys, `anim` tracks, entrance or the scene camera; one new
+manifest) and `snapKeysToBeats`. `musicOps.ts`: `motion_set_soundtrack`, `motion_get_beats`,
+`motion_time_to_music`, `motion_snap_to_beats` (spread into `createMotionOps`; the analysis and
+import arrive through the context's `soundtrackBeats` / `importAsset`). `useSoundtrackBeats.ts`:
+the React view of the same cached analysis (`@apelles/bridge`'s `useBeats`). GUI:
+`SoundtrackSection.tsx` (the document Inspector's Soundtrack section and the scene Inspector's
+Time to music form) and the keyframe timeline's beat lines + magnet. Tests:
+`musicTiming.test.ts`, `musicOps.e2e.test.ts` (fixtures in `src/fixtures/musicDoc.ts`). Design
+and measurements: `docs/notes/music-driven-motion.md`.
+
 ## Templates (D-407)
 
 `templates.ts` holds the pure template functions both interfaces use: `instantiateTemplate`

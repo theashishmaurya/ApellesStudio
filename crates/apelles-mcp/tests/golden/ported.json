@@ -231,6 +231,13 @@
     "motion_write_component",
     "motion_check_component",
     "motion_certify_component",
-    "motion_delete_component"
+    "motion_delete_component",
+    "editor_detect_beats",
+    "editor_set_beat_grid",
+    "editor_snap_cuts_to_beats",
+    "motion_set_soundtrack",
+    "motion_get_beats",
+    "motion_time_to_music",
+    "motion_snap_to_beats"
   ]
 }

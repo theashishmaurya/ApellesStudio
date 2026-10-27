@@ -55,6 +55,18 @@ fn default_editor_add_transition_kind() -> String {
     "cross_dissolve".to_string()
 }
 
+fn default_editor_detect_beats_show() -> bool {
+    true
+}
+
+fn default_editor_detect_beats_force() -> bool {
+    false
+}
+
+fn default_editor_snap_cuts_to_beats_dry_run() -> bool {
+    false
+}
+
 fn default_editor_analyze_video_force() -> bool {
     false
 }
@@ -1315,6 +1327,51 @@ pub struct EditorApplyMusicEditsArgs {
     pub track: i64,
     #[serde(default = "default_editor_apply_music_edits_include_pending")]
     pub include_pending: bool,
+}
+
+/// D-413 — a track's beats, optionally shown as the timeline's beat grid.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorDetectBeatsArgs {
+    pub track: i64,
+    #[serde(default)]
+    pub meter: Option<i64>,
+    #[serde(default)]
+    pub tempo_hint_bpm: Option<f64>,
+    #[serde(default = "default_editor_detect_beats_show")]
+    pub show: bool,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub start_frame: Option<i64>,
+    #[serde(default)]
+    pub end_frame: Option<i64>,
+    #[serde(default = "default_editor_detect_beats_force")]
+    pub force: bool,
+}
+
+/// D-413 — show a track's beat grid, or hide it (`track` null).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorSetBeatGridArgs {
+    #[serde(default)]
+    pub track: Option<i64>,
+    #[serde(default)]
+    pub meter: Option<i64>,
+    #[serde(default)]
+    pub tempo_hint_bpm: Option<f64>,
+}
+
+/// D-413 — roll a track's cuts onto the beat grid.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorSnapCutsToBeatsArgs {
+    pub track: i64,
+    #[serde(default)]
+    pub to: Option<String>,
+    #[serde(default)]
+    pub max_shift_frames: Option<i64>,
+    #[serde(default)]
+    pub clips: Option<Vec<i64>>,
+    #[serde(default = "default_editor_snap_cuts_to_beats_dry_run")]
+    pub dry_run: bool,
 }
 
 /// The schema for a parameter the Python tool declares as a bare `list`.
@@ -5475,6 +5532,111 @@ impl ApellesMcp {
             .set("track", p.track)
             .put_if("includePending", p.include_pending);
         let env = self.op("editor_apply_music_edits", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_detect_beats",
+        description = r#"Find the beats of the music on a track — tempo, every beat, the
+    downbeats (bar starts) and how hard each beat hits — and, by default, show
+    them as the timeline's beat grid (one undo step), so drags, trims and the
+    playhead snap to them in the GUI (D-413).
+
+    - `track` — required: the track holding the music (usually an audio
+      track). Every clip on it is analysed from its file, and its beats are
+      placed through the clip's trim, position and speed, so a bed cut by
+      music edits keeps its beats where they are heard.
+    - `meter` — beats per bar, 2..7 (default 4; 3 for a waltz).
+    - `tempo_hint_bpm` — 30..300: where the tempo estimate looks first. Pass
+      it when the answer came back at half or double the real tempo.
+    - `show` — set this track as the timeline's beat grid (default true).
+    - `kind` — which beats to return: `beat` (default), `downbeat` or `strong`
+      (a downbeat or a beat that hits hard).
+    - `start_frame` / `end_frame` — only beats in this timeline window.
+    - `force` — re-analyse even if this exact file was analysed before.
+
+    Answers `tempoBpm`, `meter`, `beatSpacingFrames`, per-file facts and
+    `beats`: `[{frame, bar, beat, downbeat, strong, strength, clip}]` in
+    TIMELINE frames (at most 1000; narrow the window or the kind for more).
+    Downbeats are a heuristic (low-end onsets + harmonic change): right on
+    music that marks its bars, possibly a beat off on music that does not.
+    Nothing is cut."#
+    )]
+    pub async fn editor_detect_beats(
+        &self,
+        Parameters(p): Parameters<EditorDetectBeatsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("track", p.track)
+            .set("show", p.show)
+            .put("meter", p.meter)
+            .put("tempoHintBpm", p.tempo_hint_bpm)
+            .put("kind", p.kind)
+            .put("startFrame", p.start_frame)
+            .put("endFrame", p.end_frame)
+            .put_if("force", p.force);
+        let env = self
+            .op_with("editor_detect_beats", crate::BEAT_ANALYSIS_TIMEOUT_MS, args)
+            .await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_set_beat_grid",
+        description = r#"Show a track's beats as the timeline's beat grid, or hide the grid
+    (`track` omitted / null) — the track header's metronome toggle (D-413).
+    One undo step; only one track carries the grid. `meter` (2..7) and
+    `tempo_hint_bpm` (30..300) are the analysis parameters, stored on the
+    track. Use `editor_detect_beats` to also read the beats back."#
+    )]
+    pub async fn editor_set_beat_grid(
+        &self,
+        Parameters(p): Parameters<EditorSetBeatGridArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("track", p.track)
+            .put("meter", p.meter)
+            .put("tempoHintBpm", p.tempo_hint_bpm);
+        let env = self.op("editor_set_beat_grid", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_snap_cuts_to_beats",
+        description = r#"Roll every cut on a track onto its nearest beat of the timeline's beat
+    grid, as ONE undo step (D-413). A roll moves the edit point between two
+    touching clips: the outgoing clip ends later or earlier and the incoming
+    one starts there, so nothing else moves and the sequence keeps its length.
+
+    - `track` — the track whose cuts to move (e.g. the picture track); the
+      grid itself comes from the track `editor_detect_beats` / the metronome
+      toggle set (refused when there is none).
+    - `to` — `beat` (default), `downbeat` or `strong`.
+    - `max_shift_frames` — how far a cut may move (default: half the beat
+      spacing, so every cut reaches its nearest beat).
+    - `clips` — only the cuts after these clip indices (the OUTGOING clip).
+    - `dry_run` — report what would move, change nothing.
+
+    Answers per cut `{clip, fromFrame, toFrame}` or `toFrame: null` with a
+    `reason` (already on a beat, too far, not enough media handle to roll)."#
+    )]
+    pub async fn editor_snap_cuts_to_beats(
+        &self,
+        Parameters(p): Parameters<EditorSnapCutsToBeatsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("track", p.track)
+            .put("to", p.to)
+            .put("maxShiftFrames", p.max_shift_frames)
+            .put("clips", p.clips)
+            .put_if("dryRun", p.dry_run);
+        let env = self
+            .op_with(
+                "editor_snap_cuts_to_beats",
+                crate::BEAT_ANALYSIS_TIMEOUT_MS,
+                args,
+            )
+            .await?;
         Ok(render::json_text(&env))
     }
 

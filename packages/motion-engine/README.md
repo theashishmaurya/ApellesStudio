@@ -335,6 +335,16 @@ move-drag's position pair and does not extend to resize.
 
 `node.icon` draws a real Phosphor icon tile for an infrastructure role (`GRAPH_ICONS` in `primitives/Graph.tsx`: client, server, database, cloud, gateway, reverse-proxy, load-balancer, firewall, attacker, …). `pulse.label` rides a packet; `keep`/`dy` leave it under the destination. `edgeWidth`/`edgeTone` make edges read on a light ground. A fully pinned graph is drawn exactly where pinned (B-266).
 
+## Soundtrack (D-413)
+
+`manifest.soundtrack = {src, offset?, volume?, render?, meter?, tempoHint?}`: one piece of music
+for the whole document, `src` an audio asset id (`AUDIO_ASSET_ID_PATTERN`: mp3, wav, m4a, aac,
+flac, ogg; D-404's content-hashed store). `<Video>` mounts one `<Html5Audio>` outside the scene
+`Series`, trimmed by `offset`: the player always plays it; a render includes it only when
+`render: true` (otherwise the render tree has no audio element at all). It never changes a
+pixel (`preview_render.rs::a_soundtrack_never_changes_pixels`). `meter` / `tempoHint` are the
+beat-analysis parameters `@apelles/motion` reads the beats with.
+
 ## Brand building blocks (D-404/D-405)
 
 `primitives/Image.tsx` (an asset by `sha256:` id, resolved through `lib/assets.tsx`'s

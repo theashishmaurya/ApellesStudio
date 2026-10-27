@@ -120,6 +120,10 @@
 //!   commands behind `editor_search_audio` / `editor_import_audio` /
 //!   `editor_get_credits`; the real code is `apelles-audio-library`. Explicit
 //!   network calls only, never in the render or grade path
+//! - `beats` — **musical beat analysis (D-413)**: `chroma_detect_beats`, the one
+//!   command behind the Edit tab's beat lane / beat snapping and the Motion
+//!   tab's soundtrack beats; the real code (decode, analysis, content-hash
+//!   cache) is `apelles-beat`
 //! - `write_text_file` — generic "write this UTF-8 text to this absolute path"
 //!   primitive (D-196), used by the Edit-tab FCPXML interchange exporter
 //!   (`packages/editor/src/timelineInterchange.ts` builds the XML string;
@@ -129,6 +133,7 @@
 pub mod ai_env;
 pub mod audio;
 pub mod audio_library;
+pub mod beats;
 pub mod caption_render;
 pub mod colorist_view;
 pub mod commands;

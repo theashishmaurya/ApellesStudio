@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-27** — **Music-driven motion (D-413):** new `apelles-beat` crate (tempo, beats, downbeats, accents; on-device, cached by content hash; beats within ~3 ms of known clicks, D-414 adds `realfft`); the Edit tab draws a track's beats and snaps drags, trims, the playhead and "Snap cuts to beats" to them; Motion gets a document soundtrack (plays in the player, renders unchanged pixels), beat lines and key snapping on the keyframe timeline, and "Time to music" (named moves → cues like `downbeat 1`, `next strong beat`, `every beat between`). Seven MCP tools in both servers (224 → 231); `apelles-sound-design` gains a motion-to-music section.
+
 - **2026-10-27** — Next release set: **v0.4.0, the Motion release** (owner); no Edit-only v0.3.0. Checklist at the top of `docs/04-roadmap.md`.
 
 - **2026-10-27** — Roadmap **0i**: publish straight to YouTube and Instagram (long-form, Shorts, Reels), opt-in, owner request.

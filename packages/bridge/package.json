@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@apelles/beats": "*",
     "@apelles/store": "*",
     "@tauri-apps/api": "^2.11.1",
     "react": "^19.2.8",

@@ -93,6 +93,12 @@ export interface ToolGroup {
  * `motion_refill_template` and `motion_delete_template` (Motion 52 → 59).
  * Re-counted against the real file.
  *
+ * 224 → 231 on 2026-10-27 (D-413): music-driven editing and motion,
+ * `editor_detect_beats`, `editor_set_beat_grid`, `editor_snap_cuts_to_beats`
+ * (Edit 97 → 100) and `motion_set_soundtrack`, `motion_get_beats`,
+ * `motion_time_to_music`, `motion_snap_to_beats` (Motion 65 → 69).
+ * Re-counted against the real file.
+ *
  * 217 → 224 on 2026-10-27 (D-411 Phase 0): timeline management,
  * `editor_list_timelines`, `editor_create_timeline`,
  * `editor_set_active_timeline`, `editor_rename_timeline`,
@@ -123,15 +129,15 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 224,
-  shipped: 212,
+  all: 231,
+  shipped: 219,
   debugOnly: 12,
 } as const;
 
 export const TOOL_GROUPS: readonly ToolGroup[] = [
   {
     name: 'Edit',
-    count: 97,
+    count: 100,
     blurb:
       'The whole multi-track NLE. Browse and organise the media pool, place and trim clips, perform any of the seven edit types at the playhead, roll/slip/slide, manage tracks, key transforms, set transitions, markers, captions and per-clip EQ, then render the timeline to a real file.',
     sample: [
@@ -143,6 +149,8 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
       'editor_edit_in',
       'editor_split_clip',
       'editor_music_edit',
+      'editor_detect_beats',
+      'editor_snap_cuts_to_beats',
       'editor_trim_clip',
       'editor_roll_edit',
       'editor_slip_clip',
@@ -185,7 +193,7 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
   },
   {
     name: 'Motion',
-    count: 65,
+    count: 69,
     blurb:
       'The motion-graphics room, closed as a gap on 2026-09-09 (D-257/D-259/D-260) after a year of being this surface’s sharpest shortfall. Scenes and layers from a real primitive catalog, per-layer keyframes with bezier easing, 2D and 3D cameras, align and distribute, and a Remotion render that emits one video file per scene.',
     sample: [
@@ -200,6 +208,8 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
       'motion_instantiate_template',
       'motion_write_component',
       'motion_certify_component',
+      'motion_set_soundtrack',
+      'motion_time_to_music',
       'motion_set_layer_field',
       'motion_set_layer_position',
       'motion_add_layer_keyframe',

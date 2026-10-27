@@ -1327,6 +1327,19 @@ export interface Track {
    *  `resolveCaptionStyle`). A whole imported `.srt` is styled once here, not
    *  cue by cue — the reference Inspector's "Track Style" tab. */
   caption_style?: CaptionStyle | null;
+  /** D-413 — this track's music sets the timeline's beat grid: its clips'
+   *  beats are drawn across the timeline and edits snap to them. Mirrors
+   *  `apelles_timeline::Track::beat_grid`. Absent/`null` = no grid. At most
+   *  one track carries it (`set_beat_grid` clears the others); the beats
+   *  themselves are derived from the clips' files and never stored. */
+  beat_grid?: BeatGrid | null;
+}
+
+/** D-413 — a beat grid's analysis parameters; mirrors
+ *  `apelles_timeline::BeatGrid`. Absent fields are `apelles-beat`'s defaults. */
+export interface BeatGrid {
+  meter?: number;
+  tempo_hint_bpm?: number;
 }
 
 /** D-226 — the two transition shapes v1 ships. Mirrors
@@ -3623,6 +3636,16 @@ export type EditOp =
    *  are resolved to frames before this op exists (`musicEdits.ts`), so the
    *  journal replays it without a transcript. */
   | { kind: 'music_edits'; edits: MusicEditRange[] }
+  /** D-413 — turn a track's beat grid on (with its analysis parameters) or
+   *  off. Setting it on one track clears it on every other, so the timeline
+   *  has one grid. A track-level property like `set_track_duck`: not gated by
+   *  the track's lock. */
+  | { kind: 'set_beat_grid'; track: number; grid: BeatGrid | null }
+  /** D-413 — several `roll` edits on one track as ONE history entry ("snap
+   *  cuts to beats"). Composes the `roll` op unchanged, in order, so its link
+   *  group lockstep and clamps hold; `clip` indices are storage indices, which
+   *  a roll never changes. */
+  | { kind: 'rolls'; track: number; rolls: Array<{ clip: number; delta: number }> }
   /** D-046 pass 3 — drag a Sources-panel pool item onto the timeline. Appends
    *  a full-length clip referencing the media (or inserts at `atIndex`). If
    *  `track` doesn't exist yet (a brand new timeline has `tracks: []` — see
@@ -4420,6 +4443,12 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return op.edits.length === 1
         ? `Music dropout on track ${op.edits[0].track + 1}`
         : `${op.edits.length} music edits`;
+    case 'set_beat_grid':
+      return op.grid ? `Show beats of track ${op.track + 1}` : `Hide beats of track ${op.track + 1}`;
+    case 'rolls':
+      return op.rolls.length === 1
+        ? `Roll edit after ${clipLabel(before, op.track, op.rolls[0].clip)}`
+        : `Snap ${op.rolls.length} cuts to beats on track ${op.track + 1}`;
     case 'ripple_delete_ranges':
       return op.ranges.length === 1
         ? `Ripple delete 1 range on track ${op.track + 1}`
@@ -5335,6 +5364,28 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
   // D-408 — per-edit tracks, so it is handled before the single-track guard
   // below; the whole body is `applyMusicEdits` (see the op's own doc).
   if (op.kind === 'music_edits') return applyMusicEdits(tl, op.edits, fps).timeline;
+  // D-413 — touches every track (it clears the grid elsewhere), so it is
+  // handled before the single-track guard below.
+  if (op.kind === 'set_beat_grid') {
+    if (op.track < 0 || op.track >= tl.tracks.length) return tl;
+    const next = clone(tl);
+    next.tracks.forEach((t, i) => {
+      if (i === op.track && op.grid) {
+        const g: BeatGrid = {};
+        if (op.grid.meter != null) g.meter = op.grid.meter;
+        if (op.grid.tempo_hint_bpm != null) g.tempo_hint_bpm = op.grid.tempo_hint_bpm;
+        t.beat_grid = g;
+      } else {
+        delete t.beat_grid;
+      }
+    });
+    return next;
+  }
+  if (op.kind === 'rolls') {
+    let cur = tl;
+    for (const r of op.rolls) cur = applyOp(cur, { kind: 'roll', track: op.track, clip: r.clip, delta: r.delta });
+    return cur;
+  }
   if (op.kind === 'add_clip') {
     // B-129/D-262 — the ONE track-kind gate, here rather than in any one
     // caller, so no path into this op can place a title or an adjustment clip
