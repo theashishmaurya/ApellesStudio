@@ -362,10 +362,8 @@ export function proofPlan(ref: ComponentRef): ProofPlan {
     width: ref.size.w,
     height: ref.size.h,
     fps: PROOF_FPS,
-    // Explicit: Remotion merges a render's props over the Animation
-    // composition's defaultProps (the engine sample, which turns grain and a
-    // vignette on), so an absent key is NOT off in a render (B-281). The
-    // proof renders the component alone.
+    // Explicit, though absent now means off in a render too (B-281): the proof
+    // renders the component alone, and its recorded hashes cover these keys.
     grain: false,
     vignette: false,
     components: { [key]: ref },

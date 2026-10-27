@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-27** — **B-281 fixed:** a Motion render (export, `motion_preview_frame`) of a document that leaves out `grain`/`vignette` no longer gets the engine sample's film grain and vignette; the `Animation` composition's `defaultProps` are now the neutral `animationDefaultProps` (only `title`, the schema's size/fps and a placeholder scene) and the sample is its own `AnimationSample` composition, so the renderer and the live player draw the same pixels. A test pins that no optional manifest key can come from the defaults. Intentionally changes pixels: every `preview_render.rs` hash whose fixture lacks the keys was re-recorded (D-405, D-407, D-409 entries updated; `sample.json` sets both and is unchanged).
+
 - **2026-10-27** — **B-277 fixed (D-410):** a reloaded page (web content process killed, dev full reload) reopens the project that was open, on the tab it was left on, and the Edit journal replays at once; the backend remembers both in memory only, so a cold launch still opens the launcher, and a moved/deleted project falls back to it with an error. Motion's unsaved edits across a reload logged as roadmap 0g.
 
 - **2026-10-27** — **B-280 fixed:** under StrictMode, Fast Refresh never re-ran the bridge registries' `[]` effects, so a hot update left the old op table answering (reproduced in a minimal Vite + React Compiler app); each registry now depends on its module evaluation and re-subscribes, still one subscription (B-272).

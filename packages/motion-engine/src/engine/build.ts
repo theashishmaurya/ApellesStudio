@@ -33,6 +33,24 @@ export const sceneStartFrame = (m: Manifest, sceneIndex: number): number => {
   return start;
 };
 
+/**
+ * B-281 — the `Animation` composition's `defaultProps`. Remotion merges a
+ * render's input props OVER `defaultProps`, so every key listed here is taken
+ * from here whenever a manifest leaves it out, while the live player is handed
+ * the manifest as-is. So this carries ONLY what the schema needs to parse and
+ * nothing that changes a pixel: no `grain`, `vignette`, `theme`, `transparent`
+ * `components`, and a size/fps equal to the schema's own defaults. A
+ * manifest is therefore rendered exactly as given. The engine sample is NOT a
+ * default; it is the `AnimationSample` composition (Root.tsx).
+ */
+export const animationDefaultProps: Manifest = {
+  title: "",
+  width: 1920,
+  height: 1080,
+  fps: 30,
+  scenes: [{ id: "empty", dur: 1, layers: [] }],
+};
+
 /** for Composition.calculateMetadata — props ARE the manifest */
 export const metadataFromManifest = (raw: unknown) => {
   const m = parseManifest(raw);
