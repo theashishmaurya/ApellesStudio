@@ -19,6 +19,7 @@
  */
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+import { PanelErrorBoundary } from '@apelles/ui';
 import { Root } from './Root';
 import { installFrontendLogBridge } from './utils/frontendLogBridge';
 import './styles.css';
@@ -28,6 +29,10 @@ installFrontendLogBridge();
 const root = createRoot(document.getElementById('root')!);
 root.render(
   <React.StrictMode>
-    <Root />
+    {/* B-292 — the outermost boundary: a crash above every tab and pane
+        boundary shows a reloadable error instead of a blank window. */}
+    <PanelErrorBoundary panel="app">
+      <Root />
+    </PanelErrorBoundary>
   </React.StrictMode>,
 );

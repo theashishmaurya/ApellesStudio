@@ -129,7 +129,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { CaretLeftIcon, KeyboardIcon, PlugsConnectedIcon, SidebarSimpleIcon } from '@phosphor-icons/react';
-import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@apelles/ui';
+import { Button, PanelErrorBoundary, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@apelles/ui';
 import { stepHistory } from './historyStep';
 import { KeyboardShortcutsDialog, useKeymapStore, useShortcut } from '@apelles/keymap';
 import { useShellStore, type ShellTabId } from './store';
@@ -480,8 +480,10 @@ export function Shell({
                   utility that the tab panels below use — never a Base UI
                   primitive that defers the hide to a `requestAnimationFrame`
                   that a non-frontmost window never fires (B-124). */}
-              <div className={activeLibraryPanel ? 'hidden' : 'h-full'}>{sourcesPanel}</div>
-              {activeLibraryPanel}
+              <div className={activeLibraryPanel ? 'hidden' : 'h-full'}>
+                <PanelErrorBoundary panel="Sources">{sourcesPanel}</PanelErrorBoundary>
+              </div>
+              {activeLibraryPanel && <PanelErrorBoundary panel="Library">{activeLibraryPanel}</PanelErrorBoundary>}
             </ResizablePanel>
             <ResizableHandle />
           </>
@@ -548,7 +550,10 @@ export function Shell({
             const isActive = projectOpen && tab.id === active;
             return (
               <div key={tab.id} role="tabpanel" className={isActive ? 'flex-1 min-h-0 flex flex-col' : 'hidden'}>
-                {tab.element}
+                {/* B-292 — the last line of defence for a crash in a tab's own
+                    top-level component (its panes have their own boundaries):
+                    the other tabs, the chrome and the launcher keep working. */}
+                <PanelErrorBoundary panel={`tab:${tab.id}`}>{tab.element}</PanelErrorBoundary>
               </div>
             );
           })}

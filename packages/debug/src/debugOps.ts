@@ -27,9 +27,10 @@
  *
  * Ops:
  *   `debug_get_ui_state`          — read every UI-state flag below, plus the
- *                                   open dialogs the DOM actually has and
+ *                                   open dialogs the DOM actually has,
  *                                   (B-282) the Motion player's custom-layer
- *                                   proxy states.
+ *                                   proxy states and (B-292) every panel
+ *                                   showing its crash fallback.
  *   `debug_set_active_tab`        — Edit / Motion / Colorist.
  *   `debug_set_sources_panel`     — the shell's docked library column (Sources
  *                                   is its default content; D-263 lets the
@@ -75,6 +76,7 @@
  */
 
 import { useShellStore } from '@apelles/shell';
+import { getPanelCrashes } from '@apelles/ui';
 import {
   useEditorTimelineStore,
   previewTimingReport,
@@ -166,6 +168,13 @@ function uiStateSnapshot() {
       // answered without reading a screenshot.
       customProxies: customProxyStore.snapshot(),
     },
+    // B-292 — every panel currently showing its "This panel crashed" fallback
+    // (`PanelErrorBoundary`): which one, the error, React's component stack,
+    // when, and how many times since it last rendered cleanly. Empty when
+    // nothing is down. Answers "why is this part of the window blank" without
+    // reading a screenshot, and tells an agent which panel to ask the human to
+    // reload.
+    crashedPanels: getPanelCrashes(),
   };
 }
 

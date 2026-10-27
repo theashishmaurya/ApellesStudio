@@ -157,3 +157,9 @@ export { default as LabeledSwitch } from './labeled-switch';
 export { default as CollapsibleSection } from './collapsible-section';
 
 export * from './typography';
+
+// ── crash containment (B-292 / D-418) ─────────────────────────────────────────
+export { PanelErrorBoundary } from './panel-error-boundary';
+export type { PanelErrorBoundaryProps } from './panel-error-boundary';
+export { clearPanelCrash, getPanelCrashes, reportPanelCrash, subscribePanelCrashes } from './panel-crashes';
+export type { PanelCrash } from './panel-crashes';

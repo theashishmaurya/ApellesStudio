@@ -6,6 +6,18 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-418 — Crash containment: a `PanelErrorBoundary` per tab and per major pane, registries kept above the pane boundaries
+
+**decided (2026-10-28)** · from B-292 (one render throw blanked the window and stalled the bridge)
+
+- **Context.** The app had no error boundary. React unmounts the whole root on an uncaught render error, so the timeline library's throw (B-291) left a white window, and because every op registry lives in that root, every MCP op timed out until a reload.
+- **Options.** (a) One boundary at the root: the window shows an error instead of white, but every tab and every registry still goes down together. (b) `react-error-boundary` (MIT, maintained, the common choice): a dependency for what is ~40 lines of React's own documented pattern. (c) A small boundary component in `@apelles/ui`, placed at the root, per tab and per major pane, with the registries mounted above the pane boundaries.
+- **Choice: (c).** `PanelErrorBoundary` (`packages/ui/src/panel-error-boundary.tsx`): a class component with `getDerivedStateFromError` + `componentDidCatch`, a fallback that names the panel and shows the error with **Reload panel** (remount via a fresh key), a `console.error` log line (forwarded to `app.log`), and a record in `panel-crashes.ts`, a subscribe/snapshot store `debug_get_ui_state` reports as `crashedPanels`. Placement: `main.tsx` (the app), `Shell.tsx` (each tab, the Sources / library column), `EditorTab` (Preview, Timeline, Inspector), `MotionTab` (preview, keyframe timeline, Layers / Catalog, inspector, manifest editor), the Colorist `App` (left panels, viewer, right panels).
+- **Why the registries stay put.** `useEditorControl`, `useMotionControl` and the Colorist-mounted `useChromaControl` / `useBrandControl` / `useDebugControl` are called by their tab's top-level component, which renders the pane boundaries, so a crashed pane leaves its registry mounted and answering. Moving them higher would need their inputs (Motion's player refs, the Colorist's editor actions) hoisted too, for no gain over this. A crash in a tab's top-level component itself is caught by the tab boundary; that unmounts the tab's registry until **Reload panel**, which re-announces a fresh claim (B-272).
+- **Not covered, by React's design:** errors in event handlers and async code (they do not unmount anything); a panel that throws on every render shows its fallback again after each Reload, rather than retrying on its own.
+
+---
+
 ## D-417 — Motion ships in the app: its render runtime (Node.js, Chrome Headless Shell, the Remotion compositor) downloads on demand; the engine ships as a prebuilt pack (supersedes D-391's hide)
 
 **decided (2026-10-27)** · owner (recorded with D-391): *Motion ships in the app; its render runtime is downloaded on demand, in the background, the first time the person opens the Motion tab; editing works immediately, Export / still / certification wait for it, with visible progress* · roadmap v0.4.0 "Motion ships in the bundle" · design and test guide `docs/notes/motion-runtime.md`

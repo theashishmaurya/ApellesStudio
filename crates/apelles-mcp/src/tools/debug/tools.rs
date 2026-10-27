@@ -145,12 +145,19 @@ impl ApellesMcp {
     it, and its frame count and folder or its error. Use it to confirm the
     player really draws a custom layer, without a screenshot.
 
+    A panel that crashed while rendering shows "The <panel> panel crashed"
+    with a Reload panel button instead of taking the window down.
+    `crashedPanels` lists every panel doing that now: its name, the error,
+    React's component stack, when, and how many times. Ask the human to press
+    Reload panel; the rest of the app, and its tools, keep working.
+
     Returns {shell:{activeTab,tabs,sourcesPanelOpen,wgpuSurfaceActive},
              editor:{inspectorOpen,inspectorTab,inspectorTabs,projectOpen,
                      timelineStatus,selection,selectedGap,playing,playhead},
              openDialogs:[{tag,role,label,rect}],
              motion:{customProxies:[{component,props,status,viewers,
-                                     frames?,dir?,cached?,error?}]}}."#
+                                     frames?,dir?,cached?,error?}]},
+             crashedPanels:[{panel,message,stack,componentStack,at,count}]}."#
     )]
     pub async fn debug_ui_state(&self) -> Result<CallToolResult, ErrorData> {
         // Tool name and op name differ here too — the op is `debug_get_ui_state`.

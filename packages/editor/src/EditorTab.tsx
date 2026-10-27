@@ -44,7 +44,7 @@
  */
 
 import { useEffect } from 'react';
-import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@apelles/ui';
+import { Button, PanelErrorBoundary, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@apelles/ui';
 import { SidebarSimpleIcon } from '@phosphor-icons/react';
 
 import { EditorInspectorPanel } from './EditorInspectorPanel';
@@ -167,7 +167,13 @@ export function EditorTab() {
                   `@apelles/shell`'s chrome bar beside the tab switcher — see
                   `Root.tsx`'s `headerAction` wiring and `Shell.tsx`'s own
                   module doc. Nothing left in this tab renders it. */}
-              <PreviewPane />
+              {/* B-292 — each pane crashes alone. `useEditorControl()` above
+                  is deliberately OUTSIDE every pane boundary, so the
+                  `editor_*` ops keep answering while a pane shows its
+                  fallback. */}
+              <PanelErrorBoundary panel="Preview">
+                <PreviewPane />
+              </PanelErrorBoundary>
               {/* D-118 — the Inspector's own opener: tab-local (see this file's
                   module doc for why it isn't a `Shell.tsx` chrome-bar button
                   like Sources'), placed at the preview's top-right so it reads
@@ -212,12 +218,14 @@ export function EditorTab() {
                 transcript / subtitle here", drawn on the left edge). What is
                 left is the timeline switcher itself, which really is a
                 property of this pane. */}
-            <div className="flex shrink-0 items-center justify-between gap-2">
-              <TimelineSwitcher />
-            </div>
-            <div className="flex-1 min-h-0">
-              <TimelinePane />
-            </div>
+            <PanelErrorBoundary panel="Timeline">
+              <div className="flex shrink-0 items-center justify-between gap-2">
+                <TimelineSwitcher />
+              </div>
+              <div className="flex-1 min-h-0">
+                <TimelinePane />
+              </div>
+            </PanelErrorBoundary>
           </ResizablePanel>
         </ResizablePanelGroup>
       </ResizablePanel>
@@ -247,6 +255,7 @@ export function EditorTab() {
                 rows rendered underneath, not a second copy. Renders `null`
                 for any other selection, so it costs nothing when no title is
                 selected. */}
+            <PanelErrorBoundary panel="Inspector">
             <div className="flex h-full flex-col min-h-0">
               <TextClipInspectorPanel />
               {/* D-229 — mounted unconditionally; renders null unless the
@@ -262,6 +271,7 @@ export function EditorTab() {
                 <EditorInspectorPanel />
               </div>
             </div>
+            </PanelErrorBoundary>
           </ResizablePanel>
         </>
       )}

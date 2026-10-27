@@ -73,6 +73,7 @@ import { Invokes, ImageFile, Panel, PanelRegion, Theme, ThumbnailSize, Thumbnail
 
 import ImageProcessingManager from './components/managers/ImageProcessingManager';
 import ImageLoaderManager from './components/managers/ImageLoaderManager';
+import { PanelErrorBoundary } from '@apelles/ui';
 
 
 const imageDragModifier: Modifier = ({ active, activatorEvent, activeNodeRect, transform }) => {
@@ -701,7 +702,12 @@ function App() {
             }}
           >
             <div className="flex flex-row grow h-full min-h-0">
+              {/* B-292 — each Colorist pane crashes alone. The `useChromaControl`,
+                  `useBrandControl` and `useDebugControl` registries are mounted
+                  by this component, above every pane boundary, so the bridge
+                  keeps answering while a pane shows its fallback. */}
               {!shouldHideLeftPanel && hasMainContent && (
+                <PanelErrorBoundary panel="Colorist left panels" fallbackClassName="w-72 shrink-0">
                 <SidePanelArea
                   side="left"
                   width={effectiveLeftWidth}
@@ -712,6 +718,7 @@ function App() {
                   onWidthReset={createResizeResetHandler('left')}
                   isResizing={isResizing}
                 />
+                </PanelErrorBoundary>
               )}
               <div className="relative flex-1 flex flex-col min-w-0">
                 {selectedImage && externalEditSession && (
@@ -726,6 +733,7 @@ function App() {
                   className={clsx('flex-1 flex flex-col min-w-0 h-full', selectedImage ? 'flex' : 'hidden')}
                 >
                   {selectedImage && (
+                    <PanelErrorBoundary panel="Colorist viewer">
                     <EditorView
                       transformWrapperRef={transformWrapperRef}
                       isResizing={isResizing}
@@ -748,6 +756,7 @@ function App() {
                       requestThumbnails={requestThumbnails}
                       renderAppPanel={renderAppPanel}
                     />
+                    </PanelErrorBoundary>
                   )}
                 </div>
                 <div
@@ -772,6 +781,7 @@ function App() {
                 )}
               </div>
               {!useCompactPanels && hasMainContent && (
+                <PanelErrorBoundary panel="Colorist right panels" fallbackClassName="w-72 shrink-0">
                 <SidePanelArea
                   side="right"
                   width={effectiveRightWidth}
@@ -783,6 +793,7 @@ function App() {
                   isResizing={isResizing}
                   showAdditionalTabs={useWidePanels}
                 />
+                </PanelErrorBoundary>
               )}
             </div>
             <DragOverlay modifiers={activeImageDragItem ? [imageDragModifier] : undefined} dropAnimation={null}>

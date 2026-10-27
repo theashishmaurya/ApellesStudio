@@ -126,6 +126,18 @@ Its behavioural tests live in `@apelles/editor`
 (`ScrubbableNumberInput.dom.test.tsx`) because this package has no test tier
 and that one owns the real-`PointerEvent` harness (D-142).
 
+## Crash containment — `PanelErrorBoundary` (D-418, B-292)
+
+`<PanelErrorBoundary panel="Timeline">…</PanelErrorBoundary>` keeps a render
+crash inside one panel: the panel shows "The Timeline panel crashed", the error
+and **Reload panel** (remounts its children), while the rest of the window keeps
+working. It logs `[panel-crash] …` with `console.error` (the app forwards that
+to `app.log`) and records the crash in `panel-crashes.ts`
+(`getPanelCrashes` / `subscribePanelCrashes`, a `useSyncExternalStore`-shaped
+store), which the debug-only `debug_get_ui_state` reports as `crashedPanels`.
+Wrap a new tab or major pane in one; keep an op registry hook ABOVE the pane
+boundaries of its tab, so a crashed pane never takes the control bridge down.
+
 ## Theme — one source, mapped
 
 `src/styles.css` holds the **single** definition of the shadcn token names. It is

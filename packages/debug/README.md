@@ -38,7 +38,7 @@ MCP as tools of the same name.
 
 | op | what it does |
 | --- | --- |
-| `debug_get_ui_state` | active tab, Sources panel, Edit Inspector (open + which of its tabs), selection/playhead, every dialog the DOM currently has open, and `motion.customProxies` — each Motion custom layer's live-player proxy: component, props, status, viewers, frames/folder or error (B-282) |
+| `debug_get_ui_state` | active tab, Sources panel, Edit Inspector (open + which of its tabs), selection/playhead, every dialog the DOM currently has open, and `motion.customProxies` — each Motion custom layer's live-player proxy: component, props, status, viewers, frames/folder or error (B-282), and `crashedPanels` — every panel showing its "This panel crashed" fallback: panel, message, stack, component stack, time, count (B-292) |
 | `debug_set_active_tab` | `{tab: 'edit'\|'motion'\|'colorist'}` (or a 1-based index) |
 | `debug_set_sources_panel` | `{open: bool}` — the shell's docked Sources column |
 | `debug_set_library_mode` | `{mode: 'sources'\|'titles'\|'effects'\|'subtitles'\|'recut'\|'music'\|'index'}` — which panel the Edit tab's left library column shows, and opens the column so it is visible; an unknown mode is refused with the accepted list |

@@ -129,6 +129,7 @@ import { useMotionProjectStore } from './motionProjectStore';
 import { AssetResolverProvider } from '@apelles/motion-engine/src/lib/assets';
 import type { MotionEditLinks } from './motionOps';
 import { PanelGroup, ResizablePanel, ResizableHandle } from './resizable';
+import { PanelErrorBoundary } from '@apelles/ui';
 
 /** the two views the left sidebar pane switches between (D-151) */
 type SidebarTab = 'layers' | 'catalog';
@@ -900,6 +901,9 @@ export function MotionTab({
               squeezed inside `MotionPreview.tsx` itself. */}
           <PanelGroup orientation="vertical">
             <ResizablePanel defaultSize={520} minSize={200}>
+              {/* B-292 — each pane crashes alone; `useMotionControl` above stays
+                  mounted, so the `motion_*` ops keep answering. */}
+              <PanelErrorBoundary panel="Motion preview">
               <MotionPreview
                 manifest={m.manifest}
                 transientManifest={transientManifest}
@@ -912,9 +916,11 @@ export function MotionTab({
                 onCommit={m.commit}
                 activeSceneIndex={activeSceneIndex}
               />
+              </PanelErrorBoundary>
             </ResizablePanel>
             <ResizableHandle />
             <ResizablePanel defaultSize={220} minSize={120} maxSize={480}>
+              <PanelErrorBoundary panel="Keyframe timeline">
               <KeyframeTimeline
                 manifest={m.manifest}
                 selections={selections}
@@ -925,6 +931,7 @@ export function MotionTab({
                 activeSceneIndex={activeSceneIndex}
                 beats={timelineBeats}
               />
+              </PanelErrorBoundary>
             </ResizablePanel>
           </PanelGroup>
         </ResizablePanel>
@@ -957,6 +964,7 @@ export function MotionTab({
               ))}
             </div>
             <div className="flex-1 min-h-0">
+              <PanelErrorBoundary panel={sidebarTab === 'layers' ? 'Layers' : 'Catalog'}>
               {sidebarTab === 'layers'
                 ? m.manifest && (
                     <LayerList
@@ -988,12 +996,14 @@ export function MotionTab({
                     custom={customProps}
                   />
                 )}
+              </PanelErrorBoundary>
             </div>
           </div>
         </ResizablePanel>
         <ResizableHandle />
         <ResizablePanel defaultSize={280} minSize={200} maxSize={480}>
           <div className="h-full border-l border-border-color">
+            <PanelErrorBoundary panel="Motion inspector">
             {m.manifest && (
               <InspectorPanel
                 manifest={m.manifest}
@@ -1007,6 +1017,7 @@ export function MotionTab({
                 editLinks={editLinks}
               />
             )}
+            </PanelErrorBoundary>
           </div>
         </ResizablePanel>
         {showManifest && (
@@ -1014,7 +1025,9 @@ export function MotionTab({
             <ResizableHandle />
             <ResizablePanel defaultSize={420} minSize={280}>
               <div className="h-full border-l border-border-color">
-                <ManifestEditor text={m.text} onChange={m.setText} parseError={m.parseError} />
+                <PanelErrorBoundary panel="Manifest editor">
+                  <ManifestEditor text={m.text} onChange={m.setText} parseError={m.parseError} />
+                </PanelErrorBoundary>
               </div>
             </ResizablePanel>
           </>
