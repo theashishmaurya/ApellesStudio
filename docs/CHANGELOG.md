@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-27** — **B-277 / B-280 (D-410) verified live:** a cold launch (Rust restart) opened no project, as before; after an unsaved marker on Colorist, a full page reload reopened "Fix check (scratch)" on the Colorist tab by itself with the marker restored (`[page-session] reopened …`); touching `musicEditOps.ts` hot-updated and the bridge re-registered (`bridge ready: prefix "editor_"`) with no page reload, and one `editor_add_marker` still landed exactly once.
+
 - **2026-10-27** — **B-277 fixed (D-410):** a reloaded page (web content process killed, dev full reload) reopens the project that was open, on the tab it was left on, and the Edit journal replays at once; the backend remembers both in memory only, so a cold launch still opens the launcher, and a moved/deleted project falls back to it with an error. Motion's unsaved edits across a reload logged as roadmap 0g.
 
 - **2026-10-27** — **B-280 fixed:** under StrictMode, Fast Refresh never re-ran the bridge registries' `[]` effects, so a hot update left the old op table answering (reproduced in a minimal Vite + React Compiler app); each registry now depends on its module evaluation and re-subscribes, still one subscription (B-272).
