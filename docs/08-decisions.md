@@ -6,6 +6,17 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-406 — Sound design as a checked-in agent skill plus a reminder hook (`apelles-sound-design`)
+
+**decided (2026-10-27, owner: "build a SFX skill native to Apelles which takes all these good things, and also knows how to use opensource … and have a hook which fires to read the skill when it comes to adding music or SFX both")**
+
+- **Context.** Black October's sound pass (2026-10-26) went through several owner corrections ("too loud", "reduce music, duck it", "the SFX sound is so high"). A measured teardown of a 105k-view explainer (`docs/notes/reference-teardown-lewis-jackson-polymarket.md`) showed the opposite of what we did: an edited bed with dropouts and almost no effects. A third-party tool reviewed the same day (clipwing "Real SFX") had two ideas worth keeping: sounds chosen by measured character because the agent cannot hear, and a measured report naming moments for a person to check by ear. It bakes effects into a finished MP4, which Apelles must not do.
+- **Options.** (a) Rules in CLAUDE.md: always loaded, but every session pays for them and they are not task-specific. (b) An app feature (an "auto-SFX" op): premature; the craft is judgment, and the capabilities (Openverse import D-400, ducking, fades, `editor_*` clip ops, D-401 loudness) already exist on both the GUI and MCP side. (c) A checked-in Claude Code skill with measuring scripts, plus a hook so it is actually read: task-specific, versioned with the repo, no app change. **Chose (c).**
+- **What.** `.claude/skills/apelles-sound-design/` holds `SKILL.md` (house style, sourcing rules, placement, read-back, report) plus `scripts/sound_character.py` (duration, LUFS, true peak, attack, tail, brightness, kind, multi-sound files) and `scripts/sound_qa.py` (per-role tracks, effects density, music coverage and dropouts, ducking, rendered loudness and level spikes, five listen moments). `.claude/hooks/sound-design-reminder.py` is registered in `.claude/settings.json` on UserPromptSubmit (prompts about music/SFX/ducking…) and PreToolUse (the audio MCP tools); it injects `additionalContext` at most once per 30 minutes per session and never blocks.
+- **Licensing rule.** CC0 and CC BY only, credited (CC BY lines in the video description); never NC or ND. Matches D-400's default policy.
+- **Human-and-AI parity.** This adds no capability; every action it describes already has a GUI control and an MCP tool. A GUI view of the QA report would be a separate feature.
+- **Verification.** Both scripts run against the real Black October project and final export (they found the silent picture-audio track, a three-sound file, the -14.0 LUFS / -1.0 dBTP master and the absence of music dropouts). The hook is pipe-tested for each case and its settings validate with `jq`. Its live firing waits for an MCP reconnect (`/mcp`), since the running server predates the audio tools.
+
 ## D-405 — Motion brand building blocks: `image`, `icon`, `shape`, `counter`, `group` and `anim` property tracks
 
 **decided (2026-10-27)** · Phase 1 of `docs/notes/motion-authoring-mcp.md` (with D-404)

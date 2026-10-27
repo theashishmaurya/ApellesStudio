@@ -133,9 +133,9 @@ animated underlines, icon rows and badge bursts entirely in JSON.
 |---|---|---|
 | 0 | Per-primitive zod prop schemas (layer schema → discriminated union; `propCatalog` derived/tested against them); `motion_validate`, `motion_insert_layers`, `motion_set_scene`, `motion_preview_frame`. Makes everything after it safe for agents. | D-403 |
 | 1 | Brand primitives: `image` (+ hashed asset store), `icon`, `shape`, `counter`, `group` with mask, `anim` property tracks. Most leverage for founder videos. | D-404 (assets), D-405 (primitives) |
-| 2 | Templates: `templateDef.ts`, `templates.ts`/`templateIO.ts`, Rust load/save beside themes, 7 MCP tools, GUI, starter pack. Records the rejections above. | D-406 |
-| 3 | Expressive: `path` (draw-on, morph), `repeater`, `textonpath`. | D-407 |
-| 4 | Lottie import as an asset, refusing expressions. | D-408 |
+| 2 | Templates: `templateDef.ts`, `templates.ts`/`templateIO.ts`, Rust load/save beside themes, 7 MCP tools, GUI, starter pack. Records the rejections above. | next free D-number when built |
+| 3 | Expressive: `path` (draw-on, morph), `repeater`, `textonpath`. | next free D-number when built |
+| 4 | Lottie import as an asset, refusing expressions. | next free D-number when built |
 
 Every phase ships the GUI and MCP halves together, re-captures the MCP parity corpus, and verifies
 determinism (render the same frame twice, compare hashes).

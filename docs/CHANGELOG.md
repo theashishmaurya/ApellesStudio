@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-27** — **D-406: `apelles-sound-design` skill + reminder hook.** House sound style from the teardown and Black October, open-licence sourcing with credits, `sound_character.py` (measure sounds before using them) and `sound_qa.py` (measured mix report + five moments to check by ear); a UserPromptSubmit/PreToolUse hook points agents at it.
+
 - **2026-10-27** — **B-278 fixed:** concurrent `remotion` runs no longer share a port or prune each other's bundle (own OS port + one retry; prune only bundles unused for 10 min).
 
 - **2026-10-27** — **D-404/D-405: Motion brand building blocks (Phase 1 of `motion-authoring-mcp.md`).** New primitives `image` (project assets by SHA-256 id, `motion_import_asset`), `icon` (any Phosphor icon by name, lazily loaded), `shape` (`@remotion/shapes` outlines, gradients, draw-on), `counter` (locale-free formatting) and `group` (relative timing, shape/text masks, depth ≤ 4), plus `anim` property tracks for numeric and colour props. GUI: Catalog rows, asset and icon pickers, Property tracks field, nested group rows. An agent-built "logo reveal + stat counter + icon row" is the end-to-end test; every new primitive renders byte-identically twice. 200 MCP tools (Motion 52).
