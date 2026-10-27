@@ -27,6 +27,15 @@ Still real:
 
 ## Open
 
+## B-280 — in dev, a hot update leaves the control bridge running the old op code
+
+status: **open** · severity: **minor** (dev builds only; but a live check silently tests the old code, and once applied an edit the new code would refuse) · area: the bridge op registration in `packages/editor/src/useEditorControl.ts` (and the other `use*Control` hooks), Vite HMR
+
+- **found:** 2026-10-27, live-verifying D-408 / B-279. After merging D-408, Vite logged the HMR updates but the bridge answered `unknown editor op: editor_music_edit` until a full page reload. After the B-279 fix, the HMR'd page again ran the old pre-flight and cut the voice; after a full reload the same call was refused.
+- **cause (suspected, not confirmed):** the op table / dispatch closure is captured when the bridge listener registers, and Fast Refresh swaps components without re-registering it (compare B-272's listener work).
+- **workaround in use:** force a full reload (touch `app/src/main.tsx`), then reopen the project (B-277).
+- **expected:** an HMR update to an op module re-registers the bridge with the new code, or forces a full reload.
+
 ## B-279 — a D-408 music edit aimed at the voice track cut the voice
 
 status: **fixed** (2026-10-27, live-verifying D-408) · severity: **major** (a mistyped `track` silently cut words out of the voiceover; undo recovered it) · area: `packages/editor/src/timeline.ts` (`checkMusicEdit`), `packages/editor/src/musicEditOps.ts` (`wordContext`)

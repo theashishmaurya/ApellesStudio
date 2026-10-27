@@ -4,7 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
-- **2026-10-27** — **D-408 verified live** in a scratch project: a frame dropout split the bed with 6/8-frame fades and continuous re-entry in one undo step; a whole-bed range was refused; propose → list → apply landed two edits as one undo step. The run found **B-279** (an edit aimed at the voice track cut the voice), fixed: the voice (a track others duck under, or the `word_track`) is refused. Panel layout and the Index context menu not yet checked by hand.
+- **2026-10-27** — **D-408 verified live** in a scratch project: a frame dropout split the bed with 6/8-frame fades and continuous re-entry in one undo step; a whole-bed range was refused; propose → list → apply landed two edits as one undo step. The run found **B-279** (an edit aimed at the voice track cut the voice), fixed: the voice (a track others duck under, or the `word_track`) is refused. The Music edits panel renders correctly (screenshot); the Index context menu is not yet checked by hand. Also logged **B-280** (dev only: a hot update leaves the bridge running old op code until a full reload).
 
 - **2026-10-27** — **D-408: music edits by story beat.** A dropout / stop-time breath / dry section is one `music_edits` op (split, lift, fade, never ripple; one undo for a batch), anchored to frames or to the voice track's words; `editor_music_edit` / `_propose_music_edits` / `_list_music_edits` / `_apply_music_edits` in both MCP servers (211 tools), a Music edits library panel to review the AI's proposals, and "Music dropout over this line" on the Index transcript. `apelles-sound-design` §1.3 now uses it. Not yet verified live.
 
