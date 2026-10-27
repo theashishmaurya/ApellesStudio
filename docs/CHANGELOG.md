@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-27** — **D-403/D-405 verified live:** in a scratch project an agent built a stat card purely from data over the bridge: `motion_validate` caught a missing `to`, a misspelled field and a bad icon name with did-you-mean hints (and refused PascalCase icon names in a real insert), `motion_import_asset` stored the logo by content hash, `motion_insert_layers` landed shape + image + counter + 3-icon group as one undo step, and `motion_preview_frame` rendered the strip (24.7 s cold, 2.6 s warm; counter mid-count at 1.0 s, $4,300,000 at 2.4 s). The Layers panel shows the new rows, the nested group and the Still button.
+
 - **2026-10-27** — **D-406: `apelles-sound-design` skill + reminder hook.** House sound style from the teardown and Black October, open-licence sourcing with credits, `sound_character.py` (measure sounds before using them) and `sound_qa.py` (measured mix report + five moments to check by ear); a UserPromptSubmit/PreToolUse hook points agents at it.
 
 - **2026-10-27** — **B-278 fixed:** concurrent `remotion` runs no longer share a port or prune each other's bundle (own OS port + one retry; prune only bundles unused for 10 min).
