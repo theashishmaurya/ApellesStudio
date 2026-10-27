@@ -219,6 +219,8 @@ import {
 import { scrubSourceAt, waveformWindowAt, WAVEFORM_WINDOW_SECS } from './scrubSource';
 import { DETECT_GRACE_MS, settleWithin } from './settle';
 import { getWordTranscript, proposeRetakes, retranscribeWords } from './retakeProposalOps';
+// D-408 — music edits by story beat; the panel calls the same functions.
+import { applyMusicEditsOp, listMusicEdits, musicEditNow, proposeMusicEdits } from './musicEditOps';
 import { detectedForGate, gateDetectorGroups, type DetectorGateResult } from './detectorGate';
 
 /** What a retake answer says about the gate behind its `status` (D-382). */
@@ -5323,6 +5325,37 @@ export function useEditorControl(): void {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
         return await retranscribeWords(tl, a);
+      },
+
+      // **Music edits by story beat (D-408).** A dropout / stop-time breath /
+      // dry section cut into a music bed at frames or at words of the voice
+      // track's view (the one `editor_get_word_transcript` serves). The direct
+      // tool applies one now; the proposal pair mirrors the retake flow above —
+      // the agent proposes, the person reviews in the Music edits panel, and
+      // an apply lands the reviewed rows as one undo step. Every path is the
+      // one `music_edits` op, the same the panel dispatches.
+      editor_music_edit: async (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        return await musicEditNow(tl, a);
+      },
+
+      editor_propose_music_edits: async (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        return await proposeMusicEdits(tl, a);
+      },
+
+      editor_list_music_edits: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        return listMusicEdits(tl, a);
+      },
+
+      editor_apply_music_edits: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        return applyMusicEditsOp(tl, a);
       },
 
       editor_ripple_delete_ranges: (a) => {

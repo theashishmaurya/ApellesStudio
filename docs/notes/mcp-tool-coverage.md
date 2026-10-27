@@ -215,6 +215,10 @@ inclusion, no longer a silent video).
 > > | `editor_propose_retakes` | The client's groups (word-index takes + `keep`, optional per-word `confirm` reasons) through the deterministic coverage gate; each comes back `verified` / `ai_confirmed` / `refused` with offending words, and the set is stored for the Recut panel. A stale `viewId` is refused. Nothing is cut. |
 > > | `editor_retranscribe_words` | Re-run the ASR over a word range in isolation (the dark-region recovery's windowed pass) to check a refused word for a mishearing; preview by default, `apply: true` splices it into the transcript for every consumer and changes the `viewId`. |
 > > | `editor_ripple_delete_ranges` | The apply half: cut N timeline ranges and close every gap, as **one undo entry**. |
+> > | `editor_music_edit` | **D-408 — music edits by story beat.** One dropout / stop-time breath / dry section cut into a music bed now (frames, a word range of the voice track's view, or the second before a word), faded either side, never rippling; one undo entry. |
+> > | `editor_propose_music_edits` | A batch of beat edits (kind, reason, anchor) stored for the person's review in the Music edits panel; replaces the bed's set; nothing is cut. A stale `view_id` is refused. |
+> > | `editor_list_music_edits` | The review list as the person left it: each edit's status (pending / accepted / rejected), adjusted frames, and any reason it cannot land now. |
+> > | `editor_apply_music_edits` | Apply the accepted edits (plus pending, when asked) as **one undo entry**; applied rows leave the list. |
 > >
 > > **`clip` is OPTIONAL on all four of the silence/retake detectors (D-343,
 > > fixes B-216; the two D-349 dark-region tools are the exception and require

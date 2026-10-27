@@ -42,9 +42,23 @@ From the teardown of a 105k-view explainer and our own Black October feedback:
    - **1 s stop-time breath** right before naming the product or the key idea;
    - **calls to action are dry:** no bed under a CTA or sponsor read;
    - **section closers:** out after a verdict line, back in on the next question.
-   Make a dropout with `editor_split_clip` on the bed at the word times (word timings from
-   `editor_get_word_transcript`), `editor_remove_clip` on the middle part, and
-   `set_clip_fade` (`fade_out_frames` / `fade_in_frames` of 3-12 frames) on both sides.
+   Make dropouts with the music-edit tools (D-408), never by hand-razoring the bed:
+   - read the VOICE track with `editor_get_word_transcript {track: <voice>}` and keep its
+     `viewId`; anchor each beat to word indices so it lands on the words, not on a guess;
+   - **propose the set for review:** `editor_propose_music_edits {track: <bed>, word_track:
+     <voice>, view_id, edits: [...]}`, each edit `{kind, reason, <one anchor>}` with `kind`
+     `dropout` | `breath` | `dry_open` | `dry_cta` | `section_out` and the anchor
+     `first_word` + `last_word` (music out over those words: a punchline, a big number, a
+     CTA), `before_word` (+ `length_frames`, default 1 s: a stop-time breath, music back ON
+     that word) or `start_frame` + `end_frame`. Give every edit a `reason`. Nothing is cut;
+     the person reviews them in the Edit tab's **Music edits** panel (accept / reject /
+     nudge / play from just before) and applies them as one undo step;
+   - `editor_list_music_edits` reads their review back; `editor_apply_music_edits {track,
+     include_pending: true}` applies your proposals only when they ask you to;
+   - `editor_music_edit` applies a single edit at once (same fields) when they ask for one.
+   Defaults: fade out 6 / fade in 8 frames, `mode: "continuous"` (the bed comes back where
+   it would have been, so its beats stay on the picture). A range with no music under it,
+   or one that would remove the whole bed, is refused with the reason.
 4. **Effects are sparse and purposeful.** One effect per real visual event (a chapter card, a
    number landing, a twist), not one per cut. The reference used almost none. Owners on Black
    October called a dense, loud effects pass "too loud" twice. Defaults that were accepted:

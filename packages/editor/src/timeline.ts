@@ -2464,6 +2464,273 @@ export function applyRippleDeleteRanges(
   return { timeline: next, results };
 }
 
+/** D-408 — how a music edit's re-entry relates to the bed it cut.
+ *
+ *  - `continuous` (the default) — the middle of the bed is simply removed, so
+ *    after the dropout the music comes back exactly where it would have been
+ *    had it kept playing underneath. Its beats stay locked to the picture they
+ *    were laid against, and the bed's ending still lands where it was placed.
+ *  - `pause` — the bed holds its place: after the dropout it resumes from the
+ *    source frame where it stopped (the right-hand piece is slipped earlier by
+ *    the dropout's length). The cost, stated plainly: everything after the
+ *    re-entry plays the gap's length later in the music than before, and the
+ *    bed's tail ends that much earlier in its source. Only meaningful inside
+ *    one bed clip, so it is refused for a range that touches a clip edge or
+ *    spans two clips. */
+export type MusicEditMode = 'continuous' | 'pause';
+
+/** D-408 — the default music fade-out into a dropout, in TIMELINE frames. A
+ *  quarter second at 24 fps: long enough to remove the click of a hard cut on
+ *  a sustained note, short enough that the silence still reads as a cut (the
+ *  reference teardown's dropouts are abrupt, not dissolves). */
+export const DEFAULT_MUSIC_FADE_OUT_FRAMES = 6;
+
+/** D-408 — the default fade back in, slightly longer than the fade out: a
+ *  re-entry that arrives at full level on a frame boundary is the more
+ *  audible edge of the two (a transient landing mid-word). */
+export const DEFAULT_MUSIC_FADE_IN_FRAMES = 8;
+
+/** D-408 — one music dropout as the reducer applies it: a half-open
+ *  `[start, end)` TIMELINE-frame range on ONE audio track, with the fades
+ *  either side in timeline frames. Word anchors and kinds are resolved to this
+ *  above the reducer (`musicEdits.ts`), so the document op stays plain frames
+ *  and replays from the journal without a transcript. */
+export interface MusicEditRange {
+  track: number;
+  start: number;
+  end: number;
+  fadeOutFrames: number;
+  fadeInFrames: number;
+  mode?: MusicEditMode;
+}
+
+/** What one music edit did, or why it did nothing (the B-197 rule: a batch's
+ *  answer is per item, never a single boolean). */
+export interface MusicEditResult {
+  track: number;
+  start: number;
+  end: number;
+  applied: boolean;
+  reason?: string;
+  /** Razor cuts made on the bed (0-2). */
+  splits?: number;
+  /** Whole bed pieces taken out of the range. */
+  removed?: number;
+  /** The clip (by id) that now fades out into the dropout, if any. */
+  fadeOutClipId?: string;
+  /** The clip (by id) that now fades back in after it, if any. */
+  fadeInClipId?: string;
+}
+
+/** D-408 — the pre-flight for one music edit: every refusal [`applyMusicEdit`]
+ *  can make, with a reason a person or an agent can act on. */
+export function checkMusicEdit(
+  tl: Timeline,
+  e: MusicEditRange,
+  fps: number,
+): { ok: true; overlapping: number[] } | { ok: false; reason: string } {
+  if (![e.track, e.start, e.end].every(Number.isInteger)) {
+    return { ok: false, reason: 'track, start and end must be whole numbers (timeline frames)' };
+  }
+  if (e.start < 0 || e.end <= e.start) {
+    return { ok: false, reason: `frames ${e.start}..${e.end} are not a range — a music edit needs 0 <= start < end` };
+  }
+  const tr = tl.tracks[e.track];
+  if (!tr) return { ok: false, reason: `no track ${e.track} (0..${tl.tracks.length - 1})` };
+  if (tr.kind !== 'audio') {
+    return {
+      ok: false,
+      reason: `track ${e.track} is a ${tr.kind} track — a music edit acts on the AUDIO track that holds the music bed`,
+    };
+  }
+  if (tr.locked) return { ok: false, reason: `track ${e.track} is locked` };
+  const overlapping: number[] = [];
+  tr.clips.forEach((c, i) => {
+    if (c.start_frame < e.end && endFrame(c, fps) > e.start) overlapping.push(i);
+  });
+  if (overlapping.length === 0) {
+    return {
+      ok: false,
+      reason: `no music clip under frames ${e.start}..${e.end} on track ${e.track} — the bed is already silent there`,
+    };
+  }
+  const linked = overlapping.find((i) => tr.clips[i].link_group);
+  if (linked !== undefined) {
+    return {
+      ok: false,
+      reason:
+        `"${tr.clips[linked].name}" on track ${e.track} is A/V-linked (D-129) — it is a picture's own sound, not a ` +
+        `music bed, and cutting it would cut the picture too. Unlink it first if this really is the music.`,
+    };
+  }
+  const wholeTrack = tr.clips.every((c) => c.start_frame >= e.start && endFrame(c, fps) <= e.end);
+  if (wholeTrack) {
+    return {
+      ok: false,
+      reason:
+        `frames ${e.start}..${e.end} cover every clip on track ${e.track} — that removes the whole bed, which is a ` +
+        `delete (editor_remove_clip), not a dropout`,
+    };
+  }
+  if ((e.mode ?? 'continuous') === 'pause') {
+    const c = tr.clips[overlapping[0]];
+    if (overlapping.length !== 1 || !(c.start_frame < e.start && endFrame(c, fps) > e.end)) {
+      return {
+        ok: false,
+        reason:
+          'mode "pause" resumes the bed from where it stopped, which needs the whole range strictly inside ONE bed ' +
+          'clip — this range touches a clip edge or spans clips. Use mode "continuous".',
+      };
+    }
+  }
+  return { ok: true, overlapping };
+}
+
+/** Clamp a requested fade (timeline frames) into `c`'s own source frames,
+ *  leaving room for the fade already on its other end — two fades on a short
+ *  sliver between two dropouts must not overlap. */
+function musicFadeFor(c: Clip, timelineFrames: number, otherEnd: number, fps: number): number {
+  const want = Math.max(0, Math.round(timelineFramesToSource(c, Math.max(0, Math.round(timelineFrames)), fps)));
+  return Math.max(0, Math.min(want, c.duration - Math.max(0, otherEnd)));
+}
+
+/** D-408 — one music dropout, as one pure function: razor the bed at the
+ *  range's edges, lift every piece inside it (no ripple — a dropout leaves the
+ *  timeline exactly as long as it was), fade the music out into the silence
+ *  and back in after it, and for `mode: 'pause'` slip the re-entry so it
+ *  resumes where it stopped.
+ *
+ *  Composed from `split`, `remove`, `slip` and `set_clip_fade` — the same ops a
+ *  person would use by hand (`apelles-sound-design` §1.3's old recipe) — so
+ *  their rules hold here unchanged; this is the BATCHING, exactly as
+ *  [`applyRippleDeleteRanges`] is for a ripple delete. All or nothing: a
+ *  refusal at any step returns the timeline it was handed. */
+export function applyMusicEdit(
+  tl: Timeline,
+  e: MusicEditRange,
+  fps: number,
+): { timeline: Timeline; result: MusicEditResult } {
+  const head = { track: e.track, start: e.start, end: e.end };
+  const refuse = (reason: string) => ({ timeline: tl, result: { ...head, applied: false, reason } });
+  const check = checkMusicEdit(tl, e, fps);
+  if (!check.ok) return refuse(check.reason);
+
+  let next = tl;
+  let splits = 0;
+  // 1. Razor at the edges, the LATER one first so the earlier cut does not
+  //    renumber the clip the later one falls in. An edge already on a clip
+  //    boundary (or in a gap) needs no cut.
+  for (const at of [e.end, e.start]) {
+    const hit = clipAt(next.tracks[e.track], at, fps);
+    if (!hit || at <= hit.clip.start_frame) continue;
+    const ok = checkSplit(next, e.track, hit.index, at, fps);
+    if (!ok.ok) return refuse(`the cut at frame ${at} could not be made — ${ok.reason}`);
+    next = applyOp(next, { kind: 'split', track: e.track, clip: hit.index, atFrame: at });
+    splits += 1;
+  }
+
+  // 2. Lift every piece now wholly inside the range. `checkMusicEdit` refused
+  //    a range covering the whole track, so no removal here can empty (and so
+  //    prune and renumber) it.
+  let removed = 0;
+  for (;;) {
+    const tr = next.tracks[e.track];
+    const idx = tr.clips.findIndex((c) => c.start_frame >= e.start && endFrame(c, fps) <= e.end);
+    if (idx < 0) break;
+    const ok = checkRemove(next, e.track, idx);
+    if (!ok.ok) return refuse(`"${tr.clips[idx].name}" inside the range could not be removed — ${ok.reason}`);
+    const before = next;
+    next = applyOp(next, { kind: 'remove', track: e.track, clip: idx });
+    if (next === before) return refuse(`"${tr.clips[idx].name}" inside the range could not be removed`);
+    removed += 1;
+  }
+  if (removed === 0) return refuse(`nothing on track ${e.track} lies inside frames ${e.start}..${e.end}`);
+
+  // 3. Pause mode: the re-entry resumes from where the bed stopped.
+  const afterIdx = () => next.tracks[e.track].clips.findIndex((c) => c.start_frame === e.end);
+  if ((e.mode ?? 'continuous') === 'pause') {
+    const ai = afterIdx();
+    if (ai < 0) return refuse('pause mode found no bed piece after the dropout to resume');
+    const delta = -(e.end - e.start);
+    const before = next;
+    next = applyOp(next, { kind: 'slip', track: e.track, clip: ai, delta });
+    const moved = next.tracks[e.track].clips[ai];
+    const was = before.tracks[e.track].clips[ai];
+    if (next === before || moved.source_start !== was.source_start + timelineFramesToSource(was, delta, fps)) {
+      return refuse('pause mode could not slip the re-entry back to where the bed stopped (not enough source before it)');
+    }
+  }
+
+  // 4. Fades. The piece that now ENDS at the range start fades out into the
+  //    silence; the piece that now STARTS at the range end fades back in. Either
+  //    may not exist (the range touched the bed's first or last edge).
+  const result: MusicEditResult = { ...head, applied: true, splits, removed };
+  const clips = next.tracks[e.track].clips;
+  const bi = clips.findIndex((c) => endFrame(c, fps) === e.start);
+  if (bi >= 0) {
+    const c = clips[bi];
+    next = applyOp(next, {
+      kind: 'set_clip_fade',
+      track: e.track,
+      clip: bi,
+      fade_in_frames: c.fade_in_frames ?? 0,
+      fade_out_frames: musicFadeFor(c, e.fadeOutFrames, c.fade_in_frames ?? 0, fps),
+      fade_in_curve: c.fade_in_curve,
+      fade_out_curve: DEFAULT_EASE_CURVE,
+    });
+    result.fadeOutClipId = c.id;
+  }
+  const ai = afterIdx();
+  if (ai >= 0) {
+    const c = next.tracks[e.track].clips[ai];
+    next = applyOp(next, {
+      kind: 'set_clip_fade',
+      track: e.track,
+      clip: ai,
+      fade_in_frames: musicFadeFor(c, e.fadeInFrames, c.fade_out_frames ?? 0, fps),
+      fade_out_frames: c.fade_out_frames ?? 0,
+      fade_in_curve: DEFAULT_EASE_CURVE,
+      fade_out_curve: c.fade_out_curve,
+    });
+    result.fadeInClipId = c.id;
+  }
+  return { timeline: next, result };
+}
+
+/** D-408 — a batch of music edits as one pure function, and so (through the
+ *  `music_edits` op) ONE undo step. Each edit is all-or-nothing and reports
+ *  its own outcome; two edits whose ranges overlap on one track are refused
+ *  (the later one), because the second would be cutting silence the first
+ *  made and its fades would land on the wrong pieces. Order of application is
+ *  the order given — no ripple happens, so no edit moves another's frames. */
+export function applyMusicEdits(
+  tl: Timeline,
+  edits: ReadonlyArray<MusicEditRange>,
+  fps: number,
+): { timeline: Timeline; results: MusicEditResult[] } {
+  let next = tl;
+  const results: MusicEditResult[] = [];
+  const accepted: MusicEditRange[] = [];
+  for (const e of edits) {
+    const clash = accepted.find((o) => o.track === e.track && o.start < e.end && e.start < o.end);
+    if (clash) {
+      results.push({
+        track: e.track,
+        start: e.start,
+        end: e.end,
+        applied: false,
+        reason: `overlaps the edit at frames ${clash.start}..${clash.end} on track ${e.track} in this batch — merge them into one range`,
+      });
+      continue;
+    }
+    const step = applyMusicEdit(next, e, fps);
+    next = step.timeline;
+    results.push(step.result);
+    if (step.result.applied) accepted.push(e);
+  }
+  return { timeline: next, results };
+}
+
 export function gapAt(tr: Track, frame: number, fps: number): { gapStart: number; gapEnd: number } | null {
   if (frame < 0 || clipAt(tr, frame, fps)) return null;
   let gapStart = 0;
@@ -3250,6 +3517,16 @@ export type EditOp =
    *  locked or no range describes real material; an individual range that turns
    *  out to be un-cuttable is skipped rather than guessed at. */
   | { kind: 'ripple_delete_ranges'; track: number; ranges: Array<{ start: number; end: number }> }
+  /** D-408 — music edits by story beat: one or more dropouts (a stop-time
+   *  breath, a dry punchline, a dry call to action) cut into a music bed, each
+   *  a `[start, end)` TIMELINE-frame range on one audio track with its fades.
+   *  ONE op so a whole reviewed batch is one history entry and one Undo — the
+   *  reason `ripple_delete_ranges` and `add_clip`'s `linkedAudio` are single
+   *  ops too. The body is `applyMusicEdits`, which composes `split`, `remove`,
+   *  `slip` and `set_clip_fade` and never ripples; word anchors and beat kinds
+   *  are resolved to frames before this op exists (`musicEdits.ts`), so the
+   *  journal replays it without a transcript. */
+  | { kind: 'music_edits'; edits: MusicEditRange[] }
   /** D-046 pass 3 — drag a Sources-panel pool item onto the timeline. Appends
    *  a full-length clip referencing the media (or inserts at `atIndex`). If
    *  `track` doesn't exist yet (a brand new timeline has `tracks: []` — see
@@ -4031,6 +4308,10 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return `Close gap on track ${op.track + 1}`;
     // D-318 — named for the COUNT, because that is the decision being undone:
     // "accept these 12 candidates", not twelve separate cuts.
+    case 'music_edits':
+      return op.edits.length === 1
+        ? `Music dropout on track ${op.edits[0].track + 1}`
+        : `${op.edits.length} music edits`;
     case 'ripple_delete_ranges':
       return op.ranges.length === 1
         ? `Ripple delete 1 range on track ${op.track + 1}`
@@ -4939,6 +5220,9 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
   // ORIGINAL `tl` (never mutated by any op below), matching `timelineFps`'s
   // own "fixed for a given timeline" contract.
   const fps = timelineFps(tl);
+  // D-408 — per-edit tracks, so it is handled before the single-track guard
+  // below; the whole body is `applyMusicEdits` (see the op's own doc).
+  if (op.kind === 'music_edits') return applyMusicEdits(tl, op.edits, fps).timeline;
   if (op.kind === 'add_clip') {
     // B-129/D-262 — the ONE track-kind gate, here rather than in any one
     // caller, so no path into this op can place a title or an adjustment clip

@@ -49,6 +49,7 @@ import { Button, TooltipProvider } from '@apelles/ui';
 
 import { CaptionLibrary } from './CaptionLibrary';
 import { RecutPanel } from './RecutPanel';
+import { MusicEditsPanel } from './MusicEditsPanel';
 import { EditIndexPanel } from './EditIndexPanel';
 import { CaptionsFromTranscriptButton } from './CaptionsFromTranscriptButton';
 import { EDIT_LIBRARY_MODE_LABELS } from './editLibrary';
@@ -239,6 +240,10 @@ export function EditLibraryPanel() {
             timeline: it finds silences and retakes in the selected clip and
             cuts the ones the user accepts. */}
         {mode === 'recut' && <RecutPanel />}
+
+        {/* D-408 — music edits by story beat: the AI's proposed dropouts to
+            review, and the person's own, cut into the music bed. */}
+        {mode === 'music' && <MusicEditsPanel />}
 
         {/* D-328 — the one library that NAVIGATES the edit rather than adding
             to or cutting it: every marker on the timeline, and the selected

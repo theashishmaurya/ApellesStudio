@@ -228,6 +228,11 @@ export async function proposeRetakes(tl: Timeline, a: OpArgs) {
   };
 }
 
+/** D-408 — the music-edit ops anchor beats to words of this same view (so an
+ *  index read for retakes means the same word there), and read it through
+ *  these rather than a copy of them. */
+export { resolveInput as resolveWordViewInput, viewOf as readWordView, staleError as staleWordViewError };
+
 /** Lower-case word tokens, punctuation dropped — "is this the same reading". */
 function tokens(ws: ReadonlyArray<{ word: string }>): string {
   return ws

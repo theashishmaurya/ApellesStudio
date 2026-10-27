@@ -52,6 +52,7 @@ import {
   ClosedCaptioningIcon,
   FilmStripIcon,
   ListBulletsIcon,
+  MusicNotesMinusIcon,
   TextTIcon,
   MagicWandIcon,
   type Icon as PhosphorIcon,
@@ -87,6 +88,9 @@ const RAIL_ICONS: Record<EditLibraryMode, PhosphorIcon> = {
   subtitles: ClosedCaptioningIcon,
   // D-318 — scissors: this is the one library that CUTS rather than adds.
   recut: ScissorsIcon,
+  // D-408 — music notes with a minus: this library takes music OUT on story
+  // beats (dropouts, breaths, dry sections).
+  music: MusicNotesMinusIcon,
   // D-328 — a bulleted list: Index is the only mode that READS the edit back
   // as a list (markers, transcript lines) rather than offering anything.
   index: ListBulletsIcon,
@@ -98,6 +102,7 @@ const RAIL_TIPS: Record<EditLibraryMode, string> = {
   effects: 'Effects — drag an adjustment clip onto a track above your picture',
   subtitles: 'Subtitles and captions — apply a caption style, import a file, or generate cues from the transcript',
   recut: 'Recut — find the silences and the retakes in the selected clip, then cut the ones you accept',
+  music: 'Music edits — dropouts, stop-time breaths and dry sections cut into the music bed on story beats; review the AI’s proposals here',
   index: 'Index — every marker on the timeline and the selected clip’s transcript. Click a row to jump there.',
 };
 

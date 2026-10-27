@@ -859,7 +859,7 @@
     },
     {
       "name": "debug_set_library_mode",
-      "description": "Switch which panel the Edit tab's left library column shows, and open\n    the column so that panel is actually visible \u2014 the same state the library\n    rail's own buttons drive.\n\n    `mode` is one of \"sources\", \"titles\", \"effects\", \"subtitles\", \"recut\" or\n    \"index\" (`debug_ui_state`'s `editor.libraryModes` lists them). The column\n    is opened as well because the rail lives inside it: choosing a mode while\n    the column is closed would change nothing on screen. Useful to reach the\n    Recut panel and check a retake proposal there. An unknown mode is refused\n    with the accepted list rather than silently ignored.\n\n    Returns {ok, libraryMode, sourcesPanelOpen}.",
+      "description": "Switch which panel the Edit tab's left library column shows, and open\n    the column so that panel is actually visible \u2014 the same state the library\n    rail's own buttons drive.\n\n    `mode` is one of \"sources\", \"titles\", \"effects\", \"subtitles\", \"recut\",\n    \"music\" or \"index\" (`debug_ui_state`'s `editor.libraryModes` lists them). The column\n    is opened as well because the rail lives inside it: choosing a mode while\n    the column is closed would change nothing on screen. Useful to reach the\n    Recut panel and check a retake proposal there. An unknown mode is refused\n    with the accepted list rather than silently ignored.\n\n    Returns {ok, libraryMode, sourcesPanelOpen}.",
       "inputSchema": {
         "properties": {
           "mode": {
@@ -1782,6 +1782,28 @@
         },
         "type": "object",
         "title": "editor_analyze_video_statusArguments"
+      }
+    },
+    {
+      "name": "editor_apply_music_edits",
+      "description": "Apply the reviewed music edits on one bed as ONE undo step (D-408) \u2014\n    the same as the Music edits panel's Apply button.\n\n    - `track` \u2014 required: the AUDIO track holding the bed.\n    - `include_pending` \u2014 false (default): only the edits the person\n      ACCEPTED. true: also the ones still pending \u2014 only when the person has\n      told you to apply your proposals. Rejected edits never apply.\n\n    Each edit reports `applied` or its `reason`. Applied edits leave the\n    review list; the rest stay there with their reason. Read the bed back\n    with `editor_get_timeline` before reporting it done.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "include_pending": {
+            "default": false,
+            "title": "Include Pending",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "track"
+        ],
+        "type": "object",
+        "title": "editor_apply_music_editsArguments"
       }
     },
     {
@@ -3407,6 +3429,28 @@
       }
     },
     {
+      "name": "editor_list_music_edits",
+      "description": "The music edits waiting for review, as the person has left them\n    (D-408): per music track, every edit's `status` (`pending`, `accepted`,\n    `rejected`), its kind, words, reason and frames (which the person may\n    have adjusted), and a `problem` if it cannot land on the timeline as it\n    stands now. `track` limits it to one bed. Read-only.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Track"
+          }
+        },
+        "type": "object",
+        "title": "editor_list_music_editsArguments"
+      }
+    },
+    {
       "name": "editor_list_transitions",
       "description": "Every transition on the timeline \u2014 and, just as usefully, every real\n    CUT a new one could go on.\n\n    A transition sits at an EDIT POINT: the timeline frame where one clip ends\n    and the next begins on the SAME video track (D-224). The clips themselves\n    never overlap; the transition bridges the cut and reads each clip's handle\n    media (see `editor_get_capabilities`'s `transitions` key). So this returns,\n    per video track: `cuts` (the frames a transition may be added at) and\n    `transitions` (what is already there).\n\n    Each transition reports its stored `kind`/`atFrame`/`duration`/`alignment`/\n    `color` AND its derived `windowStartFrame`/`windowEndFrame` (the frames it\n    actually covers) plus `headHandleFrames`/`tailHandleFrames` (how much media\n    outside its own trim each clip has to supply). Read the derived numbers\n    rather than recomputing them \u2014 the centre alignment's integer halving is\n    easy to get wrong by a frame.\n\n    Pass `track` to narrow to one; omit it for all. Also returns the `kinds`\n    this build supports, the legal `alignments`, and the default duration.\n    `editor_get_timeline` reports the same per-track list under its own\n    `transitions` key.",
       "inputSchema": {
@@ -3521,6 +3565,214 @@
         ],
         "type": "object",
         "title": "editor_move_trackArguments"
+      }
+    },
+    {
+      "name": "editor_music_edit",
+      "description": "Cut ONE music edit into a music bed now \u2014 a dropout, a stop-time\n    breath, a dry section \u2014 as one undo step (D-408). The bed is razored at\n    both edges, the middle is lifted (nothing ripples: the voice and picture\n    never move), and the music fades out into the silence and back in after.\n\n    - `track` \u2014 required: the AUDIO track holding the bed (several beds:\n      name the one). An A/V-linked clip (a picture's own sound) is refused.\n    - `kind` \u2014 `dropout` (default), `breath`, `dry_open`, `dry_cta` or\n      `section_out`. A label for the reviewer; every kind is the same cut.\n    - Exactly ONE anchor:\n      - `start_frame` + `end_frame` \u2014 half-open timeline frames; or\n      - `first_word` + `last_word` \u2014 inclusive word indices of the VOICE\n        track's view from `editor_get_word_transcript`: music out from the\n        first word's start to the last word's end (the punchline, the big\n        number, the call to action plays dry); or\n      - `before_word` (+ `length_frames`, default one second) \u2014 the stretch\n        just before that word, music back ON the word (a stop-time breath\n        before the product's name).\n    - `word_track` + `view_id` \u2014 required with a word anchor: the voice track\n      you read and the `viewId` it answered. A stale `view_id` is refused.\n    - `fade_out_frames` (default 6) / `fade_in_frames` (default 8) \u2014\n      timeline frames, clamped to the piece they land on.\n    - `mode` \u2014 `continuous` (default): the music re-enters where it would\n      have been had it kept playing underneath. `pause`: it resumes from\n      where it stopped (the re-entry slips earlier; only inside one bed clip).\n\n    Refused with a reason when no music is under the range, the track is\n    locked or not audio, or the range would remove the whole bed. For a set\n    of story beats the person should review first, use\n    `editor_propose_music_edits` instead.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kind"
+          },
+          "start_frame": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start Frame"
+          },
+          "end_frame": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Frame"
+          },
+          "first_word": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "First Word"
+          },
+          "last_word": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Last Word"
+          },
+          "before_word": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Before Word"
+          },
+          "length_frames": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Length Frames"
+          },
+          "word_track": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Word Track"
+          },
+          "view_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "View Id"
+          },
+          "fade_out_frames": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fade Out Frames"
+          },
+          "fade_in_frames": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fade In Frames"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mode"
+          }
+        },
+        "required": [
+          "track"
+        ],
+        "type": "object",
+        "title": "editor_music_editArguments"
+      }
+    },
+    {
+      "name": "editor_propose_music_edits",
+      "description": "Propose music edits on story beats for the person to review in the\n    Music edits panel (D-408). **Nothing is cut.** Edit the music, don't just\n    lay it under: a dry cold open, a dropout for the punchline or the big\n    reveal, a one-second stop-time breath before the product's name, dry\n    calls to action, section closers.\n\n    - `track` \u2014 required: the AUDIO track holding the bed.\n    - `edits` \u2014 `[{\"kind\": str, \"reason\": str, <one anchor>,\n      \"fade_out_frames\": int, \"fade_in_frames\": int, \"mode\": str}]`. The\n      anchor is `start_frame` + `end_frame`, `first_word` + `last_word`, or\n      `before_word` (+ `length_frames`) \u2014 exactly as in `editor_music_edit`,\n      which documents each field. `kind` and `reason` are what the person\n      reads; give a reason for every edit. **Each call REPLACES the track's\n      whole set**; an empty list clears it.\n    - `word_track` + `view_id` \u2014 required when any edit uses a word anchor:\n      the voice track read with `editor_get_word_transcript` and its `viewId`.\n      A stale one refuses the whole call: re-read, re-derive, resubmit.\n\n    A malformed edit refuses the call. An edit that is well-formed but cannot\n    land on the timeline as it stands (no music there, the whole bed) is\n    stored with its `problem` so the person sees it; fix and resubmit. Each\n    edit comes back with its frames, words and an `id`.\n\n    The person accepts, rejects or adjusts each, auditions it, and applies.\n    Read their review with `editor_list_music_edits`; apply with\n    `editor_apply_music_edits` only when they ask you to.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "edits": {
+            "items": {},
+            "title": "Edits",
+            "type": "array"
+          },
+          "word_track": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Word Track"
+          },
+          "view_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "View Id"
+          }
+        },
+        "required": [
+          "track",
+          "edits"
+        ],
+        "type": "object",
+        "title": "editor_propose_music_editsArguments"
       }
     },
     {
@@ -13202,6 +13454,54 @@
       ]
     },
     {
+      "tool": "editor_apply_music_edits",
+      "case": "minimal",
+      "arguments": {
+        "track": 46
+      },
+      "requests": [
+        {
+          "op": "editor_apply_music_edits",
+          "args": {
+            "track": 46
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_apply_music_edits",
+      "case": "full",
+      "arguments": {
+        "track": 46,
+        "include_pending": true
+      },
+      "requests": [
+        {
+          "op": "editor_apply_music_edits",
+          "args": {
+            "track": 46,
+            "includePending": true
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "editor_create_media_folder",
       "case": "minimal",
       "arguments": {
@@ -14480,6 +14780,48 @@
       ]
     },
     {
+      "tool": "editor_list_music_edits",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "editor_list_music_edits",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_list_music_edits",
+      "case": "full",
+      "arguments": {
+        "track": 7
+      },
+      "requests": [
+        {
+          "op": "editor_list_music_edits",
+          "args": {
+            "track": 7
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "editor_list_transitions",
       "case": "minimal",
       "arguments": {},
@@ -14618,6 +14960,138 @@
           "args": {
             "from": 46,
             "to": 29
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_music_edit",
+      "case": "minimal",
+      "arguments": {
+        "track": 36
+      },
+      "requests": [
+        {
+          "op": "editor_music_edit",
+          "args": {
+            "track": 36
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_music_edit",
+      "case": "full",
+      "arguments": {
+        "track": 36,
+        "kind": "v_editor_music_edit.kind",
+        "start_frame": 9,
+        "end_frame": 19,
+        "first_word": 46,
+        "last_word": 84,
+        "before_word": 45,
+        "length_frames": 8,
+        "word_track": 4,
+        "view_id": "v_editor_music_edit.view_id",
+        "fade_out_frames": 82,
+        "fade_in_frames": 77,
+        "mode": "v_editor_music_edit.mode"
+      },
+      "requests": [
+        {
+          "op": "editor_music_edit",
+          "args": {
+            "track": 36,
+            "kind": "v_editor_music_edit.kind",
+            "startFrame": 9,
+            "endFrame": 19,
+            "firstWord": 46,
+            "lastWord": 84,
+            "beforeWord": 45,
+            "lengthFrames": 8,
+            "wordTrack": 4,
+            "viewId": "v_editor_music_edit.view_id",
+            "fadeOutFrames": 82,
+            "fadeInFrames": 77,
+            "mode": "v_editor_music_edit.mode"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_propose_music_edits",
+      "case": "minimal",
+      "arguments": {
+        "track": 74,
+        "edits": [
+          "any_editor_propose_music_edits.edits[0]"
+        ]
+      },
+      "requests": [
+        {
+          "op": "editor_propose_music_edits",
+          "args": {
+            "track": 74,
+            "edits": [
+              "any_editor_propose_music_edits.edits[0]"
+            ]
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_propose_music_edits",
+      "case": "full",
+      "arguments": {
+        "track": 74,
+        "edits": [
+          "any_editor_propose_music_edits.edits[0]"
+        ],
+        "word_track": 14,
+        "view_id": "v_editor_propose_music_edits.view_id"
+      },
+      "requests": [
+        {
+          "op": "editor_propose_music_edits",
+          "args": {
+            "track": 74,
+            "edits": [
+              "any_editor_propose_music_edits.edits[0]"
+            ],
+            "wordTrack": 14,
+            "viewId": "v_editor_propose_music_edits.view_id"
           },
           "timeout_ms": 20000
         }

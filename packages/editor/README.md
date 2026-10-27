@@ -235,6 +235,26 @@ clamp), which renders honestly and parks its handle at the far edge.
 gesture and its committed effect, and `timelineExport.ffmpeg.test.ts` proves a
 drag-derived fade really exports faded.
 
+**Music edits by story beat (D-408).** A dropout, a one-second stop-time
+breath or a dry section cut into a music bed is ONE `music_edits` op
+(`applyMusicEdits` in `timeline.ts`): razor the bed at the range's edges, lift
+the middle (never a ripple — the voice and picture do not move), fade out into
+the silence and back in after; `mode: 'pause'` additionally slips the re-entry
+so the bed resumes where it stopped. A batch is one undo step. Anchors (frames,
+a word range, or "the second before this word" — words from the voice track's
+D-380 view) and the review rows live in `musicEdits.ts` (pure),
+`musicEditStore.ts` (the review list, per bed, dropped on a project switch) and
+`musicEditOps.ts` (the four `editor_*music_edit*` MCP ops and the GUI's
+`quickMusicEdit` / `applyProposalSet` — one path for both). The GUI is the
+**Music edits** library panel (`MusicEditsPanel.tsx`: bed / fades / re-entry
+defaults, In-Out at the playhead, a review list with accept / reject / nudge /
+jump / play-from-before and one Apply) and a right-click menu on the Index
+panel's transcript lines and markers (`MusicEditMenu.tsx`). Tests:
+`musicEdits.test.ts` (range math, anchors, refusals), `musicEditStore.test.ts`
+(lifecycle), `musicEditOps.e2e.dom.test.tsx` (propose → review → apply → undo
+through the real dispatch), `MusicEditsPanel.dom.test.tsx`,
+`MusicEditMenu.dom.test.tsx`.
+
 **Undo/redo (D-051).** Every real (non-no-op) `applyOp` call pushes one
 `{tab:'edit', label: labelForOp(op, before), undo, redo}` entry onto
 `@apelles/history`'s shared stack — whole-`Timeline` snapshots (`before`/`after`),

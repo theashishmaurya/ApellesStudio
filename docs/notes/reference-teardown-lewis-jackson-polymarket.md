@@ -124,9 +124,13 @@ Motion text/graph/plot/matrix scenes in a light theme (D-399); music beds with t
 licensed music/SFX search and import (D-400); a -14 LUFS master (D-401).
 
 **Gaps:**
-1. **Music editing by story beat**: dropouts, stop-time breaths and re-entries placed at transcript
-   words (e.g. `editor_music_dropout(track, at_word | frames, length, fade_ms)` or a "music edit
-   from markers" pass), with the same op in the GUI. Today each dropout is manual razor and fade work.
+1. ~~**Music editing by story beat**~~ **built (D-408, 2026-10-27).** Dropouts, stop-time breaths
+   and dry sections are one `music_edits` op, anchored to frames, to word ranges of the voice
+   track's view, or to "the second before this word": `editor_music_edit` (one, now),
+   `editor_propose_music_edits` → the Edit tab's Music edits panel (accept / reject / nudge /
+   audition) → `editor_apply_music_edits` (one undo step), plus a right-click "Music dropout over
+   this line" on the Index panel's transcript and markers. Re-entry defaults to continuous source
+   time (the bed comes back where it would have been); `pause` resumes where it stopped.
 2. **Voice levelling** to a narrow loudness range (a compressor/leveller on the VO track) before the
    master normalisation.
 3. Motion primitives this style needs: number **counter**, **image/icon/shape**, **handwritten

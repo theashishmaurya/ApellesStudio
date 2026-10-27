@@ -79,6 +79,8 @@ import { ArrowsClockwiseIcon, FlagIcon, TextAlignLeftIcon, TrashIcon } from '@ph
 import { Button, Input, Tabs, TabsContent, TabsList, TabsTrigger } from '@apelles/ui';
 import { fmtTimecode } from '@apelles/player';
 
+// D-408 — right-click a line or a marker for a music dropout there.
+import { MusicEditMenu, type MusicEditTarget } from './MusicEditMenu';
 import { useEditorTimelineStore } from './timelineStore';
 import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
 import { clipAt, markerEndFrame, markersOf, timelineFps, type Marker } from './timeline';
@@ -184,6 +186,8 @@ function MarkersView() {
 
   const fps = timelineFps(timeline);
   const markers = useMemo(() => markersOf(timeline), [timeline]);
+  // D-408 — the row the music context menu acts on (the last one right-clicked).
+  const [menuTarget, setMenuTarget] = useState<MusicEditTarget | null>(null);
 
   if (!timeline) return <EmptyNote>Open a project to see its markers.</EmptyNote>;
   if (markers.length === 0) {
@@ -196,30 +200,37 @@ function MarkersView() {
   }
 
   return (
-    <ul className="flex flex-col gap-1" data-chroma-marker-index>
-      {markers.map((m) => (
-        <MarkerRow
-          key={m.id}
-          marker={m}
-          fps={fps}
-          onSeek={() => setPlayhead(m.frame)}
-          onComment={(note) => applyOp({ kind: 'set_marker', id: m.id, patch: { note } })}
-          onRemove={() => applyOp({ kind: 'remove_marker', id: m.id })}
-        />
-      ))}
-    </ul>
+    <MusicEditMenu target={menuTarget}>
+      <ul className="flex flex-col gap-1" data-chroma-marker-index>
+        {markers.map((m) => (
+          <MarkerRow
+            key={m.id}
+            marker={m}
+            fps={fps}
+            onContextMenu={() =>
+              setMenuTarget({ start: m.frame, end: markerEndFrame(m), noun: 'this marker', text: m.name || undefined })
+            }
+            onSeek={() => setPlayhead(m.frame)}
+            onComment={(note) => applyOp({ kind: 'set_marker', id: m.id, patch: { note } })}
+            onRemove={() => applyOp({ kind: 'remove_marker', id: m.id })}
+          />
+        ))}
+      </ul>
+    </MusicEditMenu>
   );
 }
 
 interface MarkerRowProps {
   marker: Marker;
   fps: number;
+  /** D-408 — this row was right-clicked (the music context menu's target). */
+  onContextMenu: () => void;
   onSeek: () => void;
   onComment: (note: string | null) => void;
   onRemove: () => void;
 }
 
-function MarkerRow({ marker, fps, onSeek, onComment, onRemove }: MarkerRowProps) {
+function MarkerRow({ marker, fps, onContextMenu, onSeek, onComment, onRemove }: MarkerRowProps) {
   const thumb = useMarkerThumb(marker, fps);
 
   // The comment is a DRAFT while it is being typed and commits on blur —
@@ -243,6 +254,7 @@ function MarkerRow({ marker, fps, onSeek, onComment, onRemove }: MarkerRowProps)
     // gets the column's full remaining width.
     <li
       data-chroma-marker-index-item={marker.id}
+      onContextMenu={onContextMenu}
       className="group flex items-start gap-2 rounded-md p-1.5 hover:bg-bg-primary"
     >
       {/* The row's seek target is a real button wrapping the thumbnail and the
@@ -458,6 +470,8 @@ function TranscriptView() {
   }, [statuses]);
 
   const active = useActivePosition(rows);
+  // D-408 — the line the music context menu acts on (the last one right-clicked).
+  const [menuTarget, setMenuTarget] = useState<MusicEditTarget | null>(null);
 
   // The single-selection LOCATOR (not a filter and not a gate): when exactly
   // one clip is selected, the rows that play from it get an accent edge, so a
@@ -495,21 +509,26 @@ function TranscriptView() {
       ) : null}
 
       {rows.length > 0 ? (
-        <ul className="flex flex-col gap-0.5">
-          {rows.map((row, i) => (
-            <TranscriptRow
-              key={`${row.clipId}-${row.sourceStart}-${i}`}
-              row={row}
-              index={i}
-              fps={fps}
-              active={i === active.row}
-              activeWord={i === active.row ? active.word : -1}
-              focused={row.clipId === focusedClipId}
-              onSeek={() => setPlayhead(row.startFrame)}
-              onSeekFrame={setPlayhead}
-            />
-          ))}
-        </ul>
+        <MusicEditMenu target={menuTarget}>
+          <ul className="flex flex-col gap-0.5">
+            {rows.map((row, i) => (
+              <TranscriptRow
+                key={`${row.clipId}-${row.sourceStart}-${i}`}
+                row={row}
+                index={i}
+                onContextMenu={() =>
+                  setMenuTarget({ start: row.startFrame, end: row.endFrame, noun: 'this line', text: row.text.trim() })
+                }
+                fps={fps}
+                active={i === active.row}
+                activeWord={i === active.row ? active.word : -1}
+                focused={row.clipId === focusedClipId}
+                onSeek={() => setPlayhead(row.startFrame)}
+                onSeekFrame={setPlayhead}
+              />
+            ))}
+          </ul>
+        </MusicEditMenu>
       ) : null}
     </div>
   );
@@ -619,6 +638,8 @@ interface TranscriptRowProps {
   /** Which word of THIS row the playhead is on, or `-1`. */
   activeWord: number;
   focused: boolean;
+  /** D-408 — this row was right-clicked (the music context menu's target). */
+  onContextMenu: () => void;
   onSeek: () => void;
   onSeekFrame: (frame: number) => void;
 }
@@ -643,6 +664,7 @@ function TranscriptRow({
   active,
   activeWord,
   focused,
+  onContextMenu,
   onSeek,
   onSeekFrame,
 }: TranscriptRowProps) {
@@ -653,6 +675,7 @@ function TranscriptRow({
       data-chroma-transcript-clip={row.clipId}
       data-chroma-transcript-active={active ? '' : undefined}
       onClick={onSeek}
+      onContextMenu={onContextMenu}
       className={`flex cursor-pointer flex-col gap-0.5 rounded-md p-1.5 text-left ${
         active ? 'bg-accent/15 ring-1 ring-accent/40' : 'hover:bg-bg-primary'
       } ${focused ? 'border-l-2 border-accent pl-1' : ''}`}

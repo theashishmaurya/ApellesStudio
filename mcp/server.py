@@ -5040,6 +5040,153 @@ def editor_retranscribe_words(
 
 
 @mcp.tool()
+def editor_music_edit(
+    track: int,
+    kind: str | None = None,
+    start_frame: int | None = None,
+    end_frame: int | None = None,
+    first_word: int | None = None,
+    last_word: int | None = None,
+    before_word: int | None = None,
+    length_frames: int | None = None,
+    word_track: int | None = None,
+    view_id: str | None = None,
+    fade_out_frames: int | None = None,
+    fade_in_frames: int | None = None,
+    mode: str | None = None,
+) -> str:
+    """Cut ONE music edit into a music bed now — a dropout, a stop-time
+    breath, a dry section — as one undo step (D-408). The bed is razored at
+    both edges, the middle is lifted (nothing ripples: the voice and picture
+    never move), and the music fades out into the silence and back in after.
+
+    - `track` — required: the AUDIO track holding the bed (several beds:
+      name the one). An A/V-linked clip (a picture's own sound) is refused.
+    - `kind` — `dropout` (default), `breath`, `dry_open`, `dry_cta` or
+      `section_out`. A label for the reviewer; every kind is the same cut.
+    - Exactly ONE anchor:
+      - `start_frame` + `end_frame` — half-open timeline frames; or
+      - `first_word` + `last_word` — inclusive word indices of the VOICE
+        track's view from `editor_get_word_transcript`: music out from the
+        first word's start to the last word's end (the punchline, the big
+        number, the call to action plays dry); or
+      - `before_word` (+ `length_frames`, default one second) — the stretch
+        just before that word, music back ON the word (a stop-time breath
+        before the product's name).
+    - `word_track` + `view_id` — required with a word anchor: the voice track
+      you read and the `viewId` it answered. A stale `view_id` is refused.
+    - `fade_out_frames` (default 6) / `fade_in_frames` (default 8) —
+      timeline frames, clamped to the piece they land on.
+    - `mode` — `continuous` (default): the music re-enters where it would
+      have been had it kept playing underneath. `pause`: it resumes from
+      where it stopped (the re-entry slips earlier; only inside one bed clip).
+
+    Refused with a reason when no music is under the range, the track is
+    locked or not audio, or the range would remove the whole bed. For a set
+    of story beats the person should review first, use
+    `editor_propose_music_edits` instead."""
+    import json
+
+    args: dict = {"track": track}
+    for key, value in (
+        ("kind", kind),
+        ("startFrame", start_frame),
+        ("endFrame", end_frame),
+        ("firstWord", first_word),
+        ("lastWord", last_word),
+        ("beforeWord", before_word),
+        ("lengthFrames", length_frames),
+        ("wordTrack", word_track),
+        ("viewId", view_id),
+        ("fadeOutFrames", fade_out_frames),
+        ("fadeInFrames", fade_in_frames),
+        ("mode", mode),
+    ):
+        if value is not None:
+            args[key] = value
+    return json.dumps(_op("editor_music_edit", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_propose_music_edits(
+    track: int,
+    edits: list,
+    word_track: int | None = None,
+    view_id: str | None = None,
+) -> str:
+    """Propose music edits on story beats for the person to review in the
+    Music edits panel (D-408). **Nothing is cut.** Edit the music, don't just
+    lay it under: a dry cold open, a dropout for the punchline or the big
+    reveal, a one-second stop-time breath before the product's name, dry
+    calls to action, section closers.
+
+    - `track` — required: the AUDIO track holding the bed.
+    - `edits` — `[{"kind": str, "reason": str, <one anchor>,
+      "fade_out_frames": int, "fade_in_frames": int, "mode": str}]`. The
+      anchor is `start_frame` + `end_frame`, `first_word` + `last_word`, or
+      `before_word` (+ `length_frames`) — exactly as in `editor_music_edit`,
+      which documents each field. `kind` and `reason` are what the person
+      reads; give a reason for every edit. **Each call REPLACES the track's
+      whole set**; an empty list clears it.
+    - `word_track` + `view_id` — required when any edit uses a word anchor:
+      the voice track read with `editor_get_word_transcript` and its `viewId`.
+      A stale one refuses the whole call: re-read, re-derive, resubmit.
+
+    A malformed edit refuses the call. An edit that is well-formed but cannot
+    land on the timeline as it stands (no music there, the whole bed) is
+    stored with its `problem` so the person sees it; fix and resubmit. Each
+    edit comes back with its frames, words and an `id`.
+
+    The person accepts, rejects or adjusts each, auditions it, and applies.
+    Read their review with `editor_list_music_edits`; apply with
+    `editor_apply_music_edits` only when they ask you to."""
+    import json
+
+    args: dict = {"track": track, "edits": edits}
+    if word_track is not None:
+        args["wordTrack"] = word_track
+    if view_id is not None:
+        args["viewId"] = view_id
+    return json.dumps(_op("editor_propose_music_edits", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_list_music_edits(track: int | None = None) -> str:
+    """The music edits waiting for review, as the person has left them
+    (D-408): per music track, every edit's `status` (`pending`, `accepted`,
+    `rejected`), its kind, words, reason and frames (which the person may
+    have adjusted), and a `problem` if it cannot land on the timeline as it
+    stands now. `track` limits it to one bed. Read-only."""
+    import json
+
+    args: dict = {}
+    if track is not None:
+        args["track"] = track
+    return json.dumps(_op("editor_list_music_edits", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_apply_music_edits(track: int, include_pending: bool = False) -> str:
+    """Apply the reviewed music edits on one bed as ONE undo step (D-408) —
+    the same as the Music edits panel's Apply button.
+
+    - `track` — required: the AUDIO track holding the bed.
+    - `include_pending` — false (default): only the edits the person
+      ACCEPTED. true: also the ones still pending — only when the person has
+      told you to apply your proposals. Rejected edits never apply.
+
+    Each edit reports `applied` or its `reason`. Applied edits leave the
+    review list; the rest stay there with their reason. Read the bed back
+    with `editor_get_timeline` before reporting it done."""
+    import json
+
+    args: dict = {"track": track}
+    if include_pending:
+        args["includePending"] = True
+    return json.dumps(_op("editor_apply_music_edits", **args), indent=2, default=str)
+
+
+@mcp.tool()
 def editor_detect_dark_regions(
     track: int,
     clip: int,
@@ -6181,8 +6328,8 @@ def debug_set_library_mode(mode: str) -> str:
     the column so that panel is actually visible — the same state the library
     rail's own buttons drive.
 
-    `mode` is one of "sources", "titles", "effects", "subtitles", "recut" or
-    "index" (`debug_ui_state`'s `editor.libraryModes` lists them). The column
+    `mode` is one of "sources", "titles", "effects", "subtitles", "recut",
+    "music" or "index" (`debug_ui_state`'s `editor.libraryModes` lists them). The column
     is opened as well because the rail lives inside it: choosing a mode while
     the column is closed would change nothing on screen. Useful to reach the
     Recut panel and check a retake proposal there. An unknown mode is refused

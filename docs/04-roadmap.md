@@ -253,6 +253,8 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    - [x] Phase 2 — templates (`templateDef.ts`, per-file library, 7 MCP tools, Templates section + fill/save forms, six founder-video starters). **D-407, 2026-10-27.** Open: verify the forms live in the app; a template thumbnail in the Catalog; layout/timing fields in the save form.
    - [ ] Phase 3 — `path`, `repeater`, `textonpath`. Phase 4 — Lottie import (no expressions).
 
+0f. ~~**Music edits by story beat**~~ **done (D-408, 2026-10-27)** (gap #1 of `docs/notes/reference-teardown-lewis-jackson-polymarket.md`). Dropouts / stop-time breaths / dry sections as one `music_edits` op anchored to frames or transcript words; `editor_music_edit`, `editor_propose_music_edits`, `editor_list_music_edits`, `editor_apply_music_edits` in both MCP servers; the Music edits library panel (review list, In/Out, breath) and a right-click menu on the Index panel's transcript lines and markers; `apelles-sound-design` §1.3 uses it. Open: verify live in the running app; a timeline-clip context menu on the bed itself; drawing proposed dropouts on the bed in the timeline before they are applied (Premiere Remix's on-clip edit marks).
+
 0. **Export through the app's own compositor instead of an ffmpeg filter graph — D-350.**
    Moved here from "Later" 2026-09-18 when **phase 1 shipped**. Origin: B-228/B-229/B-230
    found and fixed three measured resource pathologies in `editor_export`'s ffmpeg

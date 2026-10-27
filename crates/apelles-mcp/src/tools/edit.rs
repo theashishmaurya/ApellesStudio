@@ -101,6 +101,10 @@ fn default_editor_retranscribe_words_force() -> bool {
     false
 }
 
+fn default_editor_apply_music_edits_include_pending() -> bool {
+    false
+}
+
 fn default_editor_get_timeline_transcript_start() -> bool {
     false
 }
@@ -1171,6 +1175,63 @@ pub struct EditorRetranscribeWordsArgs {
     pub apply: bool,
     #[serde(default = "default_editor_retranscribe_words_force")]
     pub force: bool,
+}
+
+/// D-408 — one music edit (dropout / breath / dry section), applied now.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorMusicEditArgs {
+    pub track: i64,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub start_frame: Option<i64>,
+    #[serde(default)]
+    pub end_frame: Option<i64>,
+    #[serde(default)]
+    pub first_word: Option<i64>,
+    #[serde(default)]
+    pub last_word: Option<i64>,
+    #[serde(default)]
+    pub before_word: Option<i64>,
+    #[serde(default)]
+    pub length_frames: Option<i64>,
+    #[serde(default)]
+    pub word_track: Option<i64>,
+    #[serde(default)]
+    pub view_id: Option<String>,
+    #[serde(default)]
+    pub fade_out_frames: Option<i64>,
+    #[serde(default)]
+    pub fade_in_frames: Option<i64>,
+    #[serde(default)]
+    pub mode: Option<String>,
+}
+
+/// D-408 — a batch of music edits stored for the person's review.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorProposeMusicEditsArgs {
+    pub track: i64,
+    #[schemars(schema_with = "untyped_array_schema")]
+    pub edits: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub word_track: Option<i64>,
+    #[serde(default)]
+    pub view_id: Option<String>,
+}
+
+/// D-408 — the music-edit review list, optionally for one bed.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorListMusicEditsArgs {
+    #[serde(default)]
+    pub track: Option<i64>,
+}
+
+/// D-408 — apply one bed's reviewed music edits as one undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorApplyMusicEditsArgs {
+    pub track: i64,
+    #[serde(default = "default_editor_apply_music_edits_include_pending")]
+    pub include_pending: bool,
 }
 
 /// The schema for a parameter the Python tool declares as a bare `list`.
@@ -5012,6 +5073,145 @@ impl ApellesMcp {
             .put_if("apply", p.apply)
             .put_if("force", p.force);
         let env = self.op("editor_retranscribe_words", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_music_edit",
+        description = r#"Cut ONE music edit into a music bed now — a dropout, a stop-time
+    breath, a dry section — as one undo step (D-408). The bed is razored at
+    both edges, the middle is lifted (nothing ripples: the voice and picture
+    never move), and the music fades out into the silence and back in after.
+
+    - `track` — required: the AUDIO track holding the bed (several beds:
+      name the one). An A/V-linked clip (a picture's own sound) is refused.
+    - `kind` — `dropout` (default), `breath`, `dry_open`, `dry_cta` or
+      `section_out`. A label for the reviewer; every kind is the same cut.
+    - Exactly ONE anchor:
+      - `start_frame` + `end_frame` — half-open timeline frames; or
+      - `first_word` + `last_word` — inclusive word indices of the VOICE
+        track's view from `editor_get_word_transcript`: music out from the
+        first word's start to the last word's end (the punchline, the big
+        number, the call to action plays dry); or
+      - `before_word` (+ `length_frames`, default one second) — the stretch
+        just before that word, music back ON the word (a stop-time breath
+        before the product's name).
+    - `word_track` + `view_id` — required with a word anchor: the voice track
+      you read and the `viewId` it answered. A stale `view_id` is refused.
+    - `fade_out_frames` (default 6) / `fade_in_frames` (default 8) —
+      timeline frames, clamped to the piece they land on.
+    - `mode` — `continuous` (default): the music re-enters where it would
+      have been had it kept playing underneath. `pause`: it resumes from
+      where it stopped (the re-entry slips earlier; only inside one bed clip).
+
+    Refused with a reason when no music is under the range, the track is
+    locked or not audio, or the range would remove the whole bed. For a set
+    of story beats the person should review first, use
+    `editor_propose_music_edits` instead."#
+    )]
+    pub async fn editor_music_edit(
+        &self,
+        Parameters(p): Parameters<EditorMusicEditArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("track", p.track)
+            .put("kind", p.kind)
+            .put("startFrame", p.start_frame)
+            .put("endFrame", p.end_frame)
+            .put("firstWord", p.first_word)
+            .put("lastWord", p.last_word)
+            .put("beforeWord", p.before_word)
+            .put("lengthFrames", p.length_frames)
+            .put("wordTrack", p.word_track)
+            .put("viewId", p.view_id)
+            .put("fadeOutFrames", p.fade_out_frames)
+            .put("fadeInFrames", p.fade_in_frames)
+            .put("mode", p.mode);
+        let env = self.op("editor_music_edit", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_propose_music_edits",
+        description = r#"Propose music edits on story beats for the person to review in the
+    Music edits panel (D-408). **Nothing is cut.** Edit the music, don't just
+    lay it under: a dry cold open, a dropout for the punchline or the big
+    reveal, a one-second stop-time breath before the product's name, dry
+    calls to action, section closers.
+
+    - `track` — required: the AUDIO track holding the bed.
+    - `edits` — `[{"kind": str, "reason": str, <one anchor>,
+      "fade_out_frames": int, "fade_in_frames": int, "mode": str}]`. The
+      anchor is `start_frame` + `end_frame`, `first_word` + `last_word`, or
+      `before_word` (+ `length_frames`) — exactly as in `editor_music_edit`,
+      which documents each field. `kind` and `reason` are what the person
+      reads; give a reason for every edit. **Each call REPLACES the track's
+      whole set**; an empty list clears it.
+    - `word_track` + `view_id` — required when any edit uses a word anchor:
+      the voice track read with `editor_get_word_transcript` and its `viewId`.
+      A stale one refuses the whole call: re-read, re-derive, resubmit.
+
+    A malformed edit refuses the call. An edit that is well-formed but cannot
+    land on the timeline as it stands (no music there, the whole bed) is
+    stored with its `problem` so the person sees it; fix and resubmit. Each
+    edit comes back with its frames, words and an `id`.
+
+    The person accepts, rejects or adjusts each, auditions it, and applies.
+    Read their review with `editor_list_music_edits`; apply with
+    `editor_apply_music_edits` only when they ask you to."#
+    )]
+    pub async fn editor_propose_music_edits(
+        &self,
+        Parameters(p): Parameters<EditorProposeMusicEditsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("track", p.track)
+            .set("edits", p.edits)
+            .put("wordTrack", p.word_track)
+            .put("viewId", p.view_id);
+        let env = self.op("editor_propose_music_edits", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_list_music_edits",
+        description = r#"The music edits waiting for review, as the person has left them
+    (D-408): per music track, every edit's `status` (`pending`, `accepted`,
+    `rejected`), its kind, words, reason and frames (which the person may
+    have adjusted), and a `problem` if it cannot land on the timeline as it
+    stands now. `track` limits it to one bed. Read-only."#
+    )]
+    pub async fn editor_list_music_edits(
+        &self,
+        Parameters(p): Parameters<EditorListMusicEditsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().put("track", p.track);
+        let env = self.op("editor_list_music_edits", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_apply_music_edits",
+        description = r#"Apply the reviewed music edits on one bed as ONE undo step (D-408) —
+    the same as the Music edits panel's Apply button.
+
+    - `track` — required: the AUDIO track holding the bed.
+    - `include_pending` — false (default): only the edits the person
+      ACCEPTED. true: also the ones still pending — only when the person has
+      told you to apply your proposals. Rejected edits never apply.
+
+    Each edit reports `applied` or its `reason`. Applied edits leave the
+    review list; the rest stay there with their reason. Read the bed back
+    with `editor_get_timeline` before reporting it done."#
+    )]
+    pub async fn editor_apply_music_edits(
+        &self,
+        Parameters(p): Parameters<EditorApplyMusicEditsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("track", p.track)
+            .put_if("includePending", p.include_pending);
+        let env = self.op("editor_apply_music_edits", args).await?;
         Ok(render::json_text(&env))
     }
 

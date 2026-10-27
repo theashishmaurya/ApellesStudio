@@ -93,6 +93,11 @@ export interface ToolGroup {
  * `motion_refill_template` and `motion_delete_template` (Motion 52 → 59).
  * Re-counted against the real file.
  *
+ * 207 → 211 on 2026-10-27 (D-408): music edits by story beat,
+ * `editor_music_edit`, `editor_propose_music_edits`, `editor_list_music_edits`
+ * and `editor_apply_music_edits` (Edit 86 → 90). Re-counted against the real
+ * file.
+ *
  * 166 → 176 on 2026-09-17 (D-339). Exactly ONE of those ten is this pass's own
  * `motion_set_project_theme` (the Motion tab's document-level theme); the other
  * nine are drift these numbers had already accumulated across four earlier
@@ -106,15 +111,15 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 207,
-  shipped: 195,
+  all: 211,
+  shipped: 199,
   debugOnly: 12,
 } as const;
 
 export const TOOL_GROUPS: readonly ToolGroup[] = [
   {
     name: 'Edit',
-    count: 86,
+    count: 90,
     blurb:
       'The whole multi-track NLE. Browse and organise the media pool, place and trim clips, perform any of the seven edit types at the playhead, roll/slip/slide, manage tracks, key transforms, set transitions, markers, captions and per-clip EQ, then render the timeline to a real file.',
     sample: [
@@ -125,6 +130,7 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
       'editor_add_clip',
       'editor_edit_in',
       'editor_split_clip',
+      'editor_music_edit',
       'editor_trim_clip',
       'editor_roll_edit',
       'editor_slip_clip',
