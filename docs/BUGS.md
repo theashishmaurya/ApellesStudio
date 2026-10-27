@@ -27,6 +27,14 @@ Still real:
 
 ## Open
 
+## B-285 — a dev full page reload took ~48 minutes to come back, with the bridge timing out meanwhile
+
+status: **open, not reproduced** · severity: **unknown** (seen once, dev build) · area: dev page load / Vite under heavy load, the D-410 restore path
+
+- **found:** 2026-10-27, live-verifying D-415. After a Motion edit at 21:41, `touch app/src/main.tsx` forced a full reload; `motion_get_state` got a 504, and the log shows `[page-session] reopened "Fix check (scratch)" on the motion tab` only at 22:29. Machine load average was ~19 (two agent builds running); earlier the same session a Vite resolve failure (a new workspace package not yet linked) had also left the page unregistered until Vite restarted.
+- **after a clean restart** of `npm run tauri:dev`, the same flow worked at once (open project → Motion → the recovered edit is back).
+- **next:** if seen again, capture the webview console and Vite log at that moment; check whether the D-410 restore waits on something slow (an `open_project` while a Rust rebuild or the ai-env start is running).
+
 ## B-284 — a new timeline ran at 24 fps whatever the project's rate was
 
 status: **fixed** (2026-10-27) · severity: **medium** (a timeline created in a 30 fps project silently resolved every frame number at 24 fps until someone noticed the clip lengths) · area: `chroma::edit::chroma_timeline_create` (D-045), now `apelles_project::timeline::create_timeline`
