@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-27** — **Automatic Clipper designed (D-411, proposed; `docs/notes/automatic-clipper.md`, roadmap 0h):** shorts (9:16/1:1/4:5) and a trailer from one long video in one MCP call. The app generates sentence-aligned candidates and refuses any cut off a sentence boundary; the MCP client judges, with a local heuristic when no agent is connected. Outputs are timelines in the same project. Reframing uses Apple Vision. Eight phases; Phase 0 (per-timeline output size, timeline MCP tools) comes first. Research: Opus Clip, Descript, Riverside, CapCut, Vizard, Submagic, Premiere Auto Reframe, FCP Smart Conform. No code.
+
 - **2026-10-27** — **B-277 / B-280 (D-410) verified live:** a cold launch (Rust restart) opened no project, as before; after an unsaved marker on Colorist, a full page reload reopened "Fix check (scratch)" on the Colorist tab by itself with the marker restored (`[page-session] reopened …`); touching `musicEditOps.ts` hot-updated and the bridge re-registered (`bridge ready: prefix "editor_"`) with no page reload, and one `editor_add_marker` still landed exactly once.
 
 - **2026-10-27** — **B-277 fixed (D-410):** a reloaded page (web content process killed, dev full reload) reopens the project that was open, on the tab it was left on, and the Edit journal replays at once; the backend remembers both in memory only, so a cold launch still opens the launcher, and a moved/deleted project falls back to it with an error. Motion's unsaved edits across a reload logged as roadmap 0g.
