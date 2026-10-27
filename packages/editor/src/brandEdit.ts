@@ -41,8 +41,11 @@ export type BrandTextPlan =
   | { op: Extract<EditOp, { kind: 'apply_brand_text' }>; notes: string[]; captionTracks: number[]; titles: number }
   | { error: string };
 
-/** The kit → the one op (or why there is nothing to apply). Pure. */
-export function planBrandText(tl: Timeline, kit: BrandKit, opts: { titles: boolean }): BrandTextPlan {
+/** The caption style a kit gives: its caption preset (`captionPresets.ts`)
+ *  with the kit's font and colour roles laid over it, plus any reason a role
+ *  could not reach Edit. Pure. Shared by the brand applier below and the
+ *  Automatic Clipper's shorts (D-411: shorts use the project's active kit). */
+export function brandCaptionStyle(kit: BrandKit): { style: Partial<CaptionStyle>; notes: string[] } | { error: string } {
   const notes: string[] = [];
   const presetId = kit.captions?.preset ?? DEFAULT_BRAND_CAPTION_PRESET;
   const preset = captionPresetById(presetId);
@@ -51,12 +54,23 @@ export function planBrandText(tl: Timeline, kit: BrandKit, opts: { titles: boole
   }
   const captionFont = editFontKey(kit, kit.captions?.font ?? 'body');
   if (!captionFont) notes.push(`captions keep the preset's font: the kit's ${kit.captions?.font ?? 'body'} font is not a .ttf/.otf file and has no editFallback`);
-  const captionStyle: Partial<CaptionStyle> = {
-    ...preset.style,
-    ...(captionFont ? { font: captionFont } : {}),
-    ...(colorOf(kit, kit.captions?.color) ? { color: colorOf(kit, kit.captions?.color) } : {}),
-    ...(colorOf(kit, kit.captions?.boxColor) ? { box_color: colorOf(kit, kit.captions?.boxColor) } : {}),
+  return {
+    style: {
+      ...preset.style,
+      ...(captionFont ? { font: captionFont } : {}),
+      ...(colorOf(kit, kit.captions?.color) ? { color: colorOf(kit, kit.captions?.color) } : {}),
+      ...(colorOf(kit, kit.captions?.boxColor) ? { box_color: colorOf(kit, kit.captions?.boxColor) } : {}),
+    },
+    notes,
   };
+}
+
+/** The kit → the one op (or why there is nothing to apply). Pure. */
+export function planBrandText(tl: Timeline, kit: BrandKit, opts: { titles: boolean }): BrandTextPlan {
+  const caption = brandCaptionStyle(kit);
+  if ('error' in caption) return caption;
+  const notes: string[] = [...caption.notes];
+  const captionStyle: Partial<CaptionStyle> = caption.style;
   const captionTracks = tl.tracks.flatMap((t, i) => (t.kind === 'subtitle' && !t.locked ? [i] : []));
   if (captionTracks.length === 0) notes.push('no unlocked subtitle track to style');
 

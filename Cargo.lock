@@ -148,6 +148,7 @@ dependencies = [
  "apelles-audio-library",
  "apelles-beat",
  "apelles-brand",
+ "apelles-clipper",
  "apelles-gpu",
  "apelles-grade-model",
  "apelles-media",
@@ -293,6 +294,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "apelles-clipper"
+version = "0.0.0"
+dependencies = [
+ "apelles-speech",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "apelles-gpu"
 version = "0.0.0"
 dependencies = [
@@ -390,6 +401,7 @@ dependencies = [
 name = "apelles-project"
 version = "0.0.0"
 dependencies = [
+ "apelles-clipper",
  "apelles-media",
  "apelles-timeline",
  "apelles-types",

@@ -129,6 +129,18 @@ fn default_editor_apply_music_edits_include_pending() -> bool {
     false
 }
 
+fn default_editor_propose_clips_replace() -> bool {
+    false
+}
+
+fn default_editor_set_clip_proposal_clear_hook() -> bool {
+    false
+}
+
+fn default_editor_build_clips_rebuild() -> bool {
+    false
+}
+
 fn default_editor_get_timeline_transcript_start() -> bool {
     false
 }
@@ -1327,6 +1339,122 @@ pub struct EditorApplyMusicEditsArgs {
     pub track: i64,
     #[serde(default = "default_editor_apply_music_edits_include_pending")]
     pub include_pending: bool,
+}
+
+/// D-411 — analyse a long source for shorts (the moment view; nothing picked).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorAutoClipArgs {
+    #[serde(default)]
+    pub media_id: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub timeline_id: Option<String>,
+    #[serde(default)]
+    pub track: Option<i64>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub outputs: Option<String>,
+    #[serde(default)]
+    pub count: Option<i64>,
+    #[serde(default)]
+    pub durations: Option<Vec<i64>>,
+    #[serde(default)]
+    pub aspect: Option<String>,
+    #[serde(default)]
+    pub captions: Option<String>,
+    #[serde(default)]
+    pub focus: Option<String>,
+    #[serde(default)]
+    pub range_start_s: Option<f64>,
+    #[serde(default)]
+    pub range_end_s: Option<f64>,
+    #[serde(default)]
+    pub hook_first: Option<bool>,
+    #[serde(default)]
+    pub tighten_dead_air: Option<bool>,
+    #[serde(default)]
+    pub tighten_retakes: Option<bool>,
+    #[serde(default)]
+    pub max_sentences: Option<i64>,
+}
+
+/// D-411 — one clip run's analysis status.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorAutoClipStatusArgs {
+    pub run_id: String,
+}
+
+/// D-411 — a page of a clip run's moment view.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorGetMomentViewArgs {
+    pub run_id: String,
+    #[serde(default)]
+    pub offset: Option<i64>,
+    #[serde(default)]
+    pub max_sentences: Option<i64>,
+}
+
+/// D-411 — the client's clip picks, gated and (by default) built.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorProposeClipsArgs {
+    pub run_id: String,
+    pub view_id: String,
+    #[schemars(schema_with = "untyped_array_schema")]
+    pub clips: Vec<serde_json::Value>,
+    #[serde(default = "default_editor_propose_clips_replace")]
+    pub replace: bool,
+    #[serde(default)]
+    pub build: Option<bool>,
+    #[serde(default)]
+    pub export_dir: Option<String>,
+    #[serde(default)]
+    pub loudness_preset: Option<String>,
+}
+
+/// D-411 — the clip runs, or one run's proposals.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorListClipProposalsArgs {
+    #[serde(default)]
+    pub run_id: Option<String>,
+}
+
+/// D-411 — review one clip proposal (status, title, edge nudges).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorSetClipProposalArgs {
+    pub run_id: String,
+    pub proposal_id: String,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub extend_start: Option<i64>,
+    #[serde(default)]
+    pub extend_end: Option<i64>,
+    #[serde(default)]
+    pub word_start: Option<i64>,
+    #[serde(default)]
+    pub word_end: Option<i64>,
+    #[serde(default = "default_editor_set_clip_proposal_clear_hook")]
+    pub clear_hook: bool,
+}
+
+/// D-411 — build (or rebuild) clip proposals into short timelines.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorBuildClipsArgs {
+    pub run_id: String,
+    #[serde(default)]
+    pub ids: Option<Vec<String>>,
+    #[serde(default = "default_editor_build_clips_rebuild")]
+    pub rebuild: bool,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub export_dir: Option<String>,
+    #[serde(default)]
+    pub loudness_preset: Option<String>,
 }
 
 /// D-413 — a track's beats, optionally shown as the timeline's beat grid.
@@ -5532,6 +5660,259 @@ impl ApellesMcp {
             .set("track", p.track)
             .put_if("includePending", p.include_pending);
         let env = self.op("editor_apply_music_edits", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_auto_clip",
+        description = r#"Automatic Clipper, step 1: analyse a long source for shorts (D-411).
+    **It picks nothing** — you are the judge. The app cuts the transcript into
+    numbered sentences and topics, finds every clean, in-length window, tags
+    each with evidence (hook text, context-dependent openers, whether it
+    lands, pace, loudness, picture cuts, focus words), and answers with a run
+    id, the job status and page 0 of the MOMENT VIEW with its `instructions`
+    (the judging rules — read them first, every run).
+
+    Source (one; none = the open timeline):
+    - `media_id` or `path` — a media-pool file (video or audio);
+    - `timeline_id` (+ `track`, default the first track with media) — a long
+      Edit timeline: its clips in play order, so a short plays what the edit
+      plays and keeps each clip's grade and sound settings.
+
+    Settings (kept in the run, `clips/<run_id>.json`):
+    - `durations` — target seconds from 15, 30, 60, 90 (default [30, 60]);
+      a short may come in 30% under or 25% over its target.
+    - `count` — how many shorts the person wants (default 5, at most 20).
+    - `aspect` — "9:16" (default, 1080x1920), "1:1" or "4:5".
+    - `captions` — "brand" (default: the project's brand kit, else Pill
+      Karaoke), "none", or a caption preset id.
+    - `focus` — what the person wants clips about; matched as evidence.
+    - `range_start_s` / `range_end_s` — analyse only that stretch of a file.
+    - `hook_first` (default true) — play a proposal's hook range first.
+    - `tighten_dead_air` / `tighten_retakes` (default true) — when a short is
+      built, shorten pauses over 0.6 s to 0.25 s and cut the deleted takes of
+      VERIFIED retakes (the Recut panel's) inside it.
+    - `outputs` — only "shorts" (the trailer is not built yet).
+    - `run_id` — continue an existing run instead of starting one.
+    - `max_sentences` — page size of the view (default 300).
+
+    A cold source answers `state: "transcribing"`: the transcript is read in
+    5-minute windows, and a PROVISIONAL view of the part done so far may come
+    with it. Poll `editor_auto_clip_status`. When `state` is "ready", read
+    every page (`editor_get_moment_view` with `offset` = `nextOffset`), judge
+    by the instructions, then call `editor_propose_clips`. The
+    `apelles-auto-clip` skill is this loop."#
+    )]
+    pub async fn editor_auto_clip(
+        &self,
+        Parameters(p): Parameters<EditorAutoClipArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .put("mediaId", p.media_id)
+            .put("path", p.path)
+            .put("timelineId", p.timeline_id)
+            .put("track", p.track)
+            .put("runId", p.run_id)
+            .put("outputs", p.outputs)
+            .put("count", p.count)
+            .put("durations", p.durations)
+            .put("aspect", p.aspect)
+            .put("captions", p.captions)
+            .put("focus", p.focus)
+            .put("rangeStartS", p.range_start_s)
+            .put("rangeEndS", p.range_end_s)
+            .put("hookFirst", p.hook_first)
+            .put("tightenDeadAir", p.tighten_dead_air)
+            .put("tightenRetakes", p.tighten_retakes)
+            .put("maxSentences", p.max_sentences);
+        let env = self.op("editor_auto_clip", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_auto_clip_status",
+        description = r#"Where a clip run's analysis is (D-411): per source file the transcript
+    (`done`, or `transcribing` with the windows landed so far), the audio and
+    picture evidence passes, and once ready the sentence / topic / candidate
+    counts, the `viewId`, how many proposals the run has and which shorts are
+    built (with their timeline ids). Safe to poll; it also starts any pass
+    that has not started."#
+    )]
+    pub async fn editor_auto_clip_status(
+        &self,
+        Parameters(p): Parameters<EditorAutoClipStatusArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("runId", p.run_id);
+        let env = self.op("editor_auto_clip_status", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_get_moment_view",
+        description = r#"A page of a clip run's MOMENT VIEW (D-411): one line per sentence —
+    `S<n>`, its start-end seconds, its evidence tags, its words — with
+    `=== topic` lines where the subject changes and, under a sentence, the
+    clean endings a short starting there can have per target length. Page 0
+    carries `instructions`, the judging rules: read them before judging.
+
+    Sentence numbers are global; keep calling with `offset` = the previous
+    `nextOffset` until it is null. `viewId` is the same on every page of one
+    view — if it changes between pages, the source changed: start again. A
+    `provisional` view (still transcribing) can be read but not proposed
+    against. Tags are measured facts, not a score: read the words."#
+    )]
+    pub async fn editor_get_moment_view(
+        &self,
+        Parameters(p): Parameters<EditorGetMomentViewArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("runId", p.run_id)
+            .put("offset", p.offset)
+            .put("maxSentences", p.max_sentences);
+        let env = self.op("editor_get_moment_view", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_propose_clips",
+        description = r#"Automatic Clipper, step 2: your picks, checked and built (D-411).
+
+    - `clips` — `[{"segments": [{"first": S, "last": S}], "hook": {"first":
+      S, "last": S}, "title": str, "reason": str, "hook_line": str}]`.
+      `segments` are inclusive SENTENCE numbers of the moment view, in play
+      order (usually one range; two stitch a moment together). `hook` is
+      optional: one to three whole sentences, at most 8 s, played first.
+      `title` (the short's headline, at most 80 characters) and `reason` (one
+      line a person can check against the words) are required; `hook_line`
+      quotes the opening line. Never write words the speaker did not say.
+    - `view_id` — the `viewId` you read. A stale one refuses the call.
+    - `replace` — false (default) adds to the run; true replaces every
+      proposal not yet built.
+    - `build` — true (default): every clip that passes is built straight away
+      as a timeline in this project at the run's frame (9:16 by default):
+      the source ranges as ordinary clips, centre-cropped, dead air and
+      verified retakes tightened through the ripple delete, captions from the
+      short's own transcript in the brand kit's style, provenance in the
+      timeline's `origin`. false: store them for review only.
+    - `export_dir` (+ `loudness_preset`, e.g. "youtube") — also queue each
+      built short's export into that folder. Rendering takes minutes; only
+      when the person asked for files.
+
+    Every clip goes through the clean-cut gate: `verified`, `warned` (passes,
+    with the issue named — an opener that needs context, an unanswered
+    question at the end, heavy overlap with another clip) or `refused` with
+    the reason and the offending sentences: an edge off a sentence boundary,
+    a length outside every target's band, an edge inside a reviewed retake, a
+    hook that is not whole sentences. Fix a refused clip and resubmit it.
+    The person reviews in the Clipper panel; work on a built short with the
+    ordinary editor_* tools after `editor_set_active_timeline`."#
+    )]
+    pub async fn editor_propose_clips(
+        &self,
+        Parameters(p): Parameters<EditorProposeClipsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("runId", p.run_id)
+            .set("viewId", p.view_id)
+            .set("clips", p.clips)
+            .put_if("replace", p.replace)
+            .put("build", p.build)
+            .put("exportDir", p.export_dir)
+            .put("loudnessPreset", p.loudness_preset);
+        let env = self
+            .op_with("editor_propose_clips", crate::CLIPPER_TIMEOUT_MS, args)
+            .await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_list_clip_proposals",
+        description = r#"The Automatic Clipper's runs and their proposals as the person has left
+    them (D-411). Without `run_id`: every run of the project (newest first)
+    with its source, settings and how many shorts it has built. With
+    `run_id`: each proposal's `status` (pending / accepted / rejected /
+    built), the gate's verdict and notes, its sentences, seconds, title,
+    reason and built `timelineId`. Read-only."#
+    )]
+    pub async fn editor_list_clip_proposals(
+        &self,
+        Parameters(p): Parameters<EditorListClipProposalsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().put("runId", p.run_id);
+        let env = self.op("editor_list_clip_proposals", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_set_clip_proposal",
+        description = r#"Review one clip proposal (D-411) — the same actions as the Clipper
+    panel's row.
+
+    - `status` — "accepted", "rejected" or "pending".
+    - `title` — a new headline.
+    - `extend_start` / `extend_end` — move the start or end by whole
+      sentences: +1 adds the sentence before / after, -1 drops one.
+    - `word_start` / `word_end` — the same by words (+ = longer). A word edge
+      must still pass the gate: only a stitched inner edge may sit on a
+      clause boundary.
+    - `clear_hook` — drop the hook.
+
+    Every change of shape is re-checked by the clean-cut gate and answered
+    with the new verdict. A built short is not changed by this: rebuild it
+    with `editor_build_clips`."#
+    )]
+    pub async fn editor_set_clip_proposal(
+        &self,
+        Parameters(p): Parameters<EditorSetClipProposalArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("runId", p.run_id)
+            .set("id", p.proposal_id)
+            .put("status", p.status)
+            .put("title", p.title)
+            .put("extendStart", p.extend_start)
+            .put("extendEnd", p.extend_end)
+            .put("wordStart", p.word_start)
+            .put("wordEnd", p.word_end)
+            .put_if("clearHook", p.clear_hook);
+        let env = self.op("editor_set_clip_proposal", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_build_clips",
+        description = r#"Build clip proposals into short timelines (D-411) — the Clipper
+    panel's Build. Without `ids`: every pending or accepted proposal that
+    passes the gate and is not built yet.
+
+    - `rebuild` — rebuild proposals that are already built, in place.
+    - `mode` — what a rebuild does when the person has EDITED the built
+      short since (its content no longer matches what was built):
+      "refuse" (default: nothing is overwritten, the answer says so),
+      "new_version" (a new timeline beside it) or "replace" (overwrite the
+      edits — only when the person said so). A rebuild of the short open in
+      the Edit tab is one undo step.
+    - `export_dir` (+ `loudness_preset`) — also queue each built short's
+      export into that folder.
+
+    Each proposal answers with its timeline id, length, caption count, how
+    many tightening cuts landed, and any warning (a crop that magnifies the
+    source past 1.5x, a source with no picture)."#
+    )]
+    pub async fn editor_build_clips(
+        &self,
+        Parameters(p): Parameters<EditorBuildClipsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("runId", p.run_id)
+            .put("ids", p.ids)
+            .put_if("rebuild", p.rebuild)
+            .put("mode", p.mode)
+            .put("exportDir", p.export_dir)
+            .put("loudnessPreset", p.loudness_preset);
+        let env = self
+            .op_with("editor_build_clips", crate::CLIPPER_TIMEOUT_MS, args)
+            .await?;
         Ok(render::json_text(&env))
     }
 

@@ -18,6 +18,9 @@
 //! - [`journal`] — the Edit timeline's write-ahead journal file
 //!   (`edit-journal.jsonl`, B-274/D-402): append, read back, compact. The
 //!   entries are the frontend's ops, opaque here.
+//! - [`clip_runs`] — the Automatic Clipper's runs (`clips/<run-id>.json`,
+//!   D-411): saved atomically, read back and checked against
+//!   `apelles_clipper::ClipRun`'s schema, listed, deleted.
 //!
 //! **What it does NOT do:**
 //! - **No `#[tauri::command]`.** A hard `tauri-macros` constraint, not a
@@ -38,6 +41,7 @@
 //!   name during migration but never parsed here (that is
 //!   `apelles-grade-model`).
 
+pub mod clip_runs;
 pub mod journal;
 pub mod manifest;
 pub mod timeline;

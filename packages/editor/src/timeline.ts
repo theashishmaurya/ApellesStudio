@@ -4308,6 +4308,20 @@ export type EditOp =
   /** D-411 Phase 0 — rename this timeline. Trimmed; an empty or unchanged name
    *  is a no-op. Same reasoning as `set_timeline_output` for being an op. */
   | { kind: 'set_timeline_name'; name: string }
+  /** D-411 Phase 1 — rebuild the OPEN timeline's whole body (tracks, markers,
+   *  output size, build provenance) as one undo step: how the Automatic
+   *  Clipper rebuilds a short the person has open, after its content-hash
+   *  check said nothing of theirs is lost (or they chose "replace"). Any other
+   *  timeline is rewritten by id (`chroma_timeline_replace`); this op exists
+   *  because the store is the open timeline's one writer (D-051). The id, name
+   *  and rate stay. */
+  | {
+      kind: 'replace_timeline_body';
+      tracks: Track[];
+      markers: Marker[];
+      output: OutputSpec | null;
+      origin: TimelineOrigin | null;
+    }
   /** D-222 — delete the marker with this id. A no-op (rejected) for an id
    *  that isn't there, same "reject rather than corrupt" discipline every
    *  other op here uses; not gated by any track's lock, since a marker
@@ -4586,6 +4600,8 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return op.output ? `Set timeline size to ${op.output.width}×${op.output.height}` : 'Use project size for timeline';
     case 'set_timeline_name':
       return `Rename timeline to "${op.name.trim()}"`;
+    case 'replace_timeline_body':
+      return `Rebuild "${before.name}"`;
     case 'remove_marker':
       return `Remove marker ${markerLabel(before, op.id)}`;
     case 'set_marker':
@@ -5664,6 +5680,14 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
 
   // D-411 Phase 0 — timeline-level properties, handled with the markers for
   // the same reason: they belong to no track and no clip.
+  if (op.kind === 'replace_timeline_body') {
+    // One deep copy of the whole body: the op is journalled and replayed, so
+    // the timeline must never share objects with it.
+    const body = clone({ ...tl, tracks: op.tracks, markers: op.markers, output: op.output, origin: op.origin });
+    if (!op.output) delete body.output;
+    if (!op.origin) delete body.origin;
+    return body;
+  }
   if (op.kind === 'set_timeline_output') {
     if (op.output === null) {
       if (!tl.output) return tl;

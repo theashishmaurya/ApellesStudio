@@ -1,0 +1,19 @@
+[package]
+name = "apelles-clipper"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Apelles L2 — the Automatic Clipper's mechanics (D-411): sentences, topics, sentence-aligned candidates with explainable evidence, the moment view a client judges from, and the deterministic clean-cut gate every proposal passes. Picks nothing; reads no file."
+
+[dependencies]
+# The word view is apelles-speech's (`IndexedView`, `index_pieces`): one
+# indexing rule for retakes, music edits and clips, so a word index means the
+# same word on every surface (D-380). Its stopword list feeds TextTiling.
+apelles-speech = { path = "../apelles-speech" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -312,7 +312,7 @@ impl ApellesMcp {
     rail's own buttons drive.
 
     `mode` is one of "sources", "titles", "effects", "subtitles", "recut",
-    "music" or "index" (`debug_ui_state`'s `editor.libraryModes` lists them). The column
+    "music", "clipper" or "index" (`debug_ui_state`'s `editor.libraryModes` lists them). The column
     is opened as well because the rail lives inside it: choosing a mode while
     the column is closed would change nothing on screen. Useful to reach the
     Recut panel and check a retake proposal there. An unknown mode is refused

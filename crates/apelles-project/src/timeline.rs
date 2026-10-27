@@ -275,30 +275,16 @@ pub fn duplicate_timeline(
     copy.id = uuid::Uuid::new_v4().to_string();
     copy.name = name;
 
-    let grades = crate::grade_dir(dir);
-    let mut copied: Vec<std::path::PathBuf> = Vec::new();
+    let mut pairs: Vec<(String, String)> = Vec::new();
     for track in &mut copy.tracks {
         for clip in &mut track.clips {
             let new_id = duplicate_clip_id(&clip.id);
-            let from = grades.join(format!("{}.grade.json", clip.id));
-            if from.is_file() {
-                let to = grades.join(format!("{new_id}.grade.json"));
-                if let Err(e) = std::fs::copy(&from, &to) {
-                    // Undo the copies already made, so a failed duplicate
-                    // leaves no orphaned grade files behind it.
-                    for done in &copied {
-                        let _ = std::fs::remove_file(done);
-                    }
-                    return Err(format!(
-                        "could not copy the grade of clip {} for the duplicate: {e}",
-                        clip.id
-                    ));
-                }
-                copied.push(to);
-            }
+            pairs.push((clip.id.clone(), new_id.clone()));
             clip.id = new_id;
         }
     }
+    copy_clip_grades(dir, &pairs)
+        .map_err(|e| format!("could not copy a grade for the duplicate: {e}"))?;
 
     let at = idx + 1;
     manifest.timelines.insert(at, copy.clone());
@@ -309,6 +295,54 @@ pub fn duplicate_timeline(
     }
     manifest.modified = now_rfc3339();
     Ok(copy)
+}
+
+/// Copy each `(from, to)` clip's Colorist grade file
+/// (`grades/<from>.grade.json` to `grades/<to>.grade.json`) where `from` has
+/// one, so a clip given a new id keeps its look. All or nothing: a failed copy
+/// removes the copies already made and names the clip. Returns how many were
+/// copied. Shared by [`duplicate_timeline`] and the clipper's shorts built
+/// from a graded long-form timeline (D-411 section 5.1).
+pub fn copy_clip_grades(dir: &Path, pairs: &[(String, String)]) -> Result<usize, String> {
+    let grades = crate::grade_dir(dir);
+    let mut copied: Vec<std::path::PathBuf> = Vec::new();
+    for (from_id, to_id) in pairs {
+        let from = grades.join(format!("{from_id}.grade.json"));
+        if !from.is_file() {
+            continue;
+        }
+        let to = grades.join(format!("{to_id}.grade.json"));
+        if let Err(e) = std::fs::copy(&from, &to) {
+            for done in &copied {
+                let _ = std::fs::remove_file(done);
+            }
+            return Err(format!("clip {from_id}: {e}"));
+        }
+        copied.push(to);
+    }
+    Ok(copied.len())
+}
+
+/// Replace the whole content of the timeline with `id`: what the clipper
+/// writes a built short with (D-411 section 5.3). The id is kept whatever
+/// `timeline` says, the name is cleaned like any rename, and an `output` must
+/// be a valid size. **Not for the active timeline while the Edit tab holds
+/// it**: the store is its one writer (D-051); the app's command refuses that
+/// case.
+pub fn replace_timeline(
+    manifest: &mut ProjectManifest,
+    id: &str,
+    mut timeline: Timeline,
+) -> Result<(), String> {
+    let idx = timeline_index(manifest, id)?;
+    timeline.id = id.to_string();
+    timeline.name = clean_timeline_name(&timeline.name)?;
+    if let Some(o) = timeline.output {
+        OutputSpec::new(o.width, o.height)?;
+    }
+    manifest.timelines[idx] = timeline;
+    manifest.modified = now_rfc3339();
+    Ok(())
 }
 
 /// Delete the timeline with `id`. Refused for a project's only timeline (a
@@ -835,6 +869,49 @@ mod tests {
         );
         assert!(after["timelines"][0].get("output").is_none());
         assert!(after["timelines"][0].get("origin").is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn replace_keeps_the_id_cleans_the_name_and_checks_the_size() {
+        let (root, _dir, mut m) = three_timelines("replace");
+        let mut body = named("ignored", "  Short 1 ");
+        body.output = Some(OutputSpec::new(1080, 1920).unwrap());
+        replace_timeline(&mut m, "c", body).unwrap();
+        assert_eq!(
+            m.timelines[2].id, "c",
+            "the id is the target's, not the body's"
+        );
+        assert_eq!(m.timelines[2].name, "Short 1");
+        assert_eq!(m.timelines[2].output, OutputSpec::new(1080, 1920).ok());
+        let mut bad = named("x", "Bad");
+        bad.output = Some(OutputSpec {
+            width: 1081,
+            height: 1920,
+        });
+        assert!(
+            replace_timeline(&mut m, "c", bad)
+                .unwrap_err()
+                .contains("even")
+        );
+        assert!(replace_timeline(&mut m, "nope", named("x", "X")).is_err());
+        assert!(replace_timeline(&mut m, "c", named("x", "   ")).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn grades_are_copied_to_new_clip_ids_all_or_nothing() {
+        let (root, dir, _m) = three_timelines("grades");
+        let grades = crate::grade_dir(&dir);
+        std::fs::create_dir_all(&grades).unwrap();
+        std::fs::write(grades.join("clip-1.grade.json"), "{}").unwrap();
+        let pairs = vec![
+            ("clip-1".to_string(), "short-1".to_string()),
+            ("ungraded".to_string(), "short-2".to_string()),
+        ];
+        assert_eq!(copy_clip_grades(&dir, &pairs).unwrap(), 1);
+        assert!(grades.join("short-1.grade.json").is_file());
+        assert!(!grades.join("short-2.grade.json").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

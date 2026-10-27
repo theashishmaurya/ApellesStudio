@@ -281,8 +281,10 @@ const STOPWORDS: &[&str] = &[
     "your",
 ];
 
-/// Is this word one whose repetition proves nothing?
-pub(crate) fn is_stopword(word: &str) -> bool {
+/// Is this word one whose repetition proves nothing? Also the stopword list
+/// `apelles-clipper`'s TextTiling topics compare content words with (D-411):
+/// one list of "words that carry no content" in the workspace.
+pub fn is_stopword(word: &str) -> bool {
     STOPWORDS.binary_search(&word).is_ok()
 }
 

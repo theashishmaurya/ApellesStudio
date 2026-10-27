@@ -41,7 +41,7 @@ MCP as tools of the same name.
 | `debug_get_ui_state` | active tab, Sources panel, Edit Inspector (open + which of its tabs), selection/playhead, every dialog the DOM currently has open, and `motion.customProxies` — each Motion custom layer's live-player proxy: component, props, status, viewers, frames/folder or error (B-282), and `crashedPanels` — every panel showing its "This panel crashed" fallback: panel, message, stack, component stack, time, count (B-292) |
 | `debug_set_active_tab` | `{tab: 'edit'\|'motion'\|'colorist'}` (or a 1-based index) |
 | `debug_set_sources_panel` | `{open: bool}` — the shell's docked Sources column |
-| `debug_set_library_mode` | `{mode: 'sources'\|'titles'\|'effects'\|'subtitles'\|'recut'\|'music'\|'index'}` — which panel the Edit tab's left library column shows, and opens the column so it is visible; an unknown mode is refused with the accepted list |
+| `debug_set_library_mode` | `{mode: 'sources'\|'titles'\|'effects'\|'subtitles'\|'recut'\|'music'\|'clipper'\|'index'}` — which panel the Edit tab's left library column shows, and opens the column so it is visible; an unknown mode is refused with the accepted list |
 | `debug_set_editor_inspector` | `{open: bool}` — the Edit tab's Inspector column |
 | `debug_set_inspector_tab` | `{tab: 'video'\|'audio'}` — that Inspector's own Video/Audio tab (D-246); only one is on screen at a time, so set it before screenshotting or dumping the panel |
 | `debug_set_popover_open` | `{id, open: bool}` — any registered Edit-tab popover/dialog (D-252, `@apelles/editor`'s `panelRegistry.ts`): `caption-panel`, `canvas-settings`, `export-dialog` today. One op for every popover rather than a bespoke one per popover — see D-252 for why. |

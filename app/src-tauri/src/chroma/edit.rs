@@ -979,6 +979,28 @@ pub fn chroma_timeline_duplicate(
     Ok(copy)
 }
 
+/// D-411 Phase 1 — replace a timeline's whole content by id: how the
+/// Automatic Clipper writes a built (or rebuilt) short. **Refused for the
+/// active timeline**: the Edit store is its one writer (D-051), and a rebuild
+/// of the open short goes through the store's undoable `replace_timeline_body`
+/// op instead. The id is kept; see
+/// [`apelles_project::timeline::replace_timeline`].
+#[tauri::command]
+pub fn chroma_timeline_replace(id: String, timeline: Timeline) -> Result<(), String> {
+    let (dir, mut manifest) = load_and_ensure_timeline(false)?;
+    if manifest
+        .timelines
+        .get(manifest.active_timeline)
+        .is_some_and(|t| t.id == id)
+    {
+        return Err(format!(
+            "timeline {id} is open in the Edit tab; it is changed through the editor, not replaced"
+        ));
+    }
+    apelles_project::timeline::replace_timeline(&mut manifest, &id, timeline)?;
+    project::save_manifest(&dir, &manifest)
+}
+
 /// D-411 Phase 0 — delete a timeline by id. Refused for the only one; the
 /// active timeline moves to a neighbour when the deleted one was active. Not
 /// undoable (a project-level action, like a deleted media-pool item): the GUI

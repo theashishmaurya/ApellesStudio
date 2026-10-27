@@ -50,6 +50,7 @@
 import {
   ScissorsIcon,
   ClosedCaptioningIcon,
+  FilmSlateIcon,
   FilmStripIcon,
   ListBulletsIcon,
   MusicNotesMinusIcon,
@@ -91,6 +92,9 @@ const RAIL_ICONS: Record<EditLibraryMode, PhosphorIcon> = {
   // D-408 — music notes with a minus: this library takes music OUT on story
   // beats (dropouts, breaths, dry sections).
   music: MusicNotesMinusIcon,
+  // D-411 — a clapperboard: this library makes new pieces (shorts) out of a
+  // long one, the design's own choice of mark (automatic-clipper.md §9).
+  clipper: FilmSlateIcon,
   // D-328 — a bulleted list: Index is the only mode that READS the edit back
   // as a list (markers, transcript lines) rather than offering anything.
   index: ListBulletsIcon,
@@ -103,6 +107,7 @@ const RAIL_TIPS: Record<EditLibraryMode, string> = {
   subtitles: 'Subtitles and captions — apply a caption style, import a file, or generate cues from the transcript',
   recut: 'Recut — find the silences and the retakes in the selected clip, then cut the ones you accept',
   music: 'Music edits — dropouts, stop-time breaths and dry sections cut into the music bed on story beats; review the AI’s proposals here',
+  clipper: 'Clipper — shorts from a long video or timeline: analyse it here, ask your AI agent to pick the moments, then review and build them',
   index: 'Index — every marker on the timeline and the selected clip’s transcript. Click a row to jump there.',
 };
 

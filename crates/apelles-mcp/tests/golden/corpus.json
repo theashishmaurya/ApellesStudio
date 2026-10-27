@@ -1095,7 +1095,7 @@
     },
     {
       "name": "debug_set_library_mode",
-      "description": "Switch which panel the Edit tab's left library column shows, and open\n    the column so that panel is actually visible \u2014 the same state the library\n    rail's own buttons drive.\n\n    `mode` is one of \"sources\", \"titles\", \"effects\", \"subtitles\", \"recut\",\n    \"music\" or \"index\" (`debug_ui_state`'s `editor.libraryModes` lists them). The column\n    is opened as well because the rail lives inside it: choosing a mode while\n    the column is closed would change nothing on screen. Useful to reach the\n    Recut panel and check a retake proposal there. An unknown mode is refused\n    with the accepted list rather than silently ignored.\n\n    Returns {ok, libraryMode, sourcesPanelOpen}.",
+      "description": "Switch which panel the Edit tab's left library column shows, and open\n    the column so that panel is actually visible \u2014 the same state the library\n    rail's own buttons drive.\n\n    `mode` is one of \"sources\", \"titles\", \"effects\", \"subtitles\", \"recut\",\n    \"music\", \"clipper\" or \"index\" (`debug_ui_state`'s `editor.libraryModes` lists them). The column\n    is opened as well because the rail lives inside it: choosing a mode while\n    the column is closed would change nothing on screen. Useful to reach the\n    Recut panel and check a retake proposal there. An unknown mode is refused\n    with the accepted list rather than silently ignored.\n\n    Returns {ok, libraryMode, sourcesPanelOpen}.",
       "inputSchema": {
         "properties": {
           "mode": {
@@ -2040,6 +2040,313 @@
         ],
         "type": "object",
         "title": "editor_apply_music_editsArguments"
+      }
+    },
+    {
+      "name": "editor_auto_clip",
+      "description": "Automatic Clipper, step 1: analyse a long source for shorts (D-411).\n    **It picks nothing** \u2014 you are the judge. The app cuts the transcript into\n    numbered sentences and topics, finds every clean, in-length window, tags\n    each with evidence (hook text, context-dependent openers, whether it\n    lands, pace, loudness, picture cuts, focus words), and answers with a run\n    id, the job status and page 0 of the MOMENT VIEW with its `instructions`\n    (the judging rules \u2014 read them first, every run).\n\n    Source (one; none = the open timeline):\n    - `media_id` or `path` \u2014 a media-pool file (video or audio);\n    - `timeline_id` (+ `track`, default the first track with media) \u2014 a long\n      Edit timeline: its clips in play order, so a short plays what the edit\n      plays and keeps each clip's grade and sound settings.\n\n    Settings (kept in the run, `clips/<run_id>.json`):\n    - `durations` \u2014 target seconds from 15, 30, 60, 90 (default [30, 60]);\n      a short may come in 30% under or 25% over its target.\n    - `count` \u2014 how many shorts the person wants (default 5, at most 20).\n    - `aspect` \u2014 \"9:16\" (default, 1080x1920), \"1:1\" or \"4:5\".\n    - `captions` \u2014 \"brand\" (default: the project's brand kit, else Pill\n      Karaoke), \"none\", or a caption preset id.\n    - `focus` \u2014 what the person wants clips about; matched as evidence.\n    - `range_start_s` / `range_end_s` \u2014 analyse only that stretch of a file.\n    - `hook_first` (default true) \u2014 play a proposal's hook range first.\n    - `tighten_dead_air` / `tighten_retakes` (default true) \u2014 when a short is\n      built, shorten pauses over 0.6 s to 0.25 s and cut the deleted takes of\n      VERIFIED retakes (the Recut panel's) inside it.\n    - `outputs` \u2014 only \"shorts\" (the trailer is not built yet).\n    - `run_id` \u2014 continue an existing run instead of starting one.\n    - `max_sentences` \u2014 page size of the view (default 300).\n\n    A cold source answers `state: \"transcribing\"`: the transcript is read in\n    5-minute windows, and a PROVISIONAL view of the part done so far may come\n    with it. Poll `editor_auto_clip_status`. When `state` is \"ready\", read\n    every page (`editor_get_moment_view` with `offset` = `nextOffset`), judge\n    by the instructions, then call `editor_propose_clips`. The\n    `apelles-auto-clip` skill is this loop.",
+      "inputSchema": {
+        "properties": {
+          "media_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Media Id"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Path"
+          },
+          "timeline_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Timeline Id"
+          },
+          "track": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Track"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Run Id"
+          },
+          "outputs": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Outputs"
+          },
+          "count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Count"
+          },
+          "durations": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Durations"
+          },
+          "aspect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Aspect"
+          },
+          "captions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Captions"
+          },
+          "focus": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Focus"
+          },
+          "range_start_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Range Start S"
+          },
+          "range_end_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Range End S"
+          },
+          "hook_first": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Hook First"
+          },
+          "tighten_dead_air": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tighten Dead Air"
+          },
+          "tighten_retakes": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tighten Retakes"
+          },
+          "max_sentences": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Sentences"
+          }
+        },
+        "type": "object",
+        "title": "editor_auto_clipArguments"
+      }
+    },
+    {
+      "name": "editor_auto_clip_status",
+      "description": "Where a clip run's analysis is (D-411): per source file the transcript\n    (`done`, or `transcribing` with the windows landed so far), the audio and\n    picture evidence passes, and once ready the sentence / topic / candidate\n    counts, the `viewId`, how many proposals the run has and which shorts are\n    built (with their timeline ids). Safe to poll; it also starts any pass\n    that has not started.",
+      "inputSchema": {
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "type": "object",
+        "title": "editor_auto_clip_statusArguments"
+      }
+    },
+    {
+      "name": "editor_build_clips",
+      "description": "Build clip proposals into short timelines (D-411) \u2014 the Clipper\n    panel's Build. Without `ids`: every pending or accepted proposal that\n    passes the gate and is not built yet.\n\n    - `rebuild` \u2014 rebuild proposals that are already built, in place.\n    - `mode` \u2014 what a rebuild does when the person has EDITED the built\n      short since (its content no longer matches what was built):\n      \"refuse\" (default: nothing is overwritten, the answer says so),\n      \"new_version\" (a new timeline beside it) or \"replace\" (overwrite the\n      edits \u2014 only when the person said so). A rebuild of the short open in\n      the Edit tab is one undo step.\n    - `export_dir` (+ `loudness_preset`) \u2014 also queue each built short's\n      export into that folder.\n\n    Each proposal answers with its timeline id, length, caption count, how\n    many tightening cuts landed, and any warning (a crop that magnifies the\n    source past 1.5x, a source with no picture).",
+      "inputSchema": {
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ids"
+          },
+          "rebuild": {
+            "default": false,
+            "title": "Rebuild",
+            "type": "boolean"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mode"
+          },
+          "export_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Export Dir"
+          },
+          "loudness_preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Loudness Preset"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "type": "object",
+        "title": "editor_build_clipsArguments"
       }
     },
     {
@@ -3290,6 +3597,47 @@
       }
     },
     {
+      "name": "editor_get_moment_view",
+      "description": "A page of a clip run's MOMENT VIEW (D-411): one line per sentence \u2014\n    `S<n>`, its start-end seconds, its evidence tags, its words \u2014 with\n    `=== topic` lines where the subject changes and, under a sentence, the\n    clean endings a short starting there can have per target length. Page 0\n    carries `instructions`, the judging rules: read them before judging.\n\n    Sentence numbers are global; keep calling with `offset` = the previous\n    `nextOffset` until it is null. `viewId` is the same on every page of one\n    view \u2014 if it changes between pages, the source changed: start again. A\n    `provisional` view (still transcribing) can be read but not proposed\n    against. Tags are measured facts, not a score: read the words.",
+      "inputSchema": {
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Offset"
+          },
+          "max_sentences": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Sentences"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "type": "object",
+        "title": "editor_get_moment_viewArguments"
+      }
+    },
+    {
       "name": "editor_get_state",
       "description": "The Edit tab's own top-level state: whether a project is open AND\n    which one (`openProject`, its `.chroma` path \u2014 B-083), load status,\n    playhead position, whether it is playing, whether a timeline exists at\n    all, and the current `selection` (a list of `{track, id}`) plus\n    `selectedGap`. Cheap, read-only \u2014 call before anything else if you don't\n    already know a project is open, to confirm which project the Edit tab is\n    actually on after an `open_project`/`new_project` switch, or to see what\n    the user currently has selected.\n\n    Also reports `previewZoom` (D-218) \u2014 the preview VIEWPORT's own zoom/pan\n    (`zoom`, `pct`, `panX`, `panY`, `fit`). Read it before interpreting a\n    `debug_screenshot` of the preview: at a non-fit view the picture on screen\n    is a magnified crop of the frame, so a clip that looks off-centre may\n    simply be being looked at from off-centre. `editor_set_preview_zoom` is\n    the write half.\n\n    Also reports `waveformView` (D-232) \u2014 whether the viewer is showing its\n    audio waveform strip under the picture. `editor_set_waveform_view` is that\n    one's write half; `editor_get_waveform` reads the envelope itself.\n\n    Also reports `activeTimeline` (D-411) \u2014 `{id, name, output}` of the\n    timeline every other `editor_*` tool acts on \u2014 and `timelineCount`. A\n    project can hold several timelines (a long-form and its shorts);\n    `editor_list_timelines` lists them and `editor_set_active_timeline`\n    switches.",
       "inputSchema": {
@@ -3895,6 +4243,28 @@
       }
     },
     {
+      "name": "editor_list_clip_proposals",
+      "description": "The Automatic Clipper's runs and their proposals as the person has left\n    them (D-411). Without `run_id`: every run of the project (newest first)\n    with its source, settings and how many shorts it has built. With\n    `run_id`: each proposal's `status` (pending / accepted / rejected /\n    built), the gate's verdict and notes, its sentences, seconds, title,\n    reason and built `timelineId`. Read-only.",
+      "inputSchema": {
+        "properties": {
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Run Id"
+          }
+        },
+        "type": "object",
+        "title": "editor_list_clip_proposalsArguments"
+      }
+    },
+    {
       "name": "editor_list_markers",
       "description": "Every marker on the current timeline, in frame order \u2014 a marker is a\n    colour-coded, optionally titled flag pinned to a TIMELINE frame (\"client\n    wants a cut here\", \"sync point\", \"VFX shot start\").\n\n    Markers belong to the TIMELINE, not to any clip or track: there is no\n    `track` argument on any of the four marker tools, and a marker survives\n    the clip beneath it being trimmed, moved to another track, or deleted.\n    They are pure annotation \u2014 nothing in the live preview or in\n    `editor_export`'s output is affected by one.\n\n    Each entry is `{id, frame, color, durationFrames, endFrame, name, note}`;\n    `name`/`note` are `null` when unset. A marker may span a RANGE rather than\n    flag one frame: `durationFrames` is 0 for a point marker (the default, and\n    what every marker made before ranges existed is) and `endFrame` is the\n    derived last frame it covers, inclusive \u2014 equal to `frame` for a point\n    marker. `id` is what `editor_set_marker`/`editor_remove_marker` take.\n    Also returns `palette`, the marker colour names `editor_add_marker` and\n    `editor_set_marker` accept. `editor_get_timeline` reports the same list\n    under its own `markers` key, so this tool is the cheap way to re-read just\n    the markers after writing one.",
       "inputSchema": {
@@ -4228,6 +4598,75 @@
         ],
         "type": "object",
         "title": "editor_music_editArguments"
+      }
+    },
+    {
+      "name": "editor_propose_clips",
+      "description": "Automatic Clipper, step 2: your picks, checked and built (D-411).\n\n    - `clips` \u2014 `[{\"segments\": [{\"first\": S, \"last\": S}], \"hook\": {\"first\":\n      S, \"last\": S}, \"title\": str, \"reason\": str, \"hook_line\": str}]`.\n      `segments` are inclusive SENTENCE numbers of the moment view, in play\n      order (usually one range; two stitch a moment together). `hook` is\n      optional: one to three whole sentences, at most 8 s, played first.\n      `title` (the short's headline, at most 80 characters) and `reason` (one\n      line a person can check against the words) are required; `hook_line`\n      quotes the opening line. Never write words the speaker did not say.\n    - `view_id` \u2014 the `viewId` you read. A stale one refuses the call.\n    - `replace` \u2014 false (default) adds to the run; true replaces every\n      proposal not yet built.\n    - `build` \u2014 true (default): every clip that passes is built straight away\n      as a timeline in this project at the run's frame (9:16 by default):\n      the source ranges as ordinary clips, centre-cropped, dead air and\n      verified retakes tightened through the ripple delete, captions from the\n      short's own transcript in the brand kit's style, provenance in the\n      timeline's `origin`. false: store them for review only.\n    - `export_dir` (+ `loudness_preset`, e.g. \"youtube\") \u2014 also queue each\n      built short's export into that folder. Rendering takes minutes; only\n      when the person asked for files.\n\n    Every clip goes through the clean-cut gate: `verified`, `warned` (passes,\n    with the issue named \u2014 an opener that needs context, an unanswered\n    question at the end, heavy overlap with another clip) or `refused` with\n    the reason and the offending sentences: an edge off a sentence boundary,\n    a length outside every target's band, an edge inside a reviewed retake, a\n    hook that is not whole sentences. Fix a refused clip and resubmit it.\n    The person reviews in the Clipper panel; work on a built short with the\n    ordinary editor_* tools after `editor_set_active_timeline`.",
+      "inputSchema": {
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "view_id": {
+            "title": "View Id",
+            "type": "string"
+          },
+          "clips": {
+            "items": {},
+            "title": "Clips",
+            "type": "array"
+          },
+          "replace": {
+            "default": false,
+            "title": "Replace",
+            "type": "boolean"
+          },
+          "build": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Build"
+          },
+          "export_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Export Dir"
+          },
+          "loudness_preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Loudness Preset"
+          }
+        },
+        "required": [
+          "run_id",
+          "view_id",
+          "clips"
+        ],
+        "type": "object",
+        "title": "editor_propose_clipsArguments"
       }
     },
     {
@@ -5499,6 +5938,105 @@
           }
         },
         "title": "editor_set_clip_keyframesArguments"
+      }
+    },
+    {
+      "name": "editor_set_clip_proposal",
+      "description": "Review one clip proposal (D-411) \u2014 the same actions as the Clipper\n    panel's row.\n\n    - `status` \u2014 \"accepted\", \"rejected\" or \"pending\".\n    - `title` \u2014 a new headline.\n    - `extend_start` / `extend_end` \u2014 move the start or end by whole\n      sentences: +1 adds the sentence before / after, -1 drops one.\n    - `word_start` / `word_end` \u2014 the same by words (+ = longer). A word edge\n      must still pass the gate: only a stitched inner edge may sit on a\n      clause boundary.\n    - `clear_hook` \u2014 drop the hook.\n\n    Every change of shape is re-checked by the clean-cut gate and answered\n    with the new verdict. A built short is not changed by this: rebuild it\n    with `editor_build_clips`.",
+      "inputSchema": {
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          },
+          "extend_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Extend Start"
+          },
+          "extend_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Extend End"
+          },
+          "word_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Word Start"
+          },
+          "word_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Word End"
+          },
+          "clear_hook": {
+            "default": false,
+            "title": "Clear Hook",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "run_id",
+          "proposal_id"
+        ],
+        "type": "object",
+        "title": "editor_set_clip_proposalArguments"
       }
     },
     {
@@ -15117,6 +15655,167 @@
       ]
     },
     {
+      "tool": "editor_auto_clip",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "editor_auto_clip",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_auto_clip",
+      "case": "full",
+      "arguments": {
+        "media_id": "v_editor_auto_clip.media_id",
+        "path": "v_editor_auto_clip.path",
+        "timeline_id": "v_editor_auto_clip.timeline_id",
+        "track": 65,
+        "run_id": "v_editor_auto_clip.run_id",
+        "outputs": "v_editor_auto_clip.outputs",
+        "count": 65,
+        "durations": [
+          94
+        ],
+        "aspect": "v_editor_auto_clip.aspect",
+        "captions": "v_editor_auto_clip.captions",
+        "focus": "v_editor_auto_clip.focus",
+        "range_start_s": -33.57,
+        "range_end_s": -31.49,
+        "hook_first": true,
+        "tighten_dead_air": true,
+        "tighten_retakes": true,
+        "max_sentences": 34
+      },
+      "requests": [
+        {
+          "op": "editor_auto_clip",
+          "args": {
+            "mediaId": "v_editor_auto_clip.media_id",
+            "path": "v_editor_auto_clip.path",
+            "timelineId": "v_editor_auto_clip.timeline_id",
+            "track": 65,
+            "runId": "v_editor_auto_clip.run_id",
+            "outputs": "v_editor_auto_clip.outputs",
+            "count": 65,
+            "durations": [
+              94
+            ],
+            "aspect": "v_editor_auto_clip.aspect",
+            "captions": "v_editor_auto_clip.captions",
+            "focus": "v_editor_auto_clip.focus",
+            "rangeStartS": -33.57,
+            "rangeEndS": -31.49,
+            "hookFirst": true,
+            "tightenDeadAir": true,
+            "tightenRetakes": true,
+            "maxSentences": 34
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_auto_clip_status",
+      "case": "minimal",
+      "arguments": {
+        "run_id": "v_editor_auto_clip_status.run_id"
+      },
+      "requests": [
+        {
+          "op": "editor_auto_clip_status",
+          "args": {
+            "runId": "v_editor_auto_clip_status.run_id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_build_clips",
+      "case": "minimal",
+      "arguments": {
+        "run_id": "v_editor_build_clips.run_id"
+      },
+      "requests": [
+        {
+          "op": "editor_build_clips",
+          "args": {
+            "runId": "v_editor_build_clips.run_id"
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_build_clips",
+      "case": "full",
+      "arguments": {
+        "run_id": "v_editor_build_clips.run_id",
+        "ids": [
+          "v_editor_build_clips.ids[0]"
+        ],
+        "rebuild": true,
+        "mode": "v_editor_build_clips.mode",
+        "export_dir": "v_editor_build_clips.export_dir",
+        "loudness_preset": "v_editor_build_clips.loudness_preset"
+      },
+      "requests": [
+        {
+          "op": "editor_build_clips",
+          "args": {
+            "runId": "v_editor_build_clips.run_id",
+            "ids": [
+              "v_editor_build_clips.ids[0]"
+            ],
+            "rebuild": true,
+            "mode": "v_editor_build_clips.mode",
+            "exportDir": "v_editor_build_clips.export_dir",
+            "loudnessPreset": "v_editor_build_clips.loudness_preset"
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "editor_create_media_folder",
       "case": "minimal",
       "arguments": {
@@ -16046,6 +16745,56 @@
       ]
     },
     {
+      "tool": "editor_get_moment_view",
+      "case": "minimal",
+      "arguments": {
+        "run_id": "v_editor_get_moment_view.run_id"
+      },
+      "requests": [
+        {
+          "op": "editor_get_moment_view",
+          "args": {
+            "runId": "v_editor_get_moment_view.run_id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_get_moment_view",
+      "case": "full",
+      "arguments": {
+        "run_id": "v_editor_get_moment_view.run_id",
+        "offset": 67,
+        "max_sentences": 38
+      },
+      "requests": [
+        {
+          "op": "editor_get_moment_view",
+          "args": {
+            "runId": "v_editor_get_moment_view.run_id",
+            "offset": 67,
+            "maxSentences": 38
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "editor_get_state",
       "case": "minimal",
       "arguments": {},
@@ -16521,6 +17270,48 @@
       ]
     },
     {
+      "tool": "editor_list_clip_proposals",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "editor_list_clip_proposals",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_list_clip_proposals",
+      "case": "full",
+      "arguments": {
+        "run_id": "v_editor_list_clip_proposals.run_id"
+      },
+      "requests": [
+        {
+          "op": "editor_list_clip_proposals",
+          "args": {
+            "runId": "v_editor_list_clip_proposals.run_id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "editor_list_markers",
       "case": "minimal",
       "arguments": {},
@@ -16849,6 +17640,75 @@
             "mode": "v_editor_music_edit.mode"
           },
           "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_propose_clips",
+      "case": "minimal",
+      "arguments": {
+        "run_id": "v_editor_propose_clips.run_id",
+        "view_id": "v_editor_propose_clips.view_id",
+        "clips": [
+          "any_editor_propose_clips.clips[0]"
+        ]
+      },
+      "requests": [
+        {
+          "op": "editor_propose_clips",
+          "args": {
+            "runId": "v_editor_propose_clips.run_id",
+            "viewId": "v_editor_propose_clips.view_id",
+            "clips": [
+              "any_editor_propose_clips.clips[0]"
+            ]
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_propose_clips",
+      "case": "full",
+      "arguments": {
+        "run_id": "v_editor_propose_clips.run_id",
+        "view_id": "v_editor_propose_clips.view_id",
+        "clips": [
+          "any_editor_propose_clips.clips[0]"
+        ],
+        "replace": false,
+        "build": true,
+        "export_dir": "v_editor_propose_clips.export_dir",
+        "loudness_preset": "v_editor_propose_clips.loudness_preset"
+      },
+      "requests": [
+        {
+          "op": "editor_propose_clips",
+          "args": {
+            "runId": "v_editor_propose_clips.run_id",
+            "viewId": "v_editor_propose_clips.view_id",
+            "clips": [
+              "any_editor_propose_clips.clips[0]"
+            ],
+            "build": true,
+            "exportDir": "v_editor_propose_clips.export_dir",
+            "loudnessPreset": "v_editor_propose_clips.loudness_preset"
+          },
+          "timeout_ms": 120000
         }
       ],
       "isError": false,
@@ -17878,6 +18738,69 @@
                 }
               }
             ]
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_set_clip_proposal",
+      "case": "minimal",
+      "arguments": {
+        "run_id": "v_editor_set_clip_proposal.run_id",
+        "proposal_id": "v_editor_set_clip_proposal.proposal_id"
+      },
+      "requests": [
+        {
+          "op": "editor_set_clip_proposal",
+          "args": {
+            "runId": "v_editor_set_clip_proposal.run_id",
+            "id": "v_editor_set_clip_proposal.proposal_id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_set_clip_proposal",
+      "case": "full",
+      "arguments": {
+        "run_id": "v_editor_set_clip_proposal.run_id",
+        "proposal_id": "v_editor_set_clip_proposal.proposal_id",
+        "status": "v_editor_set_clip_proposal.status",
+        "title": "v_editor_set_clip_proposal.title",
+        "extend_start": 80,
+        "extend_end": 29,
+        "word_start": 49,
+        "word_end": 94,
+        "clear_hook": false
+      },
+      "requests": [
+        {
+          "op": "editor_set_clip_proposal",
+          "args": {
+            "runId": "v_editor_set_clip_proposal.run_id",
+            "id": "v_editor_set_clip_proposal.proposal_id",
+            "status": "v_editor_set_clip_proposal.status",
+            "title": "v_editor_set_clip_proposal.title",
+            "extendStart": 80,
+            "extendEnd": 29,
+            "wordStart": 49,
+            "wordEnd": 94
           },
           "timeout_ms": 20000
         }

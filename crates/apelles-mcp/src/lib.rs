@@ -86,6 +86,11 @@ pub const MOTION_COMPONENT_TIMEOUT_MS: u64 = 300_000;
 /// beat track, and several files at once.
 pub const BEAT_ANALYSIS_TIMEOUT_MS: u64 = 120_000;
 
+/// Automatic Clipper (D-411): proposing or building shorts writes one timeline per
+/// short (a create, a build in the page, a content hash, a write) and may queue their
+/// exports. Seconds per short; the budget covers twenty.
+pub const CLIPPER_TIMEOUT_MS: u64 = 120_000;
+
 /// Brand kits (D-416): importing a reference video copies its bytes into the brand
 /// asset store, and applying a kit copies its fonts and logos into the Motion asset
 /// folder and parses a LUT. Seconds, not minutes; the budget covers a multi-GB

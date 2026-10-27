@@ -13,8 +13,9 @@
 # detectors behind the Edit tab's recut panel, and apelles-audio-library (D-400),
 # Openverse audio search/import, and apelles-beat (D-413), musical beat
 # analysis for the Edit beat grid and Motion's soundtrack, and apelles-brand
-# (D-416), brand kits on disk, and apelles-motion-runtime (D-417), Motion's
-# on-demand render runtime. Still future: apelles-grade,
+# (D-416), brand kits on disk, apelles-motion-runtime (D-417), Motion's
+# on-demand render runtime, and apelles-clipper (D-411), the Automatic
+# Clipper's sentences, candidates and clean-cut gate. Still future: apelles-grade,
 # apelles-compositor, apelles-agent. The live table and each crate's boundary
 # are in `crates/README.md`.
 

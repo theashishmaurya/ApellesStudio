@@ -140,6 +140,7 @@ pub mod audio_library;
 pub mod beats;
 pub mod brand;
 pub mod caption_render;
+pub mod clipper;
 pub mod colorist_view;
 pub mod commands;
 pub mod control;

@@ -16,6 +16,9 @@ apelles-timeline = { path = "../apelles-timeline" }
 # `probe::probe_cached`). Legal in the locked graph — L2 -> L1 — but the
 # lock doc's dependency table did not list it. It does now.
 apelles-media = { path = "../apelles-media" }
+# D-411 — the clip run schema (`clips/<run-id>.json`) this crate persists. L2 →
+# L2, no cycle: `apelles-clipper` depends only on `apelles-speech`.
+apelles-clipper = { path = "../apelles-clipper" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 base64 = "0.23"

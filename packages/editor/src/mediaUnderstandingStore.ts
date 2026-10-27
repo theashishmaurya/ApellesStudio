@@ -79,6 +79,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { DEFAULT_MIN_SILENCE_MS, type RetakeGroupWire } from './recut';
 import { RECOVERY_PLAN, type DarkDetection, type RecoveredWindow, type RecoveryWindow } from './darkRegions';
 import type { RetakeProposalSet } from './retakeProposals';
+import { planWindows, stitchWindows, type TranscriptWindow } from './progressiveTranscript';
 
 /** How often to poll a running sidecar job. Coarse on purpose: these jobs run
  *  for tens of seconds to minutes, so a tighter loop would just add IPC
@@ -371,6 +372,19 @@ interface JobStart {
  *  The distinction matters to a caller deciding whether to start a job. */
 export type AnalysisPhase = 'idle' | 'running' | 'done' | 'error';
 
+/** D-411 — a file being transcribed window by window (`transcribeProgressively`):
+ *  the words of the windows that have landed, stitched, and how far they reach.
+ *  Dropped when the whole file's transcript is adopted. */
+export interface PartialTranscript {
+  segments: TranscriptSegment[];
+  /** Source seconds the landed windows cover, from 0. */
+  coveredSecs: number;
+  durationSecs: number;
+  windowsDone: number;
+  windowsTotal: number;
+  language?: string;
+}
+
 export interface AnalysisStatus<T> {
   phase: AnalysisPhase;
   result?: T;
@@ -439,6 +453,17 @@ interface MediaUnderstandingState {
    *  panel because the agent writes it and the human reads it — component
    *  state cannot be fed from outside. */
   retakeProposals: Record<number, RetakeProposalSet>;
+  /** sourcePath -> the windows landed so far of a progressive transcription
+   *  (D-411). Read by the Automatic Clipper to show provisional candidates. */
+  partialTranscripts: Record<string, PartialTranscript>;
+
+  /** D-411 — transcribe `path` in 5-minute windows, in order, publishing each
+   *  in `partialTranscripts` as it lands; when the last lands, the stitched
+   *  result is adopted as the file's transcript (cached, persisted, read by
+   *  every consumer) exactly as a whole-file pass's would be. Marks the file
+   *  `transcribing` throughout, so no second pass starts. A persisted
+   *  transcript short-circuits it. Fire-and-forget; returns the phase now. */
+  startProgressiveTranscript(path: string, durationSecs: number): AnalysisPhase;
 
   /** Run to completion. Resolves with the result (cached, if there is one).
    *  Callers that cannot wait minutes — anything reached through
@@ -843,6 +868,81 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
     rereadSeq: 0,
     retakeProposals: {},
     retakeRequests: {},
+    partialTranscripts: {},
+
+    startProgressiveTranscript: (path, durationSecs) => {
+      const s = get();
+      if (s.transcribing[path]) return 'running';
+      if (s.transcripts[path]) return 'done';
+      const windows = planWindows(durationSecs);
+      if (windows.length <= 1) return get().startTranscript(path, { wordTimestamps: true });
+      set((st) => {
+        const { [path]: _cleared, ...transcriptErrors } = st.transcriptErrors;
+        return { transcribing: { ...st.transcribing, [path]: true }, transcriptErrors };
+      });
+      const run = async () => {
+        try {
+          await get().hydrate(path);
+          if (get().transcripts[path]) return;
+          const landed: Array<{ window: TranscriptWindow; segments: TranscriptSegment[] }> = [];
+          let language: string | undefined;
+          let model = '';
+          for (const w of windows) {
+            const result = await runJob<Transcript>(
+              'chroma_transcribe',
+              'chroma_transcribe_status',
+              {
+                path,
+                language: language ?? null,
+                wordTimestamps: true,
+                startSecs: w.startSecs,
+                durationSecs: w.durationSecs,
+              },
+              'transcribe window',
+            );
+            language = language ?? result.language;
+            model = result.model;
+            landed.push({ window: w, segments: result.segments ?? [] });
+            const covered = Math.min(durationSecs, Number.isFinite(w.coreEnd) ? w.coreEnd : durationSecs);
+            set((st) => ({
+              partialTranscripts: {
+                ...st.partialTranscripts,
+                [path]: {
+                  segments: stitchWindows(landed),
+                  coveredSecs: covered,
+                  durationSecs,
+                  windowsDone: landed.length,
+                  windowsTotal: windows.length,
+                  language,
+                },
+              },
+            }));
+          }
+          const segments = stitchWindows(landed);
+          const transcript: Transcript = {
+            text: segments.map((x) => x.text).join(' '),
+            language: language ?? '',
+            model,
+            source: path,
+            segments,
+            words: segments.flatMap((x) => x.words ?? []),
+          };
+          set((st) => ({ transcripts: { ...st.transcripts, [path]: transcript } }));
+          void persist(path);
+        } catch (e: unknown) {
+          const message = e instanceof Error ? e.message : String(e);
+          set((st) => ({ transcriptErrors: { ...st.transcriptErrors, [path]: message } }));
+        } finally {
+          set((st) => {
+            const { [path]: _dropped, ...rest } = st.transcribing;
+            const { [path]: _partial, ...partialTranscripts } = st.partialTranscripts;
+            return { transcribing: rest, partialTranscripts };
+          });
+        }
+      };
+      void run();
+      return 'running';
+    },
 
     getTranscript: async (path, options = {}) => {
       const cached = get().transcripts[path];
@@ -1304,6 +1404,7 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
           appliedRereads: {},
           retakeProposals: {},
           retakeRequests: {},
+          partialTranscripts: {},
         });
         return;
       }
@@ -1338,6 +1439,9 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
           // A request is for answers about this file's audio; forgetting the
           // file forgets what was asked of it too.
           retakeRequests: withoutPath(s.retakeRequests, path),
+          partialTranscripts: Object.fromEntries(
+            Object.entries(s.partialTranscripts).filter(([k]) => k !== path),
+          ),
         };
       });
     },

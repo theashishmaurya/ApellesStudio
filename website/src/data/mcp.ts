@@ -93,6 +93,12 @@ export interface ToolGroup {
  * `motion_refill_template` and `motion_delete_template` (Motion 52 → 59).
  * Re-counted against the real file.
  *
+ * 244 → 251 on 2026-10-28 (D-411 Phases 1-2): the Automatic Clipper,
+ * `editor_auto_clip`, `editor_auto_clip_status`, `editor_get_moment_view`,
+ * `editor_propose_clips`, `editor_list_clip_proposals`,
+ * `editor_set_clip_proposal` and `editor_build_clips` (Edit 100 → 107).
+ * Re-counted against the real file.
+ *
  * 241 → 244 on 2026-10-27 (D-417): Motion's render runtime,
  * `motion_runtime_status`, `motion_install_runtime` and
  * `motion_remove_runtime` (Motion 69 → 72). Re-counted against the real file.
@@ -140,15 +146,15 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 244,
-  shipped: 232,
+  all: 251,
+  shipped: 239,
   debugOnly: 12,
 } as const;
 
 export const TOOL_GROUPS: readonly ToolGroup[] = [
   {
     name: 'Edit',
-    count: 100,
+    count: 107,
     blurb:
       'The whole multi-track NLE. Browse and organise the media pool, place and trim clips, perform any of the seven edit types at the playhead, roll/slip/slide, manage tracks, key transforms, set transitions, markers, captions and per-clip EQ, then render the timeline to a real file.',
     sample: [
@@ -160,6 +166,7 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
       'editor_edit_in',
       'editor_split_clip',
       'editor_music_edit',
+      'editor_auto_clip',
       'editor_detect_beats',
       'editor_snap_cuts_to_beats',
       'editor_trim_clip',

@@ -223,6 +223,16 @@ import { DETECT_GRACE_MS, settleWithin } from './settle';
 import { getWordTranscript, proposeRetakes, retranscribeWords } from './retakeProposalOps';
 // D-408 — music edits by story beat; the panel calls the same functions.
 import { applyMusicEditsOp, listMusicEdits, musicEditNow, proposeMusicEdits } from './musicEditOps';
+// D-411 — the Automatic Clipper's ops, shared with the Clipper panel.
+import {
+  autoClipStatus,
+  buildClips,
+  listClipProposals,
+  momentView,
+  proposeClips,
+  setClipProposal,
+  startAutoClip,
+} from './clipper/clipperOps';
 // D-413 — the beat grid: the same functions the track header's metronome and
 // the toolbar's "Snap cuts to beats" call.
 import { detectTrackBeats, setBeatGridOp, snapCutsToBeatsOp } from './beatOps';
@@ -5635,6 +5645,25 @@ export function useEditorControl(): void {
         if (!tl) return noTimeline();
         return applyMusicEditsOp(tl, a);
       },
+
+      // ---- Automatic Clipper (D-411 Phases 1-2) ----------------------------
+      // The MCP client is the only judge: `editor_auto_clip` analyses a source
+      // and serves the moment view, `editor_propose_clips` gates the client's
+      // picks and builds them as timelines, the rest review and rebuild. Every
+      // op is the function the Clipper panel calls (`clipper/clipperOps.ts`).
+      editor_auto_clip: async (a) => {
+        if (useEditorTimelineStore.getState().openProjectKey === null) return noTimeline();
+        return await startAutoClip(a);
+      },
+      editor_auto_clip_status: async (a) => await autoClipStatus(a),
+      editor_get_moment_view: async (a) => await momentView(a),
+      editor_propose_clips: async (a) => await proposeClips(a),
+      editor_list_clip_proposals: async (a) => {
+        if (useEditorTimelineStore.getState().openProjectKey === null) return noTimeline();
+        return await listClipProposals(a);
+      },
+      editor_set_clip_proposal: async (a) => await setClipProposal(a),
+      editor_build_clips: async (a) => await buildClips(a),
 
       // ---- beats (D-413) ----------------------------------------------------
       // Analyse a track's music and show its beat grid; show/hide the grid;
