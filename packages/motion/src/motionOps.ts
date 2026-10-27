@@ -247,6 +247,10 @@ export interface MotionOpsApi {
   manifest: Manifest | null;
   parseError: string | null;
   dirty: boolean;
+  /** D-415 — the previous page's unsaved edits were put back from the recovery
+   *  copy and are still unsaved (`stale`: the saved manifest changed since, so
+   *  saving replaces it); null otherwise. Reported by `motion_get_state`. */
+  recovered?: { stale: boolean } | null;
   saveError: string | null;
   commit: (next: Manifest, label: string) => void;
   save: () => Promise<SaveOutcome>;
@@ -875,6 +879,9 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       return {
         loadState: cur.loadState,
         dirty: cur.dirty,
+        // D-415 — `null` unless a reload put unsaved edits back (see
+        // `MotionOpsApi.recovered`); they stay unsaved until `motion_save_manifest`.
+        recovered: cur.recovered ?? null,
         parseError: cur.parseError,
         saveError: cur.saveError,
         playerMounted: ctx.player() !== null,

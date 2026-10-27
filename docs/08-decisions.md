@@ -6,6 +6,28 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-415 — Unsaved Motion edits survive a reload: a debounced recovery snapshot, not an op journal
+
+**decided (2026-10-27, roadmap 0g; follows B-274/D-402 and B-277/D-410)**
+
+**Context.** The Edit timeline's unsaved edits survive a killed web content process or a reload (D-402), and D-410 reopens the project and tab. The Motion manifest's editing state is component state in `useMotionManifest` (the JSON text, `dirty`) with an explicit Save, so a reload dropped every unsaved Motion edit.
+
+**Options.** (a) A Motion journal mirroring D-402: an op appended per committed change, replayed on load. Rejected: D-402 journals ops because the Edit timeline is large and saved as a whole document through a debounce; Motion's ops are whole-document text commits (`commit(next, label)`), the document is one small JSON file, and replay would need the op reducer, a sequence number written atomically with the saved manifest, and a journal compaction, all to rebuild what a snapshot already is. (b) A debounced recovery copy, written atomically beside the manifest. Chosen. (c) Autosave into `manifest.json`. Rejected: it makes Save meaningless and silently overwrites the saved document, which the person asked not to happen.
+
+**Choice.** `apelles_motion::recovery` (`crates/apelles-motion/src/recovery.rs`) owns `<project>.chroma/motion/manifest.recovery.json`: `{schema, base, text}`, where `text` is the editor text exactly as it is (an unfinished, not-yet-valid edit is recovered too) and `base` is a BLAKE3 hash of the saved `manifest.json` when the copy was made. Written through a staging file renamed over the copy, so a death mid-write leaves the previous copy. Three commands (`chroma_motion_recovery_write/read/clear`, `chroma::motion_recovery`); `chroma_motion_save_manifest` clears the copy itself, so any save (button or `motion_save_manifest`) supersedes it. In the webview, `recoveryWriter.ts` debounces writes (250 ms), runs every backend call through one promise chain (a write can never land after the clear that followed it) and flushes on `pagehide`, `visibilitychange` and unmount. `useMotionManifest` keeps the copy equal to "the text that differs from the saved document" (the engine sample, for a project that never saved): scheduled while they differ, removed once they match again (a save, or undo back to it).
+
+The first time a project's manifest is seeded on a page, the copy is read. A copy equal to the seeded text is dropped. Otherwise it becomes the editor text, dirty and unsaved: **the saved manifest is never written on the person's behalf**, so Save stays meaningful. `loadState` waits for that read, so the tab never flashes the saved document first. `motionProjectStore.recovered` (`{stale}`) drives the notice the composition root shows ("Restored unsaved Motion changes. Save to keep them.") and clears when the text is saved, matches the saved document, or the project changes.
+
+**Stale copies.** `read` compares `base` with the hash of the manifest now on disk. A copy made against an older saved manifest (it was saved elsewhere since: another app instance, a hand edit, an agent) is still restored, because dropping it would lose work, and is flagged `stale: true`; the notice then says saving will replace the newer saved manifest. The person can also discard the recovered text with `motion_reload_manifest` (`force`) or by editing back, both of which clear the copy.
+
+**Renders never read it.** A render takes the manifest it is handed (`chroma_motion_job_start`, which snapshots it) or its own job snapshot (D-398), and `chroma_motion_get_manifest` reads `manifest.json` only. A test pins that a render after a restore sends the edited document and never reads the copy.
+
+**Human + AI.** The GUI shows the toast; `motion_get_state` reports `recovered: null | {stale}` in both servers (description change only, so the tool count stays 231; the parity corpus was re-captured). The ops that resolve it already exist: `motion_save_manifest` keeps the edits, `motion_reload_manifest` with `force` drops them.
+
+**Not covered.** An in-memory "Untitled" session has no project directory to put the copy in, so its Motion state is still lost on a reload (roadmap 0g keeps that line). The 250 ms debounce is the window a killed process can still cost; the Edit journal's window is one IPC message. An OS crash can lose a write that was in the page cache. Not verified live against a real web content process kill.
+
+---
+
 ## D-414 — `realfft` becomes a direct dependency of `apelles-beat`
 
 **decided (2026-10-27)** · for D-413

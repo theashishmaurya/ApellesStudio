@@ -7104,6 +7104,11 @@ def motion_get_state() -> str:
         at all. A Motion manifest lives inside a project, so `"no-project"`
         means open one in the Colorist tab first. This tool ANSWERS in that
         case rather than erroring, which is how you find it out.
+      * `recovered` — `null`, or `{stale}` when a page reload put the previous
+        page's UNSAVED edits back from the project's recovery copy (they are
+        still unsaved: `motion_save_manifest` keeps them, `motion_reload_manifest`
+        with `force=true` discards them). `stale: true` means the saved manifest
+        changed after those edits were made, so saving replaces it.
       * `selection` — what is selected right now, as `[{sceneIndex, target}]`,
         the exact shape `motion_set_selection` takes back.
       * `playheadFrame` / `playerMounted` — where the preview is parked.

@@ -104,7 +104,8 @@
 //!   preview and export are the same maths by construction. Carries the
 //!   **global** grade only; masks/crop/relight are stripped with a warning
 //! - `motion`   — the Motion tab bridge: manifest sidecar + `apelles-motion` render (D-046)
-//! - `motion_components` — custom Remotion components: library, Node static check,
+//! - `motion_recovery` — the Motion tab's unsaved-edit recovery copy (D-415)
+//! - `motion_components` —custom Remotion components: library, Node static check,
 //!   certification proof, project install and live-player proxy frames (D-409)
 //! - `media_understanding` — transcript + "what changed on screen, and when"
 //!   via the `ai-media/` sidecar (Parakeet + Qwen3-VL, D-189/D-374/D-381); just the 4
@@ -171,6 +172,7 @@ pub mod motion;
 pub mod motion_components;
 pub mod motion_job;
 pub mod motion_presets;
+pub mod motion_recovery;
 pub mod ocr;
 pub mod page_session;
 pub mod playback;

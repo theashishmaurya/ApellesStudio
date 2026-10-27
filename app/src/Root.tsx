@@ -415,6 +415,21 @@ export function Root() {
     );
   }, [recoveredEdits]);
 
+  // D-415 — the same for the Motion tab's unsaved manifest edits. They come
+  // back unsaved (the person's Save is still what writes the manifest), and a
+  // `stale` recovery says the saved manifest changed after they were made.
+  const motionRecovered = useMotionProjectStore((s) => s.recovered);
+  useEffect(() => {
+    if (motionRecovered === null) return;
+    trackEvent('motion_recovery_restored', { stale: motionRecovered.stale });
+    toast.info(
+      motionRecovered.stale
+        ? 'Restored unsaved Motion changes. The saved manifest changed since, so saving will replace it.'
+        : 'Restored unsaved Motion changes. Save to keep them.',
+      { toastId: 'motion-recovery-restored' },
+    );
+  }, [motionRecovered]);
+
   useEffect(() => {
     useKeymapStore.getState().hydrate(keybinds);
   }, [keybinds]);
