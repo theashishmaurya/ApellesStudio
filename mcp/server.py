@@ -138,6 +138,10 @@ BEAT_ANALYSIS_TIMEOUT_MS = 120_000
 #: Motion asset folder and parses a LUT. Seconds, not minutes; the budget covers
 #: a multi-GB reference reel on a slow disk.
 BRAND_TIMEOUT_MS = 120_000
+#: Automatic Clipper (D-411): proposing or building shorts writes one timeline
+#: per short (a create, a build in the page, a content hash, a write) and may
+#: queue their exports. Seconds per short; the budget covers twenty.
+CLIPPER_TIMEOUT_MS = 120_000
 
 # D-318's recut detectors used to have a 180_000 budget here, on the reasoning
 # that a cold decode of a long 4K source is not 20s-fast. B-188 proved that far
@@ -5443,6 +5447,294 @@ def editor_apply_music_edits(track: int, include_pending: bool = False) -> str:
     return json.dumps(_op("editor_apply_music_edits", **args), indent=2, default=str)
 
 
+@mcp.tool()
+def editor_auto_clip(
+    media_id: str | None = None,
+    path: str | None = None,
+    timeline_id: str | None = None,
+    track: int | None = None,
+    run_id: str | None = None,
+    outputs: str | None = None,
+    count: int | None = None,
+    durations: list[int] | None = None,
+    aspect: str | None = None,
+    captions: str | None = None,
+    focus: str | None = None,
+    range_start_s: float | None = None,
+    range_end_s: float | None = None,
+    hook_first: bool | None = None,
+    tighten_dead_air: bool | None = None,
+    tighten_retakes: bool | None = None,
+    max_sentences: int | None = None,
+) -> str:
+    """Automatic Clipper, step 1: analyse a long source for shorts (D-411).
+    **It picks nothing** — you are the judge. The app cuts the transcript into
+    numbered sentences and topics, finds every clean, in-length window, tags
+    each with evidence (hook text, context-dependent openers, whether it
+    lands, pace, loudness, picture cuts, focus words), and answers with a run
+    id, the job status and page 0 of the MOMENT VIEW with its `instructions`
+    (the judging rules — read them first, every run).
+
+    Source (one; none = the open timeline):
+    - `media_id` or `path` — a media-pool file (video or audio);
+    - `timeline_id` (+ `track`, default the first track with media) — a long
+      Edit timeline: its clips in play order, so a short plays what the edit
+      plays and keeps each clip's grade and sound settings.
+
+    Settings (kept in the run, `clips/<run_id>.json`):
+    - `durations` — target seconds from 15, 30, 60, 90 (default [30, 60]);
+      a short may come in 30% under or 25% over its target.
+    - `count` — how many shorts the person wants (default 5, at most 20).
+    - `aspect` — "9:16" (default, 1080x1920), "1:1" or "4:5".
+    - `captions` — "brand" (default: the project's brand kit, else Pill
+      Karaoke), "none", or a caption preset id.
+    - `focus` — what the person wants clips about; matched as evidence.
+    - `range_start_s` / `range_end_s` — analyse only that stretch of a file.
+    - `hook_first` (default true) — play a proposal's hook range first.
+    - `tighten_dead_air` / `tighten_retakes` (default true) — when a short is
+      built, shorten pauses over 0.6 s to 0.25 s and cut the deleted takes of
+      VERIFIED retakes (the Recut panel's) inside it.
+    - `outputs` — only "shorts" (the trailer is not built yet).
+    - `run_id` — continue an existing run instead of starting one.
+    - `max_sentences` — page size of the view (default 300).
+
+    A cold source answers `state: "transcribing"`: the transcript is read in
+    5-minute windows, and a PROVISIONAL view of the part done so far may come
+    with it. Poll `editor_auto_clip_status`. When `state` is "ready", read
+    every page (`editor_get_moment_view` with `offset` = `nextOffset`), judge
+    by the instructions, then call `editor_propose_clips`. The
+    `apelles-auto-clip` skill is this loop."""
+    import json
+
+    args: dict = {}
+    for key, value in (
+        ("mediaId", media_id),
+        ("path", path),
+        ("timelineId", timeline_id),
+        ("track", track),
+        ("runId", run_id),
+        ("outputs", outputs),
+        ("count", count),
+        ("durations", durations),
+        ("aspect", aspect),
+        ("captions", captions),
+        ("focus", focus),
+        ("rangeStartS", range_start_s),
+        ("rangeEndS", range_end_s),
+        ("hookFirst", hook_first),
+        ("tightenDeadAir", tighten_dead_air),
+        ("tightenRetakes", tighten_retakes),
+        ("maxSentences", max_sentences),
+    ):
+        if value is not None:
+            args[key] = value
+    return json.dumps(_op("editor_auto_clip", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_auto_clip_status(run_id: str) -> str:
+    """Where a clip run's analysis is (D-411): per source file the transcript
+    (`done`, or `transcribing` with the windows landed so far), the audio and
+    picture evidence passes, and once ready the sentence / topic / candidate
+    counts, the `viewId`, how many proposals the run has and which shorts are
+    built (with their timeline ids). Safe to poll; it also starts any pass
+    that has not started."""
+    import json
+
+    return json.dumps(_op("editor_auto_clip_status", runId=run_id), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_get_moment_view(
+    run_id: str,
+    offset: int | None = None,
+    max_sentences: int | None = None,
+) -> str:
+    """A page of a clip run's MOMENT VIEW (D-411): one line per sentence —
+    `S<n>`, its start-end seconds, its evidence tags, its words — with
+    `=== topic` lines where the subject changes and, under a sentence, the
+    clean endings a short starting there can have per target length. Page 0
+    carries `instructions`, the judging rules: read them before judging.
+
+    Sentence numbers are global; keep calling with `offset` = the previous
+    `nextOffset` until it is null. `viewId` is the same on every page of one
+    view — if it changes between pages, the source changed: start again. A
+    `provisional` view (still transcribing) can be read but not proposed
+    against. Tags are measured facts, not a score: read the words."""
+    import json
+
+    args: dict = {"runId": run_id}
+    if offset is not None:
+        args["offset"] = offset
+    if max_sentences is not None:
+        args["maxSentences"] = max_sentences
+    return json.dumps(_op("editor_get_moment_view", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_propose_clips(
+    run_id: str,
+    view_id: str,
+    clips: list,
+    replace: bool = False,
+    build: bool | None = None,
+    export_dir: str | None = None,
+    loudness_preset: str | None = None,
+) -> str:
+    """Automatic Clipper, step 2: your picks, checked and built (D-411).
+
+    - `clips` — `[{"segments": [{"first": S, "last": S}], "hook": {"first":
+      S, "last": S}, "title": str, "reason": str, "hook_line": str}]`.
+      `segments` are inclusive SENTENCE numbers of the moment view, in play
+      order (usually one range; two stitch a moment together). `hook` is
+      optional: one to three whole sentences, at most 8 s, played first.
+      `title` (the short's headline, at most 80 characters) and `reason` (one
+      line a person can check against the words) are required; `hook_line`
+      quotes the opening line. Never write words the speaker did not say.
+    - `view_id` — the `viewId` you read. A stale one refuses the call.
+    - `replace` — false (default) adds to the run; true replaces every
+      proposal not yet built.
+    - `build` — true (default): every clip that passes is built straight away
+      as a timeline in this project at the run's frame (9:16 by default):
+      the source ranges as ordinary clips, centre-cropped, dead air and
+      verified retakes tightened through the ripple delete, captions from the
+      short's own transcript in the brand kit's style, provenance in the
+      timeline's `origin`. false: store them for review only.
+    - `export_dir` (+ `loudness_preset`, e.g. "youtube") — also queue each
+      built short's export into that folder. Rendering takes minutes; only
+      when the person asked for files.
+
+    Every clip goes through the clean-cut gate: `verified`, `warned` (passes,
+    with the issue named — an opener that needs context, an unanswered
+    question at the end, heavy overlap with another clip) or `refused` with
+    the reason and the offending sentences: an edge off a sentence boundary,
+    a length outside every target's band, an edge inside a reviewed retake, a
+    hook that is not whole sentences. Fix a refused clip and resubmit it.
+    The person reviews in the Clipper panel; work on a built short with the
+    ordinary editor_* tools after `editor_set_active_timeline`."""
+    import json
+
+    args: dict = {"runId": run_id, "viewId": view_id, "clips": clips}
+    if replace:
+        args["replace"] = True
+    for key, value in (
+        ("build", build),
+        ("exportDir", export_dir),
+        ("loudnessPreset", loudness_preset),
+    ):
+        if value is not None:
+            args[key] = value
+    return json.dumps(
+        _op("editor_propose_clips", timeout_ms=CLIPPER_TIMEOUT_MS, **args), indent=2, default=str
+    )
+
+
+@mcp.tool()
+def editor_list_clip_proposals(run_id: str | None = None) -> str:
+    """The Automatic Clipper's runs and their proposals as the person has left
+    them (D-411). Without `run_id`: every run of the project (newest first)
+    with its source, settings and how many shorts it has built. With
+    `run_id`: each proposal's `status` (pending / accepted / rejected /
+    built), the gate's verdict and notes, its sentences, seconds, title,
+    reason and built `timelineId`. Read-only."""
+    import json
+
+    args: dict = {}
+    if run_id is not None:
+        args["runId"] = run_id
+    return json.dumps(_op("editor_list_clip_proposals", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_clip_proposal(
+    run_id: str,
+    proposal_id: str,
+    status: str | None = None,
+    title: str | None = None,
+    extend_start: int | None = None,
+    extend_end: int | None = None,
+    word_start: int | None = None,
+    word_end: int | None = None,
+    clear_hook: bool = False,
+) -> str:
+    """Review one clip proposal (D-411) — the same actions as the Clipper
+    panel's row.
+
+    - `status` — "accepted", "rejected" or "pending".
+    - `title` — a new headline.
+    - `extend_start` / `extend_end` — move the start or end by whole
+      sentences: +1 adds the sentence before / after, -1 drops one.
+    - `word_start` / `word_end` — the same by words (+ = longer). A word edge
+      must still pass the gate: only a stitched inner edge may sit on a
+      clause boundary.
+    - `clear_hook` — drop the hook.
+
+    Every change of shape is re-checked by the clean-cut gate and answered
+    with the new verdict. A built short is not changed by this: rebuild it
+    with `editor_build_clips`."""
+    import json
+
+    args: dict = {"runId": run_id, "id": proposal_id}
+    for key, value in (
+        ("status", status),
+        ("title", title),
+        ("extendStart", extend_start),
+        ("extendEnd", extend_end),
+        ("wordStart", word_start),
+        ("wordEnd", word_end),
+    ):
+        if value is not None:
+            args[key] = value
+    if clear_hook:
+        args["clearHook"] = True
+    return json.dumps(_op("editor_set_clip_proposal", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_build_clips(
+    run_id: str,
+    ids: list[str] | None = None,
+    rebuild: bool = False,
+    mode: str | None = None,
+    export_dir: str | None = None,
+    loudness_preset: str | None = None,
+) -> str:
+    """Build clip proposals into short timelines (D-411) — the Clipper
+    panel's Build. Without `ids`: every pending or accepted proposal that
+    passes the gate and is not built yet.
+
+    - `rebuild` — rebuild proposals that are already built, in place.
+    - `mode` — what a rebuild does when the person has EDITED the built
+      short since (its content no longer matches what was built):
+      "refuse" (default: nothing is overwritten, the answer says so),
+      "new_version" (a new timeline beside it) or "replace" (overwrite the
+      edits — only when the person said so). A rebuild of the short open in
+      the Edit tab is one undo step.
+    - `export_dir` (+ `loudness_preset`) — also queue each built short's
+      export into that folder.
+
+    Each proposal answers with its timeline id, length, caption count, how
+    many tightening cuts landed, and any warning (a crop that magnifies the
+    source past 1.5x, a source with no picture)."""
+    import json
+
+    args: dict = {"runId": run_id}
+    if ids is not None:
+        args["ids"] = ids
+    if rebuild:
+        args["rebuild"] = True
+    for key, value in (
+        ("mode", mode),
+        ("exportDir", export_dir),
+        ("loudnessPreset", loudness_preset),
+    ):
+        if value is not None:
+            args[key] = value
+    return json.dumps(
+        _op("editor_build_clips", timeout_ms=CLIPPER_TIMEOUT_MS, **args), indent=2, default=str
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Edit tab: beats (D-413) — the music's beat grid on the timeline, and cuts
 # rolled onto it. Analysis is on-device (`apelles-beat`) and cached by content.
@@ -6713,7 +7005,7 @@ def debug_set_library_mode(mode: str) -> str:
     rail's own buttons drive.
 
     `mode` is one of "sources", "titles", "effects", "subtitles", "recut",
-    "music" or "index" (`debug_ui_state`'s `editor.libraryModes` lists them). The column
+    "music", "clipper" or "index" (`debug_ui_state`'s `editor.libraryModes` lists them). The column
     is opened as well because the rail lives inside it: choosing a mode while
     the column is closed would change nothing on screen. Useful to reach the
     Recut panel and check a retake proposal there. An unknown mode is refused

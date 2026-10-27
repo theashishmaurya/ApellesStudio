@@ -271,6 +271,29 @@ panel's transcript lines and markers (`MusicEditMenu.tsx`). Tests:
 through the real dispatch), `MusicEditsPanel.dom.test.tsx`,
 `MusicEditMenu.dom.test.tsx`.
 
+**Automatic Clipper (D-411 Phases 1-2).** Shorts from a long media file or
+timeline, judged by the MCP client (the app picks nothing). `clipper/` holds the
+Edit-tab half: `clipperTypes.ts` (mirrors of `apelles_clipper`'s run schema and
+the `chroma_clipper_*` answers), `clipperSource.ts` (a run's source as clip
+windows onto transcripts — the retake word view's shape — including a
+provisional view while a file is still read in windows, and the reviewed
+retakes), `clipperStore.ts` (the project's runs, written through
+`chroma_clip_run_save` before memory changes; dropped on a project switch),
+`clipBuild.ts` (pure: a gated proposal's ranges → a short's timeline — linked
+V+A clips on the original media, centre crop, tightening through
+`applyRippleDeleteRanges`, captions from the short's transcript in the brand
+kit's style scaled for the frame, provenance), `clipperOps.ts` (the seven
+`editor_*clip*` ops and the panel's actions — one path for both; rebuilds
+refuse to overwrite a person's edits) and `ClipperPanel.tsx` (the `clipper`
+library mode: setup, status, proposals to review and build, candidates as
+evidence, and how to ask the agent). `progressiveTranscript.ts` is the window
+plan and stitch behind `mediaUnderstandingStore.startProgressiveTranscript`;
+`replace_timeline_body` (timeline.ts) rebuilds the open short as one undo step;
+`brandEdit.ts`'s `brandCaptionStyle` is shared with the clipper. Tests:
+`clipBuild.test.ts`, `progressiveTranscript.test.ts`,
+`clipperOps.e2e.dom.test.tsx` (the client proposes 3 shorts → 3 timelines,
+refusals, nudges, protected rebuild, stale view), `ClipperPanel.dom.test.tsx`.
+
 **Undo/redo (D-051).** Every real (non-no-op) `applyOp` call pushes one
 `{tab:'edit', label: labelForOp(op, before), undo, redo}` entry onto
 `@apelles/history`'s shared stack — whole-`Timeline` snapshots (`before`/`after`),

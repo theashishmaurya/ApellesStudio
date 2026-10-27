@@ -53,7 +53,9 @@ const MODEL_LABEL: &str = "Silero VAD";
 
 /// The loaded session, downloading and verifying the model if this is the first
 /// ask in this installation.
-async fn vad_session(app: &tauri::AppHandle) -> Result<&'static Mutex<SileroVad>, String> {
+pub(crate) async fn vad_session(
+    app: &tauri::AppHandle,
+) -> Result<&'static Mutex<SileroVad>, String> {
     VAD.get_or_try_init(|| async {
         let models_dir = crate::ai_processing::get_models_dir(app)
             .map_err(|e| format!("locating the models directory: {e}"))?;

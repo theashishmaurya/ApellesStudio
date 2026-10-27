@@ -42,6 +42,13 @@ opinion about Tauri, the GPU, or which project happens to be open right now
     line is dropped), `compact`. Entries are the frontend's ops and stay opaque
     here; only their `seq` is read. `ProjectManifest.edit_journal_seq` records,
     atomically with the saved timeline, the last entry that save includes.
+  - `clip_runs` — the Automatic Clipper's runs, `<project>/clips/<run-id>.json`
+    (D-411): `save_clip_run` (atomic, fsynced, refused when it fails
+    `apelles_clipper::ClipRun::validate`), `load_clip_run`, `list_clip_runs`
+    (newest first; a bad file is named, never fatal), `delete_clip_run`. Kept
+    out of `project.json` so a forty-proposal run does not ride every save.
+    `timeline` also gained `replace_timeline` (a built short written by id) and
+    `copy_clip_grades` (shared by duplicate and the clipper's builds).
 
 ## The `apelles-project → apelles-media` edge
 

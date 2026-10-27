@@ -219,6 +219,13 @@ inclusion, no longer a silent video).
 > > | `editor_propose_music_edits` | A batch of beat edits (kind, reason, anchor) stored for the person's review in the Music edits panel; replaces the bed's set; nothing is cut. A stale `view_id` is refused. |
 > > | `editor_list_music_edits` | The review list as the person left it: each edit's status (pending / accepted / rejected), adjusted frames, and any reason it cannot land now. |
 > > | `editor_apply_music_edits` | Apply the accepted edits (plus pending, when asked) as **one undo entry**; applied rows leave the list. |
+> > | `editor_auto_clip` | **D-411 — the Automatic Clipper, judged by the client.** Analyse a media file or a long timeline for shorts: numbered sentences, topics, every clean in-length window with evidence tags; answers with a run id, the job status (transcript in 5-minute windows, audio and picture passes) and page 0 of the moment view with its served judging rules. **Picks nothing.** |
+> > | `editor_auto_clip_status` | A run's analysis progress, counts, `viewId`, proposals and built shorts; safe to poll. |
+> > | `editor_get_moment_view` | The rest of the moment view's pages (global sentence numbers, same `viewId`). |
+> > | `editor_propose_clips` | The client's shorts (sentence ranges, optional hook, title, reason) through the deterministic clean-cut gate (`verified` / `warned` / `refused` with reasons); the passing ones built as 9:16 timelines in the project (centre crop, dead air and verified retakes tightened via ripple delete, captions from the short's transcript in the brand kit's style, provenance in `origin`); optional export queue. |
+> > | `editor_list_clip_proposals` | The project's clip runs, or one run's proposals with status, verdict, notes and built timeline. |
+> > | `editor_set_clip_proposal` | Accept / reject, retitle, move an edge by sentences or words — re-gated. |
+> > | `editor_build_clips` | Build or rebuild proposals; a rebuild over a person's edits is refused unless `mode` is `new_version` or `replace`. |
 > > | `editor_detect_beats` | **D-413 — the music's beat grid.** Tempo, beats, downbeats and accents of a track's music (on-device, cached by content), in timeline frames; by default shows the track's grid so the GUI's drags, trims and playhead snap to it. Nothing is cut. |
 > > | `editor_set_beat_grid` | Show / hide a track's beat grid (the track header's metronome); one undo entry. |
 > > | `editor_snap_cuts_to_beats` | Roll every cut on a track onto its nearest beat as **one undo entry** (dry run available); a cut too far from a beat or without media handle is left with its reason. |

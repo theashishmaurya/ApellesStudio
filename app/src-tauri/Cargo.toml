@@ -41,6 +41,8 @@ apelles-ai = { path = "../../crates/apelles-ai" }
 apelles-audio-library = { path = "../../crates/apelles-audio-library" }
 apelles-media = { path = "../../crates/apelles-media" }
 apelles-speech = { path = "../../crates/apelles-speech" }
+# D-411 — the Automatic Clipper's mechanics (sentences, topics, candidates, gate).
+apelles-clipper = { path = "../../crates/apelles-clipper" }
 apelles-beat = { path = "../../crates/apelles-beat" }
 # D-416 — brand kits: the per-file kit library, the brand asset store, a project's kit snapshot.
 apelles-brand = { path = "../../crates/apelles-brand" }

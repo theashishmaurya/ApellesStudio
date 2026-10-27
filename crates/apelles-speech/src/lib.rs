@@ -63,7 +63,7 @@ pub use dark::{
     DarkInput, DarkParams, DarkRegion, DarkReport, RMS_HOP_SECS, WordSpan, detect_dark_regions,
     rms_envelope,
 };
-pub use phrase::{PhraseParams, is_phrase_repeat};
+pub use phrase::{PhraseParams, is_phrase_repeat, is_stopword};
 pub use proposal::{
     CutRange, GateParams, GroupVerdict, IndexedView, IndexedWord, JUDGING_RULES, ProposedGroup,
     Refusal, RunSpan, TranscriptSegment, TranscriptWord, ViewPiece, check_and_resolve,

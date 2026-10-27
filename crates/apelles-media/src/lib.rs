@@ -23,6 +23,8 @@
 //! - [`probe`] — the two-layer (memory → disk) probe cache in front of
 //!   [`video::probe`], lifted out of the Edit-tab bridge where it had been
 //!   living by accident (D-146, B-056).
+//! - [`scenes`] — picture cuts in a video file from ffmpeg's scene-change
+//!   score on a small decode (D-411, evidence for the Automatic Clipper).
 //! - [`filmstrip`] — windowed, level-of-detail, disk-cached filmstrip tiles
 //!   over [`media_cache`] (D-128, D-134).
 //! - [`audio`] — the Edit-tab audio engine (symphonia → rubato → dasp_sample
@@ -66,6 +68,7 @@ pub mod loudness;
 pub mod media_cache;
 pub mod ocr;
 pub mod probe;
+pub mod scenes;
 pub mod scrub;
 pub mod still;
 pub mod timestretch;

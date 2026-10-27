@@ -27,7 +27,7 @@
 /** Every mode the Edit tab's library column can be showing, in the order the
  *  rail renders them top-to-bottom. `sources` first: it is the shared media
  *  pool, the one every tab has and the one an edit starts from. */
-export const EDIT_LIBRARY_MODES = ['sources', 'titles', 'effects', 'subtitles', 'recut', 'music', 'index'] as const;
+export const EDIT_LIBRARY_MODES = ['sources', 'titles', 'effects', 'subtitles', 'recut', 'music', 'clipper', 'index'] as const;
 
 export type EditLibraryMode = (typeof EDIT_LIBRARY_MODES)[number];
 
@@ -48,6 +48,10 @@ export const EDIT_LIBRARY_MODE_LABELS: Record<EditLibraryMode, string> = {
   // D-408 — beside Recut: it too acts on what is already on the timeline,
   // cutting dropouts into the music bed instead of material out of the speech.
   music: 'Music edits',
+  // D-411 — the Automatic Clipper: shorts cut from a long source, judged by
+  // the person's AI agent and reviewed here. Beside the other two modes that
+  // work on material already in the project.
+  clipper: 'Clipper',
   // D-328 — after Recut, for the same reason and one step further: Index does
   // not act on the edit at all, it NAVIGATES one. It is the only mode whose
   // content is a read-out of the timeline (its markers) and of the selected
