@@ -27,6 +27,13 @@ Still real:
 
 ## Open
 
+## B-290 — an audio-only timeline cannot be previewed or heard ("preview error: timeline has no video track")
+
+status: **open** · severity: **major** (a voiceover- or podcast-first edit has no playback until a picture clip exists) · area: the Edit preview/playback path (compositor preview + audio monitor), and export (the same audio-only limit was hit earlier this week on Black October and worked around with a still)
+
+- **found:** 2026-10-28 by the owner: timeline "Five Levels — Voiceover" holds only an audio track (the cut VO, 164 clips); the viewer shows "preview error: timeline has no video track" and pressing play gives no sound. Screenshot: `scratch/bug-refs/audio-only-timeline-no-playback.png`.
+- **expected:** an audio-only timeline plays its audio in sync with the playhead over a black frame at the timeline's size, and exports (audio with a black picture, or an audio-only file on request).
+
 ## B-289 — `editor_detect_silences` marks soft sentence endings and the first word as silence, so cutting its ranges clips real words
 
 status: **open** · severity: **major** (a straight "cut the silences" pass silently removes speech) · area: `editor_detect_silences` (Silero VAD, D-319/D-342) and its consumers
