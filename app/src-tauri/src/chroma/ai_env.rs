@@ -286,12 +286,12 @@ mod tests {
         );
     }
 
-    /// D-391 — the beta bundle drops Motion on both sides at once: the UI build hides
-    /// the tab and the bundled MCP server is built without its `motion_*` tools. Both
-    /// switches live in the one release pre-build command, so a build that drops only
-    /// one (a hidden tab with live tools, or the reverse) fails here instead of shipping.
+    /// D-417 (lifting D-391) — the release ships Motion on both sides at once: the UI
+    /// build keeps the tab and the bundled MCP server keeps its `motion_*` tools. D-391
+    /// held both back with two switches in this one command; a build that brought back
+    /// only one (a tab with no tools, or tools with no tab) fails here instead of shipping.
     #[test]
-    fn the_release_build_drops_motion_from_the_ui_and_the_mcp_server_together() {
+    fn the_release_build_ships_motion_in_the_ui_and_the_mcp_server_together() {
         let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let text = std::fs::read_to_string(here.join("../package.json"))
             .unwrap_or_else(|e| panic!("app/package.json should be readable: {e}"));
@@ -301,12 +301,13 @@ mod tests {
             .as_str()
             .unwrap_or_default();
         assert!(
-            script.contains("cargo build -p apelles-mcp --release --no-default-features"),
-            "the release MCP server must be built without Motion, got {script:?}"
+            script.contains("cargo build -p apelles-mcp --release")
+                && !script.contains("--no-default-features"),
+            "the release MCP server must be built with its Motion tools, got {script:?}"
         );
         assert!(
-            script.contains("VITE_APELLES_MOTION=off npm run build"),
-            "the release UI must be built without the Motion tab, got {script:?}"
+            !script.contains("VITE_APELLES_MOTION=off"),
+            "the release UI must be built with the Motion tab, got {script:?}"
         );
     }
 }

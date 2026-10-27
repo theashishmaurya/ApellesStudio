@@ -106,6 +106,9 @@
 //! - `motion`   — the Motion tab bridge: manifest sidecar + `apelles-motion` render (D-046)
 //! - `motion_components` — custom Remotion components: library, Node static check,
 //!   certification proof, project install and live-player proxy frames (D-409)
+//! - `motion_runtime` — Motion's render runtime (D-417): where the engine files and
+//!   the downloaded Node / Chrome Headless Shell / compositor live, the status
+//!   event and the install / remove commands; the logic is `apelles-motion-runtime`
 //! - `media_understanding` — transcript + "what changed on screen, and when"
 //!   via the `ai-media/` sidecar (Parakeet + Qwen3-VL, D-189/D-374/D-381); just the 4
 //!   `#[tauri::command]`s — the wire client is `apelles_ai::media_understanding`
@@ -166,6 +169,7 @@ pub mod motion;
 pub mod motion_components;
 pub mod motion_job;
 pub mod motion_presets;
+pub mod motion_runtime;
 pub mod ocr;
 pub mod page_session;
 pub mod playback;

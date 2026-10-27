@@ -150,6 +150,7 @@ dependencies = [
  "apelles-grade-model",
  "apelles-media",
  "apelles-motion",
+ "apelles-motion-runtime",
  "apelles-project",
  "apelles-speech",
  "apelles-timeline",
@@ -331,6 +332,7 @@ dependencies = [
 name = "apelles-motion"
 version = "0.0.0"
 dependencies = [
+ "apelles-motion-runtime",
  "apelles-types",
  "blake3",
  "image",
@@ -338,6 +340,23 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
+]
+
+[[package]]
+name = "apelles-motion-runtime"
+version = "0.0.0"
+dependencies = [
+ "flate2",
+ "log",
+ "reqwest",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.20",
+ "zip",
 ]
 
 [[package]]

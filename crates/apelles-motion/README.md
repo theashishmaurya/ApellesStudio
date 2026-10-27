@@ -3,14 +3,18 @@
 **Layer 2 (domain).** The manifest → Remotion render bridge for the Motion
 tab (D-039 roadmap "Motion tab MVP", D-046).
 
-- **Deps:** `apelles-types` (for the shared `ChromaError`), `serde` +
-  `serde_json`. **No `wgpu`, no `ffmpeg`, no Remotion/Node reimplementation.**
+- **Deps:** `apelles-types` (for the shared `ChromaError`), `apelles-motion-runtime`
+  (the located Node / browser / engine files, D-417), `serde` + `serde_json`.
+  **No `wgpu`, no `ffmpeg`, no Remotion/Node reimplementation.**
 - **What it is:** a thin process-orchestration wrapper around the *existing*,
-  fully-functional `packages/motion-engine/` Remotion project. Given a
-  manifest JSON path and an output path, it shells out to
-  `npx remotion render Animation <output> --props=<manifest>` inside
-  `packages/motion-engine/` — the exact command `/animate` already documents
-  for a CLI render.
+  fully-functional `packages/motion-engine/` Remotion project. Every render —
+  a scene export, a preview still, a component proof, proxy frames — runs the
+  engine's own renderer, `node <engine>/scripts/render.mts <video|still|frames>`
+  (`@remotion/renderer` over a prebuilt bundle, D-417), with the Node, Chrome
+  Headless Shell and compositor the runtime resolver located. Before D-417 it ran
+  `npx remotion render`, which needed the whole Remotion CLI (bundler + Studio) on
+  the machine; the renderer script needs only `@remotion/renderer`, so a release
+  app can ship it in a small engine pack.
 - **Why Rust wraps Node instead of the other way round:** the Remotion
   engine — 7 primitives, a manifest compiler, React/Three.js rendering — IS
   the fat core for motion graphics here. Reimplementing it in Rust would
@@ -23,25 +27,30 @@ tab (D-039 roadmap "Motion tab MVP", D-046).
   `zod` schema in `packages/motion-engine/src/engine/schema.ts` (Remotion's
   own `calculateMetadata` re-validates it at render time too); duplicating
   that schema in Rust would just drift. No progress reporting — the Tauri
-  command blocks (on a background thread) until `npx` exits. No GPU, no
+  command blocks (on a background thread) until Node exits. No downloading or
+  locating of Node / Chrome (`apelles-motion-runtime`). No GPU, no
   media decode, no reading rendered frames back as an overlay layer yet
   (that's the `apelles-compositor`-facing follow-up the crate's original
   scope line envisioned — deferred, not needed for the tab MVP).
 
 ## API
 
-- `RenderRequest::new(engine_dir, manifest_path, output_path)` — `engine_dir`
-  is `packages/motion-engine`; `composition_id` defaults to `"Animation"`.
+- `RenderRequest::new(runtime, bundle_cache, manifest_path, output_path)` —
+  `runtime` is a located `MotionRuntime` (re-exported from
+  `apelles-motion-runtime`); `composition_id` defaults to `"Animation"`.
 - `validate_request(&req) -> Result<(), ChromaError>` — the engine dir
   exists, the manifest file exists and parses as JSON. Fails fast, before
-  spawning `npx`.
-- `build_command(&req) -> std::process::Command` — pure and unit-tested: the
-  exact `npx remotion render …` argv/cwd, not yet run.
-- `run_render(&req) -> Result<RenderOutcome, ChromaError>` — validates, then
-  runs `npx` synchronously (**blocks the calling thread**). The Tauri command
-  wraps this in `tauri::async_runtime::spawn_blocking(...).await`, so from
-  the caller's point of view the render finishes before the command returns
-  — no polling, no progress bar.
+  spawning anything.
+- `runner_command(&runtime, mode)` / `build_command(&req, &bundle)` — pure and
+  unit-tested: the exact `node scripts/render.mts video --serve-url=… --props=…
+  --output=… [--frames=a-b] [--browser-executable=…] [--binaries-directory=…]`
+  argv/cwd, not yet run.
+- `run_render(&req) -> Result<RenderOutcome, ChromaError>` — validates, takes the
+  bundle from `still::ensure_bundle`, then runs Node synchronously (**blocks the
+  calling thread**; the job worker runs it on its own thread), on its own port
+  (B-278).
+- `MotionRuntime::developer(engine_dir)` — the developer's checkout and `node`
+  (22.18+), what the tests and the certify example run with.
 
 ## Status
 
@@ -96,9 +105,22 @@ This crate spawns the renderer; it never evaluates component code.
 ## Still frames (D-403)
 
 `src/still.rs` is `motion_preview_frame`'s backend: `build_still_command` (the twin of
-`build_command`, `npx remotion still <bundle> Animation <out> --props --frame --scale`),
-`build_bundle_command`, `ensure_bundle` (the engine bundled once into a cache keyed by a
-blake3 content fingerprint of its sources, reused until a file changes: ~1.5 s per still
-instead of ~18 s), and `contact_sheet` (several frames tiled into one PNG, at most four
-per row, with `image`, already in the tree). No clock, no randomness: the same manifest
-and frame give the same PNG bytes (`tests/preview_render.rs`, `--ignored`, real renders).
+`build_command`, `node scripts/render.mts still --serve-url=<bundle> --props --frame --scale`),
+`build_sequence_command` (`frames`, an image sequence in one process), `ensure_bundle`, and
+`contact_sheet` (several frames tiled into one PNG, at most four per row, with `image`,
+already in the tree). No clock, no randomness: the same manifest and frame give the same
+PNG bytes (`tests/preview_render.rs`, `--ignored`, real renders).
+
+**The bundle (D-417).** A release app renders its engine pack's prebuilt bundle in place;
+a checkout builds one with the Remotion CLI it has (`build_bundle_command`, ~18 s), cached
+under a blake3 content fingerprint of the engine's sources and reused until a file changes.
+A project's assets are layered on as a derived copy of that bundle with the asset folder in
+its `public/` (APFS clones the copy), keyed by the base and the asset names. Every render
+path (export, still, proof, proxy) goes through this one function.
+
+**Tests on the downloaded runtime.** `APELLES_MOTION_RUNTIME_DIR=<installed runtime folder>`
+makes `tests/preview_render.rs` and `tests/component_render.rs` render with that runtime's
+Node, Chrome Headless Shell and compositor instead of the developer's (see
+`apelles-motion-runtime`'s `install_runtime` example); `APELLES_MOTION_PACK_DIR=<engine pack>`
+renders from a pack built by `scripts/build-pack.mts`. With both set they run what an installed
+app runs.

@@ -221,8 +221,8 @@ Tracked in `docs/04-roadmap.md` (mostly item 27), not abandoned:
 - ✅ a `zod`-validated JSON manifest editor, collapsed behind a `</>` toggle by default
   (D-153/D-173)
 - ✅ Save (project-scoped `<project>.chroma/motion/manifest.json`) and Render via the
-  `apelles-motion` crate → `npx remotion render`, **auto-imported into Sources** afterwards
-  (D-047, D-062)
+  `apelles-motion` crate → the engine renderer (`scripts/render.mts`, D-417), **auto-imported
+  into Sources** afterwards (D-047, D-062); the render runtime downloads on first use (D-417)
 
 ### Explicitly OUT of the Motion tab's current scope
 - 🔌 **MCP tools — 0, and this is the tab's sharpest gap.** The 18 `motion_*` ops exist and

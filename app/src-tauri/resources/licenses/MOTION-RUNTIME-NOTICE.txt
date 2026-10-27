@@ -1,0 +1,53 @@
+Motion render runtime and engine pack used by Apelles
+=====================================================
+
+The Motion tab renders with Remotion. Two kinds of third-party software are
+involved, shipped in two different ways (D-417 in docs/08-decisions.md).
+
+1. Downloaded on demand, NOT included in the Apelles app or its DMG
+--------------------------------------------------------------------
+The first time the Motion tab opens, Apelles downloads these from their own
+publishers into ~/Library/Application Support/studio.apelles.app/motion-runtime/, checks
+each against a pinned SHA-256, and unpacks them unmodified. They can be
+removed again from Settings > Motion Runtime.
+
+  Node.js 24.22.1 (darwin-arm64)
+    https://nodejs.org/dist/v24.22.1/node-v24.22.1-darwin-arm64.tar.gz
+    Licence: MIT. Node.js bundles third-party code under its own licences;
+    the full text is in the LICENSE file kept beside the binary
+    (motion-runtime/<version>/node/LICENSE). Only bin/node and LICENSE are
+    unpacked; npm and the C headers in the archive are not.
+
+  Chrome Headless Shell 149.0.7790.0 (mac-arm64), from Chrome for Testing
+    https://storage.googleapis.com/chrome-for-testing-public/149.0.7790.0/mac-arm64/chrome-headless-shell-mac-arm64.zip
+    Chromium is licensed under the BSD-3-Clause licence; it includes
+    third-party components under their own licences, listed in full in
+    LICENSE.headless_shell beside the binary
+    (motion-runtime/<version>/chrome/LICENSE.headless_shell).
+
+  Remotion compositor 4.0.519 for macOS arm64 (@remotion/compositor-darwin-arm64)
+    https://registry.npmjs.org/@remotion/compositor-darwin-arm64/-/compositor-darwin-arm64-4.0.519.tgz
+    Distributed by Remotion under the Remotion License
+    (https://www.remotion.dev/license). It contains Remotion's own build of
+    FFmpeg, with its licences as stated by Remotion.
+
+2. Included in the Apelles app: Contents/Resources/motion-engine/
+-----------------------------------------------------------------
+The Motion engine pack: a prebuilt Remotion bundle of Apelles' own motion
+engine, the scripts that render it and check custom components, and the
+JavaScript packages those scripts load (@remotion/renderer and its
+dependencies, the TypeScript compiler, and the type declarations the custom
+component check reads). Each package keeps its own package.json and licence
+files in motion-engine/node_modules/<package>/. Notably:
+
+  Remotion (remotion, @remotion/*) 4.0.519 - Remotion License
+    (https://www.remotion.dev/license): free for individuals and companies
+    of up to 3 people; larger for-profit companies need a company licence.
+  TypeScript 5.9.3 - Apache-2.0 (with ThirdPartyNoticeText.txt)
+  React / React DOM - MIT
+  @types/*, csstype, zod, d3 modules, roughjs - MIT / ISC
+
+The prebuilt bundle compiles in the engine's own dependencies (three.js,
+@react-three/fiber and drei, Phosphor icons, mediabunny, …), the same
+open-source libraries the Motion tab's live player already ships in the
+app's interface, under their own licences (MIT unless stated otherwise).

@@ -93,6 +93,10 @@ export interface ToolGroup {
  * `motion_refill_template` and `motion_delete_template` (Motion 52 → 59).
  * Re-counted against the real file.
  *
+ * 224 → 227 on 2026-10-27 (D-417): Motion's render runtime,
+ * `motion_runtime_status`, `motion_install_runtime` and
+ * `motion_remove_runtime` (Motion 65 → 68). Re-counted against the real file.
+ *
  * 217 → 224 on 2026-10-27 (D-411 Phase 0): timeline management,
  * `editor_list_timelines`, `editor_create_timeline`,
  * `editor_set_active_timeline`, `editor_rename_timeline`,
@@ -123,8 +127,8 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 224,
-  shipped: 212,
+  all: 227,
+  shipped: 215,
   debugOnly: 12,
 } as const;
 
@@ -185,7 +189,7 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
   },
   {
     name: 'Motion',
-    count: 65,
+    count: 68,
     blurb:
       'The motion-graphics room, closed as a gap on 2026-09-09 (D-257/D-259/D-260) after a year of being this surface’s sharpest shortfall. Scenes and layers from a real primitive catalog, per-layer keyframes with bezier easing, 2D and 3D cameras, align and distribute, and a Remotion render that emits one video file per scene.',
     sample: [

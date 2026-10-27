@@ -27,6 +27,15 @@ Still real:
 
 ## Open
 
+## B-286 — a Motion VIDEO render is not bit-identical run to run (its PNG frames are)
+
+status: **open** · severity: **low** (52 dB PSNR between runs: invisible, but CLAUDE.md's render-path invariant asks for identical pixels) · area: the Motion scene export (`scripts/render.mts video`, before D-417 `npx remotion render`)
+
+- **found:** 2026-10-27, building D-417, comparing the old CLI export with the new renderer.
+- **repro:** render `crates/apelles-motion/tests/fixtures/sample.json` frames 0-59 to `.mp4` twice (2x scale, 3840×2160, JPEG frames, H.264) and compare decoded frames (`ffmpeg -map 0:v -f framemd5`): 51 of 60 frames differ between two runs of the old `npx remotion render`, 47 of 60 between two runs of the D-417 renderer. Audio is identical. The same frames as a PNG sequence (`render.mts frames`, 0.25 scale) are identical across runs, as every still is (`preview_render.rs`).
+- **cause:** not isolated. Pre-existing (the CLI path shows it too), so not the renderer change. Candidates: the JPEG frame encode at 4K in Chrome, or the encoder's threading.
+- **fix:** none yet. First step: render the same frames as PNG at 2x scale twice, to split the browser from the encoder.
+
 ## B-284 — a new timeline ran at 24 fps whatever the project's rate was
 
 status: **fixed** (2026-10-27) · severity: **medium** (a timeline created in a 30 fps project silently resolved every frame number at 24 fps until someone noticed the clip lengths) · area: `chroma::edit::chroma_timeline_create` (D-045), now `apelles_project::timeline::create_timeline`

@@ -118,8 +118,8 @@ export const TABS: readonly Tab[] = [
     ],
     shot: null,
     shotNote:
-      'Motion is built and working in the development build, but not in the first beta: its export needs Node.js and a headless Chrome, and it returns once the app can download those for you. No screenshot of it is shown until then.',
-    coming: 'Coming next',
+      'Motion ships in v0.4.0. Its renderer (Node.js and a headless Chrome) is not in the download: the app fetches it in the background the first time you open the Motion tab, and editing works while it does. No screenshot of it is shown until that release is out.',
+    coming: 'Arrives in v0.4.0',
   },
 ];
 

@@ -1,33 +1,40 @@
-//! Still frames of a manifest — the preview half of the render bridge (D-403).
+//! Still frames of a manifest — the preview half of the render bridge (D-403) —
+//! and the engine bundle every render path renders from.
 //!
 //! **What it is:** `motion_preview_frame`'s backend. Renders chosen frames of a
-//! manifest to PNG through Remotion's own `still` command, and tiles several into
-//! one contact sheet so an agent can SEE a motion (start, middle, settle) in one
-//! image. [`build_still_command`] sits beside [`crate::build_command`] and has the
-//! same shape: the exact argv is a pure function, unit-tested without spawning.
+//! manifest to PNG through the engine's renderer (`scripts/render.mts still`,
+//! D-417), and tiles several into one contact sheet so an agent can SEE a
+//! motion (start, middle, settle) in one image. [`build_still_command`] sits
+//! beside [`crate::build_command`] and has the same shape: the exact argv is a
+//! pure function, unit-tested without spawning.
 //!
-//! **Why a cached bundle.** `remotion still <entry>` re-bundles the engine with
-//! webpack on every call (~18 s here); `remotion still <bundle-dir>` reuses a
-//! bundle and takes ~1.5 s. So the engine is bundled once into a cache directory
-//! keyed by a content fingerprint of the engine's sources ([`engine_fingerprint`]),
-//! and every preview reuses it until a source file changes. The fingerprint is a
-//! content hash, never a timestamp, so the same sources always find the same
-//! bundle.
+//! **The bundle ([`ensure_bundle`]).** Remotion renders a BUNDLE (the engine
+//! compiled to a static site). A release app ships one, prebuilt, in its engine
+//! pack (D-417); a developer checkout builds one from its sources with
+//! `remotion bundle` (~18 s), cached under a content fingerprint of the sources
+//! ([`engine_fingerprint`]) so it is built once per source change. A project's
+//! assets (images, custom-component modules, D-404/D-409) are layered on top as
+//! a DERIVED bundle: a copy of the base (APFS clones it, so it costs no space)
+//! with the asset folder copied into its `public/`, keyed by the base and the
+//! asset names. Keys are content hashes, never timestamps, so the same sources
+//! and assets always find the same bundle.
 //!
-//! **Determinism.** No wall clock and no randomness anywhere here: output names
-//! derive from the caller's label, the cache key from file contents. The same
+//! **Determinism.** No wall clock and no randomness in any output: output names
+//! derive from the caller's label, cache keys from file contents. The same
 //! manifest and frame render the same PNG bytes (checked by a real render twice,
-//! recorded in D-403).
+//! recorded in D-403 and re-checked through the D-417 renderer).
 //!
 //! **What it does NOT do:** validate the manifest (the frontend's zod schema
 //! does, before calling), know about scenes (the caller passes ABSOLUTE frames,
 //! the same "manifest-shape agnostic" rule as [`crate::RenderRequest`]), or run
-//! more than it is asked: one bundle at most, one `still` per frame.
+//! more than it is asked: one bundle at most, one still per frame.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use apelles_types::ChromaError;
+
+use crate::{MotionRuntime, runner_command};
 
 /// Gap between contact-sheet tiles, px.
 const SHEET_GAP: u32 = 4;
@@ -47,31 +54,46 @@ const BUNDLE_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(1
 /// Serialises bundle builds within this process (see [`ensure_bundle`]).
 static BUNDLE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// `npx remotion bundle` — produce a reusable bundle of the engine.
-pub fn build_bundle_command(
-    engine_dir: &Path,
-    out_dir: &Path,
-    public_dir: Option<&Path>,
-) -> Command {
-    let mut cmd = Command::new("npx");
-    cmd.current_dir(engine_dir);
-    cmd.args([
-        "remotion",
-        "bundle",
-        &format!("--out-dir={}", out_dir.display()),
-    ]);
-    if let Some(public) = public_dir {
-        cmd.arg(format!("--public-dir={}", public.display()));
-    }
-    cmd
+/// The release engine pack's manifest (`scripts/build-pack.mts` writes it);
+/// its `bundleKey` names the prebuilt bundle's content.
+pub const PACK_MANIFEST: &str = "pack.json";
+/// The Remotion CLI, relative to a `node_modules` folder (development only:
+/// the release pack has no bundler).
+const REMOTION_CLI: &str = "@remotion/cli/remotion-cli.js";
+
+/// The Remotion CLI the engine at `engine_dir` would `require` — the first
+/// `node_modules/@remotion/cli` up the folder tree (Node's own lookup).
+pub fn remotion_cli(engine_dir: &Path) -> Option<PathBuf> {
+    engine_dir
+        .ancestors()
+        .map(|d| d.join("node_modules").join(REMOTION_CLI))
+        .find(|p| p.is_file())
+}
+
+/// `node <remotion-cli> bundle --out-dir=<out_dir>` in the engine folder —
+/// building a bundle from the engine's sources (development builds; a release
+/// ships its bundle prebuilt). `remotion.config.ts` is read from the engine
+/// folder, so the bundler settings (Rspack) are the CLI's.
+pub fn build_bundle_command(rt: &MotionRuntime, out_dir: &Path) -> Result<Command, ChromaError> {
+    let cli = remotion_cli(&rt.engine_dir).ok_or_else(|| {
+        ChromaError::NotFound(format!(
+            "no {REMOTION_CLI} above {} to bundle the engine with (run npm ci)",
+            rt.engine_dir.display()
+        ))
+    })?;
+    let mut cmd = Command::new(&rt.node);
+    cmd.current_dir(&rt.engine_dir);
+    cmd.arg(cli);
+    cmd.args(["bundle", &format!("--out-dir={}", out_dir.display())]);
+    Ok(cmd)
 }
 
 /// One still: which bundle, which manifest, which frame, where to.
 #[derive(Debug, Clone)]
 pub struct StillRequest {
-    /// `packages/motion-engine` — where `npx` runs.
-    pub engine_dir: PathBuf,
-    /// A directory produced by [`build_bundle_command`].
+    /// The located runtime (D-417).
+    pub runtime: MotionRuntime,
+    /// A bundle from [`ensure_bundle`].
     pub bundle_dir: PathBuf,
     /// Absolute path to the manifest JSON (`--props=`).
     pub manifest_path: PathBuf,
@@ -79,26 +101,22 @@ pub struct StillRequest {
     pub output_path: PathBuf,
     /// ABSOLUTE composition frame.
     pub frame: u32,
-    /// Remotion `--scale` (1 = the manifest's own resolution).
+    /// Render scale (1 = the manifest's own resolution).
     pub scale: f64,
     /// Always `"Animation"` for a manifest.
     pub composition_id: String,
 }
 
-/// The `npx remotion still` invocation for `req` — pure, the twin of
-/// [`crate::build_command`].
+/// The still render of `req` — pure, the twin of [`crate::build_command`].
 pub fn build_still_command(req: &StillRequest) -> Command {
-    let mut cmd = Command::new("npx");
-    cmd.current_dir(&req.engine_dir);
+    let mut cmd = runner_command(&req.runtime, "still");
     cmd.args([
-        "remotion",
-        "still",
-        &req.bundle_dir.to_string_lossy(),
-        req.composition_id.as_str(),
-        &req.output_path.to_string_lossy(),
-        &format!("--props={}", req.manifest_path.display()),
-        &format!("--frame={}", req.frame),
-        &format!("--scale={}", req.scale),
+        format!("--serve-url={}", req.bundle_dir.display()),
+        format!("--composition={}", req.composition_id),
+        format!("--props={}", req.manifest_path.display()),
+        format!("--output={}", req.output_path.display()),
+        format!("--frame={}", req.frame),
+        format!("--scale={}", req.scale),
     ]);
     cmd
 }
@@ -112,13 +130,13 @@ pub fn render_still(req: &StillRequest) -> Result<(), ChromaError> {
 }
 
 /// D-409 — every frame of `frames` (inclusive, absolute) as a PNG image
-/// sequence in ONE `remotion render` process: what certification's in-order
-/// pass and the live player's proxy frames use. `concurrency: Some(1)` renders
-/// every frame in one browser tab, in order — the pass that would expose state
-/// a component carries from one frame to the next.
+/// sequence in ONE renderer process: what certification's in-order pass and
+/// the live player's proxy frames use. `concurrency: Some(1)` renders every
+/// frame in one browser tab, in order — the pass that would expose state a
+/// component carries from one frame to the next.
 #[derive(Debug, Clone)]
 pub struct SequenceRequest {
-    pub engine_dir: PathBuf,
+    pub runtime: MotionRuntime,
     pub bundle_dir: PathBuf,
     pub manifest_path: PathBuf,
     /// The folder the PNGs are written into.
@@ -128,21 +146,15 @@ pub struct SequenceRequest {
     pub concurrency: Option<u32>,
 }
 
-/// The `npx remotion render … --sequence` invocation for `req` — pure.
+/// The image-sequence render of `req` — pure.
 pub fn build_sequence_command(req: &SequenceRequest) -> Command {
-    let mut cmd = Command::new("npx");
-    cmd.current_dir(&req.engine_dir);
+    let mut cmd = runner_command(&req.runtime, "frames");
     cmd.args([
-        "remotion",
-        "render",
-        &req.bundle_dir.to_string_lossy(),
-        "Animation",
-        &req.out_dir.to_string_lossy(),
-        "--sequence",
-        "--image-format=png",
-        &format!("--props={}", req.manifest_path.display()),
-        &format!("--frames={}-{}", req.frames.0, req.frames.1),
-        &format!("--scale={}", req.scale),
+        format!("--serve-url={}", req.bundle_dir.display()),
+        format!("--props={}", req.manifest_path.display()),
+        format!("--output={}", req.out_dir.display()),
+        format!("--frames={}-{}", req.frames.0, req.frames.1),
+        format!("--scale={}", req.scale),
     ]);
     if let Some(n) = req.concurrency {
         cmd.arg(format!("--concurrency={n}"));
@@ -153,11 +165,12 @@ pub fn build_sequence_command(req: &SequenceRequest) -> Command {
 /// Render `req` (on its own port, B-278) and return the PNGs it wrote, keyed
 /// by the frame number in each file name, sorted by frame.
 ///
-/// Remotion refuses an image-sequence folder whose path contains a `.`
+/// Remotion's CLI refused an image-sequence folder whose path contains a `.`
 /// ANYWHERE (`getExtensionOfFilename` splits the whole path on dots), and real
 /// paths here do: `<project>.chroma/…`, an app-data folder named by a bundle
-/// identifier. So such a folder is rendered into a dot-free scratch folder
-/// under the system temp dir and its frames moved into `out_dir` afterwards.
+/// identifier. Such a folder is still rendered into a dot-free scratch folder
+/// under the system temp dir and its frames moved into `out_dir` afterwards,
+/// which keeps every path the renderer sees free of that ambiguity.
 pub fn render_sequence(req: &SequenceRequest) -> Result<Vec<(u32, PathBuf)>, ChromaError> {
     std::fs::create_dir_all(&req.out_dir)
         .map_err(|e| ChromaError::Invalid(format!("create {}: {e}", req.out_dir.display())))?;
@@ -243,11 +256,11 @@ pub fn sequence_frames(dir: &Path) -> Result<Vec<(u32, PathBuf)>, ChromaError> {
 fn run(mut cmd: Command, what: &str) -> Result<(), ChromaError> {
     let output = cmd
         .output()
-        .map_err(|e| ChromaError::Invalid(format!("failed to spawn npx for {what}: {e}")))?;
+        .map_err(|e| ChromaError::Invalid(format!("failed to spawn node for {what}: {e}")))?;
     finish(output, what)
 }
 
-/// Turn a finished `remotion` run into `Ok` or a named error with its stderr tail.
+/// Turn a finished renderer run into `Ok` or a named error with its stderr tail.
 fn finish(output: std::process::Output, what: &str) -> Result<(), ChromaError> {
     if output.status.success() {
         return Ok(());
@@ -258,7 +271,7 @@ fn finish(output: std::process::Output, what: &str) -> Result<(), ChromaError> {
         .map(|c| c.to_string())
         .unwrap_or_else(|| "signal".to_string());
     Err(ChromaError::Invalid(format!(
-        "remotion {what} exited {code}: {}",
+        "motion {what} exited {code}: {}",
         crate::tail(&String::from_utf8_lossy(&output.stderr), 40)
     )))
 }
@@ -280,15 +293,11 @@ fn files_under(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Resu
     Ok(())
 }
 
-/// A content hash of everything that goes into a bundle: the engine's `src/`
-/// tree, its `package.json` and `remotion.config.ts`, and — when one is used —
-/// the NAMES of the files in the public directory (its files are
-/// expected to be content-addressed, so a name stands for its content). Test files are part of
-/// `src/` and are hashed too; a changed test re-bundles, which is harmless.
-pub fn engine_fingerprint(
-    engine_dir: &Path,
-    public_dir: Option<&Path>,
-) -> Result<String, ChromaError> {
+/// A content hash of everything that goes into a bundle built from the
+/// engine's sources: its `src/` tree, its `package.json` and
+/// `remotion.config.ts`. Test files are part of `src/` and are hashed too; a
+/// changed test re-bundles, which is harmless.
+pub fn engine_fingerprint(engine_dir: &Path) -> Result<String, ChromaError> {
     let io = |e: std::io::Error| {
         ChromaError::Invalid(format!("fingerprint {}: {e}", engine_dir.display()))
     };
@@ -307,75 +316,159 @@ pub fn engine_fingerprint(
         hasher.update(&std::fs::read(engine_dir.join(rel)).map_err(io)?);
         hasher.update(&[0]);
     }
-    if let Some(public) = public_dir
-        && public.is_dir()
-    {
-        let mut names = Vec::new();
-        files_under(public, public, &mut names).map_err(io)?;
-        names.sort();
-        hasher.update(b"public\0");
-        for n in names {
-            hasher.update(n.to_string_lossy().as_bytes());
-            hasher.update(&[0]);
-        }
+    Ok(hasher.finalize().to_hex()[..FINGERPRINT_CHARS].to_string())
+}
+
+/// A key for a public folder's contents: the NAMES of its files (they are
+/// content-addressed, so a name stands for its content).
+pub fn public_fingerprint(public_dir: &Path) -> Result<String, ChromaError> {
+    let mut names = Vec::new();
+    files_under(public_dir, public_dir, &mut names)
+        .map_err(|e| ChromaError::Invalid(format!("fingerprint {}: {e}", public_dir.display())))?;
+    names.sort();
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"public\0");
+    for n in names {
+        hasher.update(n.to_string_lossy().as_bytes());
+        hasher.update(&[0]);
     }
     Ok(hasher.finalize().to_hex()[..FINGERPRINT_CHARS].to_string())
 }
 
-/// The bundle for the engine as it is now, under `cache_root`: reused when one
-/// with the current fingerprint exists, otherwise built (into a staging
-/// directory, then renamed into place, so a half-written bundle is never
-/// reused); other `bundle-*` siblings unused for `BUNDLE_STALE_AFTER` are removed.
+/// The prebuilt bundle's key, from the pack manifest beside it.
+fn pack_bundle_key(engine_dir: &Path) -> Result<String, ChromaError> {
+    let path = engine_dir.join(PACK_MANIFEST);
+    let text = std::fs::read_to_string(&path).map_err(|e| {
+        ChromaError::NotFound(format!("engine pack manifest {}: {e}", path.display()))
+    })?;
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| ChromaError::Invalid(format!("{}: {e}", path.display())))?;
+    v.get("bundleKey")
+        .and_then(serde_json::Value::as_str)
+        .map(|k| k.chars().take(FINGERPRINT_CHARS).collect())
+        .ok_or_else(|| ChromaError::Invalid(format!("{} has no bundleKey", path.display())))
+}
+
+/// The bundle to render the engine with, as it is now (see the module doc):
+/// the prebuilt one in a release pack, or one built from the checkout's sources
+/// into `cache_root`; and, when `public_dir` is a folder, a derived copy of
+/// that bundle with its files in `public/`. A bundle is built or copied into a
+/// staging directory and renamed into place, so a half-written one is never
+/// reused; other `bundle-*` siblings unused for `BUNDLE_STALE_AFTER` are removed.
 pub fn ensure_bundle(
-    engine_dir: &Path,
+    rt: &MotionRuntime,
     cache_root: &Path,
     public_dir: Option<&Path>,
 ) -> Result<PathBuf, ChromaError> {
     // Two previews at once (an agent's and the GUI's) must not both build into
     // the same staging directory; the second waits and then reuses the bundle.
     let _guard = BUNDLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let fp = engine_fingerprint(engine_dir, public_dir)?;
-    let dir = cache_root.join(format!("{BUNDLE_PREFIX}{fp}"));
-    if dir.join("index.html").is_file() {
-        mark_used(&dir);
-        return Ok(dir);
+    let (base, base_key) = match &rt.prebuilt_bundle {
+        Some(prebuilt) => {
+            if !prebuilt.join("index.html").is_file() {
+                return Err(ChromaError::NotFound(format!(
+                    "the engine's prebuilt bundle is missing: {}",
+                    prebuilt.display()
+                )));
+            }
+            (prebuilt.clone(), pack_bundle_key(&rt.engine_dir)?)
+        }
+        None => {
+            let key = engine_fingerprint(&rt.engine_dir)?;
+            let dir = cache_root.join(format!("{BUNDLE_PREFIX}{key}"));
+            if !dir.join("index.html").is_file() {
+                let staging = fresh_staging(cache_root, &key)?;
+                run(build_bundle_command(rt, &staging)?, "bundle")?;
+                move_into_place(&staging, &dir)?;
+            }
+            (dir, key)
+        }
+    };
+    // A base built here stays in use while bundles are derived from it, even
+    // when every render goes through a derived copy.
+    if base.starts_with(cache_root) {
+        mark_used(&base);
     }
+    let chosen = match public_dir.filter(|d| d.is_dir()) {
+        None => base,
+        Some(public) => {
+            let key = format!("{base_key}-{}", public_fingerprint(public)?);
+            let dir = cache_root.join(format!("{BUNDLE_PREFIX}{key}"));
+            if !dir.join("index.html").is_file() {
+                let staging = fresh_staging(cache_root, &key)?;
+                copy_tree(&base, &staging)?;
+                copy_tree(public, &staging.join("public"))?;
+                move_into_place(&staging, &dir)?;
+            }
+            dir
+        }
+    };
+    if chosen.starts_with(cache_root) {
+        mark_used(&chosen);
+    }
+    prune_stale(cache_root, &chosen);
+    Ok(chosen)
+}
+
+/// An empty `staging-<key>` folder under `cache_root`.
+fn fresh_staging(cache_root: &Path, key: &str) -> Result<PathBuf, ChromaError> {
     std::fs::create_dir_all(cache_root)
         .map_err(|e| ChromaError::Invalid(format!("create {}: {e}", cache_root.display())))?;
-    let staging = cache_root.join(format!("staging-{fp}"));
+    let staging = cache_root.join(format!("staging-{key}"));
     if staging.exists() {
         std::fs::remove_dir_all(&staging)
             .map_err(|e| ChromaError::Invalid(format!("clear {}: {e}", staging.display())))?;
     }
-    run(
-        build_bundle_command(engine_dir, &staging, public_dir),
-        "bundle",
-    )?;
+    Ok(staging)
+}
+
+/// Rename a finished staging folder onto `dir` (replacing a half-made one).
+fn move_into_place(staging: &Path, dir: &Path) -> Result<(), ChromaError> {
     if dir.exists() {
-        std::fs::remove_dir_all(&dir)
+        std::fs::remove_dir_all(dir)
             .map_err(|e| ChromaError::Invalid(format!("clear {}: {e}", dir.display())))?;
     }
-    std::fs::rename(&staging, &dir)
-        .map_err(|e| ChromaError::Invalid(format!("move bundle into {}: {e}", dir.display())))?;
-    mark_used(&dir);
-    // Older bundles are dead weight (tens of MB each), but one may still be in
-    // use by a concurrent preview, so only those unused for BUNDLE_STALE_AFTER
-    // go. A failure to delete one costs disk, not correctness: not an error.
-    if let Ok(entries) = std::fs::read_dir(cache_root) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let stale = entry
-                .metadata()
-                .and_then(|m| m.modified())
-                .ok()
-                .and_then(|t| t.elapsed().ok())
-                .is_some_and(|age| age >= BUNDLE_STALE_AFTER);
-            if name.starts_with(BUNDLE_PREFIX) && entry.path() != dir && stale {
-                let _ = std::fs::remove_dir_all(entry.path());
-            }
+    std::fs::rename(staging, dir)
+        .map_err(|e| ChromaError::Invalid(format!("move bundle into {}: {e}", dir.display())))
+}
+
+/// Copy every file under `from` to the same place under `to`. `std::fs::copy`
+/// clones on APFS, so a derived bundle shares its base's blocks.
+fn copy_tree(from: &Path, to: &Path) -> Result<(), ChromaError> {
+    let mut files = Vec::new();
+    files_under(from, from, &mut files)
+        .map_err(|e| ChromaError::Invalid(format!("read {}: {e}", from.display())))?;
+    for rel in files {
+        let dest = to.join(&rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| ChromaError::Invalid(format!("create {}: {e}", parent.display())))?;
+        }
+        std::fs::copy(from.join(&rel), &dest)
+            .map_err(|e| ChromaError::Invalid(format!("copy {}: {e}", rel.display())))?;
+    }
+    Ok(())
+}
+
+/// Older bundles are dead weight (tens of MB each), but one may still be in
+/// use by a concurrent preview, so only those unused for `BUNDLE_STALE_AFTER`
+/// go. A failure to delete one costs disk, not correctness: not an error.
+fn prune_stale(cache_root: &Path, keep: &Path) {
+    let Ok(entries) = std::fs::read_dir(cache_root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age >= BUNDLE_STALE_AFTER);
+        if name.starts_with(BUNDLE_PREFIX) && entry.path() != keep && stale {
+            let _ = std::fs::remove_dir_all(entry.path());
         }
     }
-    Ok(dir)
 }
 
 /// Record that `dir` was just used, so pruning leaves it alone for a while.
@@ -448,8 +541,9 @@ fn safe_label(label: &str) -> String {
 /// A whole preview: which manifest, which absolute frames, at what scale.
 #[derive(Debug, Clone)]
 pub struct PreviewRequest {
-    pub engine_dir: PathBuf,
-    /// Where the cached bundle lives (one `bundle-<fingerprint>` inside).
+    /// The located runtime (D-417).
+    pub runtime: MotionRuntime,
+    /// Where the cached bundles live (`bundle-<fingerprint>` inside).
     pub cache_dir: PathBuf,
     /// Where the PNG (and its transient tiles) are written.
     pub out_dir: PathBuf,
@@ -458,7 +552,7 @@ pub struct PreviewRequest {
     pub scale: f64,
     /// Names the output file (`<label>.png`).
     pub label: String,
-    /// An optional directory served to the engine as `public/` (`--public-dir`).
+    /// An optional directory served to the engine as `public/`.
     pub public_dir: Option<PathBuf>,
 }
 
@@ -484,13 +578,13 @@ pub fn render_preview(req: &PreviewRequest) -> Result<PreviewOutcome, ChromaErro
             req.scale
         )));
     }
-    if !req.engine_dir.is_dir() {
+    if !req.runtime.engine_dir.is_dir() {
         return Err(ChromaError::NotFound(format!(
             "motion engine dir: {}",
-            req.engine_dir.display()
+            req.runtime.engine_dir.display()
         )));
     }
-    let bundle_dir = ensure_bundle(&req.engine_dir, &req.cache_dir, req.public_dir.as_deref())?;
+    let bundle_dir = ensure_bundle(&req.runtime, &req.cache_dir, req.public_dir.as_deref())?;
     std::fs::create_dir_all(&req.out_dir)
         .map_err(|e| ChromaError::Invalid(format!("create {}: {e}", req.out_dir.display())))?;
     let label = safe_label(&req.label);
@@ -504,7 +598,7 @@ pub fn render_preview(req: &PreviewRequest) -> Result<PreviewOutcome, ChromaErro
             req.out_dir.join(format!("{label}.tile-{i}.png"))
         };
         let still = StillRequest {
-            engine_dir: req.engine_dir.clone(),
+            runtime: req.runtime.clone(),
             bundle_dir: bundle_dir.clone(),
             manifest_path: req.manifest_path.clone(),
             output_path: tile.clone(),
@@ -554,7 +648,7 @@ mod tests {
     #[test]
     fn build_still_command_sets_cwd_and_argv() {
         let req = StillRequest {
-            engine_dir: "/engine".into(),
+            runtime: crate::tests::dev_runtime("/engine"),
             bundle_dir: "/cache/bundle-ab".into(),
             manifest_path: "/tmp/m.json".into(),
             output_path: "/tmp/out.png".into(),
@@ -563,17 +657,17 @@ mod tests {
             composition_id: "Animation".into(),
         };
         let cmd = build_still_command(&req);
-        assert_eq!(cmd.get_program(), "npx");
+        assert_eq!(cmd.get_program(), "/usr/bin/node");
         assert_eq!(cmd.get_current_dir(), Some(Path::new("/engine")));
         assert_eq!(
             args(&cmd),
             vec![
-                "remotion",
+                "/engine/scripts/render.mts",
                 "still",
-                "/cache/bundle-ab",
-                "Animation",
-                "/tmp/out.png",
+                "--serve-url=/cache/bundle-ab",
+                "--composition=Animation",
                 "--props=/tmp/m.json",
+                "--output=/tmp/out.png",
                 "--frame=42",
                 "--scale=0.5",
             ]
@@ -581,23 +675,121 @@ mod tests {
     }
 
     #[test]
-    fn build_bundle_command_passes_public_dir_only_when_given() {
-        let plain = build_bundle_command(Path::new("/engine"), Path::new("/c/b"), None);
-        assert_eq!(args(&plain), vec!["remotion", "bundle", "--out-dir=/c/b"]);
-        let with = build_bundle_command(
-            Path::new("/engine"),
-            Path::new("/c/b"),
-            Some(Path::new("/p/assets")),
-        );
+    fn build_sequence_command_renders_frames_in_one_process() {
+        let req = SequenceRequest {
+            runtime: crate::tests::managed_runtime(),
+            bundle_dir: "/c/bundle-ab".into(),
+            manifest_path: "/m.json".into(),
+            out_dir: "/out".into(),
+            frames: (0, 29),
+            scale: 0.5,
+            concurrency: Some(1),
+        };
+        let a = args(&build_sequence_command(&req));
         assert_eq!(
-            args(&with),
+            &a[..2],
+            ["/App/Resources/motion-engine/scripts/render.mts", "frames"]
+        );
+        assert!(a.contains(&"--frames=0-29".to_string()));
+        assert!(a.contains(&"--output=/out".to_string()));
+        assert_eq!(a.last().map(String::as_str), Some("--concurrency=1"));
+        assert!(a.contains(&"--browser-executable=/rt/chrome/chrome-headless-shell".to_string()));
+    }
+
+    #[test]
+    fn a_checkout_bundles_with_the_remotion_cli_above_it() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        let engine = root.path().join("packages/motion-engine");
+        std::fs::create_dir_all(&engine)?;
+        let rt = crate::tests::dev_runtime(&engine.to_string_lossy());
+        assert!(
+            build_bundle_command(&rt, Path::new("/c/b")).is_err(),
+            "no CLI, a named error"
+        );
+        let cli = root.path().join("node_modules").join(REMOTION_CLI);
+        std::fs::create_dir_all(cli.parent().ok_or("no parent")?)?;
+        std::fs::write(&cli, "")?;
+        let cmd = build_bundle_command(&rt, Path::new("/c/b"))?;
+        assert_eq!(cmd.get_program(), "/usr/bin/node");
+        assert_eq!(
+            args(&cmd),
             vec![
-                "remotion",
-                "bundle",
-                "--out-dir=/c/b",
-                "--public-dir=/p/assets"
+                cli.to_string_lossy().to_string(),
+                "bundle".into(),
+                "--out-dir=/c/b".into()
             ]
         );
+        Ok(())
+    }
+
+    /// A release pack's bundle is used in place; a project's assets make a
+    /// derived copy with them in `public/`, reused while the asset names hold.
+    #[test]
+    fn a_prebuilt_bundle_is_used_as_is_and_assets_make_a_derived_copy()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let pack = tmp.path().join("motion-engine");
+        let bundle = pack.join("bundle");
+        std::fs::create_dir_all(bundle.join("sub"))?;
+        std::fs::write(bundle.join("index.html"), "<html>")?;
+        std::fs::write(bundle.join("sub/chunk.js"), "js")?;
+        std::fs::write(
+            pack.join(PACK_MANIFEST),
+            r#"{"bundleKey":"0123456789abcdef0123"}"#,
+        )?;
+        let mut rt = crate::tests::managed_runtime();
+        rt.engine_dir = pack.clone();
+        rt.prebuilt_bundle = Some(bundle.clone());
+        let cache = tmp.path().join("cache");
+
+        assert_eq!(
+            ensure_bundle(&rt, &cache, None)?,
+            bundle,
+            "no assets: the pack's own bundle"
+        );
+
+        let assets = tmp.path().join("assets");
+        std::fs::create_dir_all(&assets)?;
+        std::fs::write(assets.join("abc.png"), "png")?;
+        let derived = ensure_bundle(&rt, &cache, Some(&assets))?;
+        assert!(derived.starts_with(&cache));
+        assert!(
+            derived
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with("bundle-0123456789abcdef-"))
+        );
+        assert_eq!(std::fs::read_to_string(derived.join("sub/chunk.js"))?, "js");
+        assert_eq!(
+            std::fs::read_to_string(derived.join("public/abc.png"))?,
+            "png"
+        );
+        assert_eq!(
+            ensure_bundle(&rt, &cache, Some(&assets))?,
+            derived,
+            "reused"
+        );
+
+        std::fs::write(assets.join("def.png"), "png2")?;
+        let next = ensure_bundle(&rt, &cache, Some(&assets))?;
+        assert_ne!(next, derived, "a new asset is a new derived bundle");
+        assert!(next.join("public/def.png").is_file());
+        Ok(())
+    }
+
+    #[test]
+    fn a_missing_prebuilt_bundle_is_a_named_error() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let mut rt = crate::tests::managed_runtime();
+        rt.prebuilt_bundle = Some(tmp.path().join("bundle"));
+        let err = ensure_bundle(&rt, &tmp.path().join("c"), None)
+            .err()
+            .ok_or("accepted")?;
+        assert!(
+            err.to_string().contains("prebuilt bundle is missing"),
+            "{err}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -643,23 +835,27 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("src/a"))?;
         std::fs::write(dir.path().join("src/a/x.ts"), "one")?;
         std::fs::write(dir.path().join("package.json"), "{}")?;
-        let a = engine_fingerprint(dir.path(), None)?;
-        assert_eq!(
-            a,
-            engine_fingerprint(dir.path(), None)?,
-            "same content, same key"
-        );
+        let a = engine_fingerprint(dir.path())?;
+        assert_eq!(a, engine_fingerprint(dir.path())?, "same content, same key");
         std::fs::write(dir.path().join("src/a/x.ts"), "two")?;
-        let b = engine_fingerprint(dir.path(), None)?;
-        assert_ne!(a, b, "changed content, new key");
+        assert_ne!(
+            a,
+            engine_fingerprint(dir.path())?,
+            "changed content, new key"
+        );
+
         let public = dir.path().join("public");
         std::fs::create_dir_all(&public)?;
         std::fs::write(public.join("abc.png"), "x")?;
-        assert_ne!(
-            b,
-            engine_fingerprint(dir.path(), Some(&public))?,
-            "a new asset re-bundles"
+        let p1 = public_fingerprint(&public)?;
+        std::fs::write(public.join("abc.png"), "y")?;
+        assert_eq!(
+            p1,
+            public_fingerprint(&public)?,
+            "names, not bytes (content-addressed)"
         );
+        std::fs::write(public.join("def.png"), "x")?;
+        assert_ne!(p1, public_fingerprint(&public)?, "a new asset, a new key");
         Ok(())
     }
 

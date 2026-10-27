@@ -38,3 +38,20 @@ export {
   watchAiEnv,
 } from './aiEnv';
 export type { AiEnvPhase, AiEnvStatus } from './aiEnv';
+
+export {
+  MOTION_RUNTIME_NOT_READY_CODE,
+  MOTION_RUNTIME_STATUS_EVENT,
+  MOTION_RUNTIME_UNKNOWN,
+  formatMegabytes,
+  motionRuntimeBlockedReason,
+  motionRuntimeHeadline,
+  motionRuntimeProgress,
+  motionRuntimeReady,
+  shouldAutoInstall,
+  useMotionRuntime,
+  useMotionRuntimeAutoInstall,
+  useMotionRuntimeStore,
+  watchMotionRuntime,
+} from './motionRuntime';
+export type { MotionRuntimeState, MotionRuntimeStatus } from './motionRuntime';

@@ -5,14 +5,14 @@
 //!   (`<project>.chroma/motion/manifest.json`, the same "path-addressed
 //!   sidecar" convention `grade.rs` uses for each shot's `grade.json`) and
 //!   drive a real render through the `apelles-motion` crate
-//!   (→ `npx remotion render` in `packages/motion-engine`).
+//!   (→ the engine renderer, `node scripts/render.mts`, with the runtime
+//!   `motion_runtime::require` located — D-417).
 //! What it does: `chroma_motion_get_manifest` / `chroma_motion_save_manifest`
 //!   read/write that sidecar for the currently open project, resolved via
 //!   `state::current_project()` — the same source `edit.rs`'s
 //!   `current_project_dir()` reads. [`render_scene_file`] renders one scene of a
-//!   manifest snapshot through the `apelles-motion` crate (→ `npx remotion
-//!   render` in `packages/motion-engine`, resolved relative to this crate's own
-//!   source location) and replaces the scene's file atomically: it renders to a
+//!   manifest snapshot through the `apelles-motion` crate (→ the engine renderer
+//!   with the located runtime, D-417) and replaces the scene's file atomically: it renders to a
 //!   staging sibling and `rename`s it onto the destination (nothing ever reads
 //!   half a video, see [`staging_path`]), then drops any live decode pipe still
 //!   holding the old inode open (D-260). That plus the pool reconcile the
@@ -52,19 +52,6 @@ fn current_project_dir() -> Result<PathBuf, String> {
 /// project" per this pass's scope; multi-manifest is deferred).
 fn manifest_path(project_dir: &Path) -> PathBuf {
     project_dir.join("motion").join("manifest.json")
-}
-
-/// `packages/motion-engine`, resolved from this crate's own compile-time
-/// location (`app/src-tauri` → `../../packages/motion-engine`) rather than a
-/// runtime guess. Correct for `npm run tauri:dev`; a packaged build bundling
-/// (or downloading) the engine separately is a later step — the engine is a
-/// dev-time Node project today, not shipped in the app bundle (D-046).
-fn engine_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("packages")
-        .join("motion-engine")
 }
 
 /// The current project's saved motion manifest, or `null` if none has been
@@ -128,6 +115,7 @@ pub async fn chroma_motion_preview_frame(
     label: String,
 ) -> Result<MotionPreviewResult, String> {
     let dir = current_project_dir()?;
+    let runtime = super::motion_runtime::require()?;
     tokio::task::spawn_blocking(move || {
         let out_dir = dir.join("motion").join("previews");
         std::fs::create_dir_all(&out_dir)
@@ -142,7 +130,7 @@ pub async fn chroma_motion_preview_frame(
         let text = serde_json::to_string(&manifest).map_err(|e| e.to_string())?;
         std::fs::write(&props, text).map_err(|e| format!("write {}: {e}", props.display()))?;
         let req = apelles_motion::still::PreviewRequest {
-            engine_dir: engine_dir(),
+            runtime,
             cache_dir: dir.join("motion").join("cache").join("preview"),
             out_dir,
             manifest_path: props,
@@ -309,19 +297,23 @@ pub(super) fn render_scene_file(
         std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
     }
     let staging = staging_path(out);
+    // D-417 — the located runtime; a render without one fails here, naming why.
+    let runtime = super::motion_runtime::require()?;
+    // The project the OUTPUT belongs to (`<project>/motion/renders/<id>.mp4`),
+    // which is the project the snapshot belongs to.
+    let project = out.parent().and_then(Path::parent).and_then(Path::parent);
+    let bundle_cache = project
+        .map(|p| p.join("motion").join("cache").join("preview"))
+        .unwrap_or_else(|| std::env::temp_dir().join("apelles-motion-bundles"));
     let mut req = RenderRequest::new(
-        engine_dir(),
+        runtime,
+        bundle_cache,
         manifest_snapshot.to_path_buf(),
         staging.clone(),
     )
     .with_frame_range(frame_range.0, frame_range.1);
-    // D-404 — the project's assets are the engine's `public/`. Derived from the
-    // OUTPUT's project (`<project>/motion/renders/<id>.mp4`), the same project the
-    // snapshot belongs to.
-    if let Some(assets) = out
-        .parent()
-        .and_then(Path::parent)
-        .and_then(Path::parent)
+    // D-404 — the project's assets are the engine's `public/`.
+    if let Some(assets) = project
         .map(apelles_motion::assets::assets_dir)
         .filter(|d| d.is_dir())
     {
@@ -378,7 +370,7 @@ pub(super) fn render_scene_file(
 /// **re-rendering a Motion scene changes what an already-placed Edit clip
 /// shows.**
 ///
-/// The Remotion render itself is not exercised (it is `npx remotion render`, a
+/// The Remotion render itself is not exercised (it is the engine renderer, a
 /// Node toolchain, not something a unit test may depend on). What IS exercised
 /// is every step this decision actually built: the staging → `rename` replace,
 /// the decode-pipe invalidation, the pool reconcile, and the preview reading

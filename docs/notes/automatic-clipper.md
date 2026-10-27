@@ -295,8 +295,9 @@ using the D-348 split-screen geometry). Applied as normal clips and transforms o
   using a caption-style text preset. The client writes the line; the heuristic uses the hook
   sentence trimmed to 8 words or fewer.
 - **CTA end card** (option): a Motion template (D-407) filled with `cta_text`/URL and rendered
-  through the existing Motion render. Off by default (Motion is held back in the beta, D-391, so
-  this degrades to a text clip when the Motion tab is not in the build).
+  through the existing Motion render. Off by default (Motion was held back in the v0.2.0 beta,
+  D-391, and ships from v0.4.0, D-417; this degrades to a text clip when the Motion tab is not
+  in the build or its render runtime is not installed yet).
 - **Music bed** (option, off by default for shorts): a quiet bed under the voice
   (`set_track_duck`, about -19 dB, per `apelles-sound-design` §1), taken from the project's own
   `assets/audio/` first. Openverse is a network call, so it is used only when asked (§12, Q4).

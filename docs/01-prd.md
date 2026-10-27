@@ -83,7 +83,9 @@ place that rule is currently unmet is named explicitly below.
   creates layers, a typed property Inspector, **on-canvas select / drag / resize /
   marquee**, a per-row **keyframe timeline** with a bezier ease-curve editor, and a
   `zod`-validated JSON manifest editor. Render goes through the `apelles-motion` crate to
-  `npx remotion render` and auto-imports the output into Sources.
+  the engine's renderer (`scripts/render.mts` over `@remotion/renderer`) and auto-imports the
+  output into Sources. An installed app downloads the render runtime (Node.js, Chrome
+  Headless Shell) the first time the tab opens (D-417).
 
 **Agent reach, stated precisely** (the numbers are the real ones, counted from
 `mcp/server.py`, not carried forward): **95 MCP tools** — 42 Colorist/session/project, 45

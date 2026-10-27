@@ -33,7 +33,7 @@
 //!   the app's live player, which never runs component code itself.
 //!
 //! **Security boundary.** Component code only ever runs in the Remotion
-//! renderer (`remotion render` / `still`: Node plus a headless Chrome, no Tauri
+//! renderer (`scripts/render.mts`, D-417: Node plus a headless Chrome, no Tauri
 //! IPC). This module spawns those processes; it never evaluates anything.
 //!
 //! **What it does NOT do:** validate a spec's shape (the zod schema in
@@ -49,6 +49,7 @@ use apelles_types::ChromaError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::MotionRuntime;
 use crate::assets::{sha256_hex, store_bytes};
 use crate::still::{self, SequenceRequest, StillRequest};
 
@@ -310,24 +311,26 @@ pub struct CheckReport {
     pub code: Option<String>,
 }
 
-/// `node scripts/check-component.mts` in the engine folder — pure. Node runs
-/// the TypeScript directly (type stripping); the one warning silenced is the
-/// "module type not specified" notice for the engine's own sources.
-pub fn build_check_command(engine_dir: &Path) -> Command {
-    let mut cmd = Command::new("node");
-    cmd.current_dir(engine_dir);
-    cmd.args([
-        "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON",
-        "scripts/check-component.mts",
-    ]);
+/// The static check's script, relative to the engine folder.
+pub const CHECK_SCRIPT: &str = "scripts/check-component.mts";
+
+/// `node scripts/check-component.mts` in the engine folder, with the runtime's
+/// Node (D-417) — pure. Node runs the TypeScript directly (type stripping,
+/// 22.18+); the one warning silenced is the "module type not specified" notice
+/// for the engine's own sources.
+pub fn build_check_command(rt: &MotionRuntime) -> Command {
+    let mut cmd = Command::new(&rt.node);
+    cmd.current_dir(&rt.engine_dir);
+    cmd.arg("--disable-warning=MODULE_TYPELESS_PACKAGE_JSON");
+    cmd.arg(rt.engine_dir.join(CHECK_SCRIPT));
     cmd
 }
 
 /// Run the static check on `source` (blocking; a few seconds for the type
 /// check). A source that fails is `Ok` with `ok: false`; `Err` means the check
 /// itself could not run.
-pub fn check_source(engine_dir: &Path, source: &str) -> Result<CheckReport, ChromaError> {
-    let mut child = build_check_command(engine_dir)
+pub fn check_source(rt: &MotionRuntime, source: &str) -> Result<CheckReport, ChromaError> {
+    let mut child = build_check_command(rt)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -752,7 +755,7 @@ pub fn pixel_hash(path: &Path) -> Result<String, ChromaError> {
 
 /// Render `order` as fresh stills into `dir`; returns `(sample index, file)`.
 fn still_pass(
-    engine_dir: &Path,
+    rt: &MotionRuntime,
     bundle: &Path,
     manifest_path: &Path,
     dir: &Path,
@@ -765,7 +768,7 @@ fn still_pass(
     for (k, sample) in order.iter().enumerate() {
         let file = dir.join(format!("{k:02}-f{}.png", sample.1));
         still::render_still(&StillRequest {
-            engine_dir: engine_dir.to_path_buf(),
+            runtime: rt.clone(),
             bundle_dir: bundle.to_path_buf(),
             manifest_path: manifest_path.to_path_buf(),
             output_path: file.clone(),
@@ -796,7 +799,7 @@ fn proof_work_dir(cache_dir: &Path, id: &str, version: u32) -> PathBuf {
 /// result, contact sheet and thumbnail are recorded in the version folder; a
 /// certified version can be re-proved, but nothing is written to it.
 pub fn prove(
-    engine_dir: &Path,
+    rt: &MotionRuntime,
     cache_dir: &Path,
     dir: &Path,
     plan: &ProofPlan,
@@ -858,7 +861,7 @@ pub fn prove(
     let manifest_path = work.join("proof.props.json");
     std::fs::write(&manifest_path, plan.manifest.to_string())
         .map_err(|e| io_err("write", &manifest_path, e))?;
-    let bundle = still::ensure_bundle(engine_dir, &cache_dir.join("bundles"), Some(&public))?;
+    let bundle = still::ensure_bundle(rt, &cache_dir.join("bundles"), Some(&public))?;
 
     let last = samples.iter().map(|s| s.1).max().unwrap_or(0);
     let index_of = |s: &(usize, u32)| samples.iter().position(|x| x == s).unwrap_or(0);
@@ -883,7 +886,7 @@ pub fn prove(
     let (seq, pass_b, pass_c) = std::thread::scope(|scope| {
         let seq = scope.spawn(|| {
             still::render_sequence(&SequenceRequest {
-                engine_dir: engine_dir.to_path_buf(),
+                runtime: rt.clone(),
                 bundle_dir: bundle.clone(),
                 manifest_path: manifest_path.clone(),
                 out_dir: work.join("in-order"),
@@ -894,7 +897,7 @@ pub fn prove(
         });
         let b = scope.spawn(|| {
             still_pass(
-                engine_dir,
+                rt,
                 &bundle,
                 &manifest_path,
                 &work.join("backwards"),
@@ -905,7 +908,7 @@ pub fn prove(
         });
         let c = scope.spawn(|| {
             still_pass(
-                engine_dir,
+                rt,
                 &bundle,
                 &manifest_path,
                 &work.join("scrambled"),
@@ -1026,7 +1029,8 @@ pub fn prove(
 /// One custom layer's proxy render.
 #[derive(Debug, Clone)]
 pub struct ProxyRequest {
-    pub engine_dir: PathBuf,
+    /// The located runtime (D-417).
+    pub runtime: MotionRuntime,
     /// where the project's preview bundles are cached (shared with stills)
     pub bundle_cache: PathBuf,
     /// `<project>/motion/cache/proxy`
@@ -1089,13 +1093,9 @@ pub fn render_proxy(req: &ProxyRequest) -> Result<ProxyOutcome, ChromaError> {
     let manifest_path = staging.join("proxy.props.json");
     std::fs::write(&manifest_path, req.manifest.to_string())
         .map_err(|e| io_err("write", &manifest_path, e))?;
-    let bundle = still::ensure_bundle(
-        &req.engine_dir,
-        &req.bundle_cache,
-        req.public_dir.as_deref(),
-    )?;
+    let bundle = still::ensure_bundle(&req.runtime, &req.bundle_cache, req.public_dir.as_deref())?;
     let rendered = still::render_sequence(&SequenceRequest {
-        engine_dir: req.engine_dir.clone(),
+        runtime: req.runtime.clone(),
         bundle_dir: bundle,
         manifest_path,
         out_dir: staging.join("frames"),
@@ -1373,17 +1373,20 @@ mod tests {
     }
 
     #[test]
-    fn the_check_command_runs_the_script_in_the_engine() {
-        let cmd = build_check_command(Path::new("/engine"));
-        assert_eq!(cmd.get_program(), "node");
-        assert_eq!(cmd.get_current_dir(), Some(Path::new("/engine")));
+    fn the_check_command_runs_the_script_in_the_engine_with_the_runtimes_node() {
+        let cmd = build_check_command(&crate::tests::managed_runtime());
+        assert_eq!(cmd.get_program(), "/rt/node/bin/node");
+        assert_eq!(
+            cmd.get_current_dir(),
+            Some(Path::new("/App/Resources/motion-engine"))
+        );
         let args: Vec<String> = cmd
             .get_args()
             .map(|a| a.to_string_lossy().to_string())
             .collect();
         assert_eq!(
             args.last().map(String::as_str),
-            Some("scripts/check-component.mts")
+            Some("/App/Resources/motion-engine/scripts/check-component.mts")
         );
     }
 
@@ -1394,20 +1397,14 @@ mod tests {
     fn installing_a_component_changes_the_bundle_cache_key()
     -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let engine = tmp.path().join("engine");
-        std::fs::create_dir_all(engine.join("src"))?;
-        std::fs::write(engine.join("src/index.ts"), "x")?;
         let assets = tmp.path().join("assets");
         std::fs::create_dir_all(&assets)?;
-        let empty = crate::still::engine_fingerprint(&engine, Some(&assets))?;
+        let empty = crate::still::public_fingerprint(&assets)?;
         store_bytes(b"module one", "js", &assets)?;
-        let one = crate::still::engine_fingerprint(&engine, Some(&assets))?;
+        let one = crate::still::public_fingerprint(&assets)?;
         assert_ne!(empty, one);
         store_bytes(b"module two", "js", &assets)?;
-        assert_ne!(
-            one,
-            crate::still::engine_fingerprint(&engine, Some(&assets))?
-        );
+        assert_ne!(one, crate::still::public_fingerprint(&assets)?);
         Ok(())
     }
 

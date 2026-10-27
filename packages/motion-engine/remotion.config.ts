@@ -2,6 +2,11 @@
  * Note: When using the Node.JS APIs, the config file
  * doesn't apply. Instead, pass options directly to the APIs.
  *
+ * D-417 — the app renders through those APIs (`scripts/render.mts`), so this file
+ * is read only by Studio, `remotion bundle` (Rspack) and hand-run CLI renders.
+ * The renderer carries the render settings below as its own named constants;
+ * `scripts/render.test.ts` keeps the two in step.
+ *
  * All configuration options: https://remotion.dev/docs/config
  */
 

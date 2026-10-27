@@ -34,6 +34,7 @@ e2e-testing = ["dep:tauri-plugin-wdio-webdriver"]
 # no wgpu/ffmpeg — see crates/README.md.
 apelles-timeline = { path = "../../crates/apelles-timeline" }
 apelles-motion = { path = "../../crates/apelles-motion" }
+apelles-motion-runtime = { path = "../../crates/apelles-motion-runtime" }
 apelles-grade-model = { path = "../../crates/apelles-grade-model" }
 apelles-types = { path = "../../crates/apelles-types" }
 apelles-gpu = { path = "../../crates/apelles-gpu" }

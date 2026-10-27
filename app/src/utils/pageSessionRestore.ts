@@ -43,7 +43,7 @@ export interface PageSessionDeps {
   openProject: (path: string) => Promise<{ ok: boolean; error?: string }>;
   activeTab: () => ShellTabId;
   setActiveTab: (tab: ShellTabId) => void;
-  /** The tabs this build shows (Motion is absent from the beta, D-391). */
+  /** The tabs this build shows (a build can leave Motion out, D-391). */
   availableTabs: readonly ShellTabId[];
 }
 

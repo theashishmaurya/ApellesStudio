@@ -447,6 +447,21 @@ fn native_op(app: &tauri::AppHandle, op: &str, args: &serde_json::Value) -> Opti
         // where its numbers are — nothing is relayed and nothing can wedge.
         "editor_export_status" => serde_json::to_value(super::export_status::snapshot())
             .map_err(|e| format!("could not serialize the export status: {e}")),
+        // D-417 — Motion's render runtime. A Rust state machine with no store copy
+        // (like the AI-env pair), and the answer an agent needs when a Motion render
+        // failed with `motion_runtime_not_ready` — possibly before the Motion tab
+        // has ever mounted.
+        "motion_runtime_status" => serde_json::to_value(apelles_motion_runtime::manager::status())
+            .map_err(|e| format!("could not serialize the Motion runtime status: {e}")),
+        "motion_install_runtime" => serde_json::to_value(
+            super::motion_runtime::chroma_motion_runtime_install(app.clone()),
+        )
+        .map_err(|e| format!("could not serialize the Motion runtime status: {e}")),
+        "motion_remove_runtime" => super::motion_runtime::chroma_motion_runtime_remove(app.clone())
+            .and_then(|s| {
+                serde_json::to_value(s)
+                    .map_err(|e| format!("could not serialize the Motion runtime status: {e}"))
+            }),
         _ => return debug_native_op(app, op, args),
     };
 

@@ -1,24 +1,27 @@
 //! Motion-tab tools — the scene-based motion-graphics surface (D-312), behind the
-//! `motion` Cargo feature (D-391).
+//! `motion` Cargo feature (D-391), plus the three render-runtime tools (D-417).
 //!
 //! WHY THE WHOLE MODULE IS BEHIND `feature = "motion"`
-//!  A Motion export runs `npx remotion render` (`apelles-motion`), which needs Node.js,
-//!  a headless Chrome and the Motion engine's `node_modules` — none of which the
-//!  release bundle carries yet. Until the on-demand toolchain download lands, the beta
-//!  build hides the Motion tab, and this server is built `--no-default-features` so it
-//!  does not advertise 65 tools no tab is mounted to answer. Same shape as `debug.rs`:
-//!  one gate on the module declaration (gating the `use` lines instead breaks the
-//!  `#[tool]` attributes), and a real empty twin of [`router`] so `server.rs` reads the
-//!  same either way. The feature is on by default, so dev builds and the test suite
-//!  see the full surface.
+//!  D-391 held Motion back from the first beta, when a release bundle could not render
+//!  it: this server was built `--no-default-features` so it did not advertise tools no
+//!  tab was mounted to answer. D-417 ships Motion again (its render runtime downloads on
+//!  demand) and the release builds with default features, but the gate stays as the one
+//!  switch that would hold Motion back again. Same shape as `debug.rs`: one gate on the
+//!  module declaration (gating the `use` lines instead breaks the `#[tool]` attributes),
+//!  and a real empty twin of [`router`] so `server.rs` reads the same either way. The
+//!  feature is on by default, so dev builds, release builds and the test suite see the
+//!  full surface.
 
+#[cfg(feature = "motion")]
+mod runtime;
 #[cfg(feature = "motion")]
 mod tools;
 
-/// This tab's contribution to the merged router.
+/// This tab's contribution to the merged router: the `motion_*` editing tools (answered
+/// by `@apelles/motion`) and the runtime tools (answered by the app itself).
 #[cfg(feature = "motion")]
 pub fn router() -> rmcp::handler::server::router::tool::ToolRouter<crate::ApellesMcp> {
-    crate::ApellesMcp::motion_router()
+    crate::ApellesMcp::motion_router() + crate::ApellesMcp::motion_runtime_router()
 }
 
 /// Built without Motion: no `motion_*` tools exist at all.
@@ -29,14 +32,14 @@ pub fn router() -> rmcp::handler::server::router::tool::ToolRouter<crate::Apelle
 
 #[cfg(test)]
 mod tests {
-    /// The gate is the whole tab: with Motion every tool here is a `motion_*` tool (and
-    /// there are 65 of them), without it the router is empty and nothing else in the
-    /// server advertises a `motion_*` name either.
+    /// The gate is the whole tab: with Motion every tool here is a `motion_*` tool (65
+    /// editing tools and the 3 runtime tools of D-417), without it the router is empty
+    /// and nothing else in the server advertises a `motion_*` name either.
     #[test]
     fn the_motion_feature_gates_exactly_the_motion_tools() {
         let mine = super::router().list_all();
         assert!(mine.iter().all(|t| t.name.starts_with("motion_")));
-        let expected = if cfg!(feature = "motion") { 65 } else { 0 };
+        let expected = if cfg!(feature = "motion") { 68 } else { 0 };
         assert_eq!(mine.len(), expected);
 
         let others = crate::tools::colorist::router()

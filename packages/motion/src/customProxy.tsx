@@ -11,7 +11,10 @@
  * cached by content, and the player draws the PNG of the layer's current local
  * frame. Until the frames exist (a first insert, a props edit) the safe
  * placeholder box is shown with "rendering preview…"; a failed render shows
- * "preview failed: <why>" there (and in the console, `customProxyStore.ts`).
+ * "preview failed: <why>" there (and in the console, `customProxyStore.ts`),
+ * except a render refused because Motion's render runtime is still being
+ * downloaded (D-417), which shows "waiting for Motion's renderer…" and is
+ * retried when the runtime is ready.
  * The status line carries `data-custom-proxy-status`, and the debug-only
  * `debug_get_ui_state` reports every proxy's state, so an agent can check it
  * without a screenshot.
@@ -26,6 +29,7 @@
 import React, { createContext, useCallback, useContext, useMemo, useSyncExternalStore } from 'react';
 import { useCurrentFrame, useVideoConfig } from 'remotion';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { MOTION_RUNTIME_NOT_READY_CODE } from '@apelles/bridge';
 import {
   CustomRendererProvider,
   PlaceholderRenderer,
@@ -100,7 +104,11 @@ const ProxyRenderer: CustomRenderer = (req) => {
           fontFamily: req.theme.fontUi,
         }}
       >
-        {state.status === 'error' ? `preview failed: ${state.error}` : 'rendering preview…'}
+        {state.status !== 'error'
+          ? 'rendering preview…'
+          : state.error.startsWith(MOTION_RUNTIME_NOT_READY_CODE)
+            ? "waiting for Motion's renderer…"
+            : `preview failed: ${state.error}`}
       </span>
     </div>
   );

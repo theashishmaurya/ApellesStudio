@@ -16,9 +16,9 @@ name = "apelles-mcp"
 path = "src/main.rs"
 
 [features]
-# D-391 — the `motion_*` tools. On by default (dev, tests, the parity gate); the release
-# bundle builds this server with `--no-default-features` while the Motion tab is hidden,
-# because a Motion export needs a Node/Chrome toolchain the bundle does not carry yet.
+# D-391 — the `motion_*` tools. On by default (dev, tests, the parity gate, and since
+# D-417 the release too). The v0.2.0 beta built this server `--no-default-features` while
+# its Motion tab was hidden; the feature stays as the switch that would do that again.
 default = ["motion"]
 motion = []
 

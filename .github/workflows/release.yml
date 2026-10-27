@@ -6,9 +6,12 @@
 #      (the release notes, written by hand and committed before tagging);
 #   2. builds the release DMG on an Apple Silicon runner with the same command a
 #      developer uses locally, `npm run tauri:build` (ad-hoc signed, D-388;
-#      bundled ffmpeg/ffprobe/uv/apelles-mcp, D-389/D-390; no Motion, D-391);
-#   3. verifies the bundle: signature, every bundled binary present, and no
-#      `motion_*` tools in the shipped MCP server;
+#      bundled ffmpeg/ffprobe/uv/apelles-mcp, D-389/D-390; the Motion engine pack
+#      in Resources/motion-engine, D-417 — Node.js and Chrome Headless Shell are
+#      NOT bundled, the app downloads them the first time the Motion tab opens);
+#   3. verifies the bundle: signature, every bundled binary present, the Motion
+#      engine pack present, and the shipped MCP server carrying its `motion_*`
+#      tools (D-417 lifted D-391's hide);
 #   4. publishes the release with the DMG, its SHA-256, and the FFmpeg 9.0.2
 #      source tarball, which D-389's GPL-3.0 obligations call for alongside
 #      every distributed copy of the bundled ffmpeg.
@@ -54,9 +57,12 @@ jobs:
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
 
+      # The Node the app downloads for Motion (apelles-motion-runtime's pin), so
+      # the engine pack's build-time self-test runs the component check on the
+      # same Node users get. Any 22.18+ would build it.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.22.1
           cache: npm
           cache-dependency-path: package-lock.json
 
@@ -84,11 +90,18 @@ jobs:
           done
           test -d "$app/Contents/Resources/resources/sidecars/ai"
           test -d "$app/Contents/Resources/resources/sidecars/ai-media"
-          # D-391: the beta's MCP server is built without Motion.
-          if strings "$app/Contents/MacOS/apelles-mcp" | grep -q motion_add_layer; then
-            echo "::error::the bundled apelles-mcp still carries motion_* tools"
-            exit 1
-          fi
+          # D-417: the Motion engine pack (prebuilt bundle + renderer + check).
+          pack="$app/Contents/Resources/motion-engine"
+          for f in pack.json bundle/index.html scripts/render.mts scripts/check-component.mts \
+                   node_modules/@remotion/renderer/package.json node_modules/typescript/lib/typescript.js; do
+            test -f "$pack/$f" || { echo "::error::the Motion engine pack has no $f"; exit 1; }
+          done
+          test -f "$app/Contents/Resources/resources/licenses/MOTION-RUNTIME-NOTICE.txt"
+          # D-417 (lifting D-391): the MCP server ships its Motion tools again.
+          for tool in motion_add_layer motion_runtime_status motion_install_runtime; do
+            strings "$app/Contents/MacOS/apelles-mcp" | grep -q "$tool" \
+              || { echo "::error::the bundled apelles-mcp has no $tool"; exit 1; }
+          done
           plist_version=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$app/Contents/Info.plist")
           test "$plist_version" = "$VERSION"
           du -sh "$app" "$dmg"

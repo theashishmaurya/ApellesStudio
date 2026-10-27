@@ -6,7 +6,7 @@
     "dev": "vite",
     "build": "vite build",
     "tauri:before-dev": "cargo build -p apelles-mcp && npm run dev",
-    "tauri:before-build": "cargo build -p apelles-mcp --release --no-default-features && VITE_APELLES_MOTION=off npm run build",
+    "tauri:before-build": "cargo build -p apelles-mcp --release && npm run build && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ../packages/motion-engine/scripts/build-pack.mts --out=src-tauri/motion-engine-pack",
     "test": "vitest run",
     "tauri": "tauri",
     "start": "tauri dev",

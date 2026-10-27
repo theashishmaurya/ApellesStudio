@@ -27,6 +27,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let src = PathBuf::from(src);
     let root = PathBuf::from(root);
     let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/motion-engine");
+    let runtime = apelles_motion::MotionRuntime::developer(&engine)
+        .ok_or("no Node 22.18+ found (PATH, APELLES_MOTION_NODE)")?;
 
     let source = std::fs::read_to_string(src.join("component.tsx"))?;
     let spec: serde_json::Value =
@@ -34,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let plan: ProofPlan =
         serde_json::from_str(&std::fs::read_to_string(src.join("proof-plan.json"))?)?;
 
-    let report = components::check_source(&engine, &source)?;
+    let report = components::check_source(&runtime, &source)?;
     if !report.ok {
         return Err(format!(
             "static check failed: {}",
@@ -46,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("draft {}@{} at {}", draft.id, draft.version, draft.dir);
 
     let cache = std::env::temp_dir().join("apelles-component-certify-cache");
-    let outcome = components::prove(&engine, &cache, Path::new(&draft.dir), &plan)?;
+    let outcome = components::prove(&runtime, &cache, Path::new(&draft.dir), &plan)?;
     println!("{}", serde_json::to_string_pretty(&outcome.proof)?);
     if outcome.proof.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
         return Err("the certification check did not pass".into());

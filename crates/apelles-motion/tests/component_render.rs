@@ -18,12 +18,42 @@
 
 use std::path::{Path, PathBuf};
 
+use apelles_motion::MotionRuntime;
 use apelles_motion::components::{self, ProofPlan};
 use apelles_motion::still::{PreviewRequest, render_preview};
 use serde_json::Value;
 
 fn engine_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/motion-engine")
+}
+
+/// The runtime these renders use: the developer's Node and Remotion's own
+/// browser, or — with `APELLES_MOTION_RUNTIME_DIR=<an installed runtime folder>`
+/// — the downloaded runtime (its Node, Chrome Headless Shell and compositor).
+/// `APELLES_MOTION_PACK_DIR=<an engine pack from scripts/build-pack.mts>` renders
+/// from the pack's prebuilt bundle and files instead of the checkout; with both
+/// set, these tests run exactly what an installed app runs (D-417).
+fn runtime() -> MotionRuntime {
+    use apelles_motion_runtime::Layout;
+    let layout = match std::env::var_os("APELLES_MOTION_PACK_DIR") {
+        Some(pack) => Layout::Packaged {
+            pack_dir: PathBuf::from(pack),
+            runtime_root: PathBuf::new(),
+        },
+        None => Layout::Dev {
+            engine_dir: engine_dir(),
+            runtime_root: PathBuf::new(),
+        },
+    };
+    match std::env::var_os("APELLES_MOTION_RUNTIME_DIR") {
+        Some(dir) => apelles_motion_runtime::locate::managed(&layout, Path::new(&dir)),
+        None => {
+            let mut rt =
+                MotionRuntime::developer(layout.engine_dir()).expect("a Node 22.18+ on PATH");
+            rt.prebuilt_bundle = layout.prebuilt_bundle();
+            rt
+        }
+    }
 }
 
 fn fixture(name: &str) -> PathBuf {
@@ -61,7 +91,7 @@ fn each_builtin_recompiles_to_its_certified_module_and_reproves_with_the_same_pi
         let files = components::read_version(&dir).expect("read built-in");
         assert_eq!(files.meta["status"], "certified", "{id} ships certified");
 
-        let report = components::check_source(&engine_dir(), &files.source).expect("check runs");
+        let report = components::check_source(&runtime(), &files.source).expect("check runs");
         assert!(report.ok, "{id}: {:?}", report.issues);
         let shipped = std::fs::read_to_string(dir.join(components::CODE_FILE)).expect("module");
         assert_eq!(
@@ -79,7 +109,7 @@ fn each_builtin_recompiles_to_its_certified_module_and_reproves_with_the_same_pi
         )
         .expect("parse plan");
         let cache = std::env::temp_dir().join("apelles-component-render-test-cache");
-        let outcome = components::prove(&engine_dir(), &cache, &copy, &plan).expect("prove");
+        let outcome = components::prove(&runtime(), &cache, &copy, &plan).expect("prove");
         assert!(!outcome.recorded, "a certified version is never written to");
         assert_eq!(outcome.proof["ok"], true, "{id}: {}", outcome.proof);
         let now: Vec<&Value> = outcome.proof["frames"]
@@ -126,7 +156,7 @@ fn the_agent_built_document_renders_identically_in_two_parallel_renders() {
     let frames = vec![30, 120, 165];
     let render = |run: usize| {
         let req = PreviewRequest {
-            engine_dir: engine_dir(),
+            runtime: runtime(),
             cache_dir: cache.clone(),
             out_dir: project.path().join(format!("run{run}")),
             manifest_path: manifest.clone(),
@@ -138,7 +168,7 @@ fn the_agent_built_document_renders_identically_in_two_parallel_renders() {
         render_preview(&req).expect("preview renders")
     };
     // Bundle once first, so the two parallel runs exercise the shared cache.
-    apelles_motion::still::ensure_bundle(&engine_dir(), &cache, Some(&assets)).expect("bundle");
+    apelles_motion::still::ensure_bundle(&runtime(), &cache, Some(&assets)).expect("bundle");
     let (a, b) = std::thread::scope(|s| {
         let a = s.spawn(|| render(0));
         let b = s.spawn(|| render(1));
@@ -170,7 +200,7 @@ fn a_custom_layer_renders_to_cached_transparent_proxy_frames() {
         serde_json::from_str(&std::fs::read_to_string(fixture("custom-proxy.json")).expect("read"))
             .expect("parse");
     let req = components::ProxyRequest {
-        engine_dir: engine_dir(),
+        runtime: runtime(),
         bundle_cache: std::env::temp_dir()
             .join("apelles-component-render-test-cache")
             .join("preview"),
@@ -221,7 +251,7 @@ export default function Stateful({ theme }: ComponentProps) {
   return <AbsoluteFill style={{ background: renders % 3 === 0 ? theme.accent : theme.bg, opacity: frame >= 0 ? 1 : 0 }} />;
 }
 "#;
-    let report = components::check_source(&engine_dir(), source).expect("check runs");
+    let report = components::check_source(&runtime(), source).expect("check runs");
     assert!(
         report.ok,
         "the static check cannot see state: {:?}",
@@ -250,7 +280,7 @@ export default function Stateful({ theme }: ComponentProps) {
     .expect("plan");
     let cache = std::env::temp_dir().join("apelles-component-render-test-cache");
     let outcome =
-        components::prove(&engine_dir(), &cache, Path::new(&draft.dir), &plan).expect("prove runs");
+        components::prove(&runtime(), &cache, Path::new(&draft.dir), &plan).expect("prove runs");
     assert_eq!(outcome.proof["ok"], false, "{}", outcome.proof);
     assert!(
         components::certify(Path::new(&draft.dir)).is_err(),

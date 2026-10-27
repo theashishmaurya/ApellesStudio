@@ -180,6 +180,9 @@ pub async fn chroma_motion_job_start(
             );
         }
     }
+    // D-417 — refuse before writing a snapshot or a job, so "the runtime is still
+    // downloading" is the answer, not a scene that failed.
+    super::motion_runtime::require()?;
 
     let state = if resume {
         let mut job = JobState::load(&job_path(&project_dir))

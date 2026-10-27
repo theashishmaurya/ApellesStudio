@@ -26,6 +26,7 @@
  * rest of this package (see `Button.tsx`).
  */
 import { useMemo, useState } from 'react';
+import { motionRuntimeBlockedReason, useMotionRuntimeStore } from '@apelles/bridge';
 import { CheckCircleIcon, PencilSimpleIcon, PlusIcon, PuzzlePieceIcon, SealCheckIcon, TrashIcon, WarningIcon } from '@phosphor-icons/react';
 import type { ComponentSpec } from '@apelles/motion-engine/src/custom/componentDef';
 import { resolveSlotValues, type TemplateSlot } from '@apelles/motion-engine/src/slots';
@@ -113,6 +114,8 @@ function AuthorForm({
   const [source, setSource] = useState(initial?.source ?? STARTER_SOURCE);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ error?: string; issues?: ValidationIssue[]; warnings?: ValidationIssue[]; saved?: string }>({});
+  // D-417 — the static check runs in Node: not usable until the runtime is.
+  const runtimeBlocked = motionRuntimeBlockedReason(useMotionRuntimeStore((st) => st.status), 'The component check');
 
   const submit = async (dryRun: boolean) => {
     let parsedProps: unknown;
@@ -200,10 +203,22 @@ function AuthorForm({
       {result.saved && <p className="text-[10px] text-text-secondary">{result.saved}</p>}
       {result.warnings && <IssueList issues={result.warnings} tone="warning" />}
       <div className="flex gap-1.5">
-        <button type="button" className={smallButton} disabled={busy} onClick={() => void submit(true)}>
+        <button
+          type="button"
+          className={smallButton}
+          disabled={busy || runtimeBlocked !== null}
+          title={runtimeBlocked ?? undefined}
+          onClick={() => void submit(true)}
+        >
           {busy ? 'Checking…' : 'Check'}
         </button>
-        <button type="button" className={`${smallButton} flex-1 justify-center`} disabled={busy || id.trim() === ''} onClick={() => void submit(false)}>
+        <button
+          type="button"
+          className={`${smallButton} flex-1 justify-center`}
+          disabled={busy || id.trim() === '' || runtimeBlocked !== null}
+          title={runtimeBlocked ?? undefined}
+          onClick={() => void submit(false)}
+        >
           Save draft
         </button>
         <button type="button" className={smallButton} onClick={onDone}>
@@ -299,6 +314,8 @@ function VersionPanel({
 }) {
   const [busy, setBusy] = useState<'check' | 'certify' | 'source' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // D-417 — the proof renders: not usable until the runtime is.
+  const runtimeBlocked = motionRuntimeBlockedReason(useMotionRuntimeStore((st) => st.status), 'Run check');
   const [source, setSource] = useState<string | null>(null);
   const [inserting, setInserting] = useState(false);
   const meta = entry.meta;
@@ -353,8 +370,8 @@ function VersionPanel({
         <button
           type="button"
           className={smallButton}
-          disabled={busy !== null}
-          title="Render the sample frames three ways and require identical pixels"
+          disabled={busy !== null || runtimeBlocked !== null}
+          title={runtimeBlocked ?? 'Render the sample frames three ways and require identical pixels'}
           onClick={() => {
             setBusy('check');
             setError(null);

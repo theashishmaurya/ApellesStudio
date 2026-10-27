@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-27** — **Motion ships in the app (D-417, lifts D-391):** the Motion tab and the `motion_*` MCP tools are back in the release build. Its render runtime (Node.js 24.22.1, Chrome Headless Shell 149, the Remotion compositor; 152 MB, SHA-256-pinned) downloads in the background the first time the Motion tab opens, resumably, into app data, with a banner, Render/Still/component check waiting with the reason, Settings › Motion Runtime (Remove), and `motion_runtime_status` / `motion_install_runtime` / `motion_remove_runtime` (227 tools). The engine ships as a prebuilt pack (+33 MB to the DMG, measured; D-417 records an option to halve that); every render now runs `scripts/render.mts` over `@remotion/renderer` (recorded preview hashes unchanged). New crate `apelles-motion-runtime`. Logged B-286 (video renders are not bit-identical run to run; pre-existing).
+
 - **2026-10-27** — Next release set: **v0.4.0, the Motion release** (owner); no Edit-only v0.3.0. Checklist at the top of `docs/04-roadmap.md`.
 
 - **2026-10-27** — Roadmap **0i**: publish straight to YouTube and Instagram (long-form, Shorts, Reels), opt-in, owner request.

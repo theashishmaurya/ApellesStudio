@@ -5,6 +5,11 @@
       "binaries/ffmpeg",
       "binaries/ffprobe",
       "binaries/apelles-mcp"
-    ]
+    ],
+    "resources": {
+      "resources/": "resources/",
+      "lensfun_db/": "lensfun_db/",
+      "motion-engine-pack/": "motion-engine/"
+    }
   }
 }

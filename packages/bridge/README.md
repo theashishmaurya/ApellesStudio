@@ -37,6 +37,18 @@ D-045/D-046 media-pool store, now consumed by a real panel (D-046's
   and the full consumer inventory: `docs/notes/ai-env-bootstrap.md` § "The GUI
   surface".
 
+- `useMotionRuntime` / `useMotionRuntimeStore` / `useMotionRuntimeAutoInstall`
+  (`src/motionRuntime.ts`, D-417) — Motion's on-demand render runtime (Node.js,
+  Chrome Headless Shell, the Remotion compositor): `chroma_motion_runtime_status`,
+  `_install`, `_remove` and the `motion-runtime-status` event behind the same
+  reference-counted subscription as `aiEnv.ts`, plus `motionRuntimeHeadline`,
+  `motionRuntimeProgress` and `motionRuntimeBlockedReason`. Read by the Motion tab
+  (its banner, Render / Still / component check) and by Settings › Motion Runtime.
+  **Unlike `aiEnv.ts` it does gate:** the backend's resolver is the one every render
+  path uses, so "not ready" here means a render would fail now, and those controls
+  are disabled with the reason. `useMotionRuntimeAutoInstall` is the owner's "download
+  the first time the Motion tab opens" rule (once per session, never after a failure).
+
 - `safeUnlisten` (`src/tauriListeners.ts`) — the correct teardown for a
   `listen()` registration (B-032/B-034/D-112). The canonical copy for
   `packages/*`, which cannot import `app/src/utils/tauriListeners.ts`.
@@ -57,4 +69,6 @@ D-045/D-046 media-pool store, now consumed by a real panel (D-046's
 **Tests:** `npm test --workspace @apelles/bridge` (vitest, node environment) —
 `src/media.test.ts` covers the pool's project-identity input (B-083/D-203);
 `src/aiEnv.test.ts` covers the D-315 status vocabulary and the rule that
-nothing in it ever reports a control as unusable.
+nothing in it ever reports a control as unusable; `src/motionRuntime.test.ts` covers
+D-417's blocking reasons, banner lines and the auto-install rule (the DOM wiring is
+`packages/motion/src/MotionRuntimeBanner.dom.test.tsx`).

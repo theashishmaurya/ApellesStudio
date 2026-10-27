@@ -55,6 +55,14 @@ src/
 scripts/
   check-component.mts  ← `node scripts/check-component.mts` (stdin `{source}` → the static
                          check's JSON), spawned by `apelles_motion::components` (D-409)
+  render.mts           ← THE renderer every Motion render runs (D-417): `node scripts/render.mts
+                         still|frames|video --serve-url=<bundle> --props=<manifest> …`, over
+                         `@remotion/renderer` (the render settings `remotion.config.ts` held for
+                         the CLI — ANGLE, JPEG video frames, 2x video scale — are its constants)
+  build-pack.mts       ← `node scripts/build-pack.mts --out=<dir>`: the ENGINE PACK a release app
+                         ships in Resources/motion-engine (prebuilt bundle, the two scripts, the
+                         renderer's packages, TypeScript + the types the check reads, built-ins);
+                         self-tests from outside the repo. Run by `app`'s `tauri:before-build`
 components/            ← the shipped, certified custom components as library DATA
                          (`<id>/<version>/{component.tsx,component.js,meta.json,contact.png,
                          thumbnail.png}`), produced by `cargo run -p apelles-motion --example
@@ -87,7 +95,7 @@ needs a global bundler override and a React Native stack; D-412). The shipped bu
 
 ```bash
 npm run dev                                   # Remotion studio
-npx remotion render Animation out.mp4 --props=manifest.json
+npx remotion render Animation out.mp4 --props=manifest.json   # by hand (the app runs scripts/render.mts)
 npx tsc --noEmit                               # typecheck
 ```
 

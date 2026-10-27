@@ -79,6 +79,8 @@ engine-history.bundle
 
 # D-315 — the pinned uv binary, fetched + hash-verified by app/src-tauri/build.rs
 app/src-tauri/binaries/
+# D-417 - the Motion engine pack the release pre-build stages (scripts/build-pack.mts).
+app/src-tauri/motion-engine-pack/
 # D-315 — ai-env inputs staged into the bundle by build.rs (generated copies)
 app/src-tauri/resources/ai-env/
 # D-390 — the Python sidecars' sources, staged into the bundle by build.rs (release builds)

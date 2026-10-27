@@ -268,7 +268,7 @@ export function Shell({
   // Cmd/Ctrl+1/2/3 — read off the registry rather than an inline map, so they
   // show up in the settings window and can be rebound like anything else. Each
   // action selects its tab by id, not by position: a build without one tab
-  // (D-391 drops Motion from the beta bundle) must not shift Colorist onto the
+  // (D-391: a build may leave Motion out, as the v0.2.0 beta did) must not shift Colorist onto the
   // Motion shortcut. An action whose tab is not registered does nothing.
   const selectTab = (id: ShellTabId) => {
     if (tabs.some((t) => t.id === id)) setActiveTab(id);

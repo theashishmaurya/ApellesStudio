@@ -53,7 +53,7 @@ supersedes `docs/00-vision.md`'s old "not an NLE" clause.
 │  (apelles-timeline +           primitives, multi-scene    grade renderer,      │
 │   apelles-media)               JSON manifest compiler)    AI masks/tracking    │
 │                                    │                                           │
-│                              apelles-motion crate → npx remotion render         │
+│                              apelles-motion crate → node render.mts (D-417)     │
 └──────────────────┬───────────────────────────────────────┬────────────────────┘
                     │                                       │ local HTTP :19788
                     │ subprocess (ffmpeg)                   │ (chroma/control.rs, D-020)
@@ -139,7 +139,8 @@ the authoritative per-crate table with deps and module lists; this is the summar
 | L2 | `apelles-timeline` | **yes, real** (D-041 → D-229) | the OTIO-*shaped* edit model: tracks / clips / gaps / markers / transitions, ripple / roll / slip / slide / split / trim, per-clip transform + crop + fades + volume/pan/EQ fields, fps conversion. **Pure** — no probing, no I/O; callers pass frame counts. |
 | L2 | `apelles-grade-model` | **yes, real** (D-143) | the `grade.json` document (D-025) — save/load, the schema-migration gate, matte/track/depth-ref externalization. **Pure**, and deliberately untyped past the envelope (the canonical shape is the frontend store's). |
 | L2 | `apelles-project` | **yes, real** (D-148) | the `.chroma` project (D-037) + settings (D-038): `ProjectManifest`/`MediaItem` (+ the legacy read-only `ProjectShot`, D-070), atomic save, every schema migration, the media pool + bins, timeline lifecycle. Depends on `apelles-media` (probe/thumbnail) — an edge the lock doc's table had been missing. |
-| L2 | `apelles-motion` | **yes, real** (D-046) | manifest → Remotion render bridge: shells out to `npx remotion render` inside `packages/motion-engine/`. The one deliberate "the fat core is not Rust" exception in the whole architecture. |
+| L2 | `apelles-motion` | **yes, real** (D-046) | manifest → Remotion render bridge: runs the engine's own renderer (`node scripts/render.mts`, `@remotion/renderer` over a prebuilt bundle, D-417) with the Node / Chrome Headless Shell `apelles-motion-runtime` located. The one deliberate "the fat core is not Rust" exception in the whole architecture. |
+| L1 | `apelles-motion-runtime` | **yes, real** (D-417) | Motion's render runtime: pinned Node.js / Chrome Headless Shell / compositor downloads (resumable, SHA-256-checked) installed atomically into app data, and the one resolver every Motion render path asks. |
 | L3 | `apelles-ai` | **yes, real** (D-145) | the `ai/` sidecar client: `sidecar` (spawn/health/backoff/respawn + the D-101 content-hash staleness check), `mask` (SAM2/ViTMatte HTTP + per-frame matte lookup), `depth` (VDA track), `media_understanding` (the `ai-media/` client, D-189) and `understanding_cache` (persisted transcripts + applied re-reads over `apelles-media`'s `media_cache`, D-385). Generalized by D-190 to supervise **N** sidecars, which is how `ai-media/` got supervised without a copy-paste. |
 | L3 | `apelles-agent` | **rescoped out** (D-141) | *not* a future crate on the current plan: `control.rs` has no Tauri-free core and its op registry lives in the frontend. Left in `app/src-tauri` + `packages/*` deliberately. |
 | L4 | `apelles-app` (`app/src-tauri`) | **yes** | the Tauri binary: every `#[tauri::command]` (a real `tauri-macros` constraint keeps them here, D-141), plus whatever isn't extracted yet. |
@@ -286,8 +287,10 @@ preview-over-timeline stack. Built: scene management (add, preview one scene as 
 drag-reorder + real thumbnails (D-177), a **Catalog** that creates layers (D-151 — before
 it the tab could edit everything and create nothing), a typed Inspector, on-canvas
 select/drag/resize/marquee in world coordinates (D-155–D-158), and a bezier ease-curve
-editor (D-164). Rendering goes through the `apelles-motion` crate → `npx remotion render`,
-and the output auto-imports into Sources (D-062).
+editor (D-164). Rendering goes through the `apelles-motion` crate → the engine renderer
+(`scripts/render.mts`, D-417), and the output auto-imports into Sources (D-062). An installed
+app ships the engine as a prebuilt pack and downloads Node.js and Chrome Headless Shell the
+first time the Motion tab opens (`docs/notes/motion-runtime.md`).
 
 **Why Rust wraps Node here, and nowhere else.** The Remotion engine *is* the fat core for
 motion graphics — reimplementing it in Rust would throw away real, working, non-trivial code

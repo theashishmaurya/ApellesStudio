@@ -231,6 +231,9 @@
     "motion_write_component",
     "motion_check_component",
     "motion_certify_component",
-    "motion_delete_component"
+    "motion_delete_component",
+    "motion_runtime_status",
+    "motion_install_runtime",
+    "motion_remove_runtime"
   ]
 }

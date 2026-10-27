@@ -10,8 +10,10 @@
 //! What it does NOT do: validate a component's declaration (the frontend's zod
 //!   schema does, `customComponents.ts`), build the proof manifest (also the
 //!   frontend), or run component code: every render here spawns the Remotion
-//!   renderer process (`remotion render` / `still`), which is where custom code
-//!   runs, never this process or the webview (D-409's security boundary).
+//!   renderer process (`scripts/render.mts`, D-417), which is where custom code
+//!   runs, never this process or the webview (D-409's security boundary). The
+//!   check and every render need the Motion runtime (`motion_runtime::require`);
+//!   the library itself is listed from the engine files without it.
 //!
 //! Every slow command (check: Node + the TypeScript compiler; prove: three
 //! render passes; proxy: one render) runs on a blocking thread.
@@ -25,16 +27,6 @@ use apelles_motion::components::{self as comps, ProofPlan};
 
 use super::state;
 
-/// `packages/motion-engine` — the same compile-time resolution as
-/// `motion.rs` (the engine is a dev-time Node project, D-046 / D-391).
-fn engine_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("packages")
-        .join("motion-engine")
-}
-
 fn app_data(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_data_dir().map_err(|e| e.to_string())
 }
@@ -43,8 +35,10 @@ fn user_root(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(comps::components_dir(&app_data(app)?))
 }
 
+/// The built-ins ship with the engine files (the checkout's, or the engine pack's
+/// in an installed app — D-417).
 fn builtin_root() -> PathBuf {
-    comps::builtin_components_dir(&engine_dir())
+    comps::builtin_components_dir(&super::motion_runtime::engine_dir())
 }
 
 fn current_project_dir() -> Result<PathBuf, String> {
@@ -108,8 +102,9 @@ pub async fn chroma_motion_write_component(
     app: AppHandle,
 ) -> Result<WriteResult, String> {
     let user = user_root(&app)?;
+    let runtime = super::motion_runtime::require()?;
     blocking(move || {
-        let report = comps::check_source(&engine_dir(), &source).map_err(|e| e.to_string())?;
+        let report = comps::check_source(&runtime, &source).map_err(|e| e.to_string())?;
         let draft = if report.ok && !dry_run {
             Some(
                 comps::write_draft(Some(&builtin_root()), &user, &spec, &source, &report)
@@ -144,8 +139,8 @@ pub async fn chroma_motion_prove_component(
         .join("motion")
         .join("cache")
         .join("components");
-    blocking(move || comps::prove(&engine_dir(), &cache, &dir, &plan).map_err(|e| e.to_string()))
-        .await
+    let runtime = super::motion_runtime::require()?;
+    blocking(move || comps::prove(&runtime, &cache, &dir, &plan).map_err(|e| e.to_string())).await
 }
 
 /// D-409 — certify a proven draft in the user library (built-ins ship
@@ -196,6 +191,7 @@ pub async fn chroma_motion_component_proxy(
     app: AppHandle,
 ) -> Result<comps::ProxyOutcome, String> {
     let project = current_project_dir()?;
+    let runtime = super::motion_runtime::require()?;
     let out_root = project.join("motion").join("cache").join("proxy");
     std::fs::create_dir_all(&out_root)
         .map_err(|e| format!("create {}: {e}", out_root.display()))?;
@@ -204,7 +200,7 @@ pub async fn chroma_motion_component_proxy(
         .map_err(|e| format!("allow {}: {e}", out_root.display()))?;
     let assets = apelles_motion::assets::assets_dir(&project);
     let req = comps::ProxyRequest {
-        engine_dir: engine_dir(),
+        runtime,
         bundle_cache: project.join("motion").join("cache").join("preview"),
         out_root,
         manifest,

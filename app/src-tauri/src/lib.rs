@@ -2088,6 +2088,11 @@ pub fn run() {
                 // Takes an `AppHandle` (unlike the three below) because it emits a
                 // live `ai-env-status` event the UI subscribes to.
                 chroma::ai_env::spawn_and_supervise(app.handle().clone());
+                // Apelles (D-417): where Motion's engine files and downloaded render
+                // runtime live (dev checkout or the installed app). Only resolves
+                // paths and logs the cheap integrity check; nothing downloads at
+                // launch — the Motion tab asks the first time it opens.
+                chroma::motion_runtime::configure(app.handle());
                 // Apelles: start + supervise the `ai/` sidecar (D-028). Killed on exit
                 // via `chroma::sidecar::shutdown()` in the `.run(...)` handler below.
                 // apelles-ai extraction (D-142): `spawn_and_supervise` never used its
@@ -2446,6 +2451,9 @@ pub fn run() {
             chroma::motion_components::chroma_motion_install_component,
             chroma::motion_components::chroma_motion_component_proxy,
             chroma::motion_components::chroma_motion_components_dirs,
+            chroma::motion_runtime::chroma_motion_runtime_status,
+            chroma::motion_runtime::chroma_motion_runtime_install,
+            chroma::motion_runtime::chroma_motion_runtime_remove,
             chroma::sidecar::chroma_ai_status,
             chroma::sidecar::chroma_ai_media_status,
             chroma::sidecar::chroma_mcp_status,

@@ -42,7 +42,17 @@ import { useOsPlatform } from '../../hooks/useOsPlatform';
 import { open } from '@tauri-apps/plugin-shell';
 import { ArrowCounterClockwiseIcon } from '@phosphor-icons/react';
 import { useUIStore } from '../../store/useUIStore';
-import { aiEnvHeadline, aiEnvIsWorking, aiEnvProgressLabel, useAiEnv } from '@apelles/bridge';
+import {
+  aiEnvHeadline,
+  aiEnvIsWorking,
+  aiEnvProgressLabel,
+  formatMegabytes,
+  motionRuntimeHeadline,
+  motionRuntimeProgress,
+  useAiEnv,
+  useMotionRuntime,
+} from '@apelles/bridge';
+import { MOTION_TAB_ENABLED } from '../../buildFeatures';
 
 /** Mirrors `chroma::sidecar::SidecarStatus` (D-101, `camelCase` on the wire —
  *  see that struct's own doc comment for why). One per supervised sidecar. */
@@ -310,6 +320,110 @@ function AiEnvStatusCard() {
             {status.venv && (
               <Text variant={TextVariants.small} className="mt-2 opacity-40 break-all">
                 <code>{status.venv}</code>
+              </Text>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * D-417 — Motion's render runtime: Node.js, Chrome Headless Shell and the
+ * Remotion compositor, downloaded the first time the Motion tab opens. The
+ * Motion tab shows the download as it happens; this card is where a person
+ * sees what is installed and removes it ("Remove Motion runtime"), beside the
+ * AI environment, the other on-demand install. Same visual shell and colour
+ * precedent as `AiEnvStatusCard`. Reads `@apelles/bridge`'s `useMotionRuntime`,
+ * the store the Motion tab's controls read too.
+ */
+function MotionRuntimeCard() {
+  const { status, loaded, busy, actionError, install, remove } = useMotionRuntime();
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const pct = motionRuntimeProgress(status);
+  const headline = motionRuntimeHeadline(status) ?? 'Motion runtime ready';
+  const working = status.state === 'installing' || status.state === 'removing';
+
+  return (
+    <div className="p-6 bg-surface rounded-xl shadow-md">
+      <Text variant={TextVariants.title} color={TextColors.accent} className="mb-2">
+        Motion Runtime
+      </Text>
+      <Text variant={TextVariants.small} className="mb-6 opacity-60">
+        What Motion renders with: Node.js, Chrome Headless Shell and the Remotion compositor
+        (a one-time {formatMegabytes(status.downloadBytes)} download, fetched the first time the
+        Motion tab opens and checked against pinned checksums). Editing works without it.
+      </Text>
+      {!loaded ? (
+        <Text variant={TextVariants.small} className="opacity-70">
+          Checking…
+        </Text>
+      ) : (
+        <div className="flex items-start gap-3">
+          {working || status.state === 'unconfigured' ? (
+            <CircleNotchIcon size={18} className="mt-0.5 shrink-0 animate-spin text-amber-400" />
+          ) : status.state === 'ready' ? (
+            <CheckCircleIcon size={18} className="mt-0.5 shrink-0 text-green-400" />
+          ) : status.state === 'failed' ? (
+            <WarningIcon size={18} className="mt-0.5 shrink-0 text-red-400" />
+          ) : (
+            <WarningIcon size={18} className="mt-0.5 shrink-0 text-amber-400" />
+          )}
+          <div className="min-w-0 flex-1">
+            <Text>{headline}</Text>
+            <Text variant={TextVariants.small} className="mt-1 opacity-80">
+              {status.detail}
+            </Text>
+            {pct !== null && (
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-card-active">
+                <div
+                  className="h-full rounded-full bg-accent transition-[width] duration-300"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            )}
+            {status.state === 'ready' && status.installedBytes > 0 && (
+              <Text variant={TextVariants.small} className="mt-1 opacity-60">
+                Node.js {status.versions.node} · Chrome Headless Shell {status.versions.chrome} ·
+                Remotion {status.versions.remotion} · {formatMegabytes(status.installedBytes)} on disk
+              </Text>
+            )}
+            {actionError && (
+              <Text variant={TextVariants.small} color={TextColors.error} className="mt-1">
+                {actionError}
+              </Text>
+            )}
+            <div className="mt-3 flex gap-2">
+              {status.canInstall && !working && (
+                <Button variant="secondary" size="sm" disabled={busy} onClick={() => void install()}>
+                  {status.state === 'failed' ? 'Retry download' : 'Download'}
+                </Button>
+              )}
+              {status.canRemove && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => {
+                    if (!confirmRemove) {
+                      setConfirmRemove(true);
+                      return;
+                    }
+                    setConfirmRemove(false);
+                    void remove();
+                  }}
+                  onBlur={() => setConfirmRemove(false)}
+                >
+                  {confirmRemove
+                    ? `Remove ${formatMegabytes(status.installedBytes)}? Click again`
+                    : 'Remove Motion runtime'}
+                </Button>
+              )}
+            </div>
+            {status.runtimeDir && (
+              <Text variant={TextVariants.small} className="mt-2 opacity-40 break-all">
+                <code>{status.runtimeDir}</code>
               </Text>
             )}
           </div>
@@ -2367,6 +2481,10 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                       sits after them because it is the thing that explains a
                       sidecar being down on a fresh install. */}
                   <AiEnvStatusCard />
+
+                  {/* D-417 — Motion's on-demand render runtime, the other thing
+                      this app downloads after install. */}
+                  {MOTION_TAB_ENABLED && <MotionRuntimeCard />}
 
                   <div className="p-6 bg-surface rounded-xl shadow-md">
                     <Text variant={TextVariants.title} color={TextColors.accent} className="mb-8">

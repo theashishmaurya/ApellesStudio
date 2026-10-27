@@ -48,8 +48,9 @@ pub const INSTRUCTIONS: &str = concat!(
     r#"The Motion tab (`motion_*`-prefixed tools, D-257) is the third surface: a scene-based motion-graphics builder — scenes, layers built from a primitive catalog, per-layer keyframes with real bezier easing, 2D/3D cameras, and a Remotion render to one video file PER SCENE. Its single source of truth is the scene manifest, the way `grade.json` is for grading. Call `motion_get_state` first (what is open, what is selected, one row per scene) and `motion_list_primitives` once before your first `motion_add_layer` — that one is static reference data listing every primitive and the fields each accepts. Note that times in Motion are SECONDS within a scene, not absolute frames."#
 );
 
-/// Built without Motion (the beta bundle, D-391): the Motion paragraph is dropped so a
-/// client is not told to call tools this build does not have.
+/// Built without Motion (`--no-default-features`, as the v0.2.0 beta was, D-391): the
+/// Motion paragraph is dropped so a client is not told to call tools this build does
+/// not have.
 #[cfg(not(feature = "motion"))]
 pub const INSTRUCTIONS: &str = base_instructions!();
 

@@ -1,0 +1,29 @@
+[package]
+name = "apelles-motion-runtime"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Apelles L1 — Motion's render runtime (D-417): the pinned Node.js / Chrome Headless Shell / Remotion compositor downloads, resumable and checksum-verified, installed atomically into app data, and the one resolver every Motion render path asks for its Node, browser and engine files."
+
+# Every dependency below was already in Cargo.lock (D-417 adds no crate to the graph).
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = "0.4"
+# The downloads. Blocking: the install runs on its own thread. rustls only, the
+# configuration apelles-ai / apelles-audio-library use.
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
+# SHA-256 of every download (the pins are SHA-256).
+sha2 = "0.11"
+# Unpacking: Node and the compositor are .tar.gz, Chrome Headless Shell is a .zip.
+flate2 = "1"
+tar = "0.4"
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+# statvfs, for the disk-space check before a download.
+rustix = { version = "1", default-features = false, features = ["fs", "std"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

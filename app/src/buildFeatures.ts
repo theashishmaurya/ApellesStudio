@@ -11,7 +11,8 @@
  */
 
 /**
- * The Motion tab. Off in the release bundle until Motion's export toolchain (Node.js +
- * headless Chrome) is downloaded on demand; on everywhere else, including dev.
+ * The Motion tab. On unless the build sets `VITE_APELLES_MOTION=off`. The v0.2.0 beta did
+ * (D-391); since D-417 the release ships Motion, its render toolchain downloaded on
+ * demand, and nothing sets it. Kept as the one switch that would hold Motion back again.
  */
 export const MOTION_TAB_ENABLED = import.meta.env.VITE_APELLES_MOTION !== 'off';

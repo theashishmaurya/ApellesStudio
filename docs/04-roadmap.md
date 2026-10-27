@@ -13,7 +13,7 @@ numbers are actually calibrated).
 
 Owner: *"Lets do it bigger one with Motion, we will take some time to get the motion right, That is the MOAT actually."* No v0.3.0 Edit-only release; everything merged since v0.2.0 ships together in v0.4.0, which is the first beta with the Motion tab. Get Motion right before tagging; no date. Must have:
 
-- [ ] **Motion ships in the bundle:** lift D-391's hide flag, with Motion's render runtime (Node.js + Chrome Headless Shell + the engine) downloaded on demand in the background the first time the Motion tab opens (owner decision recorded with D-391; editing works at once, Export waits). The D-409 component checker needs Node 22.18+.
+- [x] **Motion ships in the bundle:** lift D-391's hide flag, with Motion's render runtime (Node.js + Chrome Headless Shell + the engine) downloaded on demand in the background the first time the Motion tab opens (owner decision recorded with D-391; editing works at once, Export waits). The D-409 component checker needs Node 22.18+. **Built: D-417** (the engine ships as a prebuilt pack, +33 MB to the DMG — measured 146 MB vs 113 MB; shipping it as one archive would make it ~15 MB, an owner call; Node, Chrome Headless Shell and the compositor download, 152 MB; `docs/notes/motion-runtime.md`). Still to do on the installed app: the release checklist's Motion runtime step.
 - [ ] **Remotion licence settled** for the founder-studio business: Remotion is free for individuals and companies of up to 3 people; a larger for-profit company needs a Remotion company licence. Confirm with the owner before tagging.
 - [ ] **Unsaved Motion edits survive a reload** (0g).
 - [x] Authoring as data, templates, custom components, rough.js/d3 (D-403..D-407, D-409, D-412); export matches the player (B-281/B-282).
@@ -3323,11 +3323,11 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   The Python env is built on the user's machine (D-315). Still open: Developer ID +
   notarization, and models are still lazy-fetched on first use (into app data since
   D-390).
-  **Motion is held back from the beta (D-391):** its export needs Node.js + Chrome
-  Headless Shell + the engine's `node_modules`. Next: download them in the background
-  when the Motion tab is first opened (pinned hashes, into app data, status with
-  retry/resume, an MCP readiness tool, Export enabled when ready; measure the engine's
-  `node_modules` first), then drop D-391's two switches from `tauri:before-build`.
+  ~~**Motion is held back from the beta (D-391)**~~ — done by **D-417**: Node.js,
+  Chrome Headless Shell and the Remotion compositor download in the background the
+  first time the Motion tab opens (pinned SHA-256, into app data, resumable, status
+  with retry, `motion_runtime_status` / `motion_install_runtime`, Export enabled when
+  ready); the engine ships as a prebuilt pack; D-391's two switches are gone.
 - `docs/` cleaned for external readers, a real README, a 90-second demo.
 - **The three open product decisions** — name (D-010), licence (D-002, leaning AGPL),
   v1 headline feature (D-007). All shift under the 3-tab framing; not re-decided since.

@@ -5,12 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Apelles L2 — the manifest -> Remotion render bridge (D-046): thin process-orchestration around `npx remotion render` in packages/motion-engine. No GPU, no media I/O, no reimplemented render pipeline."
+description = "Apelles L2 — the manifest -> Remotion render bridge (D-046): thin process-orchestration around the engine renderer (`node scripts/render.mts`, D-417) in packages/motion-engine. No GPU, no media I/O, no reimplemented render pipeline."
 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 apelles-types = { path = "../apelles-types" }
+# D-417 - the located Node / browser / engine files every render command is built from.
+apelles-motion-runtime = { path = "../apelles-motion-runtime" }
 # D-398 - the render job's manifest snapshot hash. Already in the tree (apelles-media).
 blake3 = "1.8.7"
 # D-403 - tiling preview stills into one contact sheet. Already in the tree (apelles-media, app).

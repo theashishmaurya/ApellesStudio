@@ -10,10 +10,40 @@
 
 use std::path::{Path, PathBuf};
 
+use apelles_motion::MotionRuntime;
 use apelles_motion::still::{PreviewRequest, render_preview};
 
 fn engine_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/motion-engine")
+}
+
+/// The runtime these renders use: the developer's Node and Remotion's own
+/// browser, or — with `APELLES_MOTION_RUNTIME_DIR=<an installed runtime folder>`
+/// — the downloaded runtime (its Node, Chrome Headless Shell and compositor).
+/// `APELLES_MOTION_PACK_DIR=<an engine pack from scripts/build-pack.mts>` renders
+/// from the pack's prebuilt bundle and files instead of the checkout; with both
+/// set, these tests run exactly what an installed app runs (D-417).
+fn runtime() -> MotionRuntime {
+    use apelles_motion_runtime::Layout;
+    let layout = match std::env::var_os("APELLES_MOTION_PACK_DIR") {
+        Some(pack) => Layout::Packaged {
+            pack_dir: PathBuf::from(pack),
+            runtime_root: PathBuf::new(),
+        },
+        None => Layout::Dev {
+            engine_dir: engine_dir(),
+            runtime_root: PathBuf::new(),
+        },
+    };
+    match std::env::var_os("APELLES_MOTION_RUNTIME_DIR") {
+        Some(dir) => apelles_motion_runtime::locate::managed(&layout, Path::new(&dir)),
+        None => {
+            let mut rt =
+                MotionRuntime::developer(layout.engine_dir()).expect("a Node 22.18+ on PATH");
+            rt.prebuilt_bundle = layout.prebuilt_bundle();
+            rt
+        }
+    }
 }
 
 fn fixture(name: &str) -> PathBuf {
@@ -51,7 +81,7 @@ fn render_twice(
     let mut grid = (0, 0);
     for run in 0..2 {
         let req = PreviewRequest {
-            engine_dir: engine_dir(),
+            runtime: runtime(),
             cache_dir: cache.clone(),
             out_dir: work.path().join(format!("run{run}")),
             manifest_path: manifest.to_path_buf(),

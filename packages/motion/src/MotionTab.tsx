@@ -111,6 +111,11 @@ import { allowComponentDirs, componentAccess, useMotionComponentLibraryStore } f
 import { ensureComponents, insertCustomLayer } from './customComponentActions';
 import type { CustomComponentsSectionProps } from './CustomComponentsSection';
 import { CustomProxyProvider } from './customProxy';
+import { customProxyStore } from './customProxyStore';
+// D-417 — Motion's render runtime (downloaded on demand): the banner, the
+// "first time the tab opens" download, and the reason a render control waits.
+import { motionRuntimeBlockedReason, useMotionRuntime, useMotionRuntimeAutoInstall } from '@apelles/bridge';
+import { MotionRuntimeBanner } from './MotionRuntimeBanner';
 import { useMotionAssetResolver } from './assetResolver';
 import { pickAndImportImage } from './BrandFieldControls';
 import { useMotionProjectStore } from './motionProjectStore';
@@ -182,6 +187,19 @@ export function MotionTab({
 }) {
   const m = useMotionManifest(onRendered);
   const playerRef = useRef<PlayerRef>(null);
+  // D-417 — editing never waits for the render runtime; Render / Still do, and
+  // say why while it downloads. The download itself starts the first time this
+  // tab opens in a session (`useMotionRuntimeAutoInstall`).
+  const runtime = useMotionRuntime();
+  useMotionRuntimeAutoInstall();
+  const runtimeReady = runtime.status.state === 'ready';
+  const renderBlocked = motionRuntimeBlockedReason(runtime.status, 'Render');
+  const stillBlocked = motionRuntimeBlockedReason(runtime.status, 'Still');
+  useEffect(() => {
+    // A custom layer's live preview that was refused while the runtime was
+    // downloading renders as soon as it is ready.
+    if (runtimeReady) customProxyStore.retryFailed();
+  }, [runtimeReady]);
   // D-157 — the preview's imperative measurement escape hatch (see
   // `MotionPreview.tsx`'s own doc comment), used ONLY by `onSnapToLayer`
   // below: the Inspector has no DOM access of its own to the live player.
@@ -758,8 +776,8 @@ export function MotionTab({
         )}
         <Button
           variant="secondary"
-          disabled={still.busy || !m.manifest || !!m.parseError}
-          title="Render the frame under the playhead to a PNG through the real engine"
+          disabled={still.busy || !m.manifest || !!m.parseError || stillBlocked !== null}
+          title={stillBlocked ?? 'Render the frame under the playhead to a PNG through the real engine'}
           onClick={() => {
             const manifest = m.manifest;
             if (!manifest) return;
@@ -808,15 +826,19 @@ export function MotionTab({
           m.renderStatus.remainingSceneIds.length > 0 && (
             <Button
               variant="secondary"
-              disabled={m.rendering}
-              title={`Render the ${m.renderStatus.remainingSceneIds.length} scene(s) that are left: ${m.renderStatus.remainingSceneIds.join(', ')}`}
+              disabled={m.rendering || renderBlocked !== null}
+              title={renderBlocked ?? `Render the ${m.renderStatus.remainingSceneIds.length} scene(s) that are left: ${m.renderStatus.remainingSceneIds.join(', ')}`}
               onClick={() => void m.render({ resume: true })}
             >
               {m.renderStatus.state === 'interrupted' ? 'Resume render' : 'Retry from failed scene'}
               {` (${m.renderStatus.remainingSceneIds.length} left)`}
             </Button>
           )}
-        <Button disabled={m.rendering || !!m.parseError} onClick={() => void m.render()}>
+        <Button
+          disabled={m.rendering || !!m.parseError || renderBlocked !== null}
+          title={renderBlocked ?? undefined}
+          onClick={() => void m.render()}
+        >
           {m.rendering
             ? m.renderStatus.scenesTotal
               ? `Rendering ${Math.min(m.renderStatus.scenesDone + 1, m.renderStatus.scenesTotal)}/${m.renderStatus.scenesTotal}…`
@@ -824,6 +846,12 @@ export function MotionTab({
             : 'Render'}
         </Button>
       </div>
+      <MotionRuntimeBanner
+        status={runtime.status}
+        busy={runtime.busy}
+        actionError={runtime.actionError}
+        onInstall={() => void runtime.install()}
+      />
       <div className="flex-1 min-h-0">
       <PanelGroup>
         <ResizablePanel defaultSize={800} minSize={300}>
@@ -898,7 +926,8 @@ export function MotionTab({
                       onSelect={onSelect}
                       onCommit={m.commit}
                       editLinks={editLinks}
-                      onRenderScene={(sceneId) => void m.render({ sceneIds: [sceneId] })}
+                      // D-417 — no per-scene render until the runtime is ready.
+                      onRenderScene={renderBlocked === null ? (sceneId) => void m.render({ sceneIds: [sceneId] }) : undefined}
                       renderingSceneId={m.rendering ? (m.renderStatus.sceneId ?? '*') : null}
                       onSaveSceneAsTemplate={(sceneIndex) => {
                         setSaveTemplateScene(sceneIndex);

@@ -492,8 +492,9 @@ export function Root() {
           // show the shared media pool instead — see `ShellTab.libraryPanel`.
           libraryPanel: libraryMode === 'sources' ? undefined : <EditLibraryPanel />,
         },
-        // D-391 — absent from the beta bundle: its export needs a Node/Chrome
-        // toolchain the bundle does not carry yet. See `buildFeatures.ts`.
+        // D-391 — a build can leave Motion out (`buildFeatures.ts`); the v0.2.0
+        // beta did. Since D-417 the release ships it, with its render runtime
+        // downloaded on demand.
         ...(MOTION_TAB_ENABLED
           ? [
               {

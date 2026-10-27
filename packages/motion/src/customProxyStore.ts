@@ -32,6 +32,10 @@
  *    (it is the cache) and a `rendering` one lands when it finishes.
  * The timer belongs to the KEY, not to a viewer, so a viewer leaving while
  * another still shows the key never strands it.
+ *  - `retryFailed` (D-417) sends every shown key in `error` back to `waiting`:
+ *    the Motion tab calls it when the render runtime becomes ready, so a layer
+ *    whose preview failed only because the runtime was still downloading
+ *    renders without being re-selected.
  *
  * What it does NOT do: build manifests, render anything itself, or touch the
  * DOM. `snapshot` is a read for the debug-only `debug_get_ui_state`.
@@ -81,6 +85,9 @@ export interface CustomProxyStore {
    *  scope or a missing file): turn it into an error rather than a broken
    *  image. */
   frameFailed(key: string, file: string): void;
+  /** Send every shown key in `error` back to `waiting` (D-417: the render
+   *  runtime just became ready). */
+  retryFailed(): void;
   snapshot(): ProxyDebugEntry[];
 }
 
@@ -147,6 +154,19 @@ export function createCustomProxyStore(deps: CustomProxyStoreDeps): CustomProxyS
     }
   }
 
+  /** `key` → `waiting`, rendered after the debounce. Does not notify. */
+  function schedule(key: string) {
+    states.set(key, WAITING);
+    timers.set(
+      key,
+      setTimeout(() => {
+        timers.delete(key);
+        queue.push(key);
+        void drain();
+      }, deps.debounceMs),
+    );
+  }
+
   function subscribe(key: string, onChange: () => void): () => void {
     let own = viewers.get(key);
     if (!own) {
@@ -154,17 +174,7 @@ export function createCustomProxyStore(deps: CustomProxyStoreDeps): CustomProxyS
       viewers.set(key, own);
     }
     own.add(onChange);
-    if (!states.has(key)) {
-      states.set(key, WAITING);
-      timers.set(
-        key,
-        setTimeout(() => {
-          timers.delete(key);
-          queue.push(key);
-          void drain();
-        }, deps.debounceMs),
-      );
-    }
+    if (!states.has(key)) schedule(key);
     return () => {
       own.delete(onChange);
       if (own.size > 0 || viewers.get(key) !== own) return;
@@ -186,6 +196,13 @@ export function createCustomProxyStore(deps: CustomProxyStoreDeps): CustomProxyS
   return {
     subscribe,
     get: (key) => states.get(key) ?? WAITING,
+    retryFailed() {
+      for (const [key, state] of [...states]) {
+        if (state.status !== 'error' || viewerCount(key) === 0) continue;
+        schedule(key);
+        set(key, WAITING);
+      }
+    },
     frameFailed(key, file) {
       if (states.get(key)?.status !== 'ready') return;
       fail(key, `could not load preview frame ${file}`);
