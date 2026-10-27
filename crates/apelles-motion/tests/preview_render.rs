@@ -153,3 +153,52 @@ fn the_agent_built_brand_scene_renders_identically_twice() {
     assert_eq!(a, b);
     assert_eq!(grid, (3, 1));
 }
+
+/// D-407 — every built-in template, instantiated with its defaults by
+/// `packages/motion/src/templateOps.e2e.test.ts` (pinned as
+/// `builtin-templates.json`: a 0.5 s lead-in, then one scene per template),
+/// renders identically twice. Frame = scene start + 3 s, after the entrances.
+#[test]
+#[ignore = "needs Node + the engine's node_modules + headless Chrome"]
+fn each_builtin_template_renders_identically_twice() {
+    let manifest = fixture("builtin-templates.json");
+    // Scene starts at 30 fps: lead-in 15 frames, then 4, 5, 4, 6, 5, 4 s.
+    let templates: [(&str, u32); 6] = [
+        ("logo-reveal", 15),
+        ("feature-callout", 135),
+        ("stat-counter", 285),
+        ("testimonial", 405),
+        ("pricing-card", 585),
+        ("cta-end-card", 735),
+    ];
+    for (name, start) in templates {
+        let frame = start + 90;
+        let (a, b, _) = render_twice(&manifest, &[frame], None);
+        println!("{name} (frame {frame}): {a}");
+        assert_eq!(a, b, "{name}: same frame twice must be identical");
+    }
+}
+
+/// D-407 — the end-to-end proof's second half: the stat counter an agent
+/// filled through `motion_instantiate_template` (custom number, label, icon,
+/// colour and the imported logo) renders for real, twice. Scene
+/// "stat-counter" starts at frame 30; 0.5 s / 1.2 s / 3.5 s into it.
+#[test]
+#[ignore = "needs Node + the engine's node_modules + headless Chrome"]
+fn the_agent_filled_stat_counter_renders_identically_twice() {
+    let (_dir, assets, logo_id) = asset_folder();
+    let text =
+        std::fs::read_to_string(fixture("template-stat-counter.json")).expect("read fixture");
+    assert!(
+        text.contains(&logo_id),
+        "the op layer's asset id must be the Rust importer's id for the same file"
+    );
+    let (a, b, grid) = render_twice(
+        &fixture("template-stat-counter.json"),
+        &[45, 66, 135],
+        Some(assets),
+    );
+    println!("template-stat-counter.json contact sheet: {a}");
+    assert_eq!(a, b);
+    assert_eq!(grid, (3, 1));
+}

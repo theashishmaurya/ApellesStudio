@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "stat-counter",
+  "name": "Stat counter",
+  "version": 1,
+  "description": "A big number counts up, an underline draws on and a label fades in under it. Optional icon above and logo in the corner.",
+  "tags": ["data", "social-proof"],
+  "kind": "scene",
+  "authoredAt": { "width": 1920, "height": 1080, "fps": 30 },
+  "slots": [
+    { "id": "value", "type": "number", "label": "Number", "required": true, "default": 12500 },
+    { "id": "prefix", "type": "text", "label": "Before the number", "default": "", "constraints": { "maxLen": 4 } },
+    { "id": "suffix", "type": "text", "label": "After the number", "default": "+", "constraints": { "maxLen": 6 } },
+    { "id": "decimals", "type": "number", "label": "Decimals", "default": 0, "constraints": { "integer": true, "min": 0, "max": 3 } },
+    { "id": "label", "type": "text", "label": "Label", "required": true, "default": "teams shipping with us", "constraints": { "maxLen": 60 } },
+    { "id": "icon", "type": "icon", "label": "Icon", "default": "users-three", "description": "Optional; clear it for none." },
+    { "id": "logo", "type": "image", "label": "Corner logo", "description": "Optional." },
+    { "id": "accent", "type": "color", "label": "Accent colour", "description": "Optional; the theme's text colour when unset." }
+  ],
+  "body": {
+    "dur": 4,
+    "layers": [
+      { "$when": "logo", "use": "image", "id": "logo", "src": { "$slot": "logo" }, "x": 80, "y": 64, "w": 200, "h": 80, "fit": "contain", "enter": "fade", "at": 0 },
+      { "$when": "icon", "use": "icon", "id": "icon", "name": { "$slot": "icon" }, "x": 912, "y": 220, "size": 96, "color": { "$slot": "accent" }, "enter": "pop", "at": 0.1 },
+      { "use": "counter", "id": "number", "from": 0, "to": { "$slot": "value" }, "decimals": { "$slot": "decimals" }, "thousands": true, "prefix": { "$slot": "prefix" }, "suffix": { "$slot": "suffix" }, "x": 960, "y": 340, "align": "center", "size": 220, "weight": 700, "color": { "$slot": "accent" }, "at": 0.3, "dur": 1.6, "ease": [0.16, 1, 0.3, 1] },
+      { "use": "shape", "id": "underline", "shape": "line", "x": 760, "y": 640, "w": 400, "h": 0, "stroke": { "$slot": "accent" }, "strokeWidth": 6, "enter": "draw", "enterDur": 0.6, "at": 1.6 },
+      { "use": "text", "id": "label", "text": { "$slot": "label" }, "x": 960, "y": 680, "align": "center", "size": 48, "maxWidth": 1400, "preset": "fade-up", "at": 1.8 }
+    ]
+  }
+}

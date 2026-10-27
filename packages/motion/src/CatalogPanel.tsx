@@ -7,6 +7,10 @@
  * glyph, and an Add button that inserts a schema-valid instance of it into
  * the currently-selected scene.
  *
+ * D-407: a Templates section sits above everything else
+ * (`TemplatesSection.tsx`): the built-in and saved templates, each filled
+ * through a form generated from its slots.
+ *
  * What it does NOT do: it does not construct the manifest fragment
  * (`catalog.ts`'s `defaultLayerFor`) and it does not perform the insert
  * (`manifestEdit.ts`'s `addLayer`). This file is presentation plus one
@@ -55,6 +59,7 @@ import type { MotionLayerPreset } from './layerPresets';
 import { presetsForDisplay } from './layerPresets';
 import { InsertJsonBox, type InsertJsonMode } from './InsertJsonBox';
 import type { MotionRefusal } from './authoring';
+import { TemplatesSection, type TemplatesSectionProps } from './TemplatesSection';
 
 /**
  * `sceneLabel` names the insert target in the panel header, so "Add" is
@@ -72,6 +77,7 @@ export function CatalogPanel({
   onDeletePreset,
   onInsertJson,
   catalogError = null,
+  templates,
 }: {
   targetSceneId: string | null;
   onAdd: (use: PrimitiveUse) => void;
@@ -90,6 +96,9 @@ export function CatalogPanel({
   onInsertJson?: (mode: InsertJsonMode, value: unknown) => Promise<MotionRefusal | null>;
   /** D-404 — why the last insert failed (an image import), shown in the panel. */
   catalogError?: string | null;
+  /** D-407 — the Templates section (built-ins + the user library, the fill
+   *  form and the save form). Omitted = no section. */
+  templates?: TemplatesSectionProps;
 }) {
   const saved = presetsForDisplay(presets);
 
@@ -121,6 +130,10 @@ export function CatalogPanel({
             Components: {presetError}
           </p>
         )}
+
+        {/* D-407 — templates first: a filled template is a finished scene, the
+           biggest step a person can take from this panel. */}
+        {templates && <TemplatesSection {...templates} />}
 
         {saved.length > 0 && (
           <>
@@ -171,10 +184,12 @@ export function CatalogPanel({
                 </button>
               </div>
             ))}
-            <p className="text-[10px] uppercase tracking-wide text-text-secondary/60 px-0.5 mt-1">
-              Primitives
-            </p>
           </>
+        )}
+        {(saved.length > 0 || templates) && (
+          <p className="text-[10px] uppercase tracking-wide text-text-secondary/60 px-0.5 mt-1">
+            Primitives
+          </p>
         )}
 
         {catalogEntries.map((entry) => (

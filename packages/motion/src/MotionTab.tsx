@@ -71,13 +71,13 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { PlayerRef } from '@remotion/player';
-import { sceneStartFrame } from '@apelles/motion-engine/src/engine/build';
+import { sceneDurationFrames, sceneStartFrame } from '@apelles/motion-engine/src/engine/build';
 import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
 
 import { Button } from './Button';
 import { MotionPreview, type MotionCanvasMeasureApi } from './MotionPreview';
 import { KeyframeTimeline } from './KeyframeTimeline';
-import { LayerList, sameSelectionArray, type Selection } from './LayerList';
+import { LayerList, layerLabel, sameSelectionArray, type Selection } from './LayerList';
 import { InspectorPanel } from './InspectorPanel';
 import { CatalogPanel } from './CatalogPanel';
 import { iconNamesFor, planInsertLayers, planSetScene, type MotionRefusal } from './authoring';
@@ -90,6 +90,7 @@ import {
   resolveSelections,
   sceneIndexAtFrame,
   layerVisibleFrameRange,
+  setProjectThemeDef,
 } from './manifestEdit';
 import { presetFromLayer, removePreset, upsertPreset } from './layerPresets';
 import { useMotionLayerPresetStore } from './layerPresetIO';
@@ -97,7 +98,13 @@ import { useMotionThemeLibraryStore } from './themeLibraryIO';
 import type { PrimitiveUse } from './catalog';
 import { useMotionManifest, type SceneRenderResult } from './useMotionManifest';
 import { useMotionControl } from './useMotionControl';
-import { previewFrames } from './manifestIO';
+import { allowPreviewsDir, previewFrames } from './manifestIO';
+import { convertFileSrc } from '@tauri-apps/api/core';
+import { formatIssues } from '@apelles/motion-engine/src/engine/validate';
+import { useMotionTemplateLibraryStore } from './templateLibraryIO';
+import { listTemplates, templateTags, versionForSave } from './templateLibrary';
+import { exposableFields, planInstantiate, templateFromSource, type TemplatePlan, type TemplateSpec } from './templates';
+import type { TemplatesSectionProps } from './TemplatesSection';
 import { useMotionAssetResolver } from './assetResolver';
 import { pickAndImportImage } from './BrandFieldControls';
 import { useMotionProjectStore } from './motionProjectStore';
@@ -115,6 +122,18 @@ type SidebarTab = 'layers' | 'catalog';
  *  <label>," not worth plumbing a field name through `InspectorPanel`'s
  *  whole `FieldGroup`/`CameraKeyList`/`MultiLayerInspector` call chain for
  *  this pass. */
+/** D-407 — a short stable key for a set of slot values (FNV-1a over their
+ *  JSON), so each distinct preview gets its own still file and the webview
+ *  never shows a cached picture of the previous values. */
+function previewKey(values: Record<string, unknown>): string {
+  let h = 0x811c9dc5;
+  for (const ch of JSON.stringify(values)) {
+    h ^= ch.charCodeAt(0);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(36);
+}
+
 function labelForSelections(selections: Selection[]): string {
   // D-345 — an Inspector edit with nothing selected is a PROJECT edit now
   // (`ProjectInspector`), not an unidentifiable "Edit".
@@ -190,6 +209,13 @@ export function MotionTab({
   const presets = useMotionLayerPresetStore((s) => s.presets);
   const presetError = useMotionLayerPresetStore((s) => s.error);
   const presetsLoaded = useMotionLayerPresetStore((s) => s.loaded);
+  // D-407 — the template library (user-level, loaded once), and which scene's
+  // Save-as-template form is open (`null` = none).
+  const templateLibrary = useMotionTemplateLibraryStore((s) => s.templates);
+  const templateLoadErrors = useMotionTemplateLibraryStore((s) => s.loadErrors);
+  const templateError = useMotionTemplateLibraryStore((s) => s.error);
+  const templatesLoaded = useMotionTemplateLibraryStore((s) => s.loaded);
+  const [saveTemplateScene, setSaveTemplateScene] = useState<number | null>(null);
   // D-156, Phase 0b — a Phase 1 drag's in-flight preview override; `null`
   // outside a drag. See `MotionPreview.tsx`'s own doc comment for why this
   // is kept separate from `m.manifest` rather than written into it directly.
@@ -271,6 +297,10 @@ export function MotionTab({
   useEffect(() => {
     if (!themesLoaded) void useMotionThemeLibraryStore.getState().reload();
   }, [themesLoaded]);
+  // D-407 - the template library, the same way.
+  useEffect(() => {
+    if (!templatesLoaded) void useMotionTemplateLibraryStore.getState().reload();
+  }, [templatesLoaded]);
 
   // B-058 — this screen is now driven by the app's own "a project is open"
   // signal (`motionProjectStore.openProjectPath`) and nothing else, so it can no
@@ -486,6 +516,70 @@ export function MotionTab({
     if (!plan.ok) return plan;
     m.commit(plan.manifest, 'Replace scene');
     return null;
+  };
+
+  /** D-407 — plan a template instance against the live document: a scene
+   *  template after the target scene, a group template into it — the same
+   *  `planInstantiate` `motion_instantiate_template` runs. */
+  const planTemplate = async (id: string, values: Record<string, unknown>): Promise<TemplatePlan> => {
+    const found = listTemplates(templateLibrary).find((e) => e.template.id === id);
+    if (!m.manifest || targetSceneIndex === null || !found) {
+      return { ok: false, error: found ? 'no scene to insert next to' : `no template "${id}"`, issues: [] };
+    }
+    const t = found.template;
+    const target = t.kind === 'scene' ? { afterSceneIndex: targetSceneIndex } : { intoSceneIndex: targetSceneIndex };
+    return planInstantiate(m.manifest, t, values, target, { iconNames: await iconNamesFor(t.body) });
+  };
+
+  const templatesProps: TemplatesSectionProps = {
+    templates: listTemplates(templateLibrary),
+    tags: templateTags(templateLibrary),
+    loadErrors: templateLoadErrors,
+    libraryError: templateError,
+    targetSceneId,
+    onInsert: async (id, values, applyTheme) => {
+      const plan = await planTemplate(id, values);
+      if (!plan.ok) return plan;
+      const t = listTemplates(templateLibrary).find((e) => e.template.id === id)?.template;
+      const next = applyTheme && t?.themeDef ? setProjectThemeDef(plan.manifest, t.themeDef) : plan.manifest;
+      m.commit(next, `Insert template: ${t?.name ?? id}`);
+      onSelect({ sceneIndex: plan.sceneIndex, target: { kind: 'scene' } });
+      return null;
+    },
+    onPreview: async (id, values) => {
+      const plan = await planTemplate(id, values);
+      if (!plan.ok) return { error: plan.error };
+      try {
+        const doc = plan.manifest;
+        // 80% into the scene: past the entrances, before the end.
+        const frame = sceneStartFrame(doc, plan.sceneIndex) + Math.floor(sceneDurationFrames(doc, plan.sceneIndex) * 0.8);
+        await allowPreviewsDir();
+        const r = await previewFrames({ manifest: doc, frames: [frame], scale: 0.5, label: `template-${id}-${previewKey(values)}` });
+        return { src: convertFileSrc(r.path) };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    onDelete: (id) => void useMotionTemplateLibraryStore.getState().remove(id),
+    saveRequest:
+      saveTemplateScene !== null && m.manifest?.scenes[saveTemplateScene]
+        ? {
+            sceneIndex: saveTemplateScene,
+            sceneId: m.manifest.scenes[saveTemplateScene].id,
+            fields: exposableFields(m.manifest.scenes[saveTemplateScene].layers ?? [], ['layers'], layerLabel),
+          }
+        : null,
+    onSave: async (spec: TemplateSpec) => {
+      if (!m.manifest || saveTemplateScene === null) return { error: 'no scene to save', issues: [] };
+      const scene = m.manifest.scenes[saveTemplateScene];
+      const made = templateFromSource(m.manifest, { sceneIndex: saveTemplateScene }, spec, await iconNamesFor(scene));
+      if ('issues' in made) return { error: formatIssues(made.issues), issues: made.issues };
+      const versioned = versionForSave(made.template, templateLibrary);
+      if ('error' in versioned) return { error: versioned.error, issues: [] };
+      const ok = await useMotionTemplateLibraryStore.getState().save(versioned.template);
+      return ok ? null : { error: useMotionTemplateLibraryStore.getState().error ?? 'could not save the template', issues: [] };
+    },
+    onCancelSave: () => setSaveTemplateScene(null),
   };
 
   const onDeletePreset = (presetId: string) => {
@@ -760,6 +854,10 @@ export function MotionTab({
                       editLinks={editLinks}
                       onRenderScene={(sceneId) => void m.render({ sceneIds: [sceneId] })}
                       renderingSceneId={m.rendering ? (m.renderStatus.sceneId ?? '*') : null}
+                      onSaveSceneAsTemplate={(sceneIndex) => {
+                        setSaveTemplateScene(sceneIndex);
+                        setSidebarTab('catalog');
+                      }}
                     />
                   )
                 : (
@@ -772,6 +870,7 @@ export function MotionTab({
                     onDeletePreset={onDeletePreset}
                     onInsertJson={onInsertJson}
                     catalogError={catalogError}
+                    templates={templatesProps}
                   />
                 )}
             </div>

@@ -201,6 +201,22 @@ pub fn chroma_motion_assets_dir(app: tauri::AppHandle) -> Result<String, String>
     Ok(dir.to_string_lossy().to_string())
 }
 
+/// D-407 — the open project's preview-still folder (`motion/previews/`, where
+/// `chroma_motion_preview_frame` writes), made readable by the webview so the
+/// template form can SHOW the still it rendered (`convertFileSrc`). Allowed at
+/// runtime for this folder only, exactly as `chroma_motion_assets_dir` does for
+/// the asset folder.
+#[tauri::command]
+pub fn chroma_motion_previews_dir(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+    let dir = current_project_dir()?.join("motion").join("previews");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    app.asset_protocol_scope()
+        .allow_directory(&dir, false)
+        .map_err(|e| format!("allow {}: {e}", dir.display()))?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MotionRenderResult {

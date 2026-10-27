@@ -22,6 +22,10 @@ src/
                          the deliberately UN-themed fps/easing constants
   themeDef.ts          ← a theme as DATA (D-399): `ThemeDef` + zod schema, the manifest's
                          `resolveManifestTheme`, token-file derivation
+  templateDef.ts       ← a scene/group TEMPLATE as data (D-407): `MotionTemplate` + zod
+                         schema, `migrateTemplate`, slot value checks, `fillTemplateBody`
+                         (`{"$slot"}`, `"{x}"` interpolation, `$when`; no expressions).
+                         Scenes and groups carry `template` provenance (`schema.ts`)
   ThemeContext.tsx     ← `ThemeProvider` / `useTheme()` — how a resolved theme
                          reaches every primitive
   themeFonts.ts        ← each theme's webfaces, loaded once per theme per process

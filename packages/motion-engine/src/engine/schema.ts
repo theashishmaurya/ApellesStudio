@@ -182,6 +182,21 @@ export const animSchema = z.record(z.string(), z.array(animKey).min(1));
 export type AnimTracks = z.infer<typeof animSchema>;
 
 /**
+ * D-407 — where an instantiated template came from: its id, the version that
+ * was expanded, and the slot values used. The manifest holds the EXPANDED
+ * layers (copy semantics, D-332): the renderer never reads this, and the
+ * document renders the same whether or not the template still exists. It is
+ * what `motion_refill_template` re-expands from. Declared (rather than left to
+ * pass through) because `sceneSchema` is a plain object and would strip it.
+ */
+export const templateProvenanceSchema = z.object({
+  id: z.string().min(1),
+  version: z.number().int().positive(),
+  values: z.record(z.string(), z.unknown()),
+});
+export type TemplateProvenance = z.infer<typeof templateProvenanceSchema>;
+
+/**
  * The fields EVERY layer carries, whatever its `use` — the generic adapter's
  * timing plus the D-157 transform wrapper. Joined with each primitive's own
  * props (`primitiveProps.ts`) to make one option of the layer union below.
@@ -343,6 +358,8 @@ const groupLayer = z
     use: z.literal("group"),
     ...layerBase,
     ...GROUP_PROPS,
+    /** D-407 — set when this group is an instance of a group template. */
+    template: templateProvenanceSchema.optional(),
     get children(): z.ZodArray<z.ZodType<AnyLayer>> {
       return z.array(layerSchema as unknown as z.ZodType<AnyLayer>);
     },
@@ -446,6 +463,8 @@ export const sceneSchema = z.object({
     .optional(),
   /** cross-fade into this scene, in seconds (default hard cut) */
   transition: z.number().optional(),
+  /** D-407 — see `templateProvenanceSchema`. */
+  template: templateProvenanceSchema.optional(),
 });
 
 /**

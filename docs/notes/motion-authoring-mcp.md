@@ -1,4 +1,4 @@
-# Motion authoring from MCP — new graphics and templates as data, not code (Phases 0-1 built, D-403/D-404/D-405; Phases 2-4 design)
+# Motion authoring from MCP — new graphics and templates as data, not code (Phases 0-2 built, D-403/D-404/D-405/D-407; Phases 3-4 design)
 
 Owner request (2026-10-26): "look into a way to create new catalog / motion graphics from MCP
 directly instead of tweaking the code." Context: Apelles' founder/brand-video studio direction needs
@@ -31,7 +31,21 @@ each phase needs its own D-NNN when built (numbers below are provisional; D-402 
   `crates/apelles-motion/tests/preview_render.rs`. Deviations: shape masks use CSS `clip-path`
   and text masks an SVG `clipPath` (not CSS `mask`); a group child cannot be selected on its own
   yet.
-- Phases 2-4: design below, not built.
+- **Phase 2 — built (D-407, 2026-10-27).** `packages/motion-engine/src/templateDef.ts` (schema,
+  `migrateTemplate`, `checkSlotValue`, `resolveSlotValues`, `fillTemplateBody`, `slotsJsonSchema`),
+  `packages/motion/src/templates.ts` (`instantiateTemplate`, `planInstantiate`, `planRefill`,
+  `templateFromSource`, `exposableFields`), `templateLibrary.ts` + `templateLibraryIO.ts`,
+  `apelles_motion::templates` (one `<app data>/motion/templates/<id>.json` per template, per-file
+  errors, atomic writes), six starters in `packages/motion/src/templates/*.json`, the seven MCP
+  tools, a Catalog Templates section with a fill form and Save scene as template. Proof:
+  `templateOps.e2e.test.ts` + `preview_render.rs`. Deviations from the design below: one presence
+  toggle, `"$when": "<slot>"` on an array element, was added (an optional logo/icon needs it; still
+  no expression language); a list slot interpolates one item per line; a group template
+  instantiates as ONE `group` layer carrying the provenance; ids are minted deterministically
+  (`<use>-<n>`, scene named after the template), not randomly; refill across template versions
+  needs `upgrade`; the "make slot" toggle became a field list with "expose" checkboxes in the save
+  form (one place, the Essential Graphics / Figma Properties pattern; reasoning in D-407).
+- Phases 3-4: design below, not built.
 
 ## What existed before Phase 0 (checked in the code, 2026-10-26)
 
@@ -133,7 +147,7 @@ animated underlines, icon rows and badge bursts entirely in JSON.
 |---|---|---|
 | 0 | Per-primitive zod prop schemas (layer schema → discriminated union; `propCatalog` derived/tested against them); `motion_validate`, `motion_insert_layers`, `motion_set_scene`, `motion_preview_frame`. Makes everything after it safe for agents. | D-403 |
 | 1 | Brand primitives: `image` (+ hashed asset store), `icon`, `shape`, `counter`, `group` with mask, `anim` property tracks. Most leverage for founder videos. | D-404 (assets), D-405 (primitives) |
-| 2 | Templates: `templateDef.ts`, `templates.ts`/`templateIO.ts`, Rust load/save beside themes, 7 MCP tools, GUI, starter pack. Records the rejections above. | next free D-number when built |
+| 2 | Templates: `templateDef.ts`, `templates.ts`/`templateIO.ts`, Rust load/save beside themes, 7 MCP tools, GUI, starter pack. Records the rejections above. | D-407 (built) |
 | 3 | Expressive: `path` (draw-on, morph), `repeater`, `textonpath`. | next free D-number when built |
 | 4 | Lottie import as an asset, refusing expressions. | next free D-number when built |
 

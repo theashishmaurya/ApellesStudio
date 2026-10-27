@@ -84,6 +84,8 @@ let savedManifest: unknown = null;
  *  save → insert round trip really round-trips in the harness, the same way
  *  `savedManifest` above lets a Save survive a reload. */
 let savedLayerPresets: unknown[] = [];
+/** D-407 — the harness's template library, by id. */
+const savedTemplates: Record<string, unknown> = {};
 
 /** A stand-in for `@tauri-apps/api/core`'s `invoke`, stubbing exactly
  *  `window.__TAURI_INTERNALS__.invoke` — same contract as `harness-main.tsx`'s
@@ -117,6 +119,22 @@ function installInvokeStub(): void {
     chroma_motion_save_layer_presets: (args) => {
       savedLayerPresets = (args as { presets: unknown[] }).presets;
       return '/harness/app-data/motion/layer-presets.json';
+    },
+    // D-407 - the template library, one in-memory "file" per template id.
+    chroma_motion_load_templates: () => ({
+      entries: Object.entries(savedTemplates).map(([id, template]) => ({ file: `${id}.json`, template })),
+      errors: [],
+    }),
+    chroma_motion_save_template: (args) => {
+      const template = (args as { template: { id: string } }).template;
+      savedTemplates[template.id] = template;
+      return `/harness/app-data/motion/templates/${template.id}.json`;
+    },
+    chroma_motion_delete_template: (args) => {
+      const { id } = args as { id: string };
+      const had = id in savedTemplates;
+      delete savedTemplates[id];
+      return had;
     },
   };
   (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__ = {

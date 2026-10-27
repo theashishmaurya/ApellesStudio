@@ -115,7 +115,7 @@
  */
 import { Fragment, useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
-import { CopyIcon, FilmSlateIcon, PlusIcon, TrashIcon, VideoCameraIcon } from '@phosphor-icons/react';
+import { BookmarkSimpleIcon, CopyIcon, FilmSlateIcon, PlusIcon, TrashIcon, VideoCameraIcon } from '@phosphor-icons/react';
 import type { Manifest, Layer } from '@apelles/motion-engine/src/engine/schema';
 import { layerKeyCount, cameraKeyCount, scene3dCameraKeyCount } from './keyframeVisibility';
 import {
@@ -437,6 +437,7 @@ export function LayerList({
   editLinks,
   onRenderScene,
   renderingSceneId,
+  onSaveSceneAsTemplate,
 }: {
   manifest: Manifest;
   selections: Selection[];
@@ -459,6 +460,8 @@ export function LayerList({
   /** The scene the backend is rendering right now, to mark its row busy and
    *  stop a second click from queueing a second job. */
   renderingSceneId?: string | null;
+  /** D-407 — open the Save-as-template form for this scene. Omitted = no button. */
+  onSaveSceneAsTemplate?: (sceneIndex: number) => void;
 }) {
   const draggable = Boolean(onCommit);
   const dragRef = useRef<LayerDragState | null>(null);
@@ -600,6 +603,13 @@ export function LayerList({
         <RowAction label="Duplicate scene" onClick={() => doDuplicateScene(sceneIndex)}>
           <CopyIcon size={11} />
         </RowAction>
+        {/* D-407 — capture this scene as a reusable template (the form opens
+           in the Catalog's Templates section, `motion_save_template`'s GUI). */}
+        {onSaveSceneAsTemplate && (
+          <RowAction label="Save scene as template" onClick={() => onSaveSceneAsTemplate(sceneIndex)}>
+            <BookmarkSimpleIcon size={11} />
+          </RowAction>
+        )}
         {/* Hidden, not disabled, for the last remaining scene: the schema
            requires at least one (`scenes.min(1)`), so there is no state in
            which this action becomes available for it — a permanently greyed

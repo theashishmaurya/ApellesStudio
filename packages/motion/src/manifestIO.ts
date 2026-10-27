@@ -144,6 +144,16 @@ export async function getAssetsDir(): Promise<string> {
   }
 }
 
+/** D-407 — make the open project's preview-still folder readable by the
+ *  webview (so a rendered still can be shown through `convertFileSrc`). */
+export async function allowPreviewsDir(): Promise<string> {
+  try {
+    return await invoke<string>('chroma_motion_previews_dir');
+  } catch (e) {
+    rethrow(e);
+  }
+}
+
 /** Tell the backend a finished scene has been taken into Sources. */
 export async function acknowledgeRenderedScene(sceneId: string): Promise<void> {
   try {

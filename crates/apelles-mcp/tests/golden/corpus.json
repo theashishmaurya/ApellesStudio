@@ -6422,6 +6422,29 @@
       }
     },
     {
+      "name": "motion_define_template",
+      "description": "Save a Motion template written as JSON into the user's library (D-407).\n\n    Shape: `{schemaVersion: 1, id, name, version, description?, tags?,\n    kind: \"scene\" | \"group\", authoredAt: {width, height, fps}, slots, body,\n    themeDef?}`.\n      * `slots`: `[{id, type, label, description?, default?, required?,\n        constraints?}]`; `type` is text | number | color | image | icon | enum |\n        list; `constraints` may hold `maxLen`, `minLen`, `min`, `max`,\n        `integer`, `options` (enum), `minItems`, `maxItems`, `itemType`\n        (\"text\" | \"number\", list). Slot ids are identifiers (letters, digits,\n        `_`). An image value is an asset id from `motion_import_asset`\n        (`sha256:<hex>.<ext>`), an icon a Phosphor name (`rocket-launch`), a\n        colour `#rrggbb`.\n      * `body`: for `kind: \"scene\"` a scene WITHOUT `id` (`{dur, layers, ...}`);\n        for `kind: \"group\"` a list of 2D layers (instantiated as one group\n        layer). Bind any value to a slot with `{\"$slot\": \"<id>\"}`; interpolate\n        into text with `\"{price}/mo\"` (`{{` / `}}` are literal braces; a list\n        slot interpolates one item per line); keep an array element (a layer)\n        only when a slot has a value with `\"$when\": \"<id>\"`. That is ALL: there\n        is no expression language. An unset optional slot REMOVES the key it is\n        bound to, so the primitive's theme default applies -- leave colour slots\n        optional to keep a template theme-aware.\n      * pixel values are authored for `authoredAt` and reflowed to each\n        project's canvas when instantiated.\n\n    The template must parse AND expand with its defaults (a sample value is\n    used for a required slot without one) into a valid scene, icon names\n    included; otherwise nothing is saved and the answer carries `issues`\n    `[{path, code, message, expected, hint}]`. Saving under an id the library\n    already has makes it the next `version`; built-in ids are reserved.\n    `dry_run=true` checks only. Returns `{saved, id, name, kind, version,\n    previousVersion, slots, valuesSchema}`. Needs no project open; the library\n    is user-level and not in the undo stack.\n\n    Args:\n        template: the template object.\n        dry_run: check only, save nothing.",
+      "inputSchema": {
+        "properties": {
+          "template": {
+            "additionalProperties": true,
+            "title": "Template",
+            "type": "object"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "template"
+        ],
+        "type": "object",
+        "title": "motion_define_templateArguments"
+      }
+    },
+    {
       "name": "motion_define_theme",
       "description": "Define a theme as DATA and give it to the document (B-268): a look that is not\n    one of the compiled built-ins, with no engine change, commit or rebuild.\n\n    A theme is a validated document: eight opaque `#rrggbb` colours (ground,\n    deep ground, stroke, soft stroke, text, dim text, accent, signal accent),\n    the stroke feel (`strokeWidth`, `roughness`, `bowing`, `ambientDriftPx`),\n    three CSS font stacks (`fontDisplay`, `fontUi`, `fontMono`) and the Google\n    Fonts families to download for them (`fonts`). It is built in this order, then\n    validated as a whole, and nothing partial is ever stored:\n      1. `base` -- a built-in, library or embedded theme to start from (default:\n         the engine default, `dark-excalidraw`), so a few overrides are enough;\n      2. `tokens_css` -- an optional CSS token file whose `--apelles-theme-*`\n         custom properties override the base: `--apelles-theme-bg: #1c1a17;`,\n         `--apelles-theme-stroke-width: 2;`, `--apelles-theme-font-display:\n         'Newsreader', serif;`, `--apelles-theme-fonts: Newsreader:400,600 |\n         Instrument Sans:400` (families separated by `|`). Values must be literal\n         (no `var()`), which keeps the derivation deterministic;\n      3. `theme` -- explicit fields, which win over both.\n    `name` is the new theme's id (lowercase letters, digits, hyphens; never a\n    built-in's name). Errors name the field (`bg: an opaque #rrggbb colour`).\n\n    Where it goes -- `apply` (default true) EMBEDS the definition in this\n    document's manifest (`themeDef`), which is what makes a render deterministic:\n    the same manifest renders the same pixels on any machine, whatever that\n    machine's library holds. `to_library` also saves it to the user library so\n    other projects can pick it (`motion_set_project_theme`). `apply: false` with\n    `to_library: false` is a dry run that returns the validated definition.\n\n    A scene's own `bg` and a layer's own `color` / `font` still win over any\n    theme. Fonts load from Google Fonts by family name at render time; a family\n    Google does not have is skipped (the stack's fallbacks render) rather than\n    failing the render.\n\n    Undoable in the app when applied, like any other Motion edit. The library is\n    user-level state, not part of the project, and is not in the undo stack.",
       "inputSchema": {
@@ -6998,6 +7021,23 @@
       }
     },
     {
+      "name": "motion_delete_template",
+      "description": "Remove a template from the user's library (D-407). Scenes already made\n    from it keep their layers (they are copies) but can no longer be refilled.\n    Built-in templates cannot be deleted. Needs no project open.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object",
+        "title": "motion_delete_templateArguments"
+      }
+    },
+    {
       "name": "motion_delete_theme",
       "description": "Remove a theme from the user's theme library (B-268). Projects that already\n    embed it keep their own copy by design: that copy is what makes their renders\n    deterministic. Does not touch the compiled built-ins. Needs no project open.",
       "inputSchema": {
@@ -7299,6 +7339,23 @@
       }
     },
     {
+      "name": "motion_get_template",
+      "description": "Read one Motion template in full (D-407), its `body` included, to see how\n    it is built or to adapt it into a new one for `motion_define_template`.\n    Returns `{template, source, valuesSchema}`. Needs no project open.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object",
+        "title": "motion_get_templateArguments"
+      }
+    },
+    {
       "name": "motion_import_asset",
       "description": "Bring an image (a logo, a screenshot, a product shot) into the project so\n    an `image` layer can show it (D-404).\n\n    The file is copied into the project's own asset folder\n    (`<project>.chroma/motion/assets/`) and named by the SHA-256 of its bytes.\n    The answer's `id` -- `sha256:<64 hex>.<ext>` -- is what an `image` layer's\n    `src` takes; a manifest NEVER holds a file path, so the document renders\n    the same on any machine and a later change to the original file cannot\n    change a render. Importing the same bytes again returns the same `id` and\n    writes nothing (`copied: false`).\n\n    Accepted: png, jpg/jpeg, webp, gif, svg. Returns `{id, fileName, path,\n    bytes, copied, width, height, layerExample}` (`width`/`height` are null\n    for an svg); `layerExample` is a minimal layer using it.\n\n    Args:\n        path: absolute path to the image file.",
       "inputSchema": {
@@ -7359,6 +7416,82 @@
       }
     },
     {
+      "name": "motion_instantiate_template",
+      "description": "Fill a Motion template's slots and put the result in the document, in ONE\n    undoable step (D-407) -- a new on-brand scene with no layer-by-layer work.\n\n    `values` is `{slotId: value}` (see `motion_list_templates`' `valuesSchema`);\n    an omitted slot takes its default, and `null` clears an optional one (an\n    optional icon or logo then disappears). Each value is checked against its\n    slot's type and constraints; on any problem nothing changes and the answer\n    carries `issues` `[{path, code, message, expected, hint}]` with paths like\n    `values.headline` or `values.features[2]`. An image value is an asset id\n    from `motion_import_asset`.\n\n    Where it goes: a `scene` template becomes a NEW scene right after\n    `after_scene_index` (default: at the end), named after the template\n    (`stat-counter`, `stat-counter-2`, ...) unless you pass `scene_id`; a `group`\n    template becomes one group layer on top of scene `into_scene_index`\n    (required). The design is reflowed from the canvas it was authored on to\n    this project's canvas.\n\n    The document gets PLAIN layers (a copy: a render never depends on the\n    library) plus provenance `template: {id, version, values}` on the scene (or\n    group layer), which is what `motion_refill_template` re-expands from.\n    `apply_theme=true` also embeds the template's own theme in the document\n    (only if it carries one). Returns `{template, sceneIndex, sceneId, layerId?,\n    values, reflowed, themeApplied, selection}`; `dry_run=true` checks without\n    changing anything.\n\n    Args:\n        id: the template id.\n        values: the slot values.\n        after_scene_index: a scene template goes after this scene.\n        into_scene_index: a group template goes into this scene.\n        scene_id: the new scene's name (scene templates).\n        apply_theme: also use the template's theme for the document.\n        dry_run: check only.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "values": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Values"
+          },
+          "after_scene_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "After Scene Index"
+          },
+          "into_scene_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Into Scene Index"
+          },
+          "scene_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scene Id"
+          },
+          "apply_theme": {
+            "default": false,
+            "title": "Apply Theme",
+            "type": "boolean"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object",
+        "title": "motion_instantiate_templateArguments"
+      }
+    },
+    {
       "name": "motion_list_layer_presets",
       "description": "List the user's saved COMPONENTS \u2014 layers they tuned once and kept for\n    reuse. The Catalog tab's \"Components\" section, as data.\n\n    A component is a named, frozen copy of one layer fragment: every field it\n    had when it was saved, INCLUDING its `transform` and its keyframes. It is\n    not a new kind of object \u2014 inserting one produces an ordinary layer, and\n    nothing links the two afterwards.\n\n    These are USER-level and shared across projects, unlike the manifest. This\n    tool needs no project open, so it is a safe thing to call while deciding\n    what to build.\n\n    Each entry carries `id` (pass it to `motion_add_layer_from_preset`),\n    `name`, `use`, `createdAt`, and the full `layer` fragment so you can see\n    what you would be inserting before you insert it. Newest first.\n\n    Distinct from `motion_list_primitives`, which lists the ten BUILT-IN\n    primitives and their fields. That one is what the engine can draw; this one\n    is what this user has already made.",
       "inputSchema": {
@@ -7396,6 +7529,28 @@
         "properties": {},
         "type": "object",
         "title": "motion_list_primitivesArguments"
+      }
+    },
+    {
+      "name": "motion_list_templates",
+      "description": "List the Motion TEMPLATES you can fill (D-407): saved designs with named\n    slots (headline, logo, brand colour, a number...) that become a finished,\n    on-brand scene -- or a group of layers -- in one call. Read-only; needs no\n    project open.\n\n    Two sources: the BUILT-IN starters for founder/brand videos (`logo-reveal`,\n    `feature-callout`, `stat-counter`, `testimonial`, `pricing-card`,\n    `cta-end-card`) and the user's own library (`motion_save_template`,\n    `motion_define_template`).\n\n    Returns `templates`, each `{id, name, version, kind, source, description,\n    tags, authoredAt, slots, valuesSchema, hasTheme}`: `kind` is `scene` (becomes\n    a new scene) or `group` (becomes one group layer inside a scene); `slots`\n    are `{id, type, label, description?, default?, required?, constraints?}`\n    with `type` one of text | number | color | image | icon | enum | list;\n    `valuesSchema` is the same as one JSON Schema object, ready to fill. Also\n    `tags` (every tag in use) and `loadErrors` (library files that could not be\n    loaded, each named) when there are any.\n\n    Args:\n        tag: only templates carrying this tag (e.g. \"pricing\").",
+      "inputSchema": {
+        "properties": {
+          "tag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tag"
+          }
+        },
+        "type": "object",
+        "title": "motion_list_templatesArguments"
       }
     },
     {
@@ -7942,6 +8097,58 @@
       }
     },
     {
+      "name": "motion_refill_template",
+      "description": "Re-expand a template instance with new slot values (D-407): change the\n    headline, the number or the logo of a scene made from a template without\n    rebuilding it.\n\n    The instance is scene `scene_index` (a scene template), or the group layer\n    `layer_id` in it (a group template). `values` are merged over the ones it\n    was made with (`null` clears an optional slot). The scene keeps its id and\n    place; a group keeps its id, place, start time and transform. Copy\n    semantics: everything else in the instance is regenerated from the\n    template, so hand edits made to those layers since are replaced.\n\n    Refused when the library's template is a different `version` from the one\n    the instance was made with, unless `upgrade=true` (re-expand with the new\n    version), and when the template is no longer in the library. Value\n    problems come back as `issues` (`values.<slot>`). One undoable step.\n    Returns `{template: {id, version, previousVersion}, sceneIndex, sceneId,\n    layerId?, values}`; `dry_run=true` checks only.\n\n    Args:\n        scene_index: the scene (or the scene holding the group).\n        values: the slots to change.\n        layer_id: the group layer, for a group template instance.\n        upgrade: allow re-expanding with a newer template version.\n        dry_run: check only.",
+      "inputSchema": {
+        "properties": {
+          "scene_index": {
+            "title": "Scene Index",
+            "type": "integer"
+          },
+          "values": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Values"
+          },
+          "layer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Layer Id"
+          },
+          "upgrade": {
+            "default": false,
+            "title": "Upgrade",
+            "type": "boolean"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "scene_index"
+        ],
+        "type": "object",
+        "title": "motion_refill_templateArguments"
+      }
+    },
+    {
       "name": "motion_reload_manifest",
       "description": "Re-read the Motion manifest from its sidecar file on disk, replacing the\n    app's in-memory document (B-262).\n\n    Use this after changing `<project>.chroma/motion/manifest.json` OUTSIDE the\n    app (hand-authored, or written by a script): nothing else makes the app\n    notice, and without it `motion_get_manifest` and `motion_render` keep\n    working from the old in-app copy.\n\n    The file replaces the in-app document entirely. If the in-app document has\n    UNSAVED edits this refuses (they would be lost) unless `force=true`. Earlier\n    undo history refers to the previous document; do not undo across a reload.\n\n    Returns `reloaded`, the number of `scenes` in the document now loaded\n    (`null` if the file does not validate -- `motion_get_state`'s `parseError`\n    says why) and `hadSavedManifest` (false when the project has none yet and the\n    engine's sample is showing).",
       "inputSchema": {
@@ -8128,6 +8335,96 @@
         "properties": {},
         "type": "object",
         "title": "motion_save_manifestArguments"
+      }
+    },
+    {
+      "name": "motion_save_template",
+      "description": "Capture a scene you built as a reusable Motion template (D-407) -- the way\n    to turn a finished design into something an agent or a person can refill.\n\n    Without `layers` the WHOLE scene becomes a scene template; with `layers`\n    (layer ids in that scene) just those layers become a group template.\n\n    Each slot names the field it replaces: `{id, path, type, label?,\n    description?, required?, constraints?, default?}`. `path` is a field path\n    inside the scene -- `layers[2].text`, `layers[headline].text` (a bracket\n    that is not a number picks a layer by id), `layers[0].children[1].fill` --\n    or, for a group template, inside the selected layers (`[headline].text`); a\n    list of paths binds one slot to several fields (one brand colour used by\n    three layers). `type` is text | number | color | image | icon | enum |\n    list. The field's CURRENT value becomes the slot's default unless you give\n    one; a field that is unset (reading the theme) stays optional and\n    theme-aware.\n\n    The canvas (`authoredAt`) and the document's own theme (`themeDef`, if it\n    has one) are recorded. The template is checked to expand with its defaults\n    before anything is saved; refusals carry `issues` with paths like\n    `slots[1].path`. Saving under an existing id makes the next `version`.\n    `dry_run=true` returns the template without saving it.\n\n    Args:\n        scene_index: the scene to capture.\n        name: the template's name; the id defaults to its slug.\n        slots: the slots, e.g. `[{\"id\": \"headline\", \"type\": \"text\", \"path\":\n            \"layers[headline].text\", \"label\": \"Headline\"}]`.\n        layers: layer ids for a group template (omit for the whole scene).\n        id: the template id (lowercase letters, digits, hyphens).\n        description: one line on what it is for.\n        tags: e.g. [\"brand\", \"intro\"].\n        dry_run: build and check, save nothing.",
+      "inputSchema": {
+        "properties": {
+          "scene_index": {
+            "title": "Scene Index",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slots": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Slots",
+            "type": "array"
+          },
+          "layers": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Layers"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Id"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tags"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "scene_index",
+          "name",
+          "slots"
+        ],
+        "type": "object",
+        "title": "motion_save_templateArguments"
       }
     },
     {
@@ -16807,6 +17104,61 @@
       ]
     },
     {
+      "tool": "motion_define_template",
+      "case": "minimal",
+      "arguments": {
+        "template": {
+          "k_motion_define_template.template": "v_motion_define_template.template.value"
+        }
+      },
+      "requests": [
+        {
+          "op": "motion_define_template",
+          "args": {
+            "template": {
+              "k_motion_define_template.template": "v_motion_define_template.template.value"
+            }
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_define_template",
+      "case": "full",
+      "arguments": {
+        "template": {
+          "k_motion_define_template.template": "v_motion_define_template.template.value"
+        },
+        "dry_run": false
+      },
+      "requests": [
+        {
+          "op": "motion_define_template",
+          "args": {
+            "template": {
+              "k_motion_define_template.template": "v_motion_define_template.template.value"
+            }
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "motion_define_theme",
       "case": "minimal",
       "arguments": {
@@ -17037,6 +17389,29 @@
       ]
     },
     {
+      "tool": "motion_delete_template",
+      "case": "minimal",
+      "arguments": {
+        "id": "v_motion_delete_template.id"
+      },
+      "requests": [
+        {
+          "op": "motion_delete_template",
+          "args": {
+            "id": "v_motion_delete_template.id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "motion_delete_theme",
       "case": "minimal",
       "arguments": {
@@ -17226,6 +17601,29 @@
       ]
     },
     {
+      "tool": "motion_get_template",
+      "case": "minimal",
+      "arguments": {
+        "id": "v_motion_get_template.id"
+      },
+      "requests": [
+        {
+          "op": "motion_get_template",
+          "args": {
+            "id": "v_motion_get_template.id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "motion_import_asset",
       "case": "minimal",
       "arguments": {
@@ -17319,6 +17717,66 @@
       ]
     },
     {
+      "tool": "motion_instantiate_template",
+      "case": "minimal",
+      "arguments": {
+        "id": "v_motion_instantiate_template.id"
+      },
+      "requests": [
+        {
+          "op": "motion_instantiate_template",
+          "args": {
+            "id": "v_motion_instantiate_template.id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_instantiate_template",
+      "case": "full",
+      "arguments": {
+        "id": "v_motion_instantiate_template.id",
+        "values": {
+          "k_motion_instantiate_template.values": "v_motion_instantiate_template.values.value"
+        },
+        "after_scene_index": 55,
+        "into_scene_index": 64,
+        "scene_id": "v_motion_instantiate_template.scene_id",
+        "apply_theme": false,
+        "dry_run": false
+      },
+      "requests": [
+        {
+          "op": "motion_instantiate_template",
+          "args": {
+            "id": "v_motion_instantiate_template.id",
+            "values": {
+              "k_motion_instantiate_template.values": "v_motion_instantiate_template.values.value"
+            },
+            "after_scene_index": 55,
+            "into_scene_index": 64,
+            "scene_id": "v_motion_instantiate_template.scene_id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "motion_list_layer_presets",
       "case": "minimal",
       "arguments": {},
@@ -17387,6 +17845,48 @@
         {
           "op": "motion_list_primitives",
           "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_list_templates",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "motion_list_templates",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_list_templates",
+      "case": "full",
+      "arguments": {
+        "tag": "v_motion_list_templates.tag"
+      },
+      "requests": [
+        {
+          "op": "motion_list_templates",
+          "args": {
+            "tag": "v_motion_list_templates.tag"
+          },
           "timeout_ms": 20000
         }
       ],
@@ -17791,6 +18291,63 @@
       ]
     },
     {
+      "tool": "motion_refill_template",
+      "case": "minimal",
+      "arguments": {
+        "scene_index": 24
+      },
+      "requests": [
+        {
+          "op": "motion_refill_template",
+          "args": {
+            "scene_index": 24
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_refill_template",
+      "case": "full",
+      "arguments": {
+        "scene_index": 24,
+        "values": {
+          "k_motion_refill_template.values": "v_motion_refill_template.values.value"
+        },
+        "layer_id": "v_motion_refill_template.layer_id",
+        "upgrade": true,
+        "dry_run": false
+      },
+      "requests": [
+        {
+          "op": "motion_refill_template",
+          "args": {
+            "scene_index": 24,
+            "values": {
+              "k_motion_refill_template.values": "v_motion_refill_template.values.value"
+            },
+            "layer_id": "v_motion_refill_template.layer_id",
+            "upgrade": true
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "motion_reload_manifest",
       "case": "minimal",
       "arguments": {},
@@ -17983,6 +18540,94 @@
         {
           "op": "motion_save_manifest",
           "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_save_template",
+      "case": "minimal",
+      "arguments": {
+        "scene_index": 33,
+        "name": "v_motion_save_template.name",
+        "slots": [
+          {
+            "k_motion_save_template.slots[0]": "v_motion_save_template.slots[0].value"
+          }
+        ]
+      },
+      "requests": [
+        {
+          "op": "motion_save_template",
+          "args": {
+            "scene_index": 33,
+            "name": "v_motion_save_template.name",
+            "slots": [
+              {
+                "k_motion_save_template.slots[0]": "v_motion_save_template.slots[0].value"
+              }
+            ]
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_save_template",
+      "case": "full",
+      "arguments": {
+        "scene_index": 33,
+        "name": "v_motion_save_template.name",
+        "slots": [
+          {
+            "k_motion_save_template.slots[0]": "v_motion_save_template.slots[0].value"
+          }
+        ],
+        "layers": [
+          "v_motion_save_template.layers[0]"
+        ],
+        "id": "v_motion_save_template.id",
+        "description": "v_motion_save_template.description",
+        "tags": [
+          "v_motion_save_template.tags[0]"
+        ],
+        "dry_run": true
+      },
+      "requests": [
+        {
+          "op": "motion_save_template",
+          "args": {
+            "scene_index": 33,
+            "name": "v_motion_save_template.name",
+            "slots": [
+              {
+                "k_motion_save_template.slots[0]": "v_motion_save_template.slots[0].value"
+              }
+            ],
+            "layers": [
+              "v_motion_save_template.layers[0]"
+            ],
+            "id": "v_motion_save_template.id",
+            "description": "v_motion_save_template.description",
+            "tags": [
+              "v_motion_save_template.tags[0]"
+            ],
+            "dry_run": true
+          },
           "timeout_ms": 20000
         }
       ],

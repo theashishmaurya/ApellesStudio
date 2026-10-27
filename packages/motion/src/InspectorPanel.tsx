@@ -220,8 +220,10 @@ const row = 'flex flex-col gap-1';
  *  is the raw current value from the manifest (may be `undefined`, in
  *  which case the primitive's own runtime default applies — the input
  *  shows empty/unchecked, not a guessed default, so it's clear the value
- *  is "unset" vs. "set to the same thing the default happens to be"). */
-function FieldControl({
+ *  is "unset" vs. "set to the same thing the default happens to be").
+ *  Exported (D-407) so the template fill and save forms reuse the exact
+ *  controls the Inspector uses, pickers included. */
+export function FieldControl({
   spec,
   value,
   onCommit,

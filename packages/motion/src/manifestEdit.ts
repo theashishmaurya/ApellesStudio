@@ -1797,6 +1797,25 @@ export function addScene(
 }
 
 /**
+ * D-407 — insert an already-built, already-validated scene (a template
+ * instance) right after `afterSceneIndex`, or at the end. `addScene`'s
+ * placement rule, for a whole scene instead of an empty one. The scene is
+ * deep-cloned; its id and layer ids are the caller's (`templates.ts` makes
+ * them unique).
+ */
+export function insertScene(
+  manifest: Manifest,
+  scene: Scene,
+  afterSceneIndex?: number,
+): { manifest: Manifest; sceneIndex: number } {
+  const next = clone(manifest);
+  const insertAt =
+    afterSceneIndex !== undefined && next.scenes[afterSceneIndex] ? afterSceneIndex + 1 : next.scenes.length;
+  next.scenes.splice(insertAt, 0, clone(scene));
+  return { manifest: next, sceneIndex: insertAt };
+}
+
+/**
  * D-176 (owner, live: "cant resufle layers") — pure array-move reorder
  * WITHIN one scene's `layers[]` (`kind: 'layer'`) or one scene's
  * `scene3d.children[]` (`kind: 'scene3d-child'`) — `LayerList.tsx`'s new

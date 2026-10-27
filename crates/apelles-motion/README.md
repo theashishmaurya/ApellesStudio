@@ -68,6 +68,14 @@ by the SHA-256 of its bytes (`sha2`, already in the tree) and returns the `sha25
 id a manifest uses; idempotent, atomic. `RenderRequest::with_public_dir` / `PreviewRequest.public_dir`
 serve that folder as Remotion's `public/`.
 
+## Template library (D-407)
+
+`src/templates.rs`: the user's Motion templates on disk, one `<app data>/motion/templates/<id>.json`
+per template. `load_library` returns what parsed plus one `{file, error}` per file that did not
+(a bad file never takes the library down); `save_template` writes atomically (`.part`, fsync,
+rename) after checking the id is a safe file stem; `delete_template`. No schema validation here:
+`templateDef.ts` (zod) is the one source of truth and the frontend checks each entry.
+
 ## Still frames (D-403)
 
 `src/still.rs` is `motion_preview_frame`'s backend: `build_still_command` (the twin of

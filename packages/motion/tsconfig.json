@@ -8,6 +8,8 @@
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
+    // D-407 — the built-in templates ship as JSON data (`src/templates/*.json`).
+    "resolveJsonModule": true,
     // B-233 — `theme.test.ts` reads fixtures via `node:fs`/`node:url`/`node:path`
     // (needs `node`). `vite/client` types `import.meta.hot`, used by
     // `@apelles/store` (pulled in through `motionProjectStore.ts`), same entry

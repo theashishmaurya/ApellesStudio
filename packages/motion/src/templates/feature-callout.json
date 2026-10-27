@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "feature-callout",
+  "name": "Feature callout",
+  "version": 1,
+  "description": "A card rises in with an icon, a feature title and one line of detail. The card tints with the accent colour (the theme accent when unset).",
+  "tags": ["product", "feature"],
+  "kind": "scene",
+  "authoredAt": { "width": 1920, "height": 1080, "fps": 30 },
+  "slots": [
+    { "id": "icon", "type": "icon", "label": "Icon", "required": true, "default": "rocket-launch" },
+    { "id": "title", "type": "text", "label": "Feature", "required": true, "default": "Ship in minutes", "constraints": { "maxLen": 40 } },
+    { "id": "body", "type": "text", "label": "Detail", "default": "Drop in a script and get a finished, on-brand cut.", "constraints": { "maxLen": 120 } },
+    { "id": "accent", "type": "color", "label": "Accent colour", "description": "Optional; the theme accent when unset." }
+  ],
+  "body": {
+    "dur": 5,
+    "layers": [
+      {
+        "use": "group",
+        "id": "card",
+        "at": 0.2,
+        "transform": { "opacity": 0, "keys": [ { "at": 0, "opacity": 0, "y": 40 }, { "at": 0.6, "opacity": 1, "y": 0, "ease": [0.16, 1, 0.3, 1] } ] },
+        "children": [
+          { "use": "shape", "id": "panel", "shape": "roundrect", "x": 360, "y": 300, "w": 1200, "h": 480, "radius": 32, "fill": { "$slot": "accent" }, "fillOpacity": 0.12, "stroke": { "$slot": "accent" }, "strokeWidth": 2, "enter": "none" },
+          { "use": "icon", "id": "icon", "name": { "$slot": "icon" }, "x": 440, "y": 380, "size": 120, "color": { "$slot": "accent" }, "weight": "duotone", "enter": "pop", "at": 0.3 },
+          { "use": "text", "id": "title", "text": { "$slot": "title" }, "x": 620, "y": 380, "size": 64, "weight": 700, "maxWidth": 860, "preset": "fade-up", "at": 0.4 },
+          { "use": "text", "id": "detail", "text": { "$slot": "body" }, "x": 620, "y": 490, "size": 36, "maxWidth": 860, "preset": "fade-up", "at": 0.6 }
+        ]
+      }
+    ]
+  }
+}

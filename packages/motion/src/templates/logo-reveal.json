@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "logo-reveal",
+  "name": "Logo reveal",
+  "version": 1,
+  "description": "Logo pops in, the brand name rises under it, an accent underline draws on, then the tagline fades up. Without a logo the name stands alone.",
+  "tags": ["brand", "intro"],
+  "kind": "scene",
+  "authoredAt": { "width": 1920, "height": 1080, "fps": 30 },
+  "slots": [
+    { "id": "logo", "type": "image", "label": "Logo", "description": "Optional; import it first (motion_import_asset)." },
+    { "id": "brand", "type": "text", "label": "Brand name", "required": true, "default": "Northwind", "constraints": { "maxLen": 40 } },
+    { "id": "tagline", "type": "text", "label": "Tagline", "default": "Ship the video, not the timeline", "constraints": { "maxLen": 80 } },
+    { "id": "accent", "type": "color", "label": "Accent colour", "description": "Optional; the theme's stroke colour when unset." }
+  ],
+  "body": {
+    "dur": 4,
+    "layers": [
+      { "$when": "logo", "use": "image", "id": "logo", "src": { "$slot": "logo" }, "x": 840, "y": 210, "w": 240, "h": 240, "fit": "contain", "at": 0.2, "enter": "pop", "enterDur": 0.6 },
+      { "use": "text", "id": "brand", "text": { "$slot": "brand" }, "x": 960, "y": 480, "align": "center", "size": 120, "weight": 700, "preset": "mask-up", "at": 0.6 },
+      { "use": "shape", "id": "underline", "shape": "line", "x": 760, "y": 650, "w": 400, "h": 0, "stroke": { "$slot": "accent" }, "strokeWidth": 6, "enter": "draw", "enterDur": 0.8, "at": 1.2 },
+      { "use": "text", "id": "tagline", "text": { "$slot": "tagline" }, "x": 960, "y": 690, "align": "center", "size": 44, "maxWidth": 1400, "preset": "fade-up", "at": 1.6 }
+    ]
+  }
+}

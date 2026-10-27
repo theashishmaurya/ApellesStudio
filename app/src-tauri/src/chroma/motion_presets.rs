@@ -1,5 +1,12 @@
-//! motion_presets.rs — the saved-layer-preset ("component") library (D-332) and
-//!   the saved-theme library (D-399).
+//! motion_presets.rs — the saved-layer-preset ("component") library (D-332),
+//!   the saved-theme library (D-399) and the template library (D-407).
+//!
+//! D-407's template library is the exception to the whole-list rule below:
+//!   one `<app_data_dir>/motion/templates/<id>.json` per template, read with
+//!   per-file errors and written atomically by `apelles_motion::templates`
+//!   (the three `chroma_motion_*_template(s)` commands at the end are thin
+//!   wrappers over it). Everything below the next paragraph is about the
+//!   other two.
 //!
 //! What it is: Tauri commands that read and write the user's libraries of saved
 //!   Motion layer presets and saved Motion themes, each as one JSON file in the
@@ -129,4 +136,43 @@ pub fn chroma_motion_save_themes(
     std::fs::write(&path, format!("{pretty}\n"))
         .map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path.to_string_lossy().to_string())
+}
+
+/// D-407 — `<app_data_dir>`, the root `apelles_motion::templates` lays its
+/// `motion/templates/` folder under.
+fn app_data_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    app_handle.path().app_data_dir().map_err(|e| e.to_string())
+}
+
+/// D-407 — the user's template library: every `<id>.json` in
+/// `<app_data_dir>/motion/templates/` that parses, plus one `{file, error}` per
+/// file that does not (a bad file drops itself; the rest still load). Unlike
+/// the two whole-list libraries above, each template is its own file, so a
+/// save or delete touches exactly one template. Schema validation is the
+/// frontend's (`templateLibrary.ts`'s `sanitizeLoadedTemplates`).
+#[tauri::command]
+pub fn chroma_motion_load_templates(
+    app_handle: AppHandle,
+) -> Result<apelles_motion::templates::Library, String> {
+    let dir = apelles_motion::templates::templates_dir(&app_data_dir(&app_handle)?);
+    apelles_motion::templates::load_library(&dir).map_err(|e| e.to_string())
+}
+
+/// D-407 — write one template to `<id>.json`, atomically; returns the path.
+#[tauri::command]
+pub fn chroma_motion_save_template(
+    template: Value,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    let dir = apelles_motion::templates::templates_dir(&app_data_dir(&app_handle)?);
+    apelles_motion::templates::save_template(&dir, &template)
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| e.to_string())
+}
+
+/// D-407 — remove one template; `false` when there was no such file.
+#[tauri::command]
+pub fn chroma_motion_delete_template(id: String, app_handle: AppHandle) -> Result<bool, String> {
+    let dir = apelles_motion::templates::templates_dir(&app_data_dir(&app_handle)?);
+    apelles_motion::templates::delete_template(&dir, &id).map_err(|e| e.to_string())
 }

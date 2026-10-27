@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "cta-end-card",
+  "name": "CTA end card",
+  "version": 1,
+  "description": "The closing card: logo, a headline, and the URL in an accent pill with an optional icon.",
+  "tags": ["brand", "outro", "cta"],
+  "kind": "scene",
+  "authoredAt": { "width": 1920, "height": 1080, "fps": 30 },
+  "slots": [
+    { "id": "logo", "type": "image", "label": "Logo", "description": "Optional." },
+    { "id": "headline", "type": "text", "label": "Headline", "required": true, "default": "Try it free today", "constraints": { "maxLen": 48 } },
+    { "id": "url", "type": "text", "label": "URL", "required": true, "default": "northwind.app", "constraints": { "maxLen": 32 } },
+    { "id": "icon", "type": "icon", "label": "Icon", "default": "arrow-right", "description": "Optional; clear it for none." },
+    { "id": "accent", "type": "color", "label": "Accent colour", "description": "Optional; the theme accent when unset." }
+  ],
+  "body": {
+    "dur": 4,
+    "layers": [
+      { "$when": "logo", "use": "image", "id": "logo", "src": { "$slot": "logo" }, "x": 860, "y": 170, "w": 200, "h": 200, "fit": "contain", "enter": "pop", "enterDur": 0.6, "at": 0.1 },
+      { "use": "text", "id": "headline", "text": { "$slot": "headline" }, "x": 960, "y": 420, "align": "center", "size": 96, "weight": 700, "maxWidth": 1600, "preset": "mask-up", "at": 0.4 },
+      { "use": "shape", "id": "pill", "shape": "roundrect", "x": 610, "y": 640, "w": 700, "h": 110, "radius": 55, "fill": { "$slot": "accent" }, "fillOpacity": 0.15, "stroke": { "$slot": "accent" }, "strokeWidth": 2, "enter": "pop", "at": 1.0 },
+      { "use": "text", "id": "url", "text": { "$slot": "url" }, "x": 920, "y": 668, "align": "center", "size": 48, "weight": 700, "preset": "fade-up", "at": 1.2 },
+      { "$when": "icon", "use": "icon", "id": "icon", "name": { "$slot": "icon" }, "x": 1200, "y": 667, "size": 56, "color": { "$slot": "accent" }, "weight": "bold", "enter": "pop", "at": 1.4 }
+    ]
+  }
+}

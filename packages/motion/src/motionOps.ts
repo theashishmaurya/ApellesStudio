@@ -194,6 +194,27 @@ import { primitiveJsonSchema } from '@apelles/motion-engine/src/engine/jsonSchem
 import { DEFAULT_THEME_NAME, THEMES, THEME_NAMES } from '@apelles/motion-engine/src/design';
 import type { ThemeDef } from '@apelles/motion-engine/src/themeDef';
 import { buildThemeDef, findNamedTheme, removeTheme, upsertTheme } from './themeLibrary';
+// D-407 — templates as data.
+import { SLOT_TYPES, slotsJsonSchema, type MotionTemplate } from '@apelles/motion-engine/src/templateDef';
+import {
+  checkTemplateUsable,
+  isTemplateId,
+  planInstantiate,
+  planRefill,
+  provenanceAt,
+  templateFromSource,
+  type InstantiateTarget,
+  type SlotSource,
+} from './templates';
+import {
+  BUILTIN_TEMPLATE_IDS,
+  findTemplate,
+  listTemplates,
+  templateTags,
+  versionForSave,
+  type ListedTemplate,
+  type TemplateLoadError,
+} from './templateLibrary';
 import type { LoadState, ReloadOutcome, RenderOptions, RenderOutcome, SaveOutcome } from './useMotionManifest';
 import type { MotionRenderStatus } from './renderLoop';
 import type { MotionAssetRecord } from './manifestIO';
@@ -282,6 +303,23 @@ export interface MotionOpsContext {
    *  (`chroma_motion_import_asset`), or `undefined` when nothing supplies it
    *  (the op then refuses cleanly). Injected for the same reason `preview` is. */
   importAsset?: (path: string) => Promise<MotionAssetRecord>;
+  /** D-407 — the user's template library (the built-ins need nothing), or
+   *  `undefined` when nothing supplies it: listing then shows the built-ins
+   *  only and the writing ops refuse cleanly. Injected for the same reason
+   *  `presets` is. */
+  templates?: () => MotionTemplateAccess;
+}
+
+/** D-407 — the ops layer's window onto the template library. */
+export interface MotionTemplateAccess {
+  /** the CURRENT library (user templates only), read fresh per call. */
+  list: () => MotionTemplate[];
+  /** files that failed to load, each named — reported by `motion_list_templates`. */
+  loadErrors: () => TemplateLoadError[];
+  /** write one template; `false` when the write failed. */
+  save: (template: MotionTemplate) => Promise<boolean>;
+  /** remove one template; `false` when it failed or there was none. */
+  remove: (id: string) => Promise<boolean>;
 }
 
 /** D-399 — the ops layer's window onto the saved-theme library. */
@@ -653,6 +691,60 @@ function numberList(raw: unknown, name: string): number[] | { error: string } {
   return nums;
 }
 
+/** D-407 — a template as `motion_list_templates` reports it: everything but
+ *  the body, plus a JSON Schema of the values it takes. */
+function templateSummary({ template: t, source }: ListedTemplate): Record<string, unknown> {
+  return {
+    id: t.id,
+    name: t.name,
+    version: t.version,
+    kind: t.kind,
+    source,
+    description: t.description ?? '',
+    tags: t.tags ?? [],
+    authoredAt: t.authoredAt,
+    slots: t.slots,
+    valuesSchema: slotsJsonSchema(t.slots),
+    hasTheme: t.themeDef !== undefined,
+  };
+}
+
+/** D-407 — "no such template", naming the ones there are. */
+function unknownTemplate(id: string, library: readonly MotionTemplate[]): string {
+  return `no template "${id}" — available: ${listTemplates(library)
+    .map((e) => e.template.id)
+    .join(', ')}`;
+}
+
+/** D-407 — `motion_save_template`'s `slots` wire shape. */
+function parseSlotSources(raw: unknown): SlotSource[] | { error: string } {
+  if (!Array.isArray(raw)) return { error: 'slots must be a list of {id, path, type, label?, required?, constraints?, default?}' };
+  const out: SlotSource[] = [];
+  for (const [i, s] of raw.entries()) {
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return { error: `slots[${i}] must be an object` };
+    const slot = s as Record<string, unknown>;
+    const path = slot.path;
+    const pathOk = typeof path === 'string' || (Array.isArray(path) && path.length > 0 && path.every((p) => typeof p === 'string'));
+    if (typeof slot.id !== 'string' || !pathOk || typeof slot.type !== 'string') {
+      return { error: `slots[${i}] needs id (string), path (a field path or a list of them) and type` };
+    }
+    if (!(SLOT_TYPES as readonly string[]).includes(slot.type)) {
+      return { error: `slots[${i}].type must be one of text, number, color, image, icon, enum, list` };
+    }
+    out.push({
+      id: slot.id,
+      type: slot.type as SlotSource['type'],
+      path: path as string | string[],
+      ...(typeof slot.label === 'string' ? { label: slot.label } : {}),
+      ...(typeof slot.description === 'string' ? { description: slot.description } : {}),
+      ...(slot.required === true ? { required: true } : {}),
+      ...(slot.constraints && typeof slot.constraints === 'object' ? { constraints: slot.constraints as SlotSource['constraints'] } : {}),
+      ...(slot.default !== undefined ? { default: slot.default } : {}),
+    });
+  }
+  return out;
+}
+
 /**
  * Build the whole `motion_*` op registry against a live context.
  *
@@ -681,6 +773,30 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       },
     };
   };
+
+  /** D-407 — the one library write `motion_define_template` and
+   *  `motion_save_template` share: a built-in id refused, an existing id
+   *  bumped to its next version, then one file written. */
+  const saveToLibrary = async (template: MotionTemplate, dryRun: boolean): Promise<MotionOpResult> => {
+    const access = ctx.templates?.();
+    if (!access && !dryRun) return { error: 'the template library is unavailable in this context' };
+    const versioned = versionForSave(template, access?.list() ?? []);
+    if ('error' in versioned) return { error: versioned.error };
+    const t = versioned.template;
+    const summary = {
+      id: t.id,
+      name: t.name,
+      kind: t.kind,
+      version: t.version,
+      previousVersion: versioned.previousVersion,
+      slots: t.slots,
+      valuesSchema: slotsJsonSchema(t.slots),
+    };
+    if (dryRun) return { dryRun: true, ok: true, ...summary, template: t };
+    if (!access || !(await access.save(t))) return { error: `could not write template "${t.id}" to disk` };
+    return { saved: true, ...summary };
+  };
+
   return guardOps({
     // ---- reads --------------------------------------------------------
 
@@ -1240,6 +1356,210 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       if (next === list) return { error: `no theme named "${name}" in the library` };
       if (!(await access.commit(next))) return { error: 'could not write the theme library to disk' };
       return { deleted: name, remaining: next.length };
+    },
+
+    // ---- templates (D-407) ---------------------------------------------
+
+    /** D-407 — every template a project can use: the built-in starters and the
+     *  user library, each with its slots and a JSON Schema of the values it
+     *  takes. Needs no project open. */
+    motion_list_templates: (a) => {
+      const access = ctx.templates?.();
+      const library = access?.list() ?? [];
+      const tag = typeof a?.tag === 'string' && a.tag.length > 0 ? a.tag : undefined;
+      return {
+        templates: listTemplates(library, tag).map(templateSummary),
+        tags: templateTags(library),
+        ...(access && access.loadErrors().length > 0 ? { loadErrors: access.loadErrors() } : {}),
+        ...(access ? {} : { note: 'the user template library is not available here; built-ins only' }),
+      };
+    },
+
+    /** D-407 — one template in full (its body included), to read or adapt. */
+    motion_get_template: (a) => {
+      const id = a?.id;
+      if (typeof id !== 'string' || id.length === 0) return { error: 'id is required (motion_list_templates lists them)' };
+      const found = findTemplate(id, ctx.templates?.().list() ?? []);
+      if (!found) return { error: unknownTemplate(id, ctx.templates?.().list() ?? []) };
+      return { template: found.template, source: found.source, valuesSchema: slotsJsonSchema(found.template.slots) };
+    },
+
+    /** D-407 — save a template written as JSON into the user library, after
+     *  proving it parses AND expands with its defaults. Saving under an id the
+     *  library already has makes it the next version. `dry_run` checks only. */
+    motion_define_template: async (a) => {
+      const raw = a?.template;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: 'template (a template object) is required' };
+      const checked = checkTemplateUsable(raw, await iconNamesFor((raw as Record<string, unknown>).body));
+      if ('issues' in checked) return { ...fragmentRefusal('template', checked.issues) };
+      return saveToLibrary(checked.template, a?.dry_run === true || a?.dryRun === true);
+    },
+
+    /** D-407 — capture a scene (or some of its layers, as a group template)
+     *  as a template: each slot points at a field path inside it, which becomes
+     *  the slot and whose current value becomes its default. */
+    motion_save_template: async (a) => {
+      const cur = api();
+      const guard = requireManifest(cur);
+      if (isErr(guard)) return guard;
+      const sceneIndex = Math.round(Number(arg(a, 'scene_index', 'sceneIndex')));
+      if (!Number.isFinite(sceneIndex)) return { error: 'scene_index (integer) required' };
+      const name = a?.name;
+      if (typeof name !== 'string' || name.trim().length === 0) return { error: 'name is required' };
+      const rawLayers = a?.layers;
+      let layers: (string | number)[] | undefined;
+      if (rawLayers !== undefined && rawLayers !== null) {
+        if (!Array.isArray(rawLayers) || !rawLayers.every((l) => typeof l === 'string' || typeof l === 'number')) {
+          return { error: 'layers must be a list of layer ids or indexes in that scene' };
+        }
+        layers = rawLayers as (string | number)[];
+      }
+      const slots = parseSlotSources(a?.slots);
+      if (isErr(slots)) return slots;
+      if (a?.id !== undefined && a.id !== null && !isTemplateId(a.id)) {
+        return { error: 'id must be lowercase letters, digits and hyphens (at most 64)' };
+      }
+      const tags = a?.tags;
+      if (tags !== undefined && tags !== null && (!Array.isArray(tags) || !tags.every((t) => typeof t === 'string'))) {
+        return { error: 'tags must be a list of strings' };
+      }
+      const spec = {
+        ...(typeof a?.id === 'string' ? { id: a.id } : {}),
+        name: name.trim(),
+        ...(typeof a?.description === 'string' ? { description: a.description } : {}),
+        ...(Array.isArray(tags) ? { tags: tags as string[] } : {}),
+        slots,
+      };
+      const scene = guard.manifest.scenes[sceneIndex];
+      const made = templateFromSource(guard.manifest, { sceneIndex, layers }, spec, await iconNamesFor(scene));
+      if ('issues' in made) return { ...fragmentRefusal('the template', made.issues) };
+      return saveToLibrary(made.template, a?.dry_run === true || a?.dryRun === true);
+    },
+
+    /** D-407 — fill a template's slots and put the result in the document: a
+     *  scene template becomes a new scene after `after_scene_index` (default:
+     *  the end), a group template one group layer in `into_scene_index`. One
+     *  undo step. `dry_run` checks the values and the expansion only. */
+    motion_instantiate_template: async (a) => {
+      const cur = api();
+      const guard = requireManifest(cur);
+      if (isErr(guard)) return guard;
+      const id = a?.id;
+      if (typeof id !== 'string' || id.length === 0) return { error: 'id is required (motion_list_templates lists them)' };
+      const library = ctx.templates?.().list() ?? [];
+      const found = findTemplate(id, library);
+      if (!found) return { error: unknownTemplate(id, library) };
+      const template = found.template;
+
+      const rawAfter = arg(a, 'after_scene_index', 'afterSceneIndex');
+      const rawInto = arg(a, 'into_scene_index', 'intoSceneIndex');
+      if (rawAfter !== undefined && rawAfter !== null && rawInto !== undefined && rawInto !== null) {
+        return { error: 'pass after_scene_index (a scene template) or into_scene_index (a group template), not both' };
+      }
+      let target: InstantiateTarget;
+      if (rawInto !== undefined && rawInto !== null) {
+        const into = Math.round(Number(rawInto));
+        if (!Number.isFinite(into)) return { error: 'into_scene_index must be an integer' };
+        target = { intoSceneIndex: into };
+      } else if (rawAfter !== undefined && rawAfter !== null) {
+        const after = Math.round(Number(rawAfter));
+        if (!Number.isFinite(after)) return { error: 'after_scene_index must be an integer' };
+        target = { afterSceneIndex: after };
+      } else {
+        if (template.kind === 'group') return { error: `"${id}" is a group template: pass into_scene_index (the scene it is added to)` };
+        target = {};
+      }
+
+      let sceneId: string | undefined;
+      const rawSceneId = arg(a, 'scene_id', 'sceneId');
+      if (rawSceneId !== undefined && rawSceneId !== null) {
+        if (template.kind !== 'scene') return { error: 'scene_id names a new scene; a group template adds a layer' };
+        const scenes = [...guard.manifest.scenes, { id: NEW_SCENE_ID_PLACEHOLDER }];
+        const check = checkSceneRename(scenes, scenes.length - 1, rawSceneId, undefined);
+        if (!check.ok) return { error: check.reason };
+        sceneId = check.to;
+      }
+
+      const values = a?.values ?? {};
+      const plan = planInstantiate(guard.manifest, template, values, target, {
+        iconNames: await iconNamesFor(template.body),
+        sceneId,
+      });
+      if (!plan.ok) return { error: plan.error, ...(plan.issues.length > 0 ? { issues: plan.issues } : {}) };
+
+      const applyTheme = arg(a, 'apply_theme', 'applyTheme') === true;
+      if (applyTheme && !template.themeDef) return { error: `"${id}" carries no theme to apply` };
+      const next = applyTheme && template.themeDef ? setProjectThemeDef(plan.manifest, template.themeDef) : plan.manifest;
+      const inst = plan.instance;
+      const scene = next.scenes[plan.sceneIndex];
+      const layerId = inst.kind === 'group' ? (inst.layer?.id ?? null) : null;
+      const result = {
+        template: { id: template.id, version: template.version, kind: template.kind, source: found.source },
+        sceneIndex: plan.sceneIndex,
+        sceneId: scene.id,
+        ...(layerId ? { layerId } : {}),
+        values: inst.values,
+        reflowed: inst.reflowed,
+        themeApplied: applyTheme,
+        selection:
+          inst.kind === 'scene'
+            ? { sceneIndex: plan.sceneIndex, target: { kind: 'scene' } }
+            : { sceneIndex: plan.sceneIndex, target: { kind: 'layer', index: (scene.layers ?? []).findIndex((l) => l.id === layerId), id: layerId } },
+      };
+      if (a?.dry_run === true || a?.dryRun === true) return { dryRun: true, ok: true, ...result };
+      cur.commit(next, `Insert template: ${template.name}`);
+      return result;
+    },
+
+    /** D-407 — re-expand a template instance with new values, merged over
+     *  the ones it was made with. Copy semantics: hand edits made to the
+     *  instance since are replaced. Refuses when the library's template has a
+     *  different version than the instance unless `upgrade`. */
+    motion_refill_template: async (a) => {
+      const cur = api();
+      const guard = requireManifest(cur);
+      if (isErr(guard)) return guard;
+      const sceneIndex = Math.round(Number(arg(a, 'scene_index', 'sceneIndex')));
+      if (!Number.isFinite(sceneIndex)) return { error: 'scene_index (integer) required' };
+      const rawLayerId = arg(a, 'layer_id', 'layerId');
+      const ref = { sceneIndex, ...(typeof rawLayerId === 'string' && rawLayerId.length > 0 ? { layerId: rawLayerId } : {}) };
+      const found = provenanceAt(guard.manifest, ref);
+      if ('error' in found) return { error: found.error };
+      const library = ctx.templates?.().list() ?? [];
+      const listed = findTemplate(found.provenance.id, library);
+      if (!listed) return { error: `template "${found.provenance.id}" is no longer in the library; the instance keeps its layers but cannot be refilled` };
+      const template = listed.template;
+      if (template.version !== found.provenance.version && a?.upgrade !== true) {
+        return {
+          error: `the instance was made from "${template.id}" version ${found.provenance.version}; the library has version ${template.version}. Pass upgrade=true to re-expand with the new version.`,
+        };
+      }
+      const plan = planRefill(guard.manifest, ref, template, a?.values, { iconNames: await iconNamesFor(template.body) });
+      if (!plan.ok) return { error: plan.error, ...(plan.issues.length > 0 ? { issues: plan.issues } : {}) };
+      const result = {
+        template: { id: template.id, version: template.version, previousVersion: found.provenance.version },
+        sceneIndex,
+        sceneId: plan.manifest.scenes[sceneIndex].id,
+        ...(ref.layerId ? { layerId: ref.layerId } : {}),
+        values: plan.instance.values,
+      };
+      if (a?.dry_run === true || a?.dryRun === true) return { dryRun: true, ok: true, ...result };
+      cur.commit(plan.manifest, `Refill template: ${template.name}`);
+      return result;
+    },
+
+    /** D-407 — remove a template from the user library. Instances already in
+     *  documents keep their layers (copy semantics); they just cannot be
+     *  refilled. Built-ins cannot be deleted. */
+    motion_delete_template: async (a) => {
+      const id = a?.id;
+      if (typeof id !== 'string' || id.length === 0) return { error: 'id is required' };
+      if (BUILTIN_TEMPLATE_IDS.has(id)) return { error: `"${id}" is a built-in template and cannot be deleted` };
+      const access = ctx.templates?.();
+      if (!access) return { error: 'the template library is unavailable in this context' };
+      if (!access.list().some((t) => t.id === id)) return { error: unknownTemplate(id, access.list()) };
+      if (!(await access.remove(id))) return { error: `could not delete template "${id}" from disk` };
+      return { deleted: id, remaining: access.list().length };
     },
 
     /**

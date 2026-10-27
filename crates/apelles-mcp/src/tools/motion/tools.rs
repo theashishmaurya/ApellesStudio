@@ -425,6 +425,80 @@ pub struct MotionDeleteThemeArgs {
     pub name: String,
 }
 
+// D-407 — templates as data. Slot sources, values and the template itself are
+// open JSON objects (the Python server's `dict[str, Any]`); their schema is
+// the frontend's zod one (`templateDef.ts`), which validates every call.
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionListTemplatesArgs {
+    #[serde(default)]
+    pub tag: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionGetTemplateArgs {
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionDefineTemplateArgs {
+    pub template: serde_json::Map<String, Value>,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionSaveTemplateArgs {
+    pub scene_index: i64,
+    pub name: String,
+    pub slots: Vec<serde_json::Map<String, Value>>,
+    #[serde(default)]
+    pub layers: Option<Vec<String>>,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionInstantiateTemplateArgs {
+    pub id: String,
+    #[serde(default)]
+    pub values: Option<serde_json::Map<String, Value>>,
+    #[serde(default)]
+    pub after_scene_index: Option<i64>,
+    #[serde(default)]
+    pub into_scene_index: Option<i64>,
+    #[serde(default)]
+    pub scene_id: Option<String>,
+    #[serde(default)]
+    pub apply_theme: bool,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionRefillTemplateArgs {
+    pub scene_index: i64,
+    #[serde(default)]
+    pub values: Option<serde_json::Map<String, Value>>,
+    #[serde(default)]
+    pub layer_id: Option<String>,
+    #[serde(default)]
+    pub upgrade: bool,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionDeleteTemplateArgs {
+    pub id: String,
+}
+
 // D-403 — authoring as data. `serde_json::Map` publishes `{type: object,
 // additionalProperties: true}`, which is the Python server's `dict[str, Any]`.
 
@@ -792,6 +866,267 @@ impl ApellesMcp {
         let env = self
             .op("motion_delete_theme", WireArgs::new().set("name", p.name))
             .await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_list_templates",
+        description = r#"List the Motion TEMPLATES you can fill (D-407): saved designs with named
+    slots (headline, logo, brand colour, a number...) that become a finished,
+    on-brand scene -- or a group of layers -- in one call. Read-only; needs no
+    project open.
+
+    Two sources: the BUILT-IN starters for founder/brand videos (`logo-reveal`,
+    `feature-callout`, `stat-counter`, `testimonial`, `pricing-card`,
+    `cta-end-card`) and the user's own library (`motion_save_template`,
+    `motion_define_template`).
+
+    Returns `templates`, each `{id, name, version, kind, source, description,
+    tags, authoredAt, slots, valuesSchema, hasTheme}`: `kind` is `scene` (becomes
+    a new scene) or `group` (becomes one group layer inside a scene); `slots`
+    are `{id, type, label, description?, default?, required?, constraints?}`
+    with `type` one of text | number | color | image | icon | enum | list;
+    `valuesSchema` is the same as one JSON Schema object, ready to fill. Also
+    `tags` (every tag in use) and `loadErrors` (library files that could not be
+    loaded, each named) when there are any.
+
+    Args:
+        tag: only templates carrying this tag (e.g. "pricing")."#
+    )]
+    pub async fn motion_list_templates(
+        &self,
+        Parameters(p): Parameters<MotionListTemplatesArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().put("tag", p.tag);
+        let env = self.op("motion_list_templates", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_get_template",
+        description = r#"Read one Motion template in full (D-407), its `body` included, to see how
+    it is built or to adapt it into a new one for `motion_define_template`.
+    Returns `{template, source, valuesSchema}`. Needs no project open."#
+    )]
+    pub async fn motion_get_template(
+        &self,
+        Parameters(p): Parameters<MotionGetTemplateArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("id", p.id);
+        let env = self.op("motion_get_template", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_define_template",
+        description = r#"Save a Motion template written as JSON into the user's library (D-407).
+
+    Shape: `{schemaVersion: 1, id, name, version, description?, tags?,
+    kind: "scene" | "group", authoredAt: {width, height, fps}, slots, body,
+    themeDef?}`.
+      * `slots`: `[{id, type, label, description?, default?, required?,
+        constraints?}]`; `type` is text | number | color | image | icon | enum |
+        list; `constraints` may hold `maxLen`, `minLen`, `min`, `max`,
+        `integer`, `options` (enum), `minItems`, `maxItems`, `itemType`
+        ("text" | "number", list). Slot ids are identifiers (letters, digits,
+        `_`). An image value is an asset id from `motion_import_asset`
+        (`sha256:<hex>.<ext>`), an icon a Phosphor name (`rocket-launch`), a
+        colour `#rrggbb`.
+      * `body`: for `kind: "scene"` a scene WITHOUT `id` (`{dur, layers, ...}`);
+        for `kind: "group"` a list of 2D layers (instantiated as one group
+        layer). Bind any value to a slot with `{"$slot": "<id>"}`; interpolate
+        into text with `"{price}/mo"` (`{{` / `}}` are literal braces; a list
+        slot interpolates one item per line); keep an array element (a layer)
+        only when a slot has a value with `"$when": "<id>"`. That is ALL: there
+        is no expression language. An unset optional slot REMOVES the key it is
+        bound to, so the primitive's theme default applies -- leave colour slots
+        optional to keep a template theme-aware.
+      * pixel values are authored for `authoredAt` and reflowed to each
+        project's canvas when instantiated.
+
+    The template must parse AND expand with its defaults (a sample value is
+    used for a required slot without one) into a valid scene, icon names
+    included; otherwise nothing is saved and the answer carries `issues`
+    `[{path, code, message, expected, hint}]`. Saving under an id the library
+    already has makes it the next `version`; built-in ids are reserved.
+    `dry_run=true` checks only. Returns `{saved, id, name, kind, version,
+    previousVersion, slots, valuesSchema}`. Needs no project open; the library
+    is user-level and not in the undo stack.
+
+    Args:
+        template: the template object.
+        dry_run: check only, save nothing."#
+    )]
+    pub async fn motion_define_template(
+        &self,
+        Parameters(p): Parameters<MotionDefineTemplateArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("template", p.template)
+            .put_if("dry_run", p.dry_run);
+        let env = self.op("motion_define_template", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_save_template",
+        description = r#"Capture a scene you built as a reusable Motion template (D-407) -- the way
+    to turn a finished design into something an agent or a person can refill.
+
+    Without `layers` the WHOLE scene becomes a scene template; with `layers`
+    (layer ids in that scene) just those layers become a group template.
+
+    Each slot names the field it replaces: `{id, path, type, label?,
+    description?, required?, constraints?, default?}`. `path` is a field path
+    inside the scene -- `layers[2].text`, `layers[headline].text` (a bracket
+    that is not a number picks a layer by id), `layers[0].children[1].fill` --
+    or, for a group template, inside the selected layers (`[headline].text`); a
+    list of paths binds one slot to several fields (one brand colour used by
+    three layers). `type` is text | number | color | image | icon | enum |
+    list. The field's CURRENT value becomes the slot's default unless you give
+    one; a field that is unset (reading the theme) stays optional and
+    theme-aware.
+
+    The canvas (`authoredAt`) and the document's own theme (`themeDef`, if it
+    has one) are recorded. The template is checked to expand with its defaults
+    before anything is saved; refusals carry `issues` with paths like
+    `slots[1].path`. Saving under an existing id makes the next `version`.
+    `dry_run=true` returns the template without saving it.
+
+    Args:
+        scene_index: the scene to capture.
+        name: the template's name; the id defaults to its slug.
+        slots: the slots, e.g. `[{"id": "headline", "type": "text", "path":
+            "layers[headline].text", "label": "Headline"}]`.
+        layers: layer ids for a group template (omit for the whole scene).
+        id: the template id (lowercase letters, digits, hyphens).
+        description: one line on what it is for.
+        tags: e.g. ["brand", "intro"].
+        dry_run: build and check, save nothing."#
+    )]
+    pub async fn motion_save_template(
+        &self,
+        Parameters(p): Parameters<MotionSaveTemplateArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("scene_index", p.scene_index)
+            .set("name", p.name)
+            .set("slots", p.slots)
+            .put("layers", p.layers)
+            .put("id", p.id)
+            .put("description", p.description)
+            .put("tags", p.tags)
+            .put_if("dry_run", p.dry_run);
+        let env = self.op("motion_save_template", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_instantiate_template",
+        description = r#"Fill a Motion template's slots and put the result in the document, in ONE
+    undoable step (D-407) -- a new on-brand scene with no layer-by-layer work.
+
+    `values` is `{slotId: value}` (see `motion_list_templates`' `valuesSchema`);
+    an omitted slot takes its default, and `null` clears an optional one (an
+    optional icon or logo then disappears). Each value is checked against its
+    slot's type and constraints; on any problem nothing changes and the answer
+    carries `issues` `[{path, code, message, expected, hint}]` with paths like
+    `values.headline` or `values.features[2]`. An image value is an asset id
+    from `motion_import_asset`.
+
+    Where it goes: a `scene` template becomes a NEW scene right after
+    `after_scene_index` (default: at the end), named after the template
+    (`stat-counter`, `stat-counter-2`, ...) unless you pass `scene_id`; a `group`
+    template becomes one group layer on top of scene `into_scene_index`
+    (required). The design is reflowed from the canvas it was authored on to
+    this project's canvas.
+
+    The document gets PLAIN layers (a copy: a render never depends on the
+    library) plus provenance `template: {id, version, values}` on the scene (or
+    group layer), which is what `motion_refill_template` re-expands from.
+    `apply_theme=true` also embeds the template's own theme in the document
+    (only if it carries one). Returns `{template, sceneIndex, sceneId, layerId?,
+    values, reflowed, themeApplied, selection}`; `dry_run=true` checks without
+    changing anything.
+
+    Args:
+        id: the template id.
+        values: the slot values.
+        after_scene_index: a scene template goes after this scene.
+        into_scene_index: a group template goes into this scene.
+        scene_id: the new scene's name (scene templates).
+        apply_theme: also use the template's theme for the document.
+        dry_run: check only."#
+    )]
+    pub async fn motion_instantiate_template(
+        &self,
+        Parameters(p): Parameters<MotionInstantiateTemplateArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("id", p.id)
+            .put("values", p.values)
+            .put("after_scene_index", p.after_scene_index)
+            .put("into_scene_index", p.into_scene_index)
+            .put("scene_id", p.scene_id)
+            .put_if("apply_theme", p.apply_theme)
+            .put_if("dry_run", p.dry_run);
+        let env = self.op("motion_instantiate_template", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_refill_template",
+        description = r#"Re-expand a template instance with new slot values (D-407): change the
+    headline, the number or the logo of a scene made from a template without
+    rebuilding it.
+
+    The instance is scene `scene_index` (a scene template), or the group layer
+    `layer_id` in it (a group template). `values` are merged over the ones it
+    was made with (`null` clears an optional slot). The scene keeps its id and
+    place; a group keeps its id, place, start time and transform. Copy
+    semantics: everything else in the instance is regenerated from the
+    template, so hand edits made to those layers since are replaced.
+
+    Refused when the library's template is a different `version` from the one
+    the instance was made with, unless `upgrade=true` (re-expand with the new
+    version), and when the template is no longer in the library. Value
+    problems come back as `issues` (`values.<slot>`). One undoable step.
+    Returns `{template: {id, version, previousVersion}, sceneIndex, sceneId,
+    layerId?, values}`; `dry_run=true` checks only.
+
+    Args:
+        scene_index: the scene (or the scene holding the group).
+        values: the slots to change.
+        layer_id: the group layer, for a group template instance.
+        upgrade: allow re-expanding with a newer template version.
+        dry_run: check only."#
+    )]
+    pub async fn motion_refill_template(
+        &self,
+        Parameters(p): Parameters<MotionRefillTemplateArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("scene_index", p.scene_index)
+            .put("values", p.values)
+            .put("layer_id", p.layer_id)
+            .put_if("upgrade", p.upgrade)
+            .put_if("dry_run", p.dry_run);
+        let env = self.op("motion_refill_template", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_delete_template",
+        description = r#"Remove a template from the user's library (D-407). Scenes already made
+    from it keep their layers (they are copies) but can no longer be refilled.
+    Built-in templates cannot be deleted. Needs no project open."#
+    )]
+    pub async fn motion_delete_template(
+        &self,
+        Parameters(p): Parameters<MotionDeleteTemplateArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("id", p.id);
+        let env = self.op("motion_delete_template", args).await?;
         Ok(render::json_text(&env))
     }
 

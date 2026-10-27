@@ -250,6 +250,14 @@ const ALL_OPS = [
   'motion_list_themes',
   'motion_define_theme',
   'motion_delete_theme',
+  // D-407 — templates as data.
+  'motion_list_templates',
+  'motion_get_template',
+  'motion_define_template',
+  'motion_save_template',
+  'motion_instantiate_template',
+  'motion_refill_template',
+  'motion_delete_template',
   'motion_set_project_settings',
   'motion_set_scene_field',
   'motion_set_camera_2d',
@@ -297,11 +305,11 @@ const ALL_OPS = [
 // ---------------------------------------------------------------------------
 
 describe('the registry itself', () => {
-  it('exposes exactly the 52 documented ops, all motion_-prefixed', () => {
+  it('exposes exactly the 59 documented ops, all motion_-prefixed', () => {
     const { ops } = harness();
     const names = Object.keys(ops).sort();
     expect(names).toEqual([...ALL_OPS].sort());
-    expect(names).toHaveLength(52);
+    expect(names).toHaveLength(59);
     expect(names.every((n) => n.startsWith('motion_'))).toBe(true);
   });
 
@@ -321,7 +329,17 @@ describe('the registry itself', () => {
    *  refusal with no reason behind it. The other two preset ops
    *  (`motion_save_layer_preset`, `motion_add_layer_from_preset`) DO touch a
    *  manifest, so they stay in the sweep below. */
-  const LIBRARY_OPS = ['motion_list_layer_presets', 'motion_delete_layer_preset', 'motion_delete_theme'];
+  const LIBRARY_OPS = [
+    'motion_list_layer_presets',
+    'motion_delete_layer_preset',
+    'motion_delete_theme',
+    // D-407 — the template library is user-level too; only saving FROM a scene,
+    // instantiating and refilling touch a document.
+    'motion_list_templates',
+    'motion_get_template',
+    'motion_define_template',
+    'motion_delete_template',
+  ];
 
   it('every op except the orientation reads and the library ops refuses cleanly with no project open, and never commits', async () => {
     const h = harness();

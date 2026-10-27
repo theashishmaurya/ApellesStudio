@@ -1,0 +1,105 @@
+{
+  "title": "Launch",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "scenes": [
+    {
+      "id": "intro",
+      "dur": 1
+    },
+    {
+      "id": "stat-counter",
+      "dur": 4,
+      "layers": [
+        {
+          "use": "image",
+          "id": "logo",
+          "src": "sha256:4ecf4910b2061560dcbdcd647dd84a652721db9b936b8270141c4fa4ffdfc784.svg",
+          "x": 80,
+          "y": 64,
+          "w": 200,
+          "h": 80,
+          "fit": "contain",
+          "enter": "fade",
+          "at": 0
+        },
+        {
+          "use": "icon",
+          "id": "icon",
+          "name": "chart-line-up",
+          "x": 912,
+          "y": 220,
+          "size": 96,
+          "color": "#22c55e",
+          "enter": "pop",
+          "at": 0.1
+        },
+        {
+          "use": "counter",
+          "id": "number",
+          "from": 0,
+          "to": 4.2,
+          "decimals": 1,
+          "thousands": true,
+          "prefix": "$",
+          "suffix": "M",
+          "x": 960,
+          "y": 340,
+          "align": "center",
+          "size": 220,
+          "weight": 700,
+          "color": "#22c55e",
+          "at": 0.3,
+          "dur": 1.6,
+          "ease": [
+            0.16,
+            1,
+            0.3,
+            1
+          ]
+        },
+        {
+          "use": "shape",
+          "id": "underline",
+          "shape": "line",
+          "x": 760,
+          "y": 640,
+          "w": 400,
+          "h": 0,
+          "stroke": "#22c55e",
+          "strokeWidth": 6,
+          "enter": "draw",
+          "enterDur": 0.6,
+          "at": 1.6
+        },
+        {
+          "use": "text",
+          "id": "label",
+          "text": "raised in our seed round",
+          "x": 960,
+          "y": 680,
+          "align": "center",
+          "size": 48,
+          "maxWidth": 1400,
+          "preset": "fade-up",
+          "at": 1.8
+        }
+      ],
+      "template": {
+        "id": "stat-counter",
+        "version": 1,
+        "values": {
+          "value": 4.2,
+          "prefix": "$",
+          "suffix": "M",
+          "decimals": 1,
+          "label": "raised in our seed round",
+          "icon": "chart-line-up",
+          "logo": "sha256:4ecf4910b2061560dcbdcd647dd84a652721db9b936b8270141c4fa4ffdfc784.svg",
+          "accent": "#22c55e"
+        }
+      }
+    }
+  ]
+}

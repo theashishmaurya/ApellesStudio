@@ -6808,6 +6808,272 @@ def motion_delete_theme(name: str) -> str:
 
 
 @mcp.tool()
+def motion_list_templates(tag: str | None = None) -> str:
+    """List the Motion TEMPLATES you can fill (D-407): saved designs with named
+    slots (headline, logo, brand colour, a number...) that become a finished,
+    on-brand scene -- or a group of layers -- in one call. Read-only; needs no
+    project open.
+
+    Two sources: the BUILT-IN starters for founder/brand videos (`logo-reveal`,
+    `feature-callout`, `stat-counter`, `testimonial`, `pricing-card`,
+    `cta-end-card`) and the user's own library (`motion_save_template`,
+    `motion_define_template`).
+
+    Returns `templates`, each `{id, name, version, kind, source, description,
+    tags, authoredAt, slots, valuesSchema, hasTheme}`: `kind` is `scene` (becomes
+    a new scene) or `group` (becomes one group layer inside a scene); `slots`
+    are `{id, type, label, description?, default?, required?, constraints?}`
+    with `type` one of text | number | color | image | icon | enum | list;
+    `valuesSchema` is the same as one JSON Schema object, ready to fill. Also
+    `tags` (every tag in use) and `loadErrors` (library files that could not be
+    loaded, each named) when there are any.
+
+    Args:
+        tag: only templates carrying this tag (e.g. "pricing")."""
+    import json
+
+    args: dict[str, Any] = {}
+    if tag is not None:
+        args["tag"] = tag
+    return json.dumps(_op("motion_list_templates", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_get_template(id: str) -> str:
+    """Read one Motion template in full (D-407), its `body` included, to see how
+    it is built or to adapt it into a new one for `motion_define_template`.
+    Returns `{template, source, valuesSchema}`. Needs no project open."""
+    import json
+
+    return json.dumps(_op("motion_get_template", id=id), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_define_template(template: dict[str, Any], dry_run: bool = False) -> str:
+    """Save a Motion template written as JSON into the user's library (D-407).
+
+    Shape: `{schemaVersion: 1, id, name, version, description?, tags?,
+    kind: "scene" | "group", authoredAt: {width, height, fps}, slots, body,
+    themeDef?}`.
+      * `slots`: `[{id, type, label, description?, default?, required?,
+        constraints?}]`; `type` is text | number | color | image | icon | enum |
+        list; `constraints` may hold `maxLen`, `minLen`, `min`, `max`,
+        `integer`, `options` (enum), `minItems`, `maxItems`, `itemType`
+        ("text" | "number", list). Slot ids are identifiers (letters, digits,
+        `_`). An image value is an asset id from `motion_import_asset`
+        (`sha256:<hex>.<ext>`), an icon a Phosphor name (`rocket-launch`), a
+        colour `#rrggbb`.
+      * `body`: for `kind: "scene"` a scene WITHOUT `id` (`{dur, layers, ...}`);
+        for `kind: "group"` a list of 2D layers (instantiated as one group
+        layer). Bind any value to a slot with `{"$slot": "<id>"}`; interpolate
+        into text with `"{price}/mo"` (`{{` / `}}` are literal braces; a list
+        slot interpolates one item per line); keep an array element (a layer)
+        only when a slot has a value with `"$when": "<id>"`. That is ALL: there
+        is no expression language. An unset optional slot REMOVES the key it is
+        bound to, so the primitive's theme default applies -- leave colour slots
+        optional to keep a template theme-aware.
+      * pixel values are authored for `authoredAt` and reflowed to each
+        project's canvas when instantiated.
+
+    The template must parse AND expand with its defaults (a sample value is
+    used for a required slot without one) into a valid scene, icon names
+    included; otherwise nothing is saved and the answer carries `issues`
+    `[{path, code, message, expected, hint}]`. Saving under an id the library
+    already has makes it the next `version`; built-in ids are reserved.
+    `dry_run=true` checks only. Returns `{saved, id, name, kind, version,
+    previousVersion, slots, valuesSchema}`. Needs no project open; the library
+    is user-level and not in the undo stack.
+
+    Args:
+        template: the template object.
+        dry_run: check only, save nothing."""
+    import json
+
+    args: dict[str, Any] = {"template": template}
+    if dry_run:
+        args["dry_run"] = True
+    return json.dumps(_op("motion_define_template", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_save_template(
+    scene_index: int,
+    name: str,
+    slots: list[dict[str, Any]],
+    layers: list[str] | None = None,
+    id: str | None = None,
+    description: str | None = None,
+    tags: list[str] | None = None,
+    dry_run: bool = False,
+) -> str:
+    """Capture a scene you built as a reusable Motion template (D-407) -- the way
+    to turn a finished design into something an agent or a person can refill.
+
+    Without `layers` the WHOLE scene becomes a scene template; with `layers`
+    (layer ids in that scene) just those layers become a group template.
+
+    Each slot names the field it replaces: `{id, path, type, label?,
+    description?, required?, constraints?, default?}`. `path` is a field path
+    inside the scene -- `layers[2].text`, `layers[headline].text` (a bracket
+    that is not a number picks a layer by id), `layers[0].children[1].fill` --
+    or, for a group template, inside the selected layers (`[headline].text`); a
+    list of paths binds one slot to several fields (one brand colour used by
+    three layers). `type` is text | number | color | image | icon | enum |
+    list. The field's CURRENT value becomes the slot's default unless you give
+    one; a field that is unset (reading the theme) stays optional and
+    theme-aware.
+
+    The canvas (`authoredAt`) and the document's own theme (`themeDef`, if it
+    has one) are recorded. The template is checked to expand with its defaults
+    before anything is saved; refusals carry `issues` with paths like
+    `slots[1].path`. Saving under an existing id makes the next `version`.
+    `dry_run=true` returns the template without saving it.
+
+    Args:
+        scene_index: the scene to capture.
+        name: the template's name; the id defaults to its slug.
+        slots: the slots, e.g. `[{"id": "headline", "type": "text", "path":
+            "layers[headline].text", "label": "Headline"}]`.
+        layers: layer ids for a group template (omit for the whole scene).
+        id: the template id (lowercase letters, digits, hyphens).
+        description: one line on what it is for.
+        tags: e.g. ["brand", "intro"].
+        dry_run: build and check, save nothing."""
+    import json
+
+    args: dict[str, Any] = {"scene_index": scene_index, "name": name, "slots": slots}
+    if layers is not None:
+        args["layers"] = layers
+    if id is not None:
+        args["id"] = id
+    if description is not None:
+        args["description"] = description
+    if tags is not None:
+        args["tags"] = tags
+    if dry_run:
+        args["dry_run"] = True
+    return json.dumps(_op("motion_save_template", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_instantiate_template(
+    id: str,
+    values: dict[str, Any] | None = None,
+    after_scene_index: int | None = None,
+    into_scene_index: int | None = None,
+    scene_id: str | None = None,
+    apply_theme: bool = False,
+    dry_run: bool = False,
+) -> str:
+    """Fill a Motion template's slots and put the result in the document, in ONE
+    undoable step (D-407) -- a new on-brand scene with no layer-by-layer work.
+
+    `values` is `{slotId: value}` (see `motion_list_templates`' `valuesSchema`);
+    an omitted slot takes its default, and `null` clears an optional one (an
+    optional icon or logo then disappears). Each value is checked against its
+    slot's type and constraints; on any problem nothing changes and the answer
+    carries `issues` `[{path, code, message, expected, hint}]` with paths like
+    `values.headline` or `values.features[2]`. An image value is an asset id
+    from `motion_import_asset`.
+
+    Where it goes: a `scene` template becomes a NEW scene right after
+    `after_scene_index` (default: at the end), named after the template
+    (`stat-counter`, `stat-counter-2`, ...) unless you pass `scene_id`; a `group`
+    template becomes one group layer on top of scene `into_scene_index`
+    (required). The design is reflowed from the canvas it was authored on to
+    this project's canvas.
+
+    The document gets PLAIN layers (a copy: a render never depends on the
+    library) plus provenance `template: {id, version, values}` on the scene (or
+    group layer), which is what `motion_refill_template` re-expands from.
+    `apply_theme=true` also embeds the template's own theme in the document
+    (only if it carries one). Returns `{template, sceneIndex, sceneId, layerId?,
+    values, reflowed, themeApplied, selection}`; `dry_run=true` checks without
+    changing anything.
+
+    Args:
+        id: the template id.
+        values: the slot values.
+        after_scene_index: a scene template goes after this scene.
+        into_scene_index: a group template goes into this scene.
+        scene_id: the new scene's name (scene templates).
+        apply_theme: also use the template's theme for the document.
+        dry_run: check only."""
+    import json
+
+    args: dict[str, Any] = {"id": id}
+    if values is not None:
+        args["values"] = values
+    if after_scene_index is not None:
+        args["after_scene_index"] = after_scene_index
+    if into_scene_index is not None:
+        args["into_scene_index"] = into_scene_index
+    if scene_id is not None:
+        args["scene_id"] = scene_id
+    if apply_theme:
+        args["apply_theme"] = True
+    if dry_run:
+        args["dry_run"] = True
+    return json.dumps(_op("motion_instantiate_template", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_refill_template(
+    scene_index: int,
+    values: dict[str, Any] | None = None,
+    layer_id: str | None = None,
+    upgrade: bool = False,
+    dry_run: bool = False,
+) -> str:
+    """Re-expand a template instance with new slot values (D-407): change the
+    headline, the number or the logo of a scene made from a template without
+    rebuilding it.
+
+    The instance is scene `scene_index` (a scene template), or the group layer
+    `layer_id` in it (a group template). `values` are merged over the ones it
+    was made with (`null` clears an optional slot). The scene keeps its id and
+    place; a group keeps its id, place, start time and transform. Copy
+    semantics: everything else in the instance is regenerated from the
+    template, so hand edits made to those layers since are replaced.
+
+    Refused when the library's template is a different `version` from the one
+    the instance was made with, unless `upgrade=true` (re-expand with the new
+    version), and when the template is no longer in the library. Value
+    problems come back as `issues` (`values.<slot>`). One undoable step.
+    Returns `{template: {id, version, previousVersion}, sceneIndex, sceneId,
+    layerId?, values}`; `dry_run=true` checks only.
+
+    Args:
+        scene_index: the scene (or the scene holding the group).
+        values: the slots to change.
+        layer_id: the group layer, for a group template instance.
+        upgrade: allow re-expanding with a newer template version.
+        dry_run: check only."""
+    import json
+
+    args: dict[str, Any] = {"scene_index": scene_index}
+    if values is not None:
+        args["values"] = values
+    if layer_id is not None:
+        args["layer_id"] = layer_id
+    if upgrade:
+        args["upgrade"] = True
+    if dry_run:
+        args["dry_run"] = True
+    return json.dumps(_op("motion_refill_template", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_delete_template(id: str) -> str:
+    """Remove a template from the user's library (D-407). Scenes already made
+    from it keep their layers (they are copies) but can no longer be refilled.
+    Built-in templates cannot be deleted. Needs no project open."""
+    import json
+
+    return json.dumps(_op("motion_delete_template", id=id), indent=2, default=str)
+
+
+@mcp.tool()
 def motion_set_project_settings(
     title: str | None = None,
     width: int | None = None,

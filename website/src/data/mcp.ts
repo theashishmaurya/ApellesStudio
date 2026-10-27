@@ -87,6 +87,12 @@ export interface ToolGroup {
  * Openverse audio tools that pass added without a re-count (Edit 83 → 86).
  * Re-counted against the real file.
  *
+ * 200 → 207 on 2026-10-27 (D-407): the seven template tools,
+ * `motion_list_templates`, `motion_get_template`, `motion_define_template`,
+ * `motion_save_template`, `motion_instantiate_template`,
+ * `motion_refill_template` and `motion_delete_template` (Motion 52 → 59).
+ * Re-counted against the real file.
+ *
  * 166 → 176 on 2026-09-17 (D-339). Exactly ONE of those ten is this pass's own
  * `motion_set_project_theme` (the Motion tab's document-level theme); the other
  * nine are drift these numbers had already accumulated across four earlier
@@ -100,8 +106,8 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 200,
-  shipped: 188,
+  all: 207,
+  shipped: 195,
   debugOnly: 12,
 } as const;
 
@@ -161,7 +167,7 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
   },
   {
     name: 'Motion',
-    count: 52,
+    count: 59,
     blurb:
       'The motion-graphics room, closed as a gap on 2026-09-09 (D-257/D-259/D-260) after a year of being this surface’s sharpest shortfall. Scenes and layers from a real primitive catalog, per-layer keyframes with bezier easing, 2D and 3D cameras, align and distribute, and a Remotion render that emits one video file per scene.',
     sample: [
@@ -172,6 +178,8 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
       'motion_insert_layers',
       'motion_validate',
       'motion_preview_frame',
+      'motion_list_templates',
+      'motion_instantiate_template',
       'motion_set_layer_field',
       'motion_set_layer_position',
       'motion_add_layer_keyframe',

@@ -207,6 +207,13 @@
     "motion_insert_layers",
     "motion_set_scene",
     "motion_preview_frame",
-    "motion_import_asset"
+    "motion_import_asset",
+    "motion_list_templates",
+    "motion_get_template",
+    "motion_define_template",
+    "motion_save_template",
+    "motion_instantiate_template",
+    "motion_refill_template",
+    "motion_delete_template"
   ]
 }

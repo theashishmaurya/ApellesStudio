@@ -108,6 +108,7 @@ import type { PlayerRef } from '@remotion/player';
 import { createMotionOps, type MotionOpsApi, type MotionEditLinks } from './motionOps';
 import { useMotionLayerPresetStore } from './layerPresetIO';
 import { useMotionThemeLibraryStore } from './themeLibraryIO';
+import { useMotionTemplateLibraryStore } from './templateLibraryIO';
 import { importAsset, previewFrames } from './manifestIO';
 import type { Selection } from './LayerList';
 import type { MotionCanvasMeasureApi } from './MotionPreview';
@@ -240,6 +241,13 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
       preview: (req) => previewFrames(req),
       // D-404 — the content-hash asset import.
       importAsset: (path) => importAsset(path),
+      // D-407 — the template library, read the same way.
+      templates: () => ({
+        list: () => useMotionTemplateLibraryStore.getState().templates,
+        loadErrors: () => useMotionTemplateLibraryStore.getState().loadErrors,
+        save: (t) => useMotionTemplateLibraryStore.getState().save(t),
+        remove: (id) => useMotionTemplateLibraryStore.getState().remove(id),
+      }),
     });
 
     // B-272 — this subscription's identity; see `useEditorControl.ts`.

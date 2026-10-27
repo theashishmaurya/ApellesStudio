@@ -28,6 +28,7 @@
 pub mod assets;
 pub mod job;
 pub mod still;
+pub mod templates;
 
 use std::path::PathBuf;
 use std::process::Command;

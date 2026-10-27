@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "pricing-card",
+  "name": "Pricing card",
+  "version": 1,
+  "description": "A tinted plan card: plan name, a price that counts up, one feature per line and a call-to-action button.",
+  "tags": ["product", "pricing"],
+  "kind": "scene",
+  "authoredAt": { "width": 1920, "height": 1080, "fps": 30 },
+  "slots": [
+    { "id": "plan", "type": "text", "label": "Plan name", "required": true, "default": "Pro", "constraints": { "maxLen": 24 } },
+    { "id": "price", "type": "number", "label": "Price", "required": true, "default": 29, "constraints": { "min": 0 } },
+    { "id": "currency", "type": "text", "label": "Currency symbol", "default": "$", "constraints": { "maxLen": 3 } },
+    { "id": "period", "type": "text", "label": "Per", "default": "/mo", "constraints": { "maxLen": 8 } },
+    { "id": "features", "type": "list", "label": "Features (one per line)", "default": ["Unlimited projects", "4K export", "Brand kit"], "constraints": { "itemType": "text", "maxItems": 5, "maxLen": 32 } },
+    { "id": "cta", "type": "text", "label": "Button", "default": "Start free trial", "constraints": { "maxLen": 24 } },
+    { "id": "accent", "type": "color", "label": "Accent colour", "description": "Optional; the theme accent when unset." }
+  ],
+  "body": {
+    "dur": 5,
+    "layers": [
+      { "use": "shape", "id": "card", "shape": "roundrect", "x": 660, "y": 120, "w": 600, "h": 840, "radius": 32, "fill": { "$slot": "accent" }, "fillOpacity": 0.12, "stroke": { "$slot": "accent" }, "strokeWidth": 2, "enter": "fade", "at": 0 },
+      { "use": "text", "id": "plan", "text": "{plan}", "x": 960, "y": 180, "align": "center", "size": 44, "weight": 700, "preset": "fade-up", "at": 0.3 },
+      { "use": "counter", "id": "price", "from": 0, "to": { "$slot": "price" }, "prefix": { "$slot": "currency" }, "suffix": { "$slot": "period" }, "x": 960, "y": 260, "align": "center", "size": 120, "weight": 700, "at": 0.5, "dur": 1 },
+      { "use": "text", "id": "features", "text": "{features}", "x": 760, "y": 470, "size": 36, "maxWidth": 440, "preset": "fade-up", "at": 1.2 },
+      { "use": "shape", "id": "button", "shape": "roundrect", "x": 760, "y": 820, "w": 400, "h": 84, "radius": 42, "fill": { "$slot": "accent" }, "enter": "pop", "at": 1.8 },
+      { "use": "text", "id": "cta", "text": { "$slot": "cta" }, "x": 960, "y": 840, "align": "center", "size": 34, "weight": 700, "preset": "fade-up", "at": 2.0 }
+    ]
+  }
+}

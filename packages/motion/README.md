@@ -306,6 +306,25 @@ GUI-creation gap; D-155–D-159 closed the largest on-canvas-manipulation
 gap; D-160/D-161/D-162/D-163 are four of four steps toward a real keyframe
 timeline — the curve/easing editor remains, Phase 5b's own final piece.
 
+## Templates (D-407)
+
+`templates.ts` holds the pure template functions both interfaces use: `instantiateTemplate`
+(slot values checked with `values.<slot>` issues, the body filled, reflowed from `authoredAt`
+by `manifestReflow.ts`, deterministic ids, `template` provenance, strict validation),
+`planInstantiate` / `planRefill` (land it in a manifest; a scene template becomes a new
+scene, a group template one group layer), `templateFromSource` (capture a scene or some of
+its layers: slot paths become bindings, current values become defaults) and
+`exposableFields` (the save form's field list, from `propCatalog.ts`). `templateLibrary.ts`:
+the six built-in starters (`src/templates/*.json`, data, imported as JSON), per-file
+sanitising of the user library, listing by tag, `versionForSave`. `templateLibraryIO.ts`:
+`chroma_motion_load_templates` / `_save_template` / `_delete_template` and the store.
+MCP: `motion_list_templates`, `motion_get_template`, `motion_define_template`,
+`motion_save_template`, `motion_instantiate_template`, `motion_refill_template`,
+`motion_delete_template`. GUI: `TemplatesSection.tsx` at the top of the Catalog (tag
+filter, Fill & insert form built from the Inspector's `FieldControl` with live checks and
+a still preview, Save scene as template from a scene row's bookmark action).
+`templateOps.e2e.test.ts` is the fill-a-saved-design proof.
+
 ## Brand building blocks in the GUI (D-404/D-405)
 
 Catalog rows for `image`/`icon`/`shape`/`counter`/`group` (Phosphor glyphs; adding an image

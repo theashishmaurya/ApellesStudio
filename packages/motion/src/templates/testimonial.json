@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "testimonial",
+  "name": "Testimonial quote card",
+  "version": 1,
+  "description": "A quote mark, the quote, then who said it beside an accent bar. Optional round avatar on the right.",
+  "tags": ["social-proof", "quote"],
+  "kind": "scene",
+  "authoredAt": { "width": 1920, "height": 1080, "fps": 30 },
+  "slots": [
+    { "id": "quote", "type": "text", "label": "Quote", "required": true, "default": "We cut our launch video from two weeks to one afternoon.", "constraints": { "maxLen": 200 } },
+    { "id": "name", "type": "text", "label": "Name", "required": true, "default": "Priya Raman", "constraints": { "maxLen": 40 } },
+    { "id": "role", "type": "text", "label": "Role", "default": "Founder, Northwind", "constraints": { "maxLen": 60 } },
+    { "id": "avatar", "type": "image", "label": "Avatar", "description": "Optional." },
+    { "id": "accent", "type": "color", "label": "Accent colour", "description": "Optional; the theme accent when unset." }
+  ],
+  "body": {
+    "dur": 6,
+    "layers": [
+      { "use": "icon", "id": "mark", "name": "quotes", "weight": "fill", "x": 200, "y": 170, "size": 120, "color": { "$slot": "accent" }, "enter": "pop", "at": 0.1 },
+      { "use": "text", "id": "quote", "text": { "$slot": "quote" }, "x": 200, "y": 330, "size": 60, "maxWidth": 1400, "preset": "fade-up", "at": 0.4 },
+      { "use": "shape", "id": "bar", "shape": "rect", "x": 200, "y": 760, "w": 8, "h": 120, "fill": { "$slot": "accent" }, "enter": "fade", "at": 1.4 },
+      { "use": "text", "id": "name", "text": { "$slot": "name" }, "x": 240, "y": 765, "size": 44, "weight": 700, "preset": "fade-up", "at": 1.5 },
+      { "use": "text", "id": "role", "text": { "$slot": "role" }, "x": 240, "y": 830, "size": 32, "preset": "fade-up", "at": 1.7, "transform": { "opacity": 0.7 } },
+      { "$when": "avatar", "use": "image", "id": "avatar", "src": { "$slot": "avatar" }, "x": 1560, "y": 740, "w": 160, "h": 160, "radius": 80, "fit": "cover", "enter": "pop", "at": 1.5 }
+    ]
+  }
+}
