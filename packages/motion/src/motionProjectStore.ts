@@ -71,6 +71,12 @@ interface MotionProjectState {
   /** The real backend error behind `status === 'error'`; null otherwise. */
   error: string | null;
   loaded: LoadedManifest | null;
+  /** D-415 — set when the unsaved edits of a previous page were put back from
+   *  the recovery copy; `stale` says the saved manifest changed since, so the
+   *  next Save replaces it. Cleared when those edits are saved or discarded,
+   *  and on a project switch. The composition root tells the person. */
+  recovered: { stale: boolean } | null;
+  setRecovered: (recovered: { stale: boolean } | null) => void;
 
   /** The one signal that starts and stops this store's work: the path of the
    *  project that is open now, or `null` for none. Idempotent *per path* — the
@@ -102,13 +108,15 @@ export const useMotionProjectStore = createSharedStore<MotionProjectState>('moti
   status: 'idle',
   error: null,
   loaded: null,
+  recovered: null,
+  setRecovered: (recovered) => set({ recovered }),
 
   setOpenProject: (path) => {
     if (get().openProjectPath === path) return;
     loadToken += 1; // orphan any read still in flight from the old project
 
     if (path === null) {
-      set({ openProjectPath: null, status: 'idle', error: null, loaded: null });
+      set({ openProjectPath: null, status: 'idle', error: null, loaded: null, recovered: null });
       return;
     }
 
@@ -116,7 +124,7 @@ export const useMotionProjectStore = createSharedStore<MotionProjectState>('moti
     // manifest, and `useMotionManifest` seeds its editor text from a new
     // generation of it (B-083 — this is what left the Motion tab editing
     // project A's manifest after opening project B).
-    set({ openProjectPath: path, status: 'loading', error: null, loaded: null });
+    set({ openProjectPath: path, status: 'loading', error: null, loaded: null, recovered: null });
     void get().load();
   },
 

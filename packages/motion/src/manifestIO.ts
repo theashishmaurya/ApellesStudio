@@ -61,6 +61,41 @@ export async function saveManifest(manifest: unknown): Promise<string> {
   }
 }
 
+/** D-415 — the unsaved-edit recovery copy of the open project's manifest. */
+export interface RecoveryCopy {
+  /** the unsaved manifest text, exactly as it was written (may be invalid JSON) */
+  text: string;
+  /** the saved manifest changed after this copy was made */
+  stale: boolean;
+}
+
+/** D-415 — the recovery copy, or `null` when there is none. */
+export async function readRecovery(): Promise<RecoveryCopy | null> {
+  try {
+    return await invoke<RecoveryCopy | null>('chroma_motion_recovery_read');
+  } catch (e) {
+    rethrow(e);
+  }
+}
+
+/** D-415 — replace the recovery copy with `text`. Never touches the saved manifest. */
+export async function writeRecovery(text: string): Promise<void> {
+  try {
+    await invoke<void>('chroma_motion_recovery_write', { text });
+  } catch (e) {
+    rethrow(e);
+  }
+}
+
+/** D-415 — remove the recovery copy (saved, undone back to saved, or discarded). */
+export async function clearRecovery(): Promise<void> {
+  try {
+    await invoke<void>('chroma_motion_recovery_clear');
+  } catch (e) {
+    rethrow(e);
+  }
+}
+
 /** What a delivered scene is, as the app layer receives it (D-062/D-260). */
 export interface MotionRenderResult {
   outputPath: string;

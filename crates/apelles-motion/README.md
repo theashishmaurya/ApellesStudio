@@ -63,6 +63,11 @@ snapshot (already in the tree via `apelles-media`).
 
 ## Assets (D-404)
 
+`src/recovery.rs` (D-415) owns `<project>.chroma/motion/manifest.recovery.json`: the Motion
+tab's unsaved manifest text, written atomically and stamped with a hash of the saved
+`manifest.json` so a copy made against an older saved manifest reads back `stale`. It
+never writes `manifest.json`, and nothing that renders reads it.
+
 `src/assets.rs`: `import_asset` copies an image into `<project>.chroma/motion/assets/` named
 by the SHA-256 of its bytes (`sha2`, already in the tree) and returns the `sha256:<hex>.<ext>`
 id a manifest uses; idempotent, atomic. `RenderRequest::with_public_dir` / `PreviewRequest.public_dir`

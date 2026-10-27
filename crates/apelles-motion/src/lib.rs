@@ -28,6 +28,7 @@
 pub mod assets;
 pub mod components;
 pub mod job;
+pub mod recovery;
 pub mod still;
 pub mod templates;
 

@@ -57,6 +57,12 @@ per-row lane timeline).
   saved manifest yet), live-parses every edit (debounced) against
   `@apelles/motion-engine`'s `manifestSchema`, drives save/render. Component-local
   — nothing outside this tab needs it.
+- `recoveryWriter.ts` — D-415: the debounced, serialised writer for the unsaved-edit
+  recovery copy (`<project>/motion/manifest.recovery.json`, owned by
+  `apelles_motion::recovery`). `useMotionManifest` feeds it the text that differs from
+  the saved document, restores a found copy once per project (unsaved, never saved on
+  the person's behalf; `motionProjectStore.recovered` drives the notice), and a Save
+  clears it. Renders never read it.
 - `MotionPreview.tsx` — the `@remotion/player` embed. `durationInFrames` /
   `fps` / `compositionWidth` / `compositionHeight` come from the engine's own
   `totalFrames`/schema defaults (`build.ts`), not reimplemented here. Back to
