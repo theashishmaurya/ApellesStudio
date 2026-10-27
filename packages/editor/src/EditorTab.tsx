@@ -56,6 +56,8 @@ import { TimelinePane } from './TimelinePane';
 import { TimelineSwitcher } from './TimelineSwitcher';
 import { useEditorTimelineStore } from './timelineStore';
 import { useEditorControl } from './useEditorControl';
+import { registerBrandApplier } from '@apelles/brand';
+import { applyBrandToEdit } from './brandEdit';
 
 // D-208 — widened from 280/220: every Transform and Crop row now carries its
 // own keyframe nav + stopwatch diamond + reset (four `icon-xs` buttons, 96px)
@@ -97,6 +99,9 @@ export function EditorTab() {
   // — `EditorTab`, like every other tab body, stays mounted from boot
   // (B-007). No arguments — see that hook's own doc comment for why.
   useEditorControl();
+
+  // D-416 — this tab's brand applier (captions and titles, one undo step).
+  useEffect(() => registerBrandApplier('edit', applyBrandToEdit), []);
 
   // Re-check when the window regains focus — the project may have changed
   // out from under us. Safe to fire freely now: `load()` is token-guarded, so

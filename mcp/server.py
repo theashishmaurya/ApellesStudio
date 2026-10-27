@@ -133,6 +133,11 @@ MOTION_COMPONENT_TIMEOUT_MS = 300_000
 #: Mac, measured; the budget covers the first content hash of a multi-GB video
 #: whose sound is the beat track, and several files at once.
 BEAT_ANALYSIS_TIMEOUT_MS = 120_000
+#: Brand kits (D-416): importing a reference video copies its bytes into the
+#: brand asset store, and applying a kit copies its fonts and logos into the
+#: Motion asset folder and parses a LUT. Seconds, not minutes; the budget covers
+#: a multi-GB reference reel on a slow disk.
+BRAND_TIMEOUT_MS = 120_000
 
 # D-318's recut detectors used to have a 180_000 budget here, on the reasoning
 # that a cold decode of a long 4K source is not 20s-fast. B-188 proved that far
@@ -9652,6 +9657,218 @@ def motion_reload_manifest(force: bool = False) -> str:
     if force:
         args["force"] = True
     return json.dumps(_op("motion_reload_manifest", **args), indent=2, default=str)
+
+
+# --------------------------------------------------------------------------- #
+# Brand kits (D-416) — one brand definition for every tab
+# --------------------------------------------------------------------------- #
+
+
+@mcp.tool()
+def brand_list_kits() -> str:
+    """List the user's brand kits and the one THIS project uses (D-416). Start here
+    before designing anything for a person: read the project's kit, then
+    `brand_get_references`.
+
+    A brand kit is the one brand definition every tab reads: colours (primary,
+    secondary, accent, background, text + an extended palette), typography
+    (display/body/mono, each a Google, system or licensed font file), logos
+    (light/dark/mark), a motion style (ease, speed, stagger, entrance), a caption
+    style (an Edit caption preset), an optional grade look (a LUT for the
+    Colorist), sound (sonic logo, music mood) and references (images/videos with
+    a note on what to take from each).
+
+    Returns `kits` (a summary each), `loadErrors` (library files that did not
+    load, each named with why), `project` (the project's own copy, with
+    `libraryVersion` and `newerInLibrary`) or null, and `tabs` (which tabs can
+    apply a kit in this build)."""
+    import json
+
+    return json.dumps(_op("brand_list_kits"), indent=2, default=str)
+
+
+@mcp.tool()
+def brand_get_kit(id: str | None = None) -> str:
+    """Read one brand kit in full (D-416): `id` from the library, or omit it for the
+    project's own copy (what `brand_apply_kit` applies).
+
+    Returns `source` (library | project), the whole `kit`, its WCAG `contrast`
+    (every colour pair that ends up on top of another: ratio, AA/AAA level, what
+    it is used for) and `warnings` for the pairs too low for their use, and
+    `files` (each asset id the kit names → its absolute file, so you can look at
+    a logo)."""
+    import json
+
+    args: dict = {}
+    if id is not None:
+        args["id"] = id
+    return json.dumps(_op("brand_get_kit", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def brand_create_kit(kit: dict[str, Any], dry_run: bool = False) -> str:
+    """Create a brand kit in the user's library (D-416).
+
+    `kit` needs `id` (lowercase letters, digits, hyphens, at most 40) and `name`;
+    everything else you leave out comes from a neutral starter, so a few fields
+    are enough. Shape: `{id, name, description?, colors: {primary, secondary,
+    accent, background, text, palette?: [{name, hex}]}, typography: {display,
+    body, mono?: {family, source: "google"|"system"|"file", file?, licence?,
+    weights?, editFallback?}, scale?: {base, ratio, displayWeight, bodyWeight}},
+    logos?: {light?, dark?, mark?}, motion?: {ease: "out"|"inOut"|"anticipate"|
+    "linear"|[x1,y1,x2,y2], speed, stagger, entrance: "none"|"fade"|"pop"|"rise"|
+    "draw"}, captions?: {preset, font?: "display"|"body", color?, boxColor?
+    (colour roles)}, look?: {lut, intensity, name?}, sound?: {sonicLogo?, music?:
+    {mood?, bpm?: [low, high], tracks?}}, references?}`. Colours are `#rrggbb`.
+    Files (logos, a font file, a LUT, references, audio) are asset ids from
+    `brand_import_asset`, never paths. A `file` font needs its `licence` (what it
+    allows, in the person's words). `editFallback` is the Edit tab's font key
+    for a face that is not a .ttf/.otf file.
+
+    Refused with `issues` `[{path, message}]` naming every problem; nothing is
+    saved. `dry_run` validates and reports contrast without saving. Returns the
+    saved kit (version 1), `contrast` and `warnings`."""
+    import json
+
+    args: dict = {"kit": kit}
+    if dry_run:
+        args["dry_run"] = True
+    return json.dumps(_op("brand_create_kit", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def brand_update_kit(id: str, patch: dict[str, Any], dry_run: bool = False) -> str:
+    """Change a brand kit in the library (D-416). `patch` merges into the kit: objects
+    key by key (`{"colors": {"accent": "#ff5a1f"}}` changes one colour), lists and
+    values replace, and `null` removes an optional section (`{"look": null}`).
+    `id`, `version` and `schemaVersion` are not yours to change.
+
+    Every save is the next `version`. A project that uses this kit keeps its own
+    copy until `brand_set_active_kit` is called again; the answer says so
+    (`projectOutOfDate`). Refused with `issues` when the result would not be a
+    valid kit; `dry_run` checks without saving."""
+    import json
+
+    args: dict = {"id": id, "patch": patch}
+    if dry_run:
+        args["dry_run"] = True
+    return json.dumps(_op("brand_update_kit", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def brand_delete_kit(id: str) -> str:
+    """Delete a brand kit from the user's library (D-416). Projects that use it keep
+    their own copy, so nothing already branded changes."""
+    import json
+
+    return json.dumps(_op("brand_delete_kit", id=id), indent=2, default=str)
+
+
+@mcp.tool()
+def brand_import_asset(path: str) -> str:
+    """Import a file into the brand asset store (D-416): a logo (png, jpg, webp,
+    gif, svg), a font file (ttf, otf, woff, woff2), a LUT (cube), a reference video
+    (mp4, mov, m4v, webm) or audio (mp3, wav, m4a, aac, flac, ogg). The file is
+    copied and named by the SHA-256 of its bytes; the same file twice is the same
+    id. Returns `asset.id` (`sha256:<hex>.<ext>`) to put in a kit field with
+    `brand_update_kit`. For a reference with a note, use `brand_add_reference`."""
+    import json
+
+    return json.dumps(
+        _op("brand_import_asset", timeout_ms=BRAND_TIMEOUT_MS, path=path), indent=2, default=str
+    )
+
+
+@mcp.tool()
+def brand_set_active_kit(id: str | None) -> str:
+    """Make a library kit this project's brand kit, or clear it with null (D-416).
+
+    The kit and every file it names are COPIED into the project
+    (`<project>.chroma/brand/`), so the project never depends on the library:
+    editing or deleting the library kit later changes nothing here until this is
+    called again. Setting a kit does not restyle anything yet; `brand_apply_kit`
+    does, one undo step per tab. Clearing leaves looks already applied in place
+    (undo them in their tab)."""
+    import json
+
+    return json.dumps(_op("brand_set_active_kit", id=id), indent=2, default=str)
+
+
+@mcp.tool()
+def brand_apply_kit(
+    tabs: list[str] | None = None,
+    restyle_existing: bool = False,
+    titles: bool = True,
+) -> str:
+    """Apply the project's brand kit to the tabs (D-416): ONE undo step in each tab.
+
+    `tabs` is any of "edit", "motion", "colorist" (default all):
+      * motion: the kit becomes the document's theme (`brand-<kit id>`, embedded,
+        so renders never read the kit); its font files and logos are copied into
+        the Motion asset folder under the same ids. Templates and custom
+        components pick colours and fonts up from the theme. From then on new
+        layers take the kit's entrance and new keyframes its ease as DEFAULTS.
+        `restyle_existing` also rewrites EXISTING entrances and keyframe eases
+        with the kit's motion style; off by default.
+      * edit: every unlocked subtitle track gets the kit's caption preset with
+        its font and colour roles, and (unless `titles` is false) every title its
+        display font and text colour. Fonts reach Edit only as .ttf/.otf files
+        or through a font's `editFallback`; the answer says when one did not.
+      * colorist: the open shot gets the kit's LUT at its intensity.
+    Returns per tab `{ok, changed, summary, details}` or `{ok: false, error}` (a
+    tab not in this build is reported, not skipped silently)."""
+    import json
+
+    args: dict = {}
+    if tabs is not None:
+        args["tabs"] = tabs
+    if restyle_existing:
+        args["restyle_existing"] = True
+    if not titles:
+        args["titles"] = False
+    return json.dumps(
+        _op("brand_apply_kit", timeout_ms=BRAND_TIMEOUT_MS, **args), indent=2, default=str
+    )
+
+
+@mcp.tool()
+def brand_add_reference(
+    path: str,
+    note: str,
+    kind: str = "reference",
+    kit_id: str | None = None,
+) -> str:
+    """Add a reference to a brand kit (D-416): an image or video the person wants
+    the work to learn from, with a `note` saying WHAT to take from it ("use my
+    work for materials and framing"; "use the reference for type and
+    hierarchy"). `kind` is "own-work" (the person's own) or "reference" (someone
+    else's). The file is imported into the brand asset store; the kit is the
+    project's kit unless `kit_id` names another. When the project uses that kit,
+    its copy is updated too, so `brand_get_references` shows it at once."""
+    import json
+
+    args: dict = {"path": path, "note": note, "kind": kind}
+    if kit_id is not None:
+        args["kit_id"] = kit_id
+    return json.dumps(
+        _op("brand_add_reference", timeout_ms=BRAND_TIMEOUT_MS, **args), indent=2, default=str
+    )
+
+
+@mcp.tool()
+def brand_get_references(kit_id: str | None = None) -> str:
+    """Everything an agent should read BEFORE designing for this brand (D-416): the
+    kit's direction (colours, typography, motion style, captions, logos as
+    absolute files, sound) and its references, each with its note, kind, media
+    (image | video) and absolute `path` to open and look at. The project's kit by
+    default; `kit_id` reads a library kit instead."""
+    import json
+
+    args: dict = {}
+    if kit_id is not None:
+        args["kit_id"] = kit_id
+    return json.dumps(_op("brand_get_references", **args), indent=2, default=str)
+
 
 if __name__ == "__main__":
     mcp.run()

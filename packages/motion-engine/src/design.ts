@@ -30,7 +30,7 @@
  *   design while developing").
  */
 
-import type { ThemeFont } from "./themeDef";
+import type { ThemeFont, ThemeFontFile } from "./themeDef";
 
 /** The complete look one render resolves to. Every field is consumed by at
  *  least one primitive — see each field's own note for who reads it. */
@@ -98,6 +98,9 @@ export interface Theme {
   /** Google Fonts families to download for the stacks above. Built-ins leave
    *  this unset: their faces load through `themeFonts.ts`'s own loaders. */
   fonts?: ThemeFont[];
+  /** D-416 — font FILES from the document's asset folder (a brand kit's own
+   *  type), registered under their family names by `themeFonts.ts`. */
+  fontFiles?: ThemeFontFile[];
 }
 
 /**

@@ -312,6 +312,19 @@ GUI-creation gap; D-155–D-159 closed the largest on-canvas-manipulation
 gap; D-160/D-161/D-162/D-163 are four of four steps toward a real keyframe
 timeline — the curve/easing editor remains, Phase 5b's own final piece.
 
+## Brand kit (D-416)
+
+`brandTheme.ts` (pure): `themeDefFromBrandKit` (a kit → the D-399 theme `brand-<kit id>`,
+deterministic: colours by role, `bgDeep`/`textDim`/`strokeSoft` mixed from them, Apelles
+Studio's clean geometry, Google faces as `fonts`, font files as `fontFiles`),
+`brandLayerDefaults` (the kit's entrance as a DEFAULT on a new `image`/`icon`/`shape` layer,
+under the caller's props), `brandEase`, and `restyleManifest` (the explicit restyle of existing
+entrances and transform-key eases). `brandApply.ts` is this tab's applier for
+`@apelles/brand`'s registry, registered by `MotionTab`: it imports the kit's font files and logos
+into the Motion asset folder (same ids) and embeds the theme in ONE commit. `motion_add_layer`
+and the Catalog take the entrance default; `motion_add_layer_keyframe` gives a NEW key with no
+ease the kit's ease (`ctx.brandMotion`).
+
 ## Soundtrack and time to music (D-413)
 
 `musicTiming.ts` (pure): the soundtrack's beats on the composition and per scene

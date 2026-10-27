@@ -86,6 +86,12 @@ pub const MOTION_COMPONENT_TIMEOUT_MS: u64 = 300_000;
 /// beat track, and several files at once.
 pub const BEAT_ANALYSIS_TIMEOUT_MS: u64 = 120_000;
 
+/// Brand kits (D-416): importing a reference video copies its bytes into the brand
+/// asset store, and applying a kit copies its fonts and logos into the Motion asset
+/// folder and parses a LUT. Seconds, not minutes; the budget covers a multi-GB
+/// reference reel on a slow disk.
+pub const BRAND_TIMEOUT_MS: u64 = 120_000;
+
 // D-318's recut detectors used to have a `RECUT_TIMEOUT_MS = 180_000` here, on
 // the reasoning that a cold decode of a long 4K source is not 20s-fast. B-188
 // proved that far too optimistic — a real 16.5-minute 4K file took 244s and

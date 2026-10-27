@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-27** — **Brand kit (D-416, v0.4.0):** one brand for every tab: colours (contrast checked), fonts incl. your own licensed files, logos, motion style, caption look, a grade LUT, sound and references with notes. A user library (one file per kit, new `apelles-brand` crate) and a per-project copy; applying generates the Motion theme (now able to load font files), styles Edit captions/titles and puts the LUT on the Colorist shot, one undo step per tab. Brand panel in the chrome bar, ten `brand_*` MCP tools in both servers (231 → 241), `apelles-brand` skill. Every recorded render hash reproduces; a kit fixture renders identically twice. Not yet checked live.
 - **2026-10-27** — **D-415 verified live:** a Motion edit wrote `manifest.recovery.json` (saved `manifest.json` untouched); after a full app restart, opening the project restored it (`recovered: {stale: false}`, dirty); `motion_reload_manifest(force)` discarded it and removed the copy. Logged **B-285** (one ~48-minute dev reload stall, not reproduced).
 
 - **2026-10-27** — **D-413 verified live:** beats detected on a music bed (127.6 BPM, cached repeat 0.14 s; uncached 1.16 s), Motion soundtrack set, `motion_time_to_music` put the reveal on downbeat 1 (1.42 s) and the accent on the next strong beat (3.26 s) as one undo step. Roadmap **0k**: Apelles online as a remote MCP for ChatGPT, Claude and Grok (researched).

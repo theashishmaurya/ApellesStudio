@@ -93,6 +93,13 @@ export interface ToolGroup {
  * `motion_refill_template` and `motion_delete_template` (Motion 52 → 59).
  * Re-counted against the real file.
  *
+ * 231 → 241 on 2026-10-27 (D-416): brand kits, a group of their own (they
+ * belong to no single tab): `brand_list_kits`, `brand_get_kit`,
+ * `brand_create_kit`, `brand_update_kit`, `brand_delete_kit`,
+ * `brand_import_asset`, `brand_set_active_kit`, `brand_apply_kit`,
+ * `brand_add_reference` and `brand_get_references`. Re-counted against the
+ * real file.
+ *
  * 224 → 231 on 2026-10-27 (D-413): music-driven editing and motion,
  * `editor_detect_beats`, `editor_set_beat_grid`, `editor_snap_cuts_to_beats`
  * (Edit 97 → 100) and `motion_set_soundtrack`, `motion_get_beats`,
@@ -129,8 +136,8 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 231,
-  shipped: 219,
+  all: 241,
+  shipped: 229,
   debugOnly: 12,
 } as const;
 
@@ -241,6 +248,13 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
     blurb:
       'Whether the local Python environment every AI feature runs from has finished building yet, and a way to retry the build now. It is downloaded and assembled in the background on first launch, so an agent can tell "still setting up, 47 of 91 packages" apart from a real failure instead of guessing.',
     sample: ['ai_env_status', 'ai_env_retry'],
+  },
+  {
+    name: 'Brand kits',
+    count: 10,
+    blurb:
+      'One brand for every tab: colours with their contrast checked, fonts (including your own licensed files), logos, a motion style, a caption look, a grade LUT, sound and references with a note on what to take from each. A project keeps its own copy, and applying it is one undo step per tab.',
+    sample: ['brand_list_kits', 'brand_get_references', 'brand_create_kit', 'brand_set_active_kit', 'brand_apply_kit', 'brand_add_reference'],
   },
 ];
 

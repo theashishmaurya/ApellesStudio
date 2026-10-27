@@ -4232,6 +4232,20 @@ export type EditOp =
    *  omitted field provably keeps its value rather than silently resetting to
    *  a default. Refused on a track that is not a subtitle track. */
   | { kind: 'set_caption_style'; track: number; patch: Partial<CaptionStyle> }
+  /** D-416 — apply a brand kit's type and colour to the timeline in ONE undo
+   *  step: `captionStyle` patched onto each of `captionTracks` (subtitle tracks;
+   *  `set_caption_style`'s rule per track) and, when `titlePatch` is given, onto
+   *  every title (text clip) on an unlocked track (`set_text_clip`'s rule per
+   *  clip). Composes those two reducers, so their refusals (locked track, wrong
+   *  clip kind, invalid patch) hold unchanged. Fully resolved by the caller
+   *  (`brandEdit.ts`): the journal replays it without the kit. */
+  | {
+      kind: 'apply_brand_text';
+      kitName: string;
+      captionTracks: number[];
+      captionStyle: Partial<CaptionStyle> | null;
+      titlePatch: Partial<TextLayer> | null;
+    }
   /** D-229 — the per-caption "Use Track Style" checkbox. A `patch` gives this
    *  cue its own style (unticking the box, merged over whatever it resolves to
    *  now, so the override starts from what the user can currently see rather
@@ -4549,6 +4563,8 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return `Set caption to "${captionLines(op.text)[0] ?? ''}"`;
     case 'set_caption_style':
       return 'Edit subtitle track style';
+    case 'apply_brand_text':
+      return `Apply brand kit "${op.kitName}"`;
     case 'set_caption_cue_style':
       return op.patch === null ? 'Use track style for caption' : 'Override caption style';
     case 'import_subtitles':
@@ -6145,6 +6161,23 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     const next = clone(tl);
     next.tracks[op.track].caption_style = { ...(tr.caption_style ?? {}), ...op.patch };
     return next;
+  }
+  if (op.kind === 'apply_brand_text') {
+    let cur = tl;
+    if (op.captionStyle) {
+      for (const track of op.captionTracks) {
+        cur = applyOp(cur, { kind: 'set_caption_style', track, patch: op.captionStyle });
+      }
+    }
+    if (op.titlePatch) {
+      // Indices from the input: neither composed op adds, removes or moves a clip.
+      tl.tracks.forEach((tr, track) =>
+        tr.clips.forEach((c, clip) => {
+          if (isTextClip(c) && op.titlePatch) cur = applyOp(cur, { kind: 'set_text_clip', track, clip, patch: op.titlePatch });
+        }),
+      );
+    }
+    return cur;
   }
   if (op.kind === 'set_caption_cue_style') {
     const tr = tl.tracks[op.track];

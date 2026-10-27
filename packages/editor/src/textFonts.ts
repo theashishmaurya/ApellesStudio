@@ -83,6 +83,13 @@ export async function loadTextFonts(): Promise<TextFont[]> {
   return inflight;
 }
 
+/** D-416 — fetch the catalogue again: it now also lists the open project's
+ *  brand-kit font files, which change when a kit is set. */
+export async function reloadTextFonts(): Promise<TextFont[]> {
+  cache = null;
+  return loadTextFonts();
+}
+
 /** The already-loaded catalogue, or `[]` if `loadTextFonts` has not resolved
  *  yet. Synchronous by design — see this module's own doc for why the export
  *  compiler needs it that way. */

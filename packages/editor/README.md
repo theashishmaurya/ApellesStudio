@@ -358,6 +358,14 @@ Two things changed here in the same pass as the owner's live Edit-tab review:
   package (`ScrubbableNumberInput.dom.test.tsx`) because `@apelles/ui` has no
   test tier and this one owns the real-`PointerEvent` harness.
 
+**Brand kit (D-416).** `brandEdit.ts` is this tab's applier for `@apelles/brand`'s registry
+(registered by `EditorTab`): `planBrandText` resolves a kit into ONE `apply_brand_text` EditOp
+(the kit's caption preset with its font/colour roles on every unlocked subtitle track, its
+display font and text colour on every unlocked title; composes `set_caption_style` and
+`set_text_clip`, so their refusals hold), one undo step. A kit font reaches Edit only as a
+`.ttf`/`.otf` file in the project's kit snapshot (its asset id is the catalogue key
+`chroma_text_fonts` lists) or through the font's `editFallback`.
+
 **Deferred** (later tracked steps): multi-track, audio, transitions, transcript
 cut, GPU compositing, grade-in-preview, OTIO export, MCP, timeline
 rename/delete. See `docs/notes/editor-mvp.md`.

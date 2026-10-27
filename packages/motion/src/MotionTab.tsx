@@ -98,7 +98,12 @@ import { useMotionThemeLibraryStore } from './themeLibraryIO';
 import type { PrimitiveUse } from './catalog';
 import { useMotionManifest, type SceneRenderResult } from './useMotionManifest';
 import { useMotionControl } from './useMotionControl';
-import { allowPreviewsDir, previewFrames } from './manifestIO';
+import { allowPreviewsDir, importAsset, previewFrames } from './manifestIO';
+// D-416 — the brand kit: its motion style as new-layer defaults, and this tab's
+// applier in `@apelles/brand`'s registry.
+import { registerBrandApplier, useBrandStore } from '@apelles/brand';
+import { brandLayerDefaults } from './brandTheme';
+import { applyBrandToMotion } from './brandApply';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { formatIssues } from '@apelles/motion-engine/src/engine/validate';
 import { useMotionTemplateLibraryStore } from './templateLibraryIO';
@@ -280,6 +285,26 @@ export function MotionTab({
   // so the hook re-syncs it into a ref exactly the way it already does for
   // `m`; the other three are stable identities and need no re-sync.
   useMotionControl(m, { playerRef, measureApiRef, setSelections, selections, editLinks });
+
+  // D-416 — this tab's brand applier. Registered once; it reads the live
+  // manifest API through a ref at call time (`m` is a new object every render),
+  // the same re-sync `useMotionControl` does.
+  const brandManifestRef = useRef(m);
+  brandManifestRef.current = m;
+  useEffect(
+    () =>
+      registerBrandApplier('motion', (req) =>
+        applyBrandToMotion(
+          {
+            manifest: () => brandManifestRef.current.manifest,
+            commit: (next, label) => brandManifestRef.current.commit(next, label),
+            importAsset: (path) => importAsset(path),
+          },
+          req,
+        ),
+      ),
+    [],
+  );
 
   // D-158 — keeps `selections` pointing at the right layers as the STABLE
   // manifest changes underneath it (a commit, a catalog insert, a hand-edit
@@ -477,7 +502,8 @@ export function MotionTab({
         (record) => {
           const cur = m.manifest;
           if (!record || !cur) return;
-          const { manifest: next, selection: added } = addLayer(cur, sceneIndex, 'image', { src: record.id });
+          const brandDefaults = brandLayerDefaults('image', useBrandStore.getState().project?.motion);
+          const { manifest: next, selection: added } = addLayer(cur, sceneIndex, 'image', { ...brandDefaults, src: record.id });
           m.commit(next, 'Add image layer');
           if (added) onSelect(added);
         },
@@ -485,7 +511,9 @@ export function MotionTab({
       );
       return;
     }
-    const { manifest: next, selection: added } = addLayer(m.manifest, targetSceneIndex, use);
+    // D-416 — the project's brand motion style, as defaults (never overrides).
+    const brandDefaults = brandLayerDefaults(use, useBrandStore.getState().project?.motion);
+    const { manifest: next, selection: added } = addLayer(m.manifest, targetSceneIndex, use, brandDefaults);
     m.setText(JSON.stringify(next, null, 2));
     if (added) onSelect(added);
   };

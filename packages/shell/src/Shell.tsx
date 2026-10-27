@@ -196,6 +196,12 @@ export interface ShellProps {
    *  the same reason as `launcher`/`headerAction`: it lives in `app/src` and
    *  `Shell` must not import it. */
   overlay?: ReactNode;
+  /** D-416 — the Brand kit panel's opener (button + its dialog), rendered in
+   *  the chrome bar while a project is open, beside Keyboard shortcuts and
+   *  Connect to MCP: a brand kit belongs to every tab, so its opener is
+   *  shell-level. Injected by the composition root (`@apelles/brand/ui`), the
+   *  `headerAction` direction: `Shell` never imports it. */
+  brandAction?: ReactNode;
   /** D-273 — i18next's `t`, injected for the Keyboard Shortcuts window so the
    *  fork's 13 translated locales keep rendering translated Colorist rows.
    *  Same app → shell direction as `launcher`: neither `@apelles/shell` nor
@@ -219,6 +225,7 @@ export function Shell({
   sourcesPanel,
   headerAction,
   overlay,
+  brandAction,
   translate,
 }: ShellProps) {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -379,6 +386,7 @@ export function Shell({
             Inspector's own toggle (opposite corner, same idea). */}
         <div className="ml-auto flex items-center h-full gap-1">
           {projectOpen && headerAction}
+          {projectOpen && brandAction}
           {/* D-273 — the Keyboard Shortcuts window's opener. Genuinely
               shell-level (all three tabs share one registry), which is why it
               lives here and not in a tab, on the same reasoning D-120 used to

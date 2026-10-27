@@ -9,7 +9,9 @@
 //! twice is a no-op that returns the same id.
 //!
 //! D-413 added audio: a soundtrack is imported the same way, so the music a
-//! scene is timed to is pinned by content exactly as its logo is.
+//! scene is timed to is pinned by content exactly as its logo is. D-416 added
+//! fonts: a brand kit's own font files, which a theme generated from the kit
+//! loads by asset id.
 //!
 //! **What it does NOT do:** resolve an id to a URL (the engine does that,
 //! `packages/motion-engine/src/lib/assets.tsx`), garbage-collect assets no
@@ -30,12 +32,19 @@ pub const IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "webp", "gif", "s
 /// (the beat analysis) read — the engine's `ASSET_AUDIO_EXTENSIONS`.
 pub const AUDIO_EXTENSIONS: [&str; 6] = ["mp3", "wav", "m4a", "aac", "flac", "ogg"];
 
+/// D-416 — the extensions a font asset may have: a brand kit's own type, which a
+/// theme loads with `FontFace` from the same asset folder (the engine's
+/// `ASSET_FONT_EXTENSIONS`).
+pub const FONT_EXTENSIONS: [&str; 4] = ["ttf", "otf", "woff", "woff2"];
+
 /// What an asset is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AssetKind {
     Image,
     Audio,
+    /// D-416 — a font file a theme's `fontFiles` names.
+    Font,
 }
 
 /// `<project>.chroma/motion/assets`.
@@ -96,12 +105,15 @@ fn asset_extension(path: &Path) -> Result<(String, AssetKind), ChromaError> {
         Ok((ext, AssetKind::Image))
     } else if AUDIO_EXTENSIONS.contains(&ext.as_str()) {
         Ok((ext, AssetKind::Audio))
+    } else if FONT_EXTENSIONS.contains(&ext.as_str()) {
+        Ok((ext, AssetKind::Font))
     } else {
         Err(ChromaError::Unsupported(format!(
-            "{}: not an image or audio asset (expected one of {}, {})",
+            "{}: not an image, audio or font asset (expected one of {}, {}, {})",
             path.display(),
             IMAGE_EXTENSIONS.join(", "),
-            AUDIO_EXTENSIONS.join(", ")
+            AUDIO_EXTENSIONS.join(", "),
+            FONT_EXTENSIONS.join(", ")
         )))
     }
 }
@@ -135,7 +147,7 @@ pub fn import_asset(source: &Path, assets_dir: &Path) -> Result<AssetRecord, Chr
     let bytes = std::fs::metadata(&dest)
         .map_err(|e| ChromaError::Invalid(format!("stat {}: {e}", dest.display())))?
         .len();
-    let (width, height) = if ext == "svg" || kind == AssetKind::Audio {
+    let (width, height) = if ext == "svg" || kind != AssetKind::Image {
         (None, None)
     } else {
         match image::image_dimensions(&dest) {

@@ -275,3 +275,25 @@ fn a_soundtrack_never_changes_pixels() {
         "a rendered-in soundtrack changed pixels"
     );
 }
+
+/// D-416 — a document a brand kit was applied to (`brand-kit.json`, pinned by
+/// `packages/motion/src/brandKit.e2e.test.ts` through the real applier): its theme
+/// is generated from the kit and loads the kit's own font FILE (`brand-font.ttf`,
+/// CC0) from the asset folder with `FontFace`, the logo too. Imported the real way,
+/// rendered twice, compared.
+#[test]
+#[ignore = "needs Node + the engine's node_modules + headless Chrome"]
+fn a_brand_kit_document_renders_identically_twice() {
+    let (_dir, assets, logo_id) = asset_folder();
+    let font = apelles_motion::assets::import_asset(&fixture("brand-font.ttf"), &assets)
+        .expect("import the font");
+    let text = std::fs::read_to_string(fixture("brand-kit.json")).expect("read fixture");
+    assert!(
+        text.contains(&logo_id) && text.contains(&font.id),
+        "the applier's asset ids must be the Rust importer's ids for the same files"
+    );
+    let (a, b, grid) = render_twice(&fixture("brand-kit.json"), &[42, 78, 135], Some(assets));
+    println!("brand-kit.json contact sheet: {a}");
+    assert_eq!(a, b);
+    assert_eq!(grid, (3, 1));
+}

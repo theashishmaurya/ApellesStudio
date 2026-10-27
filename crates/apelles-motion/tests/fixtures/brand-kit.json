@@ -1,0 +1,217 @@
+{
+  "title": "Brand reel",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "scenes": [
+    {
+      "id": "intro",
+      "dur": 1
+    },
+    {
+      "id": "brand",
+      "dur": 4,
+      "bg": "#0b0d12",
+      "layers": [
+        {
+          "use": "group",
+          "id": "logo-reveal",
+          "at": 0.1,
+          "anim": {
+            "mask.w": [
+              {
+                "at": 0,
+                "v": 0
+              },
+              {
+                "at": 0.8,
+                "v": 800,
+                "ease": [
+                  0.16,
+                  1,
+                  0.3,
+                  1
+                ]
+              }
+            ]
+          },
+          "mask": {
+            "kind": "roundrect",
+            "x": 560,
+            "y": 140,
+            "w": 0,
+            "h": 420,
+            "radius": 48
+          },
+          "children": [
+            {
+              "use": "shape",
+              "shape": "roundrect",
+              "x": 560,
+              "y": 140,
+              "w": 800,
+              "h": 420,
+              "radius": 48,
+              "gradient": {
+                "type": "linear",
+                "angle": 25,
+                "stops": [
+                  {
+                    "at": 0,
+                    "color": "#1d2433"
+                  },
+                  {
+                    "at": 1,
+                    "color": "#3a2a5c"
+                  }
+                ]
+              },
+              "enter": "pop",
+              "enterDur": 0.267
+            },
+            {
+              "use": "image",
+              "at": 0.3,
+              "src": "sha256:4ecf4910b2061560dcbdcd647dd84a652721db9b936b8270141c4fa4ffdfc784.svg",
+              "x": 610,
+              "y": 190,
+              "w": 320,
+              "h": 320,
+              "fit": "contain",
+              "enter": "pop",
+              "enterDur": 0.267
+            },
+            {
+              "use": "text",
+              "at": 0.5,
+              "text": "Acme Labs",
+              "preset": "fade-up",
+              "size": 64,
+              "color": "#ffffff",
+              "x": 960,
+              "y": 310
+            }
+          ]
+        },
+        {
+          "use": "counter",
+          "id": "stat",
+          "at": 1,
+          "dur": 1.2,
+          "anim": {
+            "color": [
+              {
+                "at": 1,
+                "v": "#ffffff"
+              },
+              {
+                "at": 2.2,
+                "v": "#f5c542"
+              }
+            ]
+          },
+          "from": 0,
+          "to": 12500,
+          "thousands": true,
+          "suffix": "+",
+          "size": 150,
+          "color": "#f5c542",
+          "align": "center",
+          "x": 960,
+          "y": 640
+        },
+        {
+          "use": "text",
+          "id": "stat-label",
+          "at": 1.4,
+          "text": "teams shipping faster",
+          "preset": "fade-up",
+          "size": 40,
+          "align": "center",
+          "x": 960,
+          "y": 800
+        },
+        {
+          "use": "icon",
+          "id": "icon-1",
+          "at": 1.8,
+          "name": "rocket-launch",
+          "weight": "duotone",
+          "size": 96,
+          "color": "#ffffff",
+          "x": 732,
+          "y": 880,
+          "enter": "pop",
+          "enterDur": 0.267
+        },
+        {
+          "use": "icon",
+          "id": "icon-2",
+          "at": 2,
+          "name": "lightning",
+          "weight": "duotone",
+          "size": 96,
+          "color": "#ffffff",
+          "x": 912,
+          "y": 880,
+          "enter": "pop",
+          "enterDur": 0.267
+        },
+        {
+          "use": "icon",
+          "id": "icon-3",
+          "at": 2.2,
+          "name": "shield-check",
+          "weight": "duotone",
+          "size": 96,
+          "color": "#ffffff",
+          "x": 1092,
+          "y": 880,
+          "enter": "pop",
+          "enterDur": 0.267
+        },
+        {
+          "use": "shape",
+          "id": "underline",
+          "at": 2.4,
+          "shape": "line",
+          "x": 700,
+          "y": 1000,
+          "w": 520,
+          "h": 0,
+          "stroke": "#f5c542",
+          "strokeWidth": 6,
+          "enter": "pop",
+          "enterDur": 0.267
+        }
+      ]
+    }
+  ],
+  "theme": "brand-pixel-co",
+  "themeDef": {
+    "name": "brand-pixel-co",
+    "description": "Brand kit \"Pixel Co\" v1",
+    "bg": "#14112b",
+    "bgDeep": "#221f38",
+    "stroke": "#f6f3ff",
+    "strokeSoft": "#6e6b80",
+    "text": "#f6f3ff",
+    "textDim": "#a7a4b5",
+    "accent": "#ffcc00",
+    "accentSignal": "#ff3d7f",
+    "strokeWidth": 2,
+    "roughness": 0,
+    "bowing": 0,
+    "fontDisplay": "'Kenney Pixel', system-ui, sans-serif",
+    "fontUi": "'Helvetica', system-ui, sans-serif",
+    "fontMono": "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
+    "ambientDriftPx": 0,
+    "fontFiles": [
+      {
+        "family": "Kenney Pixel",
+        "src": "sha256:07b0c0a702ab55cf879468c454aec1bd04ea9342b24ac0464343286cefe77549.ttf",
+        "weight": "400"
+      }
+    ]
+  }
+}

@@ -42,6 +42,7 @@ mod tests {
         let others = crate::tools::colorist::router()
             + crate::tools::edit::router()
             + crate::tools::ai_env::router()
+            + crate::tools::brand::router()
             + crate::tools::debug::router();
         assert!(
             others

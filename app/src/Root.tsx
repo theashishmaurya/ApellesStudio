@@ -20,6 +20,8 @@ import { useKeymapStore } from '@apelles/keymap';
 import { setProjectIdentityAlertSink } from '@apelles/store';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
+import { useBrandStore } from '@apelles/brand';
+import { BrandKitButton } from '@apelles/brand/ui';
 import App from './App';
 import { MOTION_TAB_ENABLED } from './buildFeatures';
 import AgentActivityDock from './components/chroma/AgentActivityDock';
@@ -170,6 +172,13 @@ export function Root() {
   const motionProjectPath = useSessionStore((s) => s.projectPath);
   useEffect(() => {
     useMotionProjectStore.getState().setOpenProject(motionProjectPath);
+  }, [motionProjectPath]);
+
+  // D-416 — the same bridge for the project's brand kit snapshot
+  // (`<project>.chroma/brand/kit.json`), which the Motion defaults and the
+  // Brand panel read: a project switch re-reads it.
+  useEffect(() => {
+    void useBrandStore.getState().setOpenProject(motionProjectPath);
   }, [motionProjectPath]);
 
   // B-083/D-203 — the same bridge for the media pool, whose items are what
@@ -488,6 +497,8 @@ export function Root() {
       // Injected like `launcher`/`sourcesPanel`/`headerAction` — `Shell` never
       // imports it.
       overlay={<AgentActivityDock />}
+      // D-416 — the Brand kit panel: one kit for all three tabs.
+      brandAction={<BrandKitButton />}
       onCloseProject={() => {
         void useSessionStore.getState().closeProject();
       }}

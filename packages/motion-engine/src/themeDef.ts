@@ -32,6 +32,7 @@
  */
 import { z } from "zod";
 import { THEME_NAMES, resolveTheme, type Theme, type ThemeName } from "./design";
+import { FONT_ASSET_ID_PATTERN } from "./lib/assetId";
 
 /** One webfont to load: a Google Fonts family and the weights the look uses. */
 export const themeFontSchema = z.object({
@@ -50,6 +51,22 @@ export const themeFontSchema = z.object({
 });
 
 export type ThemeFont = z.infer<typeof themeFontSchema>;
+
+/**
+ * D-416 — one font FILE the theme loads from the project's asset folder: a brand
+ * kit's own typeface (a person's licensed font), by content-hash asset id, so the
+ * document still renders the same letters on any machine. Registered with the
+ * browser's `FontFace` under `family` (`themeFonts.ts`), which the stacks then name.
+ */
+export const themeFontFileSchema = z.object({
+  family: themeFontSchema.shape.family,
+  src: z.string().regex(FONT_ASSET_ID_PATTERN, "a font asset id (sha256:<hex>.ttf|otf|woff|woff2) from motion_import_asset"),
+  /** CSS weight; omitted ⇒ 400 */
+  weight: z.string().regex(/^[1-9]00$/, 'a weight like "400" or "700"').optional(),
+  italic: z.boolean().optional(),
+});
+
+export type ThemeFontFile = z.infer<typeof themeFontFileSchema>;
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/, "an opaque #rrggbb colour");
 
@@ -89,6 +106,8 @@ export const themeDefSchema = z.object({
   ambientDriftPx: z.number().min(0).max(20),
   /** the webfonts to download for the stacks above; omitted ⇒ none (system fonts) */
   fonts: z.array(themeFontSchema).max(8).optional(),
+  /** D-416 — font files to load from the asset folder; omitted ⇒ none */
+  fontFiles: z.array(themeFontFileSchema).max(8).optional(),
 });
 
 export type ThemeDef = z.infer<typeof themeDefSchema>;
@@ -154,6 +173,7 @@ export function themeDefToTheme(def: ThemeDef): Theme {
     fontMono: def.fontMono,
     ambientDriftPx: def.ambientDriftPx,
     fonts: def.fonts,
+    ...(def.fontFiles ? { fontFiles: def.fontFiles } : {}),
   };
 }
 

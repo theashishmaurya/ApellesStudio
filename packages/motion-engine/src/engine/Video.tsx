@@ -397,7 +397,10 @@ const NO_COMPONENTS: Readonly<Record<string, ComponentRef>> = {};
 export const Video: React.FC<Manifest> = (manifest) => {
   const { fps } = manifest;
   const theme = resolveManifestTheme(manifest);
-  ensureThemeFonts(theme);
+  // D-416 — a theme's font FILES resolve through the same asset resolver as
+  // the document's images.
+  const resolveAsset = useAssetResolver();
+  ensureThemeFonts(theme, resolveAsset);
   return (
     <ThemeProvider theme={theme}>
     {/* D-409 — the document's embedded custom-component definitions. Who

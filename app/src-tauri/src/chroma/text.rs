@@ -10,7 +10,9 @@
 //! **What it does:**
 //! - [`TEXT_FONTS`] — the fixed catalogue of font families the Edit tab
 //!   offers, each a key + label + an ordered list of candidate absolute paths
-//!   (first one that exists wins).
+//!   (first one that exists wins). D-416 adds the open project's brand-kit
+//!   font FILES (`.ttf`/`.otf` in `<project>.chroma/brand/assets/`), keyed by
+//!   their content-hash asset id, after the fixed entries.
 //! - [`chroma_text_fonts`] — that catalogue, resolved against this machine,
 //!   as a Tauri command. **One source of truth for both renderers**: the
 //!   Inspector's font picker lists it, and `@apelles/editor`'s export compiler
@@ -368,7 +370,7 @@ pub struct ResolvedFont {
 /// does no probing or decoding.
 #[tauri::command]
 pub fn chroma_text_fonts() -> Vec<ResolvedFont> {
-    TEXT_FONTS
+    let mut fonts: Vec<ResolvedFont> = TEXT_FONTS
         .iter()
         .map(|f| ResolvedFont {
             key: f.key.to_string(),
@@ -378,7 +380,65 @@ pub fn chroma_text_fonts() -> Vec<ResolvedFont> {
             bold: f.bold,
             italic: f.italic,
         })
-        .collect()
+        .collect();
+    fonts.extend(brand_fonts());
+    fonts
+}
+
+/// D-416 — the open project's brand-kit font FILES that both renderers can
+/// read (single-face `.ttf`/`.otf`; `ab_glyph` and ffmpeg's FreeType read
+/// neither `.woff` nor `.woff2` here), as extra catalogue entries keyed by
+/// their content-hash asset id (`sha256:<hex>.ttf`). Read from the project's
+/// kit snapshot (`<project>.chroma/brand/kit.json`, `apelles_brand::project`),
+/// which carries the file itself, so a title set in a brand font renders the
+/// same on any machine the project is copied to. Only `typography.<role>.file`
+/// and `.family` are read: the label, and which file. No project, no kit, or an
+/// unreadable kit ⇒ no extra entries (the catalogue is still complete).
+fn brand_fonts() -> Vec<ResolvedFont> {
+    let Some(project) = crate::chroma::state::current_project() else {
+        return Vec::new();
+    };
+    let Ok(Some(kit)) = apelles_brand::project::read(&project.path) else {
+        return Vec::new();
+    };
+    let Some(typography) = kit.get("typography").and_then(serde_json::Value::as_object) else {
+        return Vec::new();
+    };
+    let mut out: Vec<ResolvedFont> = Vec::new();
+    for (role, font) in typography {
+        let Some(id) = font.get("file").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if !is_edit_font_id(id) || out.iter().any(|f| f.key == id) {
+            continue;
+        }
+        let family = font
+            .get("family")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(id);
+        out.push(ResolvedFont {
+            key: id.to_string(),
+            label: format!("{family} (brand {role})"),
+            path: brand_font_path(&project.path, id).map(|p| p.to_string_lossy().into_owned()),
+            group: None,
+            bold: false,
+            italic: false,
+        });
+    }
+    out
+}
+
+/// D-416 — whether `key` names a brand font file the Edit renderers can read.
+fn is_edit_font_id(key: &str) -> bool {
+    apelles_brand::assets::file_name_of_id(key)
+        .is_some_and(|f| f.ends_with(".ttf") || f.ends_with(".otf"))
+}
+
+/// D-416 — the project's copy of a brand font, if it is there.
+fn brand_font_path(project_dir: &Path, key: &str) -> Option<PathBuf> {
+    let file = apelles_brand::assets::file_name_of_id(key)?;
+    let path = apelles_brand::project::project_assets_dir(project_dir).join(file);
+    path.is_file().then_some(path)
 }
 
 /// Measure a batch of caption words for the export compiler (D-243).
@@ -450,6 +510,15 @@ fn first_existing(candidates: &[&str]) -> Option<PathBuf> {
 /// catalogue resolves, which means the machine has no usable font at all and
 /// there is nothing honest to draw.
 pub fn resolve_font_path(key: &str) -> Result<PathBuf, String> {
+    // D-416 — a brand font is a content-hash asset id resolved against the open
+    // project's brand snapshot; missing (no project, a kit since cleared) it
+    // degrades to the default face like any unknown key.
+    if is_edit_font_id(key)
+        && let Some(path) =
+            crate::chroma::state::current_project().and_then(|p| brand_font_path(&p.path, key))
+    {
+        return Ok(path);
+    }
     let family = TEXT_FONTS
         .iter()
         .find(|f| f.key == key)
@@ -477,8 +546,9 @@ pub fn resolve_font_path(key: &str) -> Result<PathBuf, String> {
 /// Parsing a face is milliseconds and this is called once per previewed
 /// frame; without the cache a title would re-parse its ~700 KB font file
 /// every frame of playback. Grows to at most [`TEXT_FONTS`]`.len()` entries
-/// (a font is only ever loaded via [`resolve_font_path`], which only ever
-/// returns a catalogue path), so it needs no eviction.
+/// plus the brand fonts a session's projects named (a font is only ever loaded
+/// via [`resolve_font_path`], which only returns a catalogue path or a brand
+/// kit's font file, D-416), so it needs no eviction.
 fn font_cache() -> &'static Mutex<HashMap<PathBuf, Arc<FontVec>>> {
     static CACHE: OnceLock<Mutex<HashMap<PathBuf, Arc<FontVec>>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))

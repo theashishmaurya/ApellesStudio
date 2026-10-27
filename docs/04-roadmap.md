@@ -18,7 +18,7 @@ Owner: *"Lets do it bigger one with Motion, we will take some time to get the mo
 - [x] **Unsaved Motion edits survive a reload** (0g, D-415). Live check still to do; the in-memory "Untitled" session is not covered.
 - [x] Authoring as data, templates, custom components, rough.js/d3 (D-403..D-407, D-409, D-412); export matches the player (B-281/B-282).
 - [x] Music-driven motion (beat sync): on-device beat analysis, the Edit tab's beat grid + snapping + "snap cuts to beats", Motion's soundtrack + beat lines + key snapping + "time to music", seven MCP tools (D-413, 0j). Live check in the app still to do.
-- [ ] Brand kit (colours, fonts, motion style, references across all tabs).
+- [x] Brand kit (colours, fonts, motion style, references across all tabs): D-416, `docs/notes/brand-kit.md`; the explicit, user-authored sibling of 0d's learned `taste.md`. Live check in the app still to do (Brand panel, the three appliers, a brand font in the Edit preview/export).
 - [ ] Automatic Clipper Phases 1-2 (shorts from one agent call; D-411).
 - [ ] A full release-checklist run on the installed app (`docs/releases/README.md`), notes in `docs/releases/v0.4.0.md`.
 - Nice to have: publish to YouTube / Instagram (0i).
@@ -260,6 +260,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    - **Output:** a human-readable, user-editable `taste.md` (plus a structured sidecar for tools), per user and optionally per client/brand for the studio use case.
    - **Use:** read by the in-app agent and by every MCP session as default choices; cited when a choice is made ("using your usual -14 dB music duck").
    - **Rules:** local-first (stays on the machine unless the user exports it); the user can see, edit and delete every line; distillation runs on explicit events (export, accept/reject, a correction), never as hidden telemetry; human-and-AI parity (a GUI view/editor plus MCP `taste_get` / `taste_note` / `taste_forget`).
+   - **Relation to the brand kit (D-416, built 2026-10-27):** the kit is what a person TELLS Apelles (colours, type, logos, motion style, caption look, grade look, references with notes); `taste.md` is what Apelles LEARNS. Per-client taste should key on the active brand kit's id, and a learned preference must never override the kit's explicit values.
 
 0e. **Motion authoring from MCP: new graphics and templates as data, not code** (owner, 2026-10-26; design `docs/notes/motion-authoring-mcp.md`).
    - [x] Phase 0 — per-primitive schemas, `motion_validate`, `motion_insert_layers`, `motion_set_scene`, `motion_add_layer(props)`, `propsSchema`, `motion_preview_frame` + GUI (Insert as JSON, Still). **D-403, 2026-10-27.**

@@ -147,6 +147,7 @@ dependencies = [
  "apelles-ai",
  "apelles-audio-library",
  "apelles-beat",
+ "apelles-brand",
  "apelles-gpu",
  "apelles-grade-model",
  "apelles-media",
@@ -277,6 +278,17 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "apelles-brand"
+version = "0.0.0"
+dependencies = [
+ "apelles-motion",
+ "apelles-types",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

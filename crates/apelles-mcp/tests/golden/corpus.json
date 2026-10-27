@@ -476,6 +476,242 @@
       }
     },
     {
+      "name": "brand_add_reference",
+      "description": "Add a reference to a brand kit (D-416): an image or video the person wants\n    the work to learn from, with a `note` saying WHAT to take from it (\"use my\n    work for materials and framing\"; \"use the reference for type and\n    hierarchy\"). `kind` is \"own-work\" (the person's own) or \"reference\" (someone\n    else's). The file is imported into the brand asset store; the kit is the\n    project's kit unless `kit_id` names another. When the project uses that kit,\n    its copy is updated too, so `brand_get_references` shows it at once.",
+      "inputSchema": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "kind": {
+            "default": "reference",
+            "title": "Kind",
+            "type": "string"
+          },
+          "kit_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kit Id"
+          }
+        },
+        "required": [
+          "path",
+          "note"
+        ],
+        "type": "object",
+        "title": "brand_add_referenceArguments"
+      }
+    },
+    {
+      "name": "brand_apply_kit",
+      "description": "Apply the project's brand kit to the tabs (D-416): ONE undo step in each tab.\n\n    `tabs` is any of \"edit\", \"motion\", \"colorist\" (default all):\n      * motion: the kit becomes the document's theme (`brand-<kit id>`, embedded,\n        so renders never read the kit); its font files and logos are copied into\n        the Motion asset folder under the same ids. Templates and custom\n        components pick colours and fonts up from the theme. From then on new\n        layers take the kit's entrance and new keyframes its ease as DEFAULTS.\n        `restyle_existing` also rewrites EXISTING entrances and keyframe eases\n        with the kit's motion style; off by default.\n      * edit: every unlocked subtitle track gets the kit's caption preset with\n        its font and colour roles, and (unless `titles` is false) every title its\n        display font and text colour. Fonts reach Edit only as .ttf/.otf files\n        or through a font's `editFallback`; the answer says when one did not.\n      * colorist: the open shot gets the kit's LUT at its intensity.\n    Returns per tab `{ok, changed, summary, details}` or `{ok: false, error}` (a\n    tab not in this build is reported, not skipped silently).",
+      "inputSchema": {
+        "properties": {
+          "tabs": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tabs"
+          },
+          "restyle_existing": {
+            "default": false,
+            "title": "Restyle Existing",
+            "type": "boolean"
+          },
+          "titles": {
+            "default": true,
+            "title": "Titles",
+            "type": "boolean"
+          }
+        },
+        "type": "object",
+        "title": "brand_apply_kitArguments"
+      }
+    },
+    {
+      "name": "brand_create_kit",
+      "description": "Create a brand kit in the user's library (D-416).\n\n    `kit` needs `id` (lowercase letters, digits, hyphens, at most 40) and `name`;\n    everything else you leave out comes from a neutral starter, so a few fields\n    are enough. Shape: `{id, name, description?, colors: {primary, secondary,\n    accent, background, text, palette?: [{name, hex}]}, typography: {display,\n    body, mono?: {family, source: \"google\"|\"system\"|\"file\", file?, licence?,\n    weights?, editFallback?}, scale?: {base, ratio, displayWeight, bodyWeight}},\n    logos?: {light?, dark?, mark?}, motion?: {ease: \"out\"|\"inOut\"|\"anticipate\"|\n    \"linear\"|[x1,y1,x2,y2], speed, stagger, entrance: \"none\"|\"fade\"|\"pop\"|\"rise\"|\n    \"draw\"}, captions?: {preset, font?: \"display\"|\"body\", color?, boxColor?\n    (colour roles)}, look?: {lut, intensity, name?}, sound?: {sonicLogo?, music?:\n    {mood?, bpm?: [low, high], tracks?}}, references?}`. Colours are `#rrggbb`.\n    Files (logos, a font file, a LUT, references, audio) are asset ids from\n    `brand_import_asset`, never paths. A `file` font needs its `licence` (what it\n    allows, in the person's words). `editFallback` is the Edit tab's font key\n    for a face that is not a .ttf/.otf file.\n\n    Refused with `issues` `[{path, message}]` naming every problem; nothing is\n    saved. `dry_run` validates and reports contrast without saving. Returns the\n    saved kit (version 1), `contrast` and `warnings`.",
+      "inputSchema": {
+        "properties": {
+          "kit": {
+            "additionalProperties": true,
+            "title": "Kit",
+            "type": "object"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kit"
+        ],
+        "type": "object",
+        "title": "brand_create_kitArguments"
+      }
+    },
+    {
+      "name": "brand_delete_kit",
+      "description": "Delete a brand kit from the user's library (D-416). Projects that use it keep\n    their own copy, so nothing already branded changes.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object",
+        "title": "brand_delete_kitArguments"
+      }
+    },
+    {
+      "name": "brand_get_kit",
+      "description": "Read one brand kit in full (D-416): `id` from the library, or omit it for the\n    project's own copy (what `brand_apply_kit` applies).\n\n    Returns `source` (library | project), the whole `kit`, its WCAG `contrast`\n    (every colour pair that ends up on top of another: ratio, AA/AAA level, what\n    it is used for) and `warnings` for the pairs too low for their use, and\n    `files` (each asset id the kit names \u2192 its absolute file, so you can look at\n    a logo).",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "title": "brand_get_kitArguments"
+      }
+    },
+    {
+      "name": "brand_get_references",
+      "description": "Everything an agent should read BEFORE designing for this brand (D-416): the\n    kit's direction (colours, typography, motion style, captions, logos as\n    absolute files, sound) and its references, each with its note, kind, media\n    (image | video) and absolute `path` to open and look at. The project's kit by\n    default; `kit_id` reads a library kit instead.",
+      "inputSchema": {
+        "properties": {
+          "kit_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kit Id"
+          }
+        },
+        "type": "object",
+        "title": "brand_get_referencesArguments"
+      }
+    },
+    {
+      "name": "brand_import_asset",
+      "description": "Import a file into the brand asset store (D-416): a logo (png, jpg, webp,\n    gif, svg), a font file (ttf, otf, woff, woff2), a LUT (cube), a reference video\n    (mp4, mov, m4v, webm) or audio (mp3, wav, m4a, aac, flac, ogg). The file is\n    copied and named by the SHA-256 of its bytes; the same file twice is the same\n    id. Returns `asset.id` (`sha256:<hex>.<ext>`) to put in a kit field with\n    `brand_update_kit`. For a reference with a note, use `brand_add_reference`.",
+      "inputSchema": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object",
+        "title": "brand_import_assetArguments"
+      }
+    },
+    {
+      "name": "brand_list_kits",
+      "description": "List the user's brand kits and the one THIS project uses (D-416). Start here\n    before designing anything for a person: read the project's kit, then\n    `brand_get_references`.\n\n    A brand kit is the one brand definition every tab reads: colours (primary,\n    secondary, accent, background, text + an extended palette), typography\n    (display/body/mono, each a Google, system or licensed font file), logos\n    (light/dark/mark), a motion style (ease, speed, stagger, entrance), a caption\n    style (an Edit caption preset), an optional grade look (a LUT for the\n    Colorist), sound (sonic logo, music mood) and references (images/videos with\n    a note on what to take from each).\n\n    Returns `kits` (a summary each), `loadErrors` (library files that did not\n    load, each named with why), `project` (the project's own copy, with\n    `libraryVersion` and `newerInLibrary`) or null, and `tabs` (which tabs can\n    apply a kit in this build).",
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+        "title": "brand_list_kitsArguments"
+      }
+    },
+    {
+      "name": "brand_set_active_kit",
+      "description": "Make a library kit this project's brand kit, or clear it with null (D-416).\n\n    The kit and every file it names are COPIED into the project\n    (`<project>.chroma/brand/`), so the project never depends on the library:\n    editing or deleting the library kit later changes nothing here until this is\n    called again. Setting a kit does not restyle anything yet; `brand_apply_kit`\n    does, one undo step per tab. Clearing leaves looks already applied in place\n    (undo them in their tab).",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object",
+        "title": "brand_set_active_kitArguments"
+      }
+    },
+    {
+      "name": "brand_update_kit",
+      "description": "Change a brand kit in the library (D-416). `patch` merges into the kit: objects\n    key by key (`{\"colors\": {\"accent\": \"#ff5a1f\"}}` changes one colour), lists and\n    values replace, and `null` removes an optional section (`{\"look\": null}`).\n    `id`, `version` and `schemaVersion` are not yours to change.\n\n    Every save is the next `version`. A project that uses this kit keeps its own\n    copy until `brand_set_active_kit` is called again; the answer says so\n    (`projectOutOfDate`). Refused with `issues` when the result would not be a\n    valid kit; `dry_run` checks without saving.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "patch": {
+            "additionalProperties": true,
+            "title": "Patch",
+            "type": "object"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "patch"
+        ],
+        "type": "object",
+        "title": "brand_update_kitArguments"
+      }
+    },
+    {
       "name": "clear_mask_keyframe",
       "description": "Remove ONE geometry keyframe (D-034), the one at `frame` (a frame from\n    list_mask_keyframes). When the last keyframe is removed the sub-mask becomes\n    fully static again.",
       "inputSchema": {
@@ -13243,6 +13479,397 @@
         {
           "type": "text",
           "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  }\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_add_reference",
+      "case": "minimal",
+      "arguments": {
+        "path": "v_brand_add_reference.path",
+        "note": "v_brand_add_reference.note"
+      },
+      "requests": [
+        {
+          "op": "brand_add_reference",
+          "args": {
+            "path": "v_brand_add_reference.path",
+            "note": "v_brand_add_reference.note",
+            "kind": "reference"
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_add_reference",
+      "case": "full",
+      "arguments": {
+        "path": "v_brand_add_reference.path",
+        "note": "v_brand_add_reference.note",
+        "kind": "v_brand_add_reference.kind",
+        "kit_id": "v_brand_add_reference.kit_id"
+      },
+      "requests": [
+        {
+          "op": "brand_add_reference",
+          "args": {
+            "path": "v_brand_add_reference.path",
+            "note": "v_brand_add_reference.note",
+            "kind": "v_brand_add_reference.kind",
+            "kit_id": "v_brand_add_reference.kit_id"
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_apply_kit",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "brand_apply_kit",
+          "args": {},
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_apply_kit",
+      "case": "full",
+      "arguments": {
+        "tabs": [
+          "v_brand_apply_kit.tabs[0]"
+        ],
+        "restyle_existing": true,
+        "titles": true
+      },
+      "requests": [
+        {
+          "op": "brand_apply_kit",
+          "args": {
+            "tabs": [
+              "v_brand_apply_kit.tabs[0]"
+            ],
+            "restyle_existing": true
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_create_kit",
+      "case": "minimal",
+      "arguments": {
+        "kit": {
+          "k_brand_create_kit.kit": "v_brand_create_kit.kit.value"
+        }
+      },
+      "requests": [
+        {
+          "op": "brand_create_kit",
+          "args": {
+            "kit": {
+              "k_brand_create_kit.kit": "v_brand_create_kit.kit.value"
+            }
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_create_kit",
+      "case": "full",
+      "arguments": {
+        "kit": {
+          "k_brand_create_kit.kit": "v_brand_create_kit.kit.value"
+        },
+        "dry_run": false
+      },
+      "requests": [
+        {
+          "op": "brand_create_kit",
+          "args": {
+            "kit": {
+              "k_brand_create_kit.kit": "v_brand_create_kit.kit.value"
+            }
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_delete_kit",
+      "case": "minimal",
+      "arguments": {
+        "id": "v_brand_delete_kit.id"
+      },
+      "requests": [
+        {
+          "op": "brand_delete_kit",
+          "args": {
+            "id": "v_brand_delete_kit.id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_get_kit",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "brand_get_kit",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_get_kit",
+      "case": "full",
+      "arguments": {
+        "id": "v_brand_get_kit.id"
+      },
+      "requests": [
+        {
+          "op": "brand_get_kit",
+          "args": {
+            "id": "v_brand_get_kit.id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_get_references",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "brand_get_references",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_get_references",
+      "case": "full",
+      "arguments": {
+        "kit_id": "v_brand_get_references.kit_id"
+      },
+      "requests": [
+        {
+          "op": "brand_get_references",
+          "args": {
+            "kit_id": "v_brand_get_references.kit_id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_import_asset",
+      "case": "minimal",
+      "arguments": {
+        "path": "v_brand_import_asset.path"
+      },
+      "requests": [
+        {
+          "op": "brand_import_asset",
+          "args": {
+            "path": "v_brand_import_asset.path"
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_list_kits",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "brand_list_kits",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_set_active_kit",
+      "case": "minimal",
+      "arguments": {
+        "id": "v_brand_set_active_kit.id"
+      },
+      "requests": [
+        {
+          "op": "brand_set_active_kit",
+          "args": {
+            "id": "v_brand_set_active_kit.id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_update_kit",
+      "case": "minimal",
+      "arguments": {
+        "id": "v_brand_update_kit.id",
+        "patch": {
+          "k_brand_update_kit.patch": "v_brand_update_kit.patch.value"
+        }
+      },
+      "requests": [
+        {
+          "op": "brand_update_kit",
+          "args": {
+            "id": "v_brand_update_kit.id",
+            "patch": {
+              "k_brand_update_kit.patch": "v_brand_update_kit.patch.value"
+            }
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_update_kit",
+      "case": "full",
+      "arguments": {
+        "id": "v_brand_update_kit.id",
+        "patch": {
+          "k_brand_update_kit.patch": "v_brand_update_kit.patch.value"
+        },
+        "dry_run": true
+      },
+      "requests": [
+        {
+          "op": "brand_update_kit",
+          "args": {
+            "id": "v_brand_update_kit.id",
+            "patch": {
+              "k_brand_update_kit.patch": "v_brand_update_kit.patch.value"
+            },
+            "dry_run": true
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
         }
       ]
     },

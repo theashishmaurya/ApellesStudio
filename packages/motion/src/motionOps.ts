@@ -196,6 +196,8 @@ import { primitiveJsonSchema } from '@apelles/motion-engine/src/engine/jsonSchem
 import { DEFAULT_THEME_NAME, THEMES, THEME_NAMES } from '@apelles/motion-engine/src/design';
 import type { ThemeDef } from '@apelles/motion-engine/src/themeDef';
 import { buildThemeDef, findNamedTheme, removeTheme, upsertTheme } from './themeLibrary';
+import type { MotionStyle } from '@apelles/brand';
+import { brandEase, brandLayerDefaults } from './brandTheme';
 // D-407 — templates as data.
 import { SLOT_TYPES, slotsJsonSchema, type MotionTemplate } from '@apelles/motion-engine/src/templateDef';
 import {
@@ -339,6 +341,12 @@ export interface MotionOpsContext {
    *  supplies it (the beat ops then refuse cleanly). Injected for the same
    *  reason `preview` is. */
   soundtrackBeats?: (soundtrack: Soundtrack) => Promise<FileBeats>;
+  /** D-416 — the open project's brand-kit motion style, or `undefined` when the
+   *  project has none (or nothing supplies it): `motion_add_layer` takes its
+   *  entrance as a DEFAULT under the caller's props, and
+   *  `motion_add_layer_keyframe` its ease when none is given. Never applied to
+   *  existing work (that is `brand_apply_kit` with `restyle_existing`). */
+  brandMotion?: () => MotionStyle | undefined;
 }
 
 /** D-407 — the ops layer's window onto the template library. */
@@ -2059,13 +2067,16 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       // strictly as the WHOLE merged layer (unknown keys refused), so a typo'd
       // prop is an issue naming it rather than a layer that silently ignores it.
       const rawProps = a?.props;
-      let props: Record<string, unknown> | undefined;
+      // D-416 — the brand kit's entrance, under whatever the caller says.
+      const brandDefaults = brandLayerDefaults(use, ctx.brandMotion?.());
+      let props: Record<string, unknown> | undefined =
+        Object.keys(brandDefaults).length > 0 ? brandDefaults : undefined;
       if (rawProps !== undefined && rawProps !== null) {
         if (typeof rawProps !== 'object' || Array.isArray(rawProps)) {
           return { error: 'props must be an object of the primitive\'s fields (see motion_list_primitives)' };
         }
-        props = rawProps as Record<string, unknown>;
-        if ('use' in props || 'id' in props) {
+        props = { ...brandDefaults, ...(rawProps as Record<string, unknown>) };
+        if ('use' in rawProps || 'id' in rawProps) {
           return { error: 'props may not set "use" (that is the use argument) or "id" (minted for you)' };
         }
         const merged = { ...defaultLayerFor(use as PrimitiveUse), ...props, use };
@@ -2919,17 +2930,22 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         derivedFrom = 'current-position';
       }
 
+      const keyFrame = Math.round(at * fps);
+      const atKeyFrame = (k: { at?: unknown }) => Math.round((typeof k.at === 'number' ? k.at : 0) * fps) === keyFrame;
+      const isNewKey = !layerTransformKeys(manifest, resolved).some(atKeyFrame);
+
       let next = upsertLayerTransformKeyXY(manifest, resolved, at, fps, x, y);
       if (next === manifest) return { error: 'no change — selection did not resolve to an editable layer' };
 
-      if (easeResult.curve) {
-        const frame = Math.round(at * fps);
+      // D-416 — a NEW key with no ease given takes the brand kit's ease; an
+      // existing key keeps its own.
+      const brandStyle = !easeResult.curve && isNewKey ? ctx.brandMotion?.() : undefined;
+      const curve: EaseCurve | undefined = easeResult.curve ?? (brandStyle ? brandEase(brandStyle) : undefined);
+      if (curve) {
         const keys = layerTransformKeys(next, resolved);
-        const idx = keys.findIndex((k) => Math.round((typeof k.at === 'number' ? k.at : 0) * fps) === frame);
+        const idx = keys.findIndex(atKeyFrame);
         if (idx !== -1) {
-          const withEase = keys.map((k, i) =>
-            i === idx ? { ...k, ease: toSchemaEase(easeResult.curve as EaseCurve) } : k,
-          );
+          const withEase = keys.map((k, i) => (i === idx ? { ...k, ease: toSchemaEase(curve) } : k));
           next = setLayerTransformKeys(next, resolved, withEase);
         }
       }
@@ -2941,7 +2957,8 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         x,
         y,
         derivedFrom,
-        ease: easeResult.curve ?? null,
+        ease: curve ?? null,
+        ...(brandStyle ? { easeFrom: 'brand kit' } : {}),
         warning: easeResult.warning,
       };
     },

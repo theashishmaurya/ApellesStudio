@@ -1,0 +1,20 @@
+[package]
+name = "apelles-brand"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Apelles L2 — brand kits on disk (D-416): the user's per-file kit library, the content-addressed brand asset store (logos, fonts, LUTs, references, sonic logos), and a project's own snapshot of its active kit. Stores and copies; never interprets a kit's look (the schema is zod in @apelles/brand)."
+
+[dependencies]
+apelles-types = { path = "../apelles-types" }
+# The per-file JSON library rule (D-407, generalised by D-416) and the streamed
+# SHA-256 the Motion asset store already names files by, so a brand asset and the
+# Motion asset it becomes share one id.
+apelles-motion = { path = "../apelles-motion" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.27.0"
