@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-27** — **D-413 verified live:** beats detected on a music bed (127.6 BPM, cached repeat 0.14 s; uncached 1.16 s), Motion soundtrack set, `motion_time_to_music` put the reveal on downbeat 1 (1.42 s) and the accent on the next strong beat (3.26 s) as one undo step. Roadmap **0k**: Apelles online as a remote MCP for ChatGPT, Claude and Grok (researched).
+
 - **2026-10-27** — **Music-driven motion (D-413):** new `apelles-beat` crate (tempo, beats, downbeats, accents; on-device, cached by content hash; beats within ~3 ms of known clicks, D-414 adds `realfft`); the Edit tab draws a track's beats and snaps drags, trims, the playhead and "Snap cuts to beats" to them; Motion gets a document soundtrack (plays in the player, renders unchanged pixels), beat lines and key snapping on the keyframe timeline, and "Time to music" (named moves → cues like `downbeat 1`, `next strong beat`, `every beat between`). Seven MCP tools in both servers (224 → 231); `apelles-sound-design` gains a motion-to-music section.
 
 - **2026-10-27** — Next release set: **v0.4.0, the Motion release** (owner); no Edit-only v0.3.0. Checklist at the top of `docs/04-roadmap.md`.
