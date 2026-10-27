@@ -16,6 +16,13 @@
  * `_flushSave`'s own comment). `loadList()`/`createTimeline()`/
  * `setActiveTimeline()` wrap the D-045 `chroma_timeline_list`/`_create`/
  * `_set_active` commands that had no UI consumer until this pass.
+ * D-411 Phase 0 added `renameTimeline()`/`setTimelineOutput()`/
+ * `duplicateTimeline()`/`deleteTimeline()`, the one set of actions both the
+ * switcher's menus and the `editor_*_timeline*` MCP ops call. The OPEN
+ * timeline is renamed/resized through `applyOp` (this store is its one writer,
+ * so the change is undoable and journalled); any other through a by-id
+ * command. B-283: an undo/redo snapshot of another timeline switches to that
+ * timeline before it is restored.
  *
  * B-088 — **the optimistic timeline and the backend's timeline are two
  * different documents for the length of that debounce, and `savedVersion`
@@ -90,10 +97,13 @@ import {
   applyOp as applyOpPure,
   labelForOp,
   timelineDuration,
+  checkTimelineOutput,
   type ClipKeyframeParam,
   type EditOp,
   type EaseCurve,
+  type OutputSpec,
   type Timeline,
+  type TimelineOrigin,
 } from './timeline';
 import { clampPreviewView, FIT_VIEW, type PreviewView } from './previewZoom';
 // D-280 — the transport's playback-rate model lives with the transport
@@ -128,6 +138,20 @@ export interface TimelineSummary {
   name: string;
   duration: number;
   active: boolean;
+  /** D-411 Phase 0 — the timeline's own output size; `null`/absent = the
+   *  project's. */
+  output?: OutputSpec | null;
+  /** D-411 Phase 0 — build provenance; `null`/absent for a hand-made timeline. */
+  origin?: TimelineOrigin | null;
+}
+
+/** What every timeline-management action resolves to: never a rejection (the
+ *  switcher and the MCP ops both report `error` in words), plus the timeline a
+ *  create or duplicate produced. */
+export interface TimelineActionResult {
+  ok: boolean;
+  error?: string;
+  timeline?: Timeline;
 }
 
 /** A selected clip, by track + id (D-107 multi-select — an array, not a
@@ -519,11 +543,33 @@ interface EditorTimelineState {
 
   /** re-read the project's timeline list (id/name/duration/active per one) */
   loadList: () => Promise<void>;
-  /** create a new empty timeline, make it active, and reload both the list
-   *  and the (now-empty) active timeline */
-  createTimeline: (name: string) => Promise<{ ok: boolean; error?: string }>;
+  /** create a new empty timeline and reload the list. Active by default (and
+   *  then the now-empty active timeline is reloaded too); D-411 Phase 0 adds
+   *  its own output size and `activate: false`, so an agent can create
+   *  several shorts without the view jumping each time. */
+  createTimeline: (
+    name: string,
+    opts?: { output?: OutputSpec | null; activate?: boolean },
+  ) => Promise<TimelineActionResult>;
   /** switch the active timeline by id, then reload both */
-  setActiveTimeline: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  setActiveTimeline: (id: string) => Promise<TimelineActionResult>;
+  /** D-411 Phase 0 — rename any timeline. The ACTIVE one goes through the
+   *  `set_timeline_name` op (this store is its one writer, so a backend write
+   *  would be overwritten by the next save; as an op it is also undoable);
+   *  any other through `chroma_timeline_rename`. */
+  renameTimeline: (id: string, name: string) => Promise<TimelineActionResult>;
+  /** D-411 Phase 0 — set (`output`) or clear (`null`) any timeline's own
+   *  output size; routed exactly like `renameTimeline`. */
+  setTimelineOutput: (id: string, output: OutputSpec | null) => Promise<TimelineActionResult>;
+  /** D-411 Phase 0 — duplicate any timeline (an independent copy, grades
+   *  copied; see `apelles_project::timeline::duplicate_timeline`). Flushes
+   *  first when `id` is the active timeline, so the copy holds the edit on
+   *  screen. Not activated unless asked. */
+  duplicateTimeline: (id: string, opts?: { name?: string; activate?: boolean }) => Promise<TimelineActionResult>;
+  /** D-411 Phase 0 — delete any timeline but the last. Not undoable (a
+   *  project-level action); the GUI confirms first. Deleting the active one
+   *  flushes it, then reloads whichever neighbour the backend activated. */
+  deleteTimeline: (id: string) => Promise<TimelineActionResult>;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -998,6 +1044,27 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   },
 
   restoreSnapshot: (timeline) => {
+    // B-283 — an undo/redo entry belongs to the timeline it was made on, and
+    // `chroma_timeline_set` writes onto whichever timeline is ACTIVE. Undoing
+    // after a timeline switch used to write the other timeline's snapshot —
+    // id and all — over the active one. It now switches to the snapshot's own
+    // timeline first (Premiere's behaviour: undo brings its sequence forward),
+    // and refuses in words when that timeline no longer exists (deleted).
+    const active = get().timeline;
+    if (active && active.id && timeline.id && active.id !== timeline.id) {
+      void get()
+        .setActiveTimeline(timeline.id)
+        .then((switched) => {
+          if (!switched.ok) {
+            set({
+              error: `could not undo/redo on timeline "${timeline.name}": ${switched.error ?? 'it is no longer in this project'}`,
+            });
+            return;
+          }
+          get().restoreSnapshot(timeline);
+        });
+      return;
+    }
     localEditGeneration += 1; // B-272
     // B-274/D-402 — an undo/redo is journalled as the whole snapshot it
     // restores: its immediate save is still a round trip a killed page can lose.
@@ -1088,14 +1155,30 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
     }
   },
 
-  createTimeline: async (name) => {
-    const flushed = await get().flushPendingSave();
-    if (!flushed) return { ok: false, error: unflushedError(get().error) };
+  createTimeline: async (name, opts) => {
+    const activate = opts?.activate ?? true;
+    let output: OutputSpec | null = null;
+    if (opts?.output) {
+      const checked = checkTimelineOutput(opts.output.width, opts.output.height);
+      if (!checked.ok) return { ok: false, error: checked.error };
+      output = checked.output;
+    }
+    if (!name.trim()) return { ok: false, error: 'a timeline name must not be empty' };
+    // B-080 — only a create that ACTIVATES changes where a pending save would
+    // land; one that leaves the active timeline alone owes no flush.
+    if (activate) {
+      const flushed = await get().flushPendingSave();
+      if (!flushed) return { ok: false, error: unflushedError(get().error) };
+    }
     try {
-      await invoke<Timeline>('chroma_timeline_create', { name });
-      await Promise.all([get().load(), get().loadList()]);
-      set({ playhead: 0 });
-      return { ok: true };
+      const timeline = await invoke<Timeline>('chroma_timeline_create', { name, output, activate });
+      if (activate) {
+        await Promise.all([get().load(), get().loadList()]);
+        set({ playhead: 0 });
+      } else {
+        await get().loadList();
+      }
+      return { ok: true, timeline };
     } catch (e) {
       return { ok: false, error: String(e) };
     }
@@ -1112,6 +1195,95 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
       await invoke('chroma_timeline_set_active', { id });
       await Promise.all([get().load(), get().loadList()]);
       set({ playhead: 0 });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  },
+
+  renameTimeline: async (id, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return { ok: false, error: 'a timeline name must not be empty' };
+    const active = get().timeline;
+    if (active && active.id === id) {
+      get().applyOp({ kind: 'set_timeline_name', name: trimmed });
+      return { ok: true };
+    }
+    try {
+      await invoke('chroma_timeline_rename', { id, name: trimmed });
+      await get().loadList();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  },
+
+  setTimelineOutput: async (id, output) => {
+    let checkedOutput: OutputSpec | null = null;
+    if (output) {
+      const checked = checkTimelineOutput(output.width, output.height);
+      if (!checked.ok) return { ok: false, error: checked.error };
+      checkedOutput = checked.output;
+    }
+    const active = get().timeline;
+    if (active && active.id === id) {
+      get().applyOp({ kind: 'set_timeline_output', output: checkedOutput });
+      return { ok: true };
+    }
+    try {
+      await invoke('chroma_timeline_set_output', { id, output: checkedOutput });
+      await get().loadList();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  },
+
+  duplicateTimeline: async (id, opts) => {
+    const activate = opts?.activate ?? false;
+    // The copy is read off disk, so a pending edit to the timeline being
+    // copied must be there first; and an activating duplicate changes where a
+    // pending save would land (B-080). Either way: flush.
+    if (activate || get().timeline?.id === id) {
+      const flushed = await get().flushPendingSave();
+      if (!flushed) return { ok: false, error: unflushedError(get().error) };
+    }
+    try {
+      const timeline = await invoke<Timeline>('chroma_timeline_duplicate', {
+        id,
+        name: opts?.name?.trim() ? opts.name.trim() : null,
+        activate,
+      });
+      if (activate) {
+        await Promise.all([get().load(), get().loadList()]);
+        set({ playhead: 0 });
+      } else {
+        await get().loadList();
+      }
+      return { ok: true, timeline };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  },
+
+  deleteTimeline: async (id) => {
+    const wasActive = get().timeline?.id === id;
+    // B-080 — deleting the ACTIVE timeline moves "active" to a neighbour, so a
+    // save still pending for it would land on that neighbour. Flushed first
+    // (onto the timeline about to go, which is harmless) rather than dropped,
+    // so a refused delete loses nothing either.
+    if (wasActive) {
+      const flushed = await get().flushPendingSave();
+      if (!flushed) return { ok: false, error: unflushedError(get().error) };
+    }
+    try {
+      await invoke('chroma_timeline_delete', { id });
+      if (wasActive) {
+        await Promise.all([get().load(), get().loadList()]);
+        set({ playhead: 0, selection: [], selectedGap: null, curveEditor: null, dynamicZoom: null });
+      } else {
+        await get().loadList();
+      }
       return { ok: true };
     } catch (e) {
       return { ok: false, error: String(e) };

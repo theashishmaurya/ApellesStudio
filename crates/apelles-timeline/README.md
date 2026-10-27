@@ -57,6 +57,15 @@ op that actually runs. The fade is the one with an evaluator attached
 (`Clip::fade_multiplier_at`, over `apelles-types`' curve math — see above); the
 *result* is still applied up there, and for audio in `apelles-media`.
 
+**`Timeline::output` / `Timeline::origin` (D-411 Phase 0, `src/output.rs`)** — a
+timeline's own output size (`OutputSpec`, even, 16..8192, checked by
+`OutputSpec::new`) overriding the project's D-038 size, and the build provenance a
+tool-built timeline carries (`TimelineOrigin`: run, proposal, source, segments,
+hashes). Both are skipped when `None`, so a pre-D-411 timeline round-trips
+unchanged. This crate resolves neither against the project (it cannot see
+`ProjectSettings`): `chroma::edit::derived_composition_size` puts the override
+first. `origin` is read by nothing that renders.
+
 **`Track::transitions` (D-226)** — a `Transition` per **edit point**: the cut it
 straddles (`at_frame`), a kind (`CrossDissolve` / `DipToColor`), a duration and
 an alignment. **This crate's "clips on one track never overlap" invariant is

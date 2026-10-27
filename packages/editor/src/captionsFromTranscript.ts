@@ -67,7 +67,10 @@
 // multi-line handling, since the grouping heuristic caps a cue at one line's
 // worth of text by construction.
 
-import type { TranscriptSegment, TranscriptWord } from './mediaUnderstandingStore';
+import type { Transcript, TranscriptSegment, TranscriptWord } from './mediaUnderstandingStore';
+import { stitchTimelineTranscript, type TimelineTranscriptRow } from './timelineTranscript';
+import type { RecoveredWindow } from './darkRegions';
+import { timelineFps, type Timeline } from './timeline';
 
 /** How many words trigger a break, regardless of duration or pause. See the
  *  module doc for why 8. */
@@ -244,4 +247,112 @@ export function sanitiseIdStem(stem: string): string {
     .join('')
     .replace(/^-+|-+$/g, '')
     .toLowerCase();
+}
+
+// --------------------------------------------------------------------------- //
+// D-411 Phase 0 — captions from the TIMELINE transcript.
+//
+// The file path above captions ONE source file and shifts it by one offset,
+// which is right for a single clip played from its start and wrong for any
+// cut: a trimmed head, a ripple-deleted pause or a retake cut moves every
+// later word, and a short assembled from several segments of the source plays
+// them out of source order. Captions for an edit have to come from the edit:
+// `stitchTimelineTranscript` (D-329) already maps every word through each
+// clip's own trim, speed and position onto TIMELINE frames, so this groups
+// THOSE words. The cues therefore land where the words play, a cut removes
+// the words it removes, and a tightened pause is measured as it plays.
+// --------------------------------------------------------------------------- //
+
+/** A word on its way into a cue: timeline seconds, plus the source span that
+ *  identifies it across a cut. */
+interface PlacedWord extends TranscriptWord {
+  sourceStart: number;
+  sourceEnd: number;
+}
+
+/** Group a stitched timeline transcript's words into caption cues, in
+ *  TIMELINE frames — the `import_subtitles` shape, with no offset to apply.
+ *
+ *  Grouping reuses {@link groupTranscriptIntoCues} unchanged (same word, time
+ *  and pause limits), fed with words in timeline seconds:
+ *
+ *  - **A source sentence stays one grouping unit across a cut.** Consecutive
+ *    rows that come from the same source segment (same file, same segment
+ *    span — e.g. a sentence with a pause ripple-deleted out of its middle) are
+ *    merged back into one segment before grouping, so the cut does not force
+ *    a cue break mid-sentence; the pause rule still breaks it wherever the
+ *    played gap is long enough. Rows from different segments never merge.
+ *  - **A word cut in two plays once.** A cut inside a word leaves a clamped
+ *    piece of it in each neighbouring clip; the pieces are one word (same
+ *    source span), joined into one.
+ *  - Words clamped to nothing (`endFrame <= startFrame`) play no frame and are
+ *    dropped.
+ *
+ *  `fps` non-finite/`<= 0` falls back to 24, the same degrade-not-poison
+ *  contract as {@link generatedCuesToCaptions}. */
+export function timelineRowsToCaptions(
+  rows: readonly TimelineTranscriptRow[],
+  fps: number,
+  options: CaptionGroupingOptions,
+  idPrefix: string,
+): GeneratedCaption[] {
+  const rate = Number.isFinite(fps) && fps > 0 ? fps : 24;
+  const groups: PlacedWord[][] = [];
+  let prev: TimelineTranscriptRow | null = null;
+
+  for (const row of rows) {
+    const sameSentence =
+      prev !== null &&
+      prev.sourcePath === row.sourcePath &&
+      prev.sourceStart === row.sourceStart &&
+      prev.sourceEnd === row.sourceEnd &&
+      row.startFrame >= prev.startFrame;
+    if (!sameSentence || groups.length === 0) groups.push([]);
+    const words = groups[groups.length - 1];
+    for (const w of row.words) {
+      if (w.endFrame <= w.startFrame) continue;
+      const last = words[words.length - 1];
+      if (last && last.sourceStart === w.sourceStart && last.sourceEnd === w.sourceEnd) {
+        last.end = Math.max(last.end, w.endFrame / rate);
+        continue;
+      }
+      words.push({
+        word: w.text,
+        start: w.startFrame / rate,
+        end: w.endFrame / rate,
+        sourceStart: w.sourceStart,
+        sourceEnd: w.sourceEnd,
+      });
+    }
+    prev = row;
+  }
+
+  const segments: TranscriptSegment[] = groups
+    .filter((g) => g.length > 0)
+    .map((g) => ({
+      start: g[0].start,
+      end: g[g.length - 1].end,
+      text: '',
+      words: g.map(({ word, start, end }) => ({ word, start, end })),
+    }));
+  // The words are already in timeline seconds, so the conversion back to
+  // frames is exact (`frame / rate * rate`) and needs no offset.
+  return generatedCuesToCaptions(groupTranscriptIntoCues(segments, options), rate, 0, idPrefix);
+}
+
+/** The whole "captions from the timeline transcript" step for a timeline whose
+ *  sources are transcribed: stitch (D-329, recoveries spliced in exactly as
+ *  the Index panel shows them), group, and name the cues `cap-<timeline>-<i>`.
+ *  The ONE function both `editor_generate_captions_from_transcript(scope=
+ *  "timeline")` and the GUI's "From the timeline" menu item call, so the agent
+ *  and the person get the same cues. */
+export function captionsForTimeline(
+  tl: Timeline,
+  transcripts: Readonly<Record<string, Transcript>>,
+  recoveries: Readonly<Record<string, readonly RecoveredWindow[]>>,
+  options: CaptionGroupingOptions = {},
+): GeneratedCaption[] {
+  const rows = stitchTimelineTranscript(tl, transcripts, recoveries);
+  const stem = sanitiseIdStem(tl.name || 'timeline') || 'timeline';
+  return timelineRowsToCaptions(rows, timelineFps(tl), options, `cap-${stem}-`);
 }

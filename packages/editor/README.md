@@ -11,17 +11,27 @@ dragging a pool item in from the shell's Sources panel.
   uses `@phosphor-icons/react` icons (D-300); the timeline toolbar (`Scissors`
   split, `Trash` remove) and the empty-state action are `@apelles/ui` `<Button>`s, the toolbar
   buttons wrapped in `@apelles/ui` `<Tooltip>` (D-042).
-- `TimelineSwitcher` (D-046) — a `@apelles/ui` `<Select>` of the project's
-  timelines (D-045's `chroma_timeline_list`) with the active one checked,
-  switching via `chroma_timeline_set_active`, plus inline "+ New" →
-  `chroma_timeline_create`. No rename/delete UI (no backing commands).
+- `TimelineSwitcher` (D-046, tab strip D-058, management D-411 Phase 0) — one
+  `@apelles/ui` tab per project timeline (D-045's `chroma_timeline_list`),
+  switching via `chroma_timeline_set_active`, a `+` tab → `chroma_timeline_create`,
+  and per timeline a right-click menu (plus a `⋯` menu for the open one): Rename
+  (also double-click), Duplicate (independent copy, grades copied), Size (project
+  size or a delivery preset), Delete (confirmed, not undoable). A timeline with its
+  own size shows it on its tab (`9:16`).
+- `TimelineOutputForm` (D-411 Phase 0) — "This timeline" in the Project Settings
+  panel: the open timeline's own output size (project size / preset / custom),
+  through the store's `setTimelineOutput`.
 - `useEditorTimelineStore` — zustand store: `timeline`, `playhead`, `playing`,
   `timelines` (D-046), `openProjectKey` + `setOpenProject()` (B-034/D-112's
   readiness signal, made the open project's *identity* rather than a boolean by
   B-083/D-203 — a changed key is a real project switch and reloads everything),
   `load()`, `applyOp()`, `restoreSnapshot()` (D-051),
   `setPlayhead()`, `loadList()`/`createTimeline()`/`setActiveTimeline()`
-  (D-046), `flushPendingSave()` (B-080/D-308). Optimistic ops → debounced
+  (D-046), `renameTimeline()`/`setTimelineOutput()`/`duplicateTimeline()`/
+  `deleteTimeline()` (D-411 Phase 0: the open timeline is renamed/resized by
+  the `set_timeline_name`/`set_timeline_output` ops, any other by id commands;
+  an undo whose snapshot belongs to another timeline switches to it first,
+  B-283), `flushPendingSave()` (B-080/D-308). Optimistic ops → debounced
   `chroma_timeline_set` → `chroma_timeline_get` refetch. **`chroma_timeline_set`
   lands on whichever timeline is ACTIVE when it arrives**, so anything that
   changes which timeline or project that is must `await flushPendingSave()`

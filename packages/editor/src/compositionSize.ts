@@ -3,9 +3,12 @@
  * module-level value the SYNCHRONOUS export compiler can read (B-208/D-353).
  *
  * **What it is:** a thin wrapper over `chroma_timeline_composition_size`
- * (`chroma::edit::composition_size_only`, D-199) — the project's recorded
- * output spec (D-038 `ProjectSettings`), or the timeline's first real video
- * clip's own probed resolution when no explicit settings exist.
+ * (`chroma::edit::composition_size_only`, D-199) — the timeline's own output
+ * size when it has one (D-411 Phase 0, `Timeline.output`), else the project's
+ * recorded output spec (D-038 `ProjectSettings`), else the timeline's first
+ * real video clip's own probed resolution. Keyed per timeline since D-411, so
+ * an export of a timeline that is not the active one sizes against its own
+ * frame.
  *
  * **What it is for.** `compileEditorExportArgs` must hand
  * `TimelineExportOptions.sourceFootprints` a clip's source resolution *as a
@@ -48,37 +51,52 @@ interface CompositionSizeResponse {
   compHeight: number;
 }
 
-let cached: CompositionSizeValue | null = null;
-let inflight: Promise<CompositionSizeValue | null> | null = null;
+/** D-411 Phase 0 — the snapshot is per TIMELINE: an export by id warms and
+ *  reads the size of the timeline it is exporting (its own `output`, else the
+ *  project's), which is not the active timeline's when a 9:16 short is
+ *  exported from a 16:9 view. `ACTIVE` keys the active timeline. */
+const ACTIVE = '';
 
-/** Fetch the composition size and publish it for [`compositionSizeSnapshot`].
+const cached = new Map<string, CompositionSizeValue | null>();
+const inflight = new Map<string, Promise<CompositionSizeValue | null>>();
+
+/** Fetch the composition size of `timelineId` (omitted: the active timeline)
+ *  and publish it for [`compositionSizeSnapshot`].
  *
- *  Idempotent per call site and concurrency-safe: parallel callers share one
- *  in-flight request. Resolves to `null` (and clears the snapshot) when the
- *  backend cannot answer, so a later call retries rather than inheriting a
- *  stale success. */
-export async function warmCompositionSize(): Promise<CompositionSizeValue | null> {
-  if (!inflight) {
-    inflight = invoke<CompositionSizeResponse>('chroma_timeline_composition_size')
+ *  Idempotent per call site and concurrency-safe: parallel callers for the
+ *  same timeline share one in-flight request. Resolves to `null` (and clears
+ *  that timeline's snapshot) when the backend cannot answer, so a later call
+ *  retries rather than inheriting a stale success. */
+export async function warmCompositionSize(timelineId?: string): Promise<CompositionSizeValue | null> {
+  const key = timelineId ?? ACTIVE;
+  let pending = inflight.get(key);
+  if (!pending) {
+    const request =
+      timelineId === undefined
+        ? invoke<CompositionSizeResponse>('chroma_timeline_composition_size')
+        : invoke<CompositionSizeResponse>('chroma_timeline_composition_size', { timelineId });
+    pending = request
       .then((g) => {
         const value =
           g.compWidth > 0 && g.compHeight > 0 ? { width: g.compWidth, height: g.compHeight } : null;
-        cached = value;
+        cached.set(key, value);
         return value;
       })
       .catch(() => {
-        cached = null;
+        cached.set(key, null);
         return null;
       })
       .finally(() => {
-        inflight = null;
+        inflight.delete(key);
       });
+    inflight.set(key, pending);
   }
-  return inflight;
+  return pending;
 }
 
-/** The last warmed composition size, or `null` if none has resolved (or the
- *  last warm failed). Synchronous — this is the whole point of the module. */
-export function compositionSizeSnapshot(): CompositionSizeValue | null {
-  return cached;
+/** The last warmed composition size of `timelineId` (omitted: the active
+ *  timeline), or `null` if none has resolved (or the last warm failed).
+ *  Synchronous — this is the whole point of the module. */
+export function compositionSizeSnapshot(timelineId?: string): CompositionSizeValue | null {
+  return cached.get(timelineId ?? ACTIVE) ?? null;
 }

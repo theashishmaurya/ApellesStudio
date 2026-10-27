@@ -12,7 +12,9 @@
 //!   for a frame count here, `apelles-timeline` never touches media — and
 //!   persisting it) or `chroma_timeline_set` replaces it; `chroma_timeline_list`
 //!   /`chroma_timeline_create`/`chroma_timeline_set_active` manage the
-//!   `timelines` list itself; `chroma_timeline_frame` resolves a timeline
+//!   `timelines` list itself, and (D-411 Phase 0) `chroma_timeline_get_by_id`
+//!   / `_rename` / `_set_output` / `_duplicate` / `_delete` address any
+//!   timeline by id (thin wrappers over `apelles_project::timeline`); `chroma_timeline_frame` resolves a timeline
 //!   position on the active timeline to `(clip, source frame)` via
 //!   [`apelles_timeline::Track::clip_at`] and decodes that source frame with the
 //!   lightweight [`super::decode_pipe`] path (ffmpeg → rgb → JPEG);
@@ -91,7 +93,9 @@ use image::DynamicImage;
 use image::codecs::jpeg::JpegEncoder;
 use serde::Serialize;
 
-use apelles_timeline::{Clip, LayerRole, LayerSource, Timeline, TrackKind, VisibleLayer};
+use apelles_timeline::{
+    Clip, LayerRole, LayerSource, OutputSpec, Timeline, TimelineOrigin, TrackKind, VisibleLayer,
+};
 
 #[cfg(test)]
 use super::highlight_draw::apply_highlights_to_rgba;
@@ -427,6 +431,22 @@ pub(crate) fn resolve_timeline_and_settings(
     apelles_project::timeline::resolve_timeline_and_settings(&current_project_dir()?, persist)
 }
 
+/// D-411 Phase 0 — the **open** project's timeline `id` (active or not) plus
+/// its settings: what an export of a named timeline renders, and what
+/// [`chroma_timeline_composition_size`] measures when handed an id. `None`
+/// is the active timeline, exactly [`resolve_timeline_and_settings`].
+pub(crate) fn resolve_timeline_by_id_and_settings(
+    id: Option<&str>,
+) -> Result<(Timeline, project::ProjectSettings), String> {
+    match id {
+        Some(id) => apelles_project::timeline::resolve_timeline_by_id_and_settings(
+            &current_project_dir()?,
+            id,
+        ),
+        None => resolve_timeline_and_settings(false),
+    }
+}
+
 /// The **composition space** every clip's geometry is measured against
 /// (D-136, Phase 0a of `docs/notes/on-canvas-transform.md`): the project's
 /// recorded output resolution (D-038), or — for a project that never recorded
@@ -485,10 +505,22 @@ pub(super) const NO_COMPOSITION_SIZE: &str = "this project has no frame size yet
 /// whose only content is audio (or that has not been given a size yet) still
 /// exports. An `Err` is a real failure (a source that will not probe), never
 /// "nothing to measure".
+///
+/// **D-411 Phase 0 — the timeline's own output size wins.** A timeline with
+/// [`Timeline::output`] set (a 9:16 short in a 16:9 project) is composed at
+/// that size, ahead of the project's settings and the first-clip fallback.
+/// This function is the one place every consumer resolves the composition —
+/// the preview frame, [`chroma_timeline_clip_geometry`],
+/// [`chroma_timeline_composition_size`], the compositor export and the
+/// Colorist's view of an Edit clip — so honouring the override here is what
+/// makes all of them agree on it.
 pub(super) fn derived_composition_size(
     settings: &project::ProjectSettings,
     timeline: &Timeline,
 ) -> Result<Option<(u32, u32)>, String> {
+    if let Some(output) = timeline.output {
+        return Ok(Some(output.size()));
+    }
     if let (Some(w), Some(h)) = (settings.width, settings.height)
         && w > 0
         && h > 0
@@ -817,8 +849,12 @@ pub fn chroma_timeline_set(timeline: Timeline, journal_seq: Option<u64>) -> Resu
 }
 
 /// One timeline's id/name/duration + whether it's the active one — what
-/// [`chroma_timeline_list`] returns. For a future timeline-switcher UI
-/// (D-045 pass 3); no UI consumes this yet.
+/// [`chroma_timeline_list`] returns: the timeline switcher's tabs
+/// (`TimelineSwitcher.tsx`) and `editor_list_timelines`.
+///
+/// D-411 Phase 0 added `output` (the timeline's own size override, `None` =
+/// the project's) and `origin` (build provenance), so the switcher and an
+/// agent can tell a 9:16 short from the long-form without loading each one.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimelineSummary {
@@ -826,6 +862,8 @@ pub struct TimelineSummary {
     pub name: String,
     pub duration: i64,
     pub active: bool,
+    pub output: Option<OutputSpec>,
+    pub origin: Option<TimelineOrigin>,
 }
 
 /// All of the open project's timelines (D-045). Lazily builds the first one
@@ -844,28 +882,112 @@ pub fn chroma_timeline_list() -> Result<Vec<TimelineSummary>, String> {
             name: tl.name.clone(),
             duration: tl.duration(),
             active: i == manifest.active_timeline,
+            output: tl.output,
+            origin: tl.origin.clone(),
         })
         .collect())
 }
 
-/// Create a new, empty, named timeline, append it to the project, make it the
-/// active timeline, and persist. Returns the full new [`Timeline`] so a
-/// caller can use it immediately without a second `chroma_timeline_get`.
+/// Create a new, empty, named timeline, append it to the project, and
+/// persist. Returns the full new [`Timeline`] so a caller can use it
+/// immediately without a second `chroma_timeline_get`.
+///
+/// D-411 Phase 0: `output` gives it its own size (`None` = the project's),
+/// and `activate` (default `true`, the pre-D-411 behaviour) says whether it
+/// becomes the active timeline — an agent building several shorts in a row
+/// can create them without the view jumping each time. Its rate is the active
+/// timeline's (B-284); see [`apelles_project::timeline::create_timeline`].
 #[tauri::command]
-pub fn chroma_timeline_create(name: String) -> Result<Timeline, String> {
+pub fn chroma_timeline_create(
+    name: String,
+    output: Option<OutputSpec>,
+    activate: Option<bool>,
+) -> Result<Timeline, String> {
+    let output = output
+        .map(|o| OutputSpec::new(o.width, o.height))
+        .transpose()?;
     let (dir, mut manifest) = load_and_ensure_timeline(false)?;
-    let tl = Timeline {
-        id: uuid::Uuid::new_v4().to_string(),
-        name,
-        rate: None,
-        tracks: Vec::new(),
-        markers: Vec::new(),
-    };
-    manifest.timelines.push(tl.clone());
-    manifest.active_timeline = manifest.timelines.len() - 1;
-    manifest.modified = now_rfc3339();
+    let tl = apelles_project::timeline::create_timeline(
+        &mut manifest,
+        &name,
+        output,
+        activate.unwrap_or(true),
+    )?;
     project::save_manifest(&dir, &manifest)?;
     Ok(tl)
+}
+
+/// D-411 Phase 0 — one timeline of the open project by id, active or not.
+/// What exporting a timeline without switching to it compiles from.
+#[tauri::command]
+pub async fn chroma_timeline_get_by_id(id: String) -> Result<Timeline, String> {
+    tokio::task::spawn_blocking(move || {
+        resolve_timeline_by_id_and_settings(Some(&id)).map(|(tl, _settings)| tl)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// D-411 Phase 0 — rename a timeline by id.
+///
+/// **Not for the active timeline while the Edit tab holds it**: the Edit
+/// store is the active timeline's one writer (D-051/D-318), and its next
+/// `chroma_timeline_set` would write the old name straight back. The store
+/// renames the active timeline through its `set_timeline_name` op instead
+/// (undoable, journalled) and only reaches this command for the others —
+/// see `timelineStore.ts`'s `renameTimeline`.
+#[tauri::command]
+pub fn chroma_timeline_rename(id: String, name: String) -> Result<(), String> {
+    let (dir, mut manifest) = load_and_ensure_timeline(false)?;
+    apelles_project::timeline::rename_timeline(&mut manifest, &id, &name)?;
+    project::save_manifest(&dir, &manifest)
+}
+
+/// D-411 Phase 0 — set (`Some`) or clear (`None`) a timeline's own output
+/// size by id. Same active-timeline caveat as [`chroma_timeline_rename`]: the
+/// store routes the active one through its `set_timeline_output` op.
+#[tauri::command]
+pub fn chroma_timeline_set_output(id: String, output: Option<OutputSpec>) -> Result<(), String> {
+    let output = output
+        .map(|o| OutputSpec::new(o.width, o.height))
+        .transpose()?;
+    let (dir, mut manifest) = load_and_ensure_timeline(false)?;
+    apelles_project::timeline::set_timeline_output(&mut manifest, &id, output)?;
+    project::save_manifest(&dir, &manifest)
+}
+
+/// D-411 Phase 0 — duplicate a timeline by id (independent copy, grades
+/// copied to the new clip ids; see
+/// [`apelles_project::timeline::duplicate_timeline`]). The caller flushes
+/// the Edit store's pending save first when `id` is the active timeline, so
+/// the copy holds the edit on screen.
+#[tauri::command]
+pub fn chroma_timeline_duplicate(
+    id: String,
+    name: Option<String>,
+    activate: Option<bool>,
+) -> Result<Timeline, String> {
+    let (dir, mut manifest) = load_and_ensure_timeline(false)?;
+    let copy = apelles_project::timeline::duplicate_timeline(
+        &dir,
+        &mut manifest,
+        &id,
+        name.as_deref(),
+        activate.unwrap_or(false),
+    )?;
+    project::save_manifest(&dir, &manifest)?;
+    Ok(copy)
+}
+
+/// D-411 Phase 0 — delete a timeline by id. Refused for the only one; the
+/// active timeline moves to a neighbour when the deleted one was active. Not
+/// undoable (a project-level action, like a deleted media-pool item): the GUI
+/// asks first, and the MCP tool says so in its description.
+#[tauri::command]
+pub fn chroma_timeline_delete(id: String) -> Result<(), String> {
+    let (dir, mut manifest) = load_and_ensure_timeline(false)?;
+    apelles_project::timeline::delete_timeline(&mut manifest, &id)?;
+    project::save_manifest(&dir, &manifest)
 }
 
 /// Make the timeline with `id` the active one — every `chroma_timeline_get`/
@@ -1884,9 +2006,15 @@ pub(crate) fn clip_geometry(track: usize, clip: usize) -> Result<ClipGeometry, S
 /// with NOTHING selected (so a human can see the real output frame before
 /// touching anything) needs the composition size on its own — this is that,
 /// a thin wrapper with no clip-probing at all.
+///
+/// D-411 Phase 0 — `timeline_id` measures that timeline instead of the active
+/// one (its own `output` override, else the project's size), which is what
+/// exporting a timeline by id sizes its clips against.
 #[tauri::command]
-pub async fn chroma_timeline_composition_size() -> Result<ClipGeometry, String> {
-    tokio::task::spawn_blocking(composition_size_only)
+pub async fn chroma_timeline_composition_size(
+    timeline_id: Option<String>,
+) -> Result<ClipGeometry, String> {
+    tokio::task::spawn_blocking(move || composition_size_only(timeline_id.as_deref()))
         .await
         .map_err(|e| format!("composition size task: {e}"))?
 }
@@ -1901,8 +2029,8 @@ pub async fn chroma_timeline_composition_size() -> Result<ClipGeometry, String> 
 /// fixed at `1.0` (undefined without a clip — see that struct's own doc for
 /// what they mean) rather than inventing a second, near-identical DTO the
 /// frontend would need a second type for.
-fn composition_size_only() -> Result<ClipGeometry, String> {
-    let (timeline, settings) = resolve_timeline_and_settings(false)?;
+fn composition_size_only(timeline_id: Option<&str>) -> Result<ClipGeometry, String> {
+    let (timeline, settings) = resolve_timeline_by_id_and_settings(timeline_id)?;
     let (comp_w, comp_h) = composition_size(&settings, &timeline)?;
     Ok(ClipGeometry {
         comp_width: comp_w,
@@ -5305,6 +5433,7 @@ mod composition_size_tests {
                 },
             ],
             markers: Vec::new(),
+            ..Default::default()
         };
         let settings = project::ProjectSettings::default();
 
@@ -5337,6 +5466,7 @@ mod composition_size_tests {
                 ..Default::default()
             }],
             markers: Vec::new(),
+            ..Default::default()
         };
         let settings = project::ProjectSettings::default();
 
@@ -5376,6 +5506,7 @@ mod composition_size_tests {
                 },
             ],
             markers: Vec::new(),
+            ..Default::default()
         };
         let settings = project::ProjectSettings::default();
 
@@ -5411,6 +5542,7 @@ mod composition_size_tests {
                 ..Default::default()
             }],
             markers: Vec::new(),
+            ..Default::default()
         };
         let settings = project::ProjectSettings {
             width: Some(1920),
@@ -5420,6 +5552,53 @@ mod composition_size_tests {
 
         let (w, h) = composition_size(&settings, &timeline).expect("composition size");
         assert_eq!((w, h), (1920, 1080));
+    }
+
+    /// D-411 Phase 0 — a timeline's own output size wins over the project's
+    /// settings AND over its footage: a 9:16 short in a 16:9 project composes
+    /// at 1080x1920, while a sibling timeline with no override keeps the
+    /// project's size. No media needed: the override is consulted first.
+    #[test]
+    fn a_timelines_own_output_size_overrides_the_project_and_the_footage() {
+        let settings = project::ProjectSettings {
+            width: Some(1920),
+            height: Some(1080),
+            ..Default::default()
+        };
+        let short = Timeline {
+            id: "short".into(),
+            name: "Short".into(),
+            output: Some(OutputSpec::new(1080, 1920).expect("valid size")),
+            tracks: vec![Track {
+                kind: TrackKind::Video,
+                clips: vec![Clip {
+                    id: "c".into(),
+                    source_path: "/does/not/exist.mov".into(),
+                    duration: 24,
+                    source_len: 24,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            composition_size(&settings, &short).expect("short"),
+            (1080, 1920)
+        );
+        let long_form = Timeline {
+            id: "long".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            composition_size(&settings, &long_form).expect("long"),
+            (1920, 1080)
+        );
+        // An empty project with no size at all still has one for the short.
+        assert_eq!(
+            derived_composition_size(&project::ProjectSettings::default(), &short).expect("ok"),
+            Some((1080, 1920))
+        );
     }
 }
 
@@ -5535,6 +5714,7 @@ mod preview_text_tests {
                     },
                 ],
                 markers: Vec::new(),
+                ..Default::default()
             }],
             active_timeline: 0,
             media: Vec::new(),
@@ -5789,6 +5969,7 @@ mod preview_transition_tests {
                     ..Default::default()
                 }],
                 markers: Vec::new(),
+                ..Default::default()
             }],
             active_timeline: 0,
             media: Vec::new(),
@@ -6021,6 +6202,7 @@ mod preview_throughput_tests {
                 rate: None,
                 tracks,
                 markers: Vec::new(),
+                ..Default::default()
             }],
             active_timeline: 0,
             media: Vec::new(),
@@ -6085,6 +6267,7 @@ mod preview_throughput_tests {
                     ..Default::default()
                 }],
                 markers: Vec::new(),
+                ..Default::default()
             }],
             active_timeline: 0,
             media: Vec::new(),
@@ -6672,6 +6855,7 @@ mod preview_adjustment_tests {
                 rate: Some(apelles_types::Rational { num: 24, den: 1 }),
                 tracks,
                 markers: Vec::new(),
+                ..Default::default()
             }],
             active_timeline: 0,
             media: Vec::new(),
@@ -6994,6 +7178,7 @@ mod grade_bridge_tests {
                     ..Default::default()
                 }],
                 markers: Vec::new(),
+                ..Default::default()
             }],
             active_timeline: 0,
             media: Vec::new(),

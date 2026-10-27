@@ -113,7 +113,7 @@ import { assertProjectIdentity } from '@apelles/store';
 // transport. The same pair the store clamps to and the Rust session clamps to.
 import { MAX_PLAYBACK_RATE, MIN_PLAYBACK_RATE } from '@apelles/player';
 
-import { useEditorTimelineStore, type Selection } from './timelineStore';
+import { useEditorTimelineStore, type Selection, type TimelineSummary } from './timelineStore';
 // D-243 — the caption preset library and the one action that applies it,
 // shared verbatim with `CaptionLibrary.tsx` so the agent and the human cannot
 // drift apart.
@@ -135,6 +135,7 @@ import { suggestClipHighlights } from './highlightSuggestOp';
 import { liveSuggestDeps } from './highlightSuggestLive';
 import {
   checkAddClip,
+  checkTimelineOutput,
   clipOutputSourceFrames,
   timelineDuration,
   CLIP_KEYFRAME_DEFAULTS,
@@ -201,6 +202,7 @@ import {
   type EqBandKind,
   type Marker,
   type NewClipFields,
+  type OutputSpec,
   type CaptionStyle,
   type TextLayer,
   type Timeline,
@@ -255,7 +257,9 @@ const SPEED_RANGE_HELP =
   `must be between ${MIN_SPEED} and ${MAX_SPEED}, or between -${MAX_SPEED} and -${MIN_SPEED} ` +
   `to play that run in reverse (1 = normal, -1 = backwards at recorded speed)`;
 import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
-import { runEditorExport } from './editorExport';
+import { resolveExportTimeline, runEditorExport } from './editorExport';
+// D-411 Phase 0 — the composition size of a timeline by id (FCPXML's default size).
+import { warmCompositionSize } from './compositionSize';
 // D-329 — the whole timeline's transcript, the same stitch the Index panel
 // renders, so `editor_get_timeline_transcript` and the GUI cannot disagree.
 import { stitchTimelineTranscript, transcriptSources } from './timelineTranscript';
@@ -290,6 +294,7 @@ import {
   generatedCuesToCaptions,
   groupTranscriptIntoCues,
   sanitiseIdStem,
+  captionsForTimeline,
 } from './captionsFromTranscript';
 import { composeFontStyleKey, fontStyleOf, loadTextFonts, textFontsSync } from './textFonts';
 import {
@@ -593,10 +598,61 @@ function analysisResult(path: string) {
  *  the rest of this hook needs — it has a correct answer, the same
  *  reasoning CLAUDE.md's Testing section gives for the grade-doc/mask-
  *  geometry unit tests. */
+/** D-411 Phase 0 — one timeline as the timeline-management tools report it.
+ *  The ACTIVE timeline's name/output/duration come from the store's own copy
+ *  (`active`), not the backend summary, because the store holds edits a
+ *  debounced save has not delivered yet — a rename an agent just made must
+ *  read back renamed. */
+export function timelineSummaryDto(t: TimelineSummary, active: Timeline | null) {
+  const live = t.active && active && active.id === t.id ? active : null;
+  return {
+    id: t.id,
+    name: live ? live.name : t.name,
+    active: t.active,
+    durationFrames: live ? timelineDuration(live) : t.duration,
+    output: (live ? live.output : t.output) ?? null,
+    origin: (live ? live.origin : t.origin) ?? null,
+  };
+}
+
+/** {@link timelineSummaryDto} for the timeline with `id`, from the store's
+ *  current list (callers have just reloaded it). `null` if it is not there. */
+function timelineSummaryDtoFor(id: string) {
+  const s = useEditorTimelineStore.getState();
+  const t = s.timelines.find((x) => x.id === id);
+  return t ? timelineSummaryDto(t, s.timeline) : null;
+}
+
+/** D-411 Phase 0 — the optional `id` the per-timeline tools take: absent means
+ *  the active timeline. Returns the id, or the error to hand back. */
+function timelineIdArg(a: { id?: unknown } | undefined): string | { error: string } {
+  if (a?.id !== undefined && a?.id !== null) {
+    return typeof a.id === 'string' && a.id ? a.id : { error: 'id must be a timeline id string' };
+  }
+  const active = useEditorTimelineStore.getState().timeline;
+  return active?.id ? active.id : noTimeline();
+}
+
+/** D-411 Phase 0 — `width`/`height` args as a checked output size: `null` when
+ *  neither was given, an error when only one was or the pair fails
+ *  `checkTimelineOutput` (even, 16..8192). */
+function outputFromArgs(a: { width?: unknown; height?: unknown } | undefined): OutputSpec | { error: string } | null {
+  const hasW = a?.width !== undefined && a?.width !== null;
+  const hasH = a?.height !== undefined && a?.height !== null;
+  if (!hasW && !hasH) return null;
+  if (hasW !== hasH) return { error: 'pass both width and height, or neither' };
+  const checked = checkTimelineOutput(a?.width, a?.height);
+  return checked.ok ? checked.output : { error: checked.error };
+}
+
 export function timelineDto(tl: Timeline) {
   return {
     id: tl.id,
     name: tl.name,
+    // D-411 Phase 0 — the timeline's own size (null = the project's) and its
+    // build provenance (null for a hand-made timeline).
+    output: tl.output ?? null,
+    origin: tl.origin ?? null,
     durationFrames: timelineDuration(tl),
     tracks: tl.tracks.map((t, ti) => ({
       index: ti,
@@ -1881,6 +1937,85 @@ function noTimeline(): { error: string } {
   return { error: 'the timeline is still loading (the project was just opened or switched) — retry' };
 }
 
+/**
+ * D-411 Phase 0 — `editor_generate_captions_from_transcript(scope="timeline")`:
+ * captions grouped from the TIMELINE transcript (D-329's stitch), so every cue
+ * lands where its words play after every cut, trim and tightened pause —
+ * rather than one file's transcript shifted by one offset.
+ *
+ * Same start-then-poll contract as the file path: it starts a transcript for
+ * every source file the timeline's dialogue clips use (one per FILE, cached),
+ * and answers `state: "transcribing"` until all of them are done. Recovered
+ * dark regions (D-349) are spliced in, exactly as `editor_get_timeline_
+ * transcript` reports them, so the captions read the same words a person sees
+ * in the Index panel. `path`/`offset_frames` belong to the file path and are
+ * refused here rather than silently ignored.
+ */
+function captionsFromTimelineTranscript(tl: Timeline, a: Record<string, unknown> | undefined) {
+  if (a?.path !== undefined || a?.mediaId !== undefined || a?.sourcePath !== undefined || a?.offsetFrames !== undefined) {
+    return {
+      error:
+        'scope="timeline" captions the whole timeline at the frames its words play; path / media_id / offset_frames apply only to scope="file"',
+    };
+  }
+  const sources = transcriptSources(tl);
+  if (sources.length === 0) {
+    return { error: 'no dialogue-bearing video clips on this timeline to caption' };
+  }
+  const store = useMediaUnderstandingStore.getState();
+  for (const s of sources) {
+    store.startTranscript(s.path, { wordTimestamps: true, force: !!a?.force });
+  }
+  const fresh = useMediaUnderstandingStore.getState();
+  const states = sources.map((s) => ({ path: s.path, status: fresh.transcriptStatus(s.path) }));
+  const failed = states.find((s) => s.status.phase === 'error');
+  if (failed) return { error: `transcribing ${failed.path} failed: ${failed.status.error ?? 'unknown error'}` };
+  const pending = states.filter((s) => s.status.phase !== 'done').length;
+  if (pending > 0) {
+    return {
+      ok: true,
+      scope: 'timeline',
+      state: 'transcribing',
+      pending,
+      sources: states.map((s) => ({ path: s.path, state: s.status.phase })),
+      note: `${pending} of ${sources.length} source files are still transcribing — call editor_generate_captions_from_transcript(scope="timeline") again once they are done (or poll editor_get_transcript_status)`,
+    };
+  }
+  const recoveries = Object.fromEntries(sources.map((s) => [s.path, fresh.recoveriesFor(s.path)]));
+  const num = (v: unknown): number | undefined => {
+    if (v === undefined || v === null) return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const captions = captionsForTimeline(tl, fresh.transcripts, recoveries, {
+    maxWords: num(a?.maxWords),
+    maxDurationS: num(a?.maxDurationS),
+    maxPauseGapS: num(a?.maxPauseGapS),
+  });
+  if (captions.length === 0) {
+    return {
+      error:
+        'the timeline transcript has no word-level timestamps to group into cues — the clips may be silent, or every word was cut',
+    };
+  }
+  const style = captionStylePatch(a, a?.font !== undefined ? String(a.font) : DEFAULT_CAPTION_FONT);
+  useEditorTimelineStore.getState().applyOp({
+    kind: 'import_subtitles',
+    cues: captions,
+    ...(Object.keys(style).length > 0 ? { style } : {}),
+  });
+  const after = useEditorTimelineStore.getState().timeline;
+  return {
+    ok: true,
+    scope: 'timeline',
+    track: (after?.tracks.length ?? 1) - 1,
+    cues: captions.length,
+    firstFrame: captions[0].start_frame,
+    lastFrame: captions[captions.length - 1].start_frame + captions[captions.length - 1].duration,
+    sources: sources.map((s) => s.path),
+  };
+}
+
 /** B-280 — this evaluation of the module. A dev hot update to this file or to
  *  anything it imports (`timeline.ts`, `musicEditOps.ts`, …) re-evaluates it
  *  and mints a new value, and the subscription below depends on it, so the
@@ -1908,6 +2043,13 @@ export function useEditorControl(): void {
           playhead: s.playhead,
           playing: s.playing,
           hasTimeline: !!s.timeline,
+          // D-411 Phase 0 — WHICH timeline every other `editor_*` tool is
+          // acting on, and how many the project has: with several timelines
+          // (a long-form and its shorts) "the timeline" is ambiguous without it.
+          activeTimeline: s.timeline
+            ? { id: s.timeline.id, name: s.timeline.name, output: s.timeline.output ?? null }
+            : null,
+          timelineCount: s.timelines.length,
           // What is selected right now — the same `selection`/`selectedGap`
           // pair every selection path writes (timeline click, marquee, canvas
           // click-to-select), so a caller can both read the user's current
@@ -1962,6 +2104,106 @@ export function useEditorControl(): void {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
         return timelineDto(tl);
+      },
+
+      // ---- D-411 Phase 0: timeline management -----------------------------
+      //
+      // The MCP half of the timeline switcher's tabs and menu
+      // (`TimelineSwitcher.tsx`): every op drives the SAME store action the
+      // GUI does (`createTimeline`/`setActiveTimeline`/`renameTimeline`/
+      // `duplicateTimeline`/`deleteTimeline`/`setTimelineOutput`), so an agent
+      // and a person cannot manage timelines two different ways. Every other
+      // `editor_*` tool acts on the ACTIVE timeline; these are how an agent
+      // moves between several (the Automatic Clipper's shorts, D-411).
+
+      editor_list_timelines: async () => {
+        const s = useEditorTimelineStore.getState();
+        if (s.openProjectKey === null) return noTimeline();
+        await s.loadList();
+        const fresh = useEditorTimelineStore.getState();
+        const rows = await Promise.all(
+          fresh.timelines.map(async (t) => {
+            const dto = timelineSummaryDto(t, fresh.timeline);
+            const frame = dto.output ?? (await warmCompositionSize(t.id));
+            return { ...dto, frameSize: frame ?? null };
+          }),
+        );
+        return {
+          ok: true,
+          activeId: rows.find((r) => r.active)?.id ?? null,
+          timelines: rows,
+          note: '`output` is the timeline’s own size (null = it uses the project’s); `frameSize` is the size it actually renders at.',
+        };
+      },
+
+      editor_create_timeline: async (a) => {
+        if (useEditorTimelineStore.getState().openProjectKey === null) return noTimeline();
+        const name = typeof a?.name === 'string' ? a.name : '';
+        if (!name.trim()) return { error: 'name must be a non-empty timeline name' };
+        const output = outputFromArgs(a);
+        if (output && 'error' in output) return output;
+        const activate = a?.activate === undefined ? true : !!a.activate;
+        const res = await useEditorTimelineStore.getState().createTimeline(name, { output: output ?? null, activate });
+        if (!res.ok || !res.timeline) return { error: res.error ?? 'the timeline could not be created' };
+        return { ok: true, timeline: timelineSummaryDtoFor(res.timeline.id), active: activate };
+      },
+
+      editor_set_active_timeline: async (a) => {
+        const id = typeof a?.id === 'string' ? a.id : '';
+        if (!id) return { error: 'id must be a timeline id (editor_list_timelines lists them)' };
+        const res = await useEditorTimelineStore.getState().setActiveTimeline(id);
+        if (!res.ok) return { error: res.error ?? 'the switch failed' };
+        const tl = useEditorTimelineStore.getState().timeline;
+        return { ok: true, activeId: tl?.id ?? id, name: tl?.name ?? null };
+      },
+
+      editor_rename_timeline: async (a) => {
+        const id = timelineIdArg(a);
+        if (typeof id !== 'string') return id;
+        const name = typeof a?.name === 'string' ? a.name : '';
+        const res = await useEditorTimelineStore.getState().renameTimeline(id, name);
+        if (!res.ok) return { error: res.error ?? 'the rename failed' };
+        return { ok: true, timeline: timelineSummaryDtoFor(id) };
+      },
+
+      editor_duplicate_timeline: async (a) => {
+        const id = timelineIdArg(a);
+        if (typeof id !== 'string') return id;
+        const res = await useEditorTimelineStore.getState().duplicateTimeline(id, {
+          name: typeof a?.name === 'string' ? a.name : undefined,
+          activate: !!a?.activate,
+        });
+        if (!res.ok || !res.timeline) return { error: res.error ?? 'the duplicate failed' };
+        return { ok: true, timeline: timelineSummaryDtoFor(res.timeline.id), active: !!a?.activate };
+      },
+
+      editor_delete_timeline: async (a) => {
+        // No default to the active timeline here, deliberately: this one is
+        // not undoable, so the caller names exactly what goes.
+        const id = typeof a?.id === 'string' ? a.id : '';
+        if (!id) return { error: 'id must be the id of the timeline to delete (editor_list_timelines lists them)' };
+        const res = await useEditorTimelineStore.getState().deleteTimeline(id);
+        if (!res.ok) return { error: res.error ?? 'the delete failed' };
+        const s = useEditorTimelineStore.getState();
+        return { ok: true, deleted: id, activeId: s.timeline?.id ?? null, remaining: s.timelines.length };
+      },
+
+      editor_set_timeline_output: async (a) => {
+        const id = timelineIdArg(a);
+        if (typeof id !== 'string') return id;
+        let output: OutputSpec | null;
+        if (a?.clear) {
+          if (a?.width != null || a?.height != null) return { error: 'pass clear=true OR width and height, not both' };
+          output = null;
+        } else {
+          const parsed = outputFromArgs(a);
+          if (!parsed) return { error: 'pass width and height (the timeline’s own size), or clear=true to use the project’s size' };
+          if ('error' in parsed) return parsed;
+          output = parsed;
+        }
+        const res = await useEditorTimelineStore.getState().setTimelineOutput(id, output);
+        if (!res.ok) return { error: res.error ?? 'the size change failed' };
+        return { ok: true, timeline: timelineSummaryDtoFor(id) };
       },
 
       editor_set_playhead: (a) => {
@@ -3175,6 +3417,12 @@ export function useEditorControl(): void {
       editor_generate_captions_from_transcript: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
+        // D-411 Phase 0 — `scope: "timeline"` captions follow the timeline's
+        // own cuts. (The design note spells it `from`, a Python keyword the
+        // MCP tool cannot take as a parameter name.)
+        const scope = a?.scope ?? 'file';
+        if (scope !== 'file' && scope !== 'timeline') return { error: 'scope must be "file" or "timeline"' };
+        if (scope === 'timeline') return captionsFromTimelineTranscript(tl, a);
         const path = resolveMediaPath(a);
         if ('error' in path) return path;
 
@@ -4284,14 +4532,30 @@ export function useEditorControl(): void {
       // writes the string to disk. See timelineInterchange.ts's own header
       // doc for the full, precise scope (what maps, what doesn't) and D-196
       // in docs/08-decisions.md for the field-mapping table. -----------------
+      // D-411 Phase 0 — `timelineId` writes that timeline (not only the
+      // active one), and omitted `width`/`height` default to its own
+      // composition size (its `output` override, else the project's), so a
+      // 9:16 short interchanges as 9:16 without restating its size.
       editor_export_fcpxml: async (a) => {
-        const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return noTimeline();
-
+        if (!useEditorTimelineStore.getState().timeline) return noTimeline();
         const outPath = a?.outPath;
         if (typeof outPath !== 'string' || !outPath) return { error: 'outPath must be a non-empty absolute file path' };
-        const width = Math.round(Number(a?.width));
-        const height = Math.round(Number(a?.height));
+        const resolved = await resolveExportTimeline(a?.timelineId);
+        if ('error' in resolved) return resolved;
+        const tl = resolved.timeline;
+        const sized = a?.width != null && a?.height != null;
+        if (!sized && (a?.width != null || a?.height != null)) {
+          return { error: 'pass both width and height, or neither (to use the timeline’s own size)' };
+        }
+        const comp = sized ? null : await warmCompositionSize(resolved.timelineId);
+        if (!sized && !comp) {
+          return {
+            error:
+              'this timeline has no frame size — pass width and height, or give it one (editor_set_timeline_output, or the project settings)',
+          };
+        }
+        const width = sized ? Math.round(Number(a?.width)) : (comp?.width ?? NaN);
+        const height = sized ? Math.round(Number(a?.height)) : (comp?.height ?? NaN);
         if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
           return { error: 'width and height must be positive numbers (the output composition size)' };
         }
@@ -4338,7 +4602,7 @@ export function useEditorControl(): void {
           return { error: `failed to write ${outPath}: ${String(e)}` };
         }
 
-        return { ok: true, outPath, warnings };
+        return { ok: true, outPath, timelineId: tl.id, width, height, warnings };
       },
 
       // ---- fade (D-147) + duck (D-149) — moved from useChromaControl.ts ---

@@ -93,6 +93,13 @@ export interface ToolGroup {
  * `motion_refill_template` and `motion_delete_template` (Motion 52 → 59).
  * Re-counted against the real file.
  *
+ * 217 → 224 on 2026-10-27 (D-411 Phase 0): timeline management,
+ * `editor_list_timelines`, `editor_create_timeline`,
+ * `editor_set_active_timeline`, `editor_rename_timeline`,
+ * `editor_duplicate_timeline`, `editor_delete_timeline` and
+ * `editor_set_timeline_output` (Edit 90 → 97). Re-counted against the real
+ * file.
+ *
  * 211 → 217 on 2026-10-27 (D-409): the six custom-component tools,
  * `motion_list_components`, `motion_get_component`, `motion_write_component`,
  * `motion_check_component`, `motion_certify_component` and
@@ -116,15 +123,15 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 217,
-  shipped: 205,
+  all: 224,
+  shipped: 212,
   debugOnly: 12,
 } as const;
 
 export const TOOL_GROUPS: readonly ToolGroup[] = [
   {
     name: 'Edit',
-    count: 90,
+    count: 97,
     blurb:
       'The whole multi-track NLE. Browse and organise the media pool, place and trim clips, perform any of the seven edit types at the playhead, roll/slip/slide, manage tracks, key transforms, set transitions, markers, captions and per-clip EQ, then render the timeline to a real file.',
     sample: [

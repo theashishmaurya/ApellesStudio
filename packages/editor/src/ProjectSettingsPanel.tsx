@@ -28,14 +28,25 @@
  * Flagged live (owner, 2026-09-10) as part of the docked panel reading as
  * busier than it needed to, with dead space below it once removed. The form
  * now renders directly under the panel's own header, no wrapper.
+ *
+ * **D-411 Phase 0 — "This timeline".** Under the project's own spec sits the
+ * OPEN timeline's own output size (`TimelineOutputForm`): follow the project,
+ * or a preset / custom size of its own. The project settings stay the default
+ * every timeline without one uses.
  */
 import { InspectorEmptyState } from '@apelles/inspector';
 
 import { ProjectSettingsForm } from './ProjectSettingsForm';
+import { TimelineOutputForm } from './TimelineOutputForm';
+import { useEditorTimelineStore } from './timelineStore';
 import { useProjectSettings } from './useProjectSettings';
 
 export function ProjectSettingsPanel() {
   const { settings, error, saving, save } = useProjectSettings();
+  // D-411 Phase 0 — the open timeline's own size section. Keyed by timeline
+  // id so its mode pills re-seed from the document on a timeline switch.
+  const timelineId = useEditorTimelineStore((s) => s.timeline?.id ?? null);
+  const timelineName = useEditorTimelineStore((s) => s.timeline?.name ?? '');
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-0 text-xs" data-chroma-panel="project-settings">
@@ -53,6 +64,16 @@ export function ProjectSettingsPanel() {
         {settings === null && !error && <InspectorEmptyState>Loading project settings…</InspectorEmptyState>}
         {error && <p className="pb-2 text-[11px] text-red-400">Could not load project settings: {error}</p>}
         {settings !== null && <ProjectSettingsForm settings={settings} onChange={save} disabled={saving} />}
+        {timelineId !== null && (
+          // D-411 Phase 0 — Resolve's per-timeline "Use Project Settings": a
+          // short can be 9:16 while the project (and its long-form) is 16:9.
+          <div className="mt-4 flex flex-col gap-2 border-t border-border-color pt-3">
+            <div className="text-text-primary font-medium">
+              This timeline <span className="text-text-secondary font-normal">· {timelineName || 'Untitled'}</span>
+            </div>
+            <TimelineOutputForm key={timelineId} />
+          </div>
+        )}
       </div>
     </div>
   );

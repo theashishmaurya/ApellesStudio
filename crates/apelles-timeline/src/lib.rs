@@ -186,6 +186,8 @@ pub mod caption;
 /// each other should be able to open one file per side.
 pub mod caption_anim;
 pub mod highlight;
+/// D-411 Phase 0 — a timeline's own output size and its build provenance.
+pub mod output;
 /// D-236 — the speed ramp's arithmetic (see the module's own doc). Kept in its
 /// own file rather than inlined here because it is an exact, line-for-line
 /// mirror of `@apelles/editor`'s `speedRamp.ts`, and a reader checking the two
@@ -206,6 +208,10 @@ use caption::{CaptionCue, CaptionStyle};
 pub use apelles_types::ease::EaseCurve;
 pub use apelles_types::fade::{self, fade_gain};
 pub use highlight::Highlight;
+pub use output::{
+    OUTPUT_MAX_EDGE, OUTPUT_MIN_EDGE, OriginSegment, OriginSegmentRole, OutputSpec, TimelineOrigin,
+    TimelineOriginKind, TimelineOriginSource,
+};
 pub use speed_ramp::{SpeedPoint, SpeedSegment};
 
 // D-224 — same shape, same reason, one layer further: a clip's EQ band type
@@ -298,6 +304,25 @@ pub struct Timeline {
     /// it. It is stored, round-tripped and shown.
     #[serde(default)]
     pub markers: Vec<Marker>,
+    /// **D-411 Phase 0 — this timeline's own output size**, overriding the
+    /// project's D-038 `ProjectSettings {width, height}` for this timeline
+    /// only (a 9:16 short beside the 16:9 long-form it was cut from). `None` —
+    /// every timeline saved before D-411, and every timeline nobody resized —
+    /// means "use the project's size", exactly the pre-D-411 behaviour.
+    ///
+    /// Skipped when `None` so an old project round-trips byte-for-byte. This
+    /// crate never resolves it against the project's settings (it cannot see
+    /// them): `chroma::edit::derived_composition_size` does, and every preview
+    /// and export path goes through that one function. See [`output`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<OutputSpec>,
+    /// **D-411 Phase 0 — how a tool built this timeline** (the Automatic
+    /// Clipper's shorts and trailers): run, proposal, source, segments and the
+    /// hashes a rebuild checks. Data only: nothing in this crate, the
+    /// compositor or the exporter reads it. `None` for every hand-made
+    /// timeline. See [`output::TimelineOrigin`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<TimelineOrigin>,
 }
 
 /// One timeline marker (D-222) — see [`Timeline::markers`] for why these hang
@@ -2302,6 +2327,7 @@ impl Timeline {
                 ..Default::default()
             }],
             markers: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -4893,6 +4919,7 @@ mod tests {
                 },
             ],
             markers: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -5164,6 +5191,7 @@ mod tests {
                     note: None,
                 },
             ],
+            ..Default::default()
         };
         let json = serde_json::to_string(&tl).unwrap();
         assert!(json.contains("\"frame\":120"), "{json}");
@@ -5877,6 +5905,7 @@ mod tests {
             rate: None,
             tracks: vec![mk(track0), mk(track1)],
             markers: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -6064,6 +6093,7 @@ mod tests {
             rate: None,
             tracks: vec![mk(TrackKind::Video, vec![v]), mk(TrackKind::Audio, vec![a])],
             markers: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -6561,6 +6591,7 @@ mod tests {
             rate: None,
             tracks: vec![mk(TrackKind::Video, vec![v]), mk(TrackKind::Audio, vec![a])],
             markers: Vec::new(),
+            ..Default::default()
         }
     }
 

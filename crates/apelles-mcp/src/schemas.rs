@@ -370,6 +370,17 @@ pub enum LoudnessPreset {
     Off,
 }
 
+/// `editor_generate_captions_from_transcript`'s `scope` (D-411 Phase 0): one
+/// source `"file"`, or the whole `"timeline"` from its stitched transcript.
+/// Mirrors `mcp/schemas.py`'s `CaptionScope`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+pub enum CaptionScope {
+    #[serde(rename = "file")]
+    File,
+    #[serde(rename = "timeline")]
+    Timeline,
+}
+
 /// One segment boundary in a clip speed ramp (`set_clip_speed`).
 ///
 /// "From this SOURCE frame onward, play at this speed." Source frames are absolute in

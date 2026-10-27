@@ -43,7 +43,7 @@
  * same broadcast today, same as `CanvasSettingsPopover.tsx`'s write did
  * before D-275 retired it — no caller-specific plumbing either way.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
@@ -82,12 +82,37 @@ function safeUnlisten(unlistenPromise: Promise<(() => void) | undefined | void>)
     });
 }
 
+/** Which timeline to measure, and when to measure it again (D-411 Phase 0).
+ *
+ *  - `id` — a timeline SWITCH must refetch: a 9:16 short and the 16:9
+ *    long-form it was cut from are two different frames in one project. (Before
+ *    D-411 this hook only refetched on `hasTimeline` and the settings
+ *    broadcast, so the boundary of the previous timeline would have stayed up
+ *    across a switch; no two timelines could differ then, so it never showed.)
+ *  - `output` — the timeline's own size override, answered IMMEDIATELY from
+ *    the store rather than after the debounced save reaches the backend, so
+ *    the boundary and the overlays follow a size change the moment it is
+ *    made.
+ *  - `revision` — the store's `savedVersion` (B-088): the backend answer for
+ *    a timeline WITHOUT an override depends on its first clip, which an edit
+ *    can change, and the backend only knows once the save has landed. */
+export interface CompositionSizeKey {
+  id: string;
+  output?: { width: number; height: number } | null;
+  revision: number;
+}
+
 /** `null` while unresolved — no timeline yet, still loading, or the
  *  resolver failed (e.g. an empty timeline with no clip to derive a size
  *  from and no explicit `ProjectSettings` either — the same "nothing to
  *  show yet" a fresh, empty Edit tab is in). */
-export function useCompositionSize(hasTimeline: boolean): CompositionSize | null {
+export function useCompositionSize(key: CompositionSizeKey | null): CompositionSize | null {
   const [size, setSize] = useState<CompositionSize | null>(null);
+  const hasTimeline = key !== null;
+  const timelineId = key?.id ?? null;
+  const revision = key?.revision ?? 0;
+  const overrideWidth = key?.output?.width ?? null;
+  const overrideHeight = key?.output?.height ?? null;
 
   // B-086 — a monotonic token bumped every time the backend broadcasts a
   // successful `chroma_project_set_settings` write, from ANY caller. This is
@@ -112,6 +137,10 @@ export function useCompositionSize(hasTimeline: boolean): CompositionSize | null
     // (`docs/notes/react-compiler-coverage.md`), which `reactCompiler.test.ts`
     // now fails on.
     void refreshToken;
+    // Same reason, same spelling: the active timeline's id and the saved
+    // revision are refetch triggers only (see `CompositionSizeKey`).
+    void timelineId;
+    void revision;
     if (!hasTimeline) {
       setSize(null);
       return;
@@ -127,7 +156,14 @@ export function useCompositionSize(hasTimeline: boolean): CompositionSize | null
     return () => {
       cancelled = true;
     };
-  }, [hasTimeline, refreshToken]);
+  }, [hasTimeline, timelineId, revision, refreshToken]);
 
-  return size;
+  // Memoised on the two numbers: consumers (`useContentBox`, the overlays) key
+  // effects off this object's identity, and a fresh literal per render would
+  // re-run them on every frame of playback.
+  const override = useMemo(
+    () => (overrideWidth !== null && overrideHeight !== null ? { width: overrideWidth, height: overrideHeight } : null),
+    [overrideWidth, overrideHeight],
+  );
+  return override ?? size;
 }

@@ -1,6 +1,6 @@
 # Automatic Clipper: shorts and a trailer from one long video
 
-**Status: design, accepted for build (D-411, 2026-10-27). No code yet.** Roadmap: item 0h in
+**Status: design, accepted for build (D-411, 2026-10-27). Phase 0 (§10, timelines that can be shorts) built 2026-10-27 — see D-411's Phase 0 build notes for the calls made while building (e.g. `scope` instead of `from` for the captions parameter, duplicate re-minting clip ids). Phases 1–7 not built.** Roadmap: item 0h in
 `docs/04-roadmap.md`. Research notes (gitignored): `scratch/clipper-reference/NOTES.md`, with the
 raw Opus Clip help pages in `scratch/clipper-reference/opus/`.
 

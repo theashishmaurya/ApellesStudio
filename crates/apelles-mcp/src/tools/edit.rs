@@ -22,8 +22,8 @@ use serde_json::Value;
 use crate::args::WireArgs;
 use crate::render;
 use crate::schemas::{
-    ClipHighlightSpec, ClipKeyframe, ClipSelector, CurveSpec, DynamicZoomFraming, ExportRenderer,
-    FitMode, GapSelector, LoudnessPreset, SpeedRampPoint,
+    CaptionScope, ClipHighlightSpec, ClipKeyframe, ClipSelector, CurveSpec, DynamicZoomFraming,
+    ExportRenderer, FitMode, GapSelector, LoudnessPreset, SpeedRampPoint,
 };
 use crate::server::ApellesMcp;
 
@@ -60,6 +60,18 @@ fn default_editor_analyze_video_force() -> bool {
 }
 
 fn default_editor_generate_captions_from_transcript_force() -> bool {
+    false
+}
+
+fn default_editor_create_timeline_activate() -> bool {
+    true
+}
+
+fn default_editor_duplicate_timeline_activate() -> bool {
+    false
+}
+
+fn default_editor_set_timeline_output_clear() -> bool {
     false
 }
 
@@ -487,6 +499,11 @@ pub struct EditorGenerateCaptionsFromTranscriptArgs {
     pub position_x: Option<f64>,
     #[serde(default)]
     pub position_y: Option<f64>,
+    /// D-411 Phase 0 — `"file"` (the default: one source file, shifted by
+    /// `offset_frames`) or `"timeline"` (the whole edit, from its stitched
+    /// transcript, so every cue follows the cuts).
+    #[serde(default)]
+    pub scope: Option<CaptionScope>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -923,8 +940,12 @@ pub struct EditorSetDynamicZoomArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EditorExportArgs {
     pub out_path: String,
-    pub width: i64,
-    pub height: i64,
+    /// D-411 Phase 0 — optional now: omitted (with `height`), the export is
+    /// written at the timeline's own frame size.
+    #[serde(default)]
+    pub width: Option<i64>,
+    #[serde(default)]
+    pub height: Option<i64>,
     #[serde(default)]
     pub fps: Option<f64>,
     #[serde(default)]
@@ -950,17 +971,79 @@ pub struct EditorExportArgs {
     /// D-401 — true-peak ceiling for a custom target, dBTP (default -1).
     #[serde(default)]
     pub true_peak_dbtp: Option<f64>,
+    /// D-411 Phase 0 — export this timeline instead of the active one,
+    /// without switching to it.
+    #[serde(default)]
+    pub timeline_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EditorExportFcpxmlArgs {
     pub out_path: String,
-    pub width: i64,
-    pub height: i64,
+    /// D-411 Phase 0 — optional, as on `editor_export`.
+    #[serde(default)]
+    pub width: Option<i64>,
+    #[serde(default)]
+    pub height: Option<i64>,
     #[serde(default)]
     pub fps: Option<f64>,
     #[serde(default)]
     pub project_name: Option<String>,
+    /// D-411 Phase 0 — write this timeline instead of the active one.
+    #[serde(default)]
+    pub timeline_id: Option<String>,
+}
+
+// --- D-411 Phase 0: timeline management ----------------------------------- //
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorCreateTimelineArgs {
+    pub name: String,
+    #[serde(default)]
+    pub width: Option<i64>,
+    #[serde(default)]
+    pub height: Option<i64>,
+    #[serde(default = "default_editor_create_timeline_activate")]
+    pub activate: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorSetActiveTimelineArgs {
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorRenameTimelineArgs {
+    pub name: String,
+    #[serde(default)]
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorDuplicateTimelineArgs {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default = "default_editor_duplicate_timeline_activate")]
+    pub activate: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorDeleteTimelineArgs {
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorSetTimelineOutputArgs {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub width: Option<i64>,
+    #[serde(default)]
+    pub height: Option<i64>,
+    #[serde(default = "default_editor_set_timeline_output_clear")]
+    pub clear: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1259,7 +1342,7 @@ impl ApellesMcp {
         description = r#"The active edit timeline: every track and every clip on it, with the
     indices the mutating Edit-tab tools address clips by.
 
-    Returns {id, name, durationFrames, tracks: [{index, kind: "video"|"audio",
+    Returns {id, name, output, origin, durationFrames, tracks: [{index, kind: "video"|"audio",
     gain, locked, hidden, duckFrom, duckDb, duckAttackMs, duckReleaseMs,
     clips: [{index, id, name, sourcePath, startFrame, duration, sourceStart,
     sourceLen, sourceFps, linkGroup, fadeInFrames, fadeOutFrames, fadeInCurve,
@@ -1701,11 +1784,168 @@ impl ApellesMcp {
 
     Also reports `waveformView` (D-232) — whether the viewer is showing its
     audio waveform strip under the picture. `editor_set_waveform_view` is that
-    one's write half; `editor_get_waveform` reads the envelope itself."#
+    one's write half; `editor_get_waveform` reads the envelope itself.
+
+    Also reports `activeTimeline` (D-411) — `{id, name, output}` of the
+    timeline every other `editor_*` tool acts on — and `timelineCount`. A
+    project can hold several timelines (a long-form and its shorts);
+    `editor_list_timelines` lists them and `editor_set_active_timeline`
+    switches."#
     )]
     pub async fn editor_get_state(&self) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new();
         let env = self.op("editor_get_state", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    // --- D-411 Phase 0: timeline management --------------------------------- //
+
+    #[tool(
+        name = "editor_list_timelines",
+        description = r#"Every timeline in the open project, in tab order: `{id, name, active,
+    durationFrames, output, origin, frameSize}` each, plus `activeId`.
+
+    `output` is the timeline's OWN size (`{width, height}`), or `null` when it
+    follows the project's size (every timeline made before D-411, and every
+    one nobody resized). `frameSize` is the size it actually renders and
+    exports at — `output` when set, else the project's. `origin` is how a tool
+    built it (the Automatic Clipper's shorts and trailers: run, proposal,
+    source segments), `null` for a hand-made timeline.
+
+    Every other `editor_*` tool acts on the ACTIVE timeline only; switch with
+    `editor_set_active_timeline`. `editor_export(timeline_id=...)` exports any
+    of them without switching."#
+    )]
+    pub async fn editor_list_timelines(&self) -> Result<CallToolResult, ErrorData> {
+        let env = self.op("editor_list_timelines", WireArgs::new()).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_create_timeline",
+        description = r#"Create a new, empty timeline named `name` — the Edit tab's `+` tab.
+
+    `width`/`height` give it its OWN output size (both or neither; even
+    numbers, 16 to 8192), e.g. 1080x1920 for a 9:16 short in a 16:9 project.
+    Omitted, it follows the project's size. Its frame rate is the active
+    timeline's. `activate` (default true) makes it the active timeline, as the
+    GUI does; pass false to create several without switching the view (they
+    stay listed by `editor_list_timelines`). Returns the new timeline's
+    summary, including its `id`."#
+    )]
+    pub async fn editor_create_timeline(
+        &self,
+        Parameters(p): Parameters<EditorCreateTimelineArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("name", p.name)
+            .set("activate", p.activate)
+            .put("width", p.width)
+            .put("height", p.height);
+        let env = self.op("editor_create_timeline", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_set_active_timeline",
+        description = r#"Switch the Edit tab to the timeline with `id` (from
+    `editor_list_timelines`) — the same as clicking its tab. Every other
+    `editor_*` tool acts on the active timeline from then on. Any pending edit
+    to the timeline being left is saved first; if that save fails the switch
+    is refused, with the reason, rather than losing the edit. Resets the
+    playhead to 0."#
+    )]
+    pub async fn editor_set_active_timeline(
+        &self,
+        Parameters(p): Parameters<EditorSetActiveTimelineArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("id", p.id);
+        let env = self.op("editor_set_active_timeline", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_rename_timeline",
+        description = r#"Rename a timeline — the tab's double-click / "Rename…". `id` omitted
+    means the active timeline. The name is trimmed and must not be empty.
+    Renaming the active timeline is an ordinary undoable edit (a GUI undo
+    reverts it); renaming another one is a project-level change."#
+    )]
+    pub async fn editor_rename_timeline(
+        &self,
+        Parameters(p): Parameters<EditorRenameTimelineArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("name", p.name).put("id", p.id);
+        let env = self.op("editor_rename_timeline", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_duplicate_timeline",
+        description = r#"Duplicate a timeline — the tab menu's "Duplicate" (Premiere's
+    Duplicate Sequence). `id` omitted means the active timeline; `name`
+    defaults to "<name> copy". The copy lands right after the original and is
+    INDEPENDENT: every clip gets a new id and its Colorist grade is copied to
+    that id, so grading or editing the copy never changes the original. Its
+    own output size and markers travel with it. `activate` (default false)
+    switches to the copy. Returns the copy's summary, including its `id`."#
+    )]
+    pub async fn editor_duplicate_timeline(
+        &self,
+        Parameters(p): Parameters<EditorDuplicateTimelineArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("activate", p.activate)
+            .put("id", p.id)
+            .put("name", p.name);
+        let env = self.op("editor_duplicate_timeline", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_delete_timeline",
+        description = r#"Delete the timeline with `id` — the tab menu's "Delete…". **Not
+    undoable** (a project-level action, like removing a media-pool item; the
+    GUI asks for confirmation first), so `id` is required: there is no
+    default to the active timeline. The project's only timeline cannot be
+    deleted. Deleting the active timeline activates the one that takes its
+    place. The media and every other timeline are untouched. Returns the new
+    `activeId` and how many timelines remain."#
+    )]
+    pub async fn editor_delete_timeline(
+        &self,
+        Parameters(p): Parameters<EditorDeleteTimelineArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("id", p.id);
+        let env = self.op("editor_delete_timeline", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_set_timeline_output",
+        description = r#"Give a timeline its OWN output size, or put it back on the project's —
+    the tab menu's Size and the Project Settings panel's "This timeline"
+    section (Resolve's per-timeline "Use Project Settings").
+
+    Pass `width` and `height` (even, 16 to 8192; e.g. 1080x1920 for 9:16,
+    1080x1080 for 1:1, 1080x1350 for 4:5), or `clear=true` to follow the
+    project's size again. `id` omitted means the active timeline. The preview
+    canvas, the on-canvas transform handles, `editor_export` (which then
+    defaults to this size) and FCPXML all use it. Clip transforms are
+    fractions of the frame, so nothing on the timeline is moved — a 16:9
+    layout is simply measured against the new frame. Resizing the active
+    timeline is an undoable edit."#
+    )]
+    pub async fn editor_set_timeline_output(
+        &self,
+        Parameters(p): Parameters<EditorSetTimelineOutputArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .put("id", p.id)
+            .put("width", p.width)
+            .put("height", p.height)
+            .put_if("clear", p.clear);
+        let env = self.op("editor_set_timeline_output", args).await?;
         Ok(render::json_text(&env))
     }
 
@@ -2724,13 +2964,26 @@ impl ApellesMcp {
     `offset_frames` shifts every cue — pass the playhead frame to drop the
     track in mid-timeline rather than at 00:00. The style arguments are
     identical to `editor_import_subtitles`'s own (they set the whole new
-    TRACK's style); use `editor_set_caption_style` afterwards to change it."#
+    TRACK's style); use `editor_set_caption_style` afterwards to change it.
+
+    **`scope="timeline"` (D-411) captions the EDIT instead of one file:** no
+    `path`/`media_id`/`source_path`/`offset_frames` (refused if given). Every
+    source file the timeline's video clips play from is transcribed (one job
+    per file, cached; the same `state` polling applies, with `pending`
+    counting files still running), and the cues are grouped from the stitched
+    timeline transcript (`editor_get_timeline_transcript`'s rows), so each cue
+    sits on the frames where its words actually play after every trim, cut,
+    reorder and tightened pause. A sentence split by a cut stays one grouping
+    unit; the pause rule measures the gap as it plays. Use it for anything
+    edited — above all a short assembled from several moments. The default
+    `scope="file"` is the behaviour described above."#
     )]
     pub async fn editor_generate_captions_from_transcript(
         &self,
         Parameters(p): Parameters<EditorGenerateCaptionsFromTranscriptArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         let args = media_args(p.path, p.media_id, p.source_path)
+            .put("scope", p.scope)
             .put_if("force", p.force)
             .put("offsetFrames", p.offset_frames)
             .put("maxWords", p.max_words)
@@ -4294,7 +4547,14 @@ impl ApellesMcp {
 
     `width`/`height` are the output composition's pixel size (every clip's
     `position_x`/`position_y`/`scale` from `editor_set_clip_transform` are
-    fractions of this). `fps` defaults to the timeline's own rate.
+    fractions of this). Omit BOTH to export at the timeline's own frame size
+    (its `editor_set_timeline_output` size, else the project's — D-411); pass
+    both or neither. `fps` defaults to the timeline's own rate.
+
+    **`timeline_id` (D-411) exports that timeline without switching to it** —
+    the active one when omitted. `editor_list_timelines` lists the ids; a
+    batch of shorts is one call per id, each at its own size. The result
+    reports which `timelineId` was exported and at what `width`/`height`.
     `speed_overrides` is `{clip_id: multiplier}` (e.g. `{"clip-abc": 1.2}`)
     — an EXPORT-TIME-ONLY speed change; it does not touch the clip's stored
     trim/duration, so scrubbing it in the GUI still plays at 1x.
@@ -4399,8 +4659,9 @@ impl ApellesMcp {
         let out_path = p.out_path.clone();
         let args = WireArgs::new()
             .set("outPath", p.out_path)
-            .set("width", p.width)
-            .set("height", p.height)
+            .put("width", p.width)
+            .put("height", p.height)
+            .put("timelineId", p.timeline_id)
             .put("fps", p.fps)
             .put("speedOverrides", p.speed_overrides)
             .put("fitOverrides", p.fit_overrides)
@@ -4515,8 +4776,9 @@ impl ApellesMcp {
     always called out by name in `warnings` when it's actually load-bearing.
 
     `width`/`height` are the output composition's pixel size, the same
-    convention `editor_export` already uses. `fps` defaults to the
-    timeline's own exact rate. Does NOT export XMEML/FCP7 XML (the
+    convention `editor_export` already uses; omit both to use the timeline's
+    own frame size (D-411). `timeline_id` writes that timeline instead of the
+    active one. `fps` defaults to the timeline's own exact rate. Does NOT export XMEML/FCP7 XML (the
     Premiere-targeted sibling interchange format) — a precise, scoped,
     not-yet-built follow-up, see D-196."#
     )]
@@ -4526,8 +4788,9 @@ impl ApellesMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new()
             .set("outPath", p.out_path)
-            .set("width", p.width)
-            .set("height", p.height)
+            .put("width", p.width)
+            .put("height", p.height)
+            .put("timelineId", p.timeline_id)
             .put("fps", p.fps)
             .put("projectName", p.project_name);
         let env = self.op("editor_export_fcpxml", args).await?;

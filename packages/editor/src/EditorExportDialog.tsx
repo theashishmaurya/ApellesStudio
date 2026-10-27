@@ -45,8 +45,19 @@
  * `chroma_timeline_clip_geometry` for the form fields alone; it now goes
  * through the one shared resolver, so the number on screen and the number the
  * compiler uses cannot be two different answers.
+ *
+ * **D-411 Phase 0 — any timeline, not only the active one.** A Timeline picker
+ * (shown once a project has more than one) chooses what to export, the way
+ * Resolve's Deliver page and Premiere's Export dialog name the sequence being
+ * rendered. Width/height default to THAT timeline's own size (a 9:16 short's
+ * 1080×1920 in a 16:9 project), the per-clip rows list its clips, and the
+ * queued job carries its id so the compositor renders it without switching the
+ * view. The async half (resolve the timeline, warm fonts, sizes, caption
+ * metrics and grades) is `prepareEditorExport`, the same function
+ * `editor_export` runs.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { WarningIcon, CheckCircleIcon, DownloadSimpleIcon, CircleNotchIcon, XCircleIcon } from '@phosphor-icons/react';
 import {
@@ -76,9 +87,10 @@ import { usePanelOpen } from './panelRegistry';
 import { useEditorTimelineStore } from './timelineStore';
 import { timelineFps, type Clip, type Timeline } from './timeline';
 import { useExportQueueStore, type ExportJob, type ExportJobStatus } from './exportQueueStore';
-// D-256 — bake each graded clip's Colorist grade into a .cube before the
-// queue freezes this job's ffmpeg argv against those file paths.
-import { warmGradeLuts } from './gradeLuts';
+// D-256 / D-411 — everything the queue's synchronous compile needs warm (the
+// Colorist grade .cubes its argv names, fonts, sizes, caption metrics), for
+// whichever timeline is being exported.
+import { prepareEditorExport } from './editorExport';
 // B-208/D-353 — the composition size, for this dialog's default width/height
 // AND for the compiler the queue runs at enqueue time.
 import { warmCompositionSize } from './compositionSize';
@@ -147,9 +159,12 @@ function videoClips(tl: Timeline | null): Clip[] {
  *  `compositionSize.ts` snapshot `compileEditorExportArgs` reads (B-208/D-353).
  *  `FALLBACK_*` stands in only when there is genuinely nothing to derive a
  *  size from, which is the one case the resolver answers `null` for. */
-async function fetchCompositionSize(tl: Timeline | null): Promise<{ width: number; height: number }> {
-  if (!tl) return { width: FALLBACK_WIDTH, height: FALLBACK_HEIGHT };
-  const size = await warmCompositionSize();
+async function fetchCompositionSize(
+  tl: Timeline | null,
+  timelineId?: string,
+): Promise<{ width: number; height: number }> {
+  if (!tl && timelineId === undefined) return { width: FALLBACK_WIDTH, height: FALLBACK_HEIGHT };
+  const size = await warmCompositionSize(timelineId);
   return size ?? { width: FALLBACK_WIDTH, height: FALLBACK_HEIGHT };
 }
 
@@ -211,6 +226,7 @@ function JobProgress({ job }: { job: ExportJob }) {
 
 export function EditorExportDialog() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
+  const timelines = useEditorTimelineStore((s) => s.timelines);
   const jobs = useExportQueueStore((s) => s.jobs);
   const clearFinished = useExportQueueStore((s) => s.clearFinished);
 
@@ -237,8 +253,16 @@ export function EditorExportDialog() {
   /** The bake runs before the job is queued, so the button has a real busy
    *  state rather than appearing to do nothing on a cold cache. */
   const [queueing, setQueueing] = useState(false);
+  /** D-411 Phase 0 — which timeline to export. `null` = the active one (the
+   *  default every time the dialog opens). */
+  const [exportTimelineId, setExportTimelineId] = useState<string | null>(null);
+  /** That timeline's document when it is NOT the active one, read by id (for
+   *  its clip rows and its name) — the store holds only the active one. */
+  const [otherTimeline, setOtherTimeline] = useState<Timeline | null>(null);
+  const exportingOther = exportTimelineId !== null && exportTimelineId !== timeline?.id;
+  const target = exportingOther ? otherTimeline : timeline;
 
-  const clips = useMemo(() => videoClips(timeline), [timeline]);
+  const clips = useMemo(() => videoClips(target), [target]);
 
   // Re-derive sensible defaults every time the dialog opens (not on every
   // keystroke) — the same "reset only on open" convention Colorist's own
@@ -266,6 +290,8 @@ export function EditorExportDialog() {
     setFreezeOverrides({});
     setValidationError(null);
     setFps(formatFps(timelineFps(tl)));
+    setExportTimelineId(null);
+    setOtherTimeline(null);
     let cancelled = false;
     fetchCompositionSize(tl).then(({ width: w, height: h }) => {
       if (!cancelled) {
@@ -278,9 +304,35 @@ export function EditorExportDialog() {
     };
   }, [open]);
 
+  /** D-411 Phase 0 — pick the timeline to export: read it (when it is not the
+   *  active one) and re-default the size and rate to its own. */
+  const chooseTimeline = async (id: string) => {
+    const active = id === timeline?.id;
+    setExportTimelineId(active ? null : id);
+    setFitOverrides({});
+    setFreezeOverrides({});
+    setValidationError(null);
+    let doc: Timeline | null = timeline;
+    if (!active) {
+      try {
+        doc = await invoke<Timeline>('chroma_timeline_get_by_id', { id });
+      } catch (e) {
+        setValidationError(`Could not read that timeline: ${String((e as Error)?.message ?? e)}`);
+        return;
+      }
+      setOtherTimeline(doc);
+    } else {
+      setOtherTimeline(null);
+    }
+    setFps(formatFps(timelineFps(doc)));
+    const size = await fetchCompositionSize(doc, active ? undefined : id);
+    setWidth(String(size.width));
+    setHeight(String(size.height));
+  };
+
   const handleChoosePath = async () => {
     const ext = suggestedExt();
-    const suggested = `${stemOf(timeline?.name ?? 'timeline')}.${ext}`;
+    const suggested = `${stemOf(target?.name ?? 'timeline')}.${ext}`;
     try {
       const chosen = await save({
         title: 'Export timeline',
@@ -311,42 +363,13 @@ export function EditorExportDialog() {
       return;
     }
 
-    // D-256 — bake each graded clip's Colorist grade BEFORE compiling. The
-    // queue freezes a job's ffmpeg argv at enqueue time (D-198), and that argv
-    // names the `.cube` files by path, so they have to exist and be current
-    // now. `compileEditorExportArgs` refuses outright on a cold cache rather
-    // than compiling an export that would silently drop a grade — this await is
-    // what keeps the GUI path on the right side of that refusal.
     if (!timeline) {
       setValidationError('No timeline — open a project first.');
       return;
     }
-    setQueueing(true);
-    // B-208/D-353 — refresh the composition size the compiler reads
-    // synchronously, for the same enqueue-time-snapshot reason the grade bake
-    // below exists: the dialog may have been open across a `set_project_
-    // settings` write, and a job frozen against the old size would size every
-    // `scale`d clip against a composition the project no longer has.
-    // B-276 — that size is read from the PERSISTED timeline, so a save still
-    // on its debounce is settled first. A failed save is reported again, and
-    // refused, when a queued compositor job runs (`runCompiledExport`); the
-    // filter-graph path compiles from the in-memory timeline and needs none.
-    await useEditorTimelineStore.getState().flushPendingSave();
-    await warmCompositionSize();
-    try {
-      const baked = await warmGradeLuts(timeline);
-      setGradeNotes(baked.warnings);
-    } catch (e) {
-      setQueueing(false);
-      setValidationError(
-        `Could not bake a clip's Colorist grade for export: ${String((e as Error)?.message ?? e)}`,
-      );
-      return;
-    }
-    setQueueing(false);
-
-    const result = useExportQueueStore.getState().enqueue(stemOf(outPath), {
+    const exportArgs = {
       outPath,
+      ...(exportingOther && exportTimelineId ? { timelineId: exportTimelineId } : {}),
       width: w,
       height: h,
       fps: f,
@@ -355,7 +378,23 @@ export function EditorExportDialog() {
       ...(loudnessChoice === 'custom'
         ? { loudnessLufs: parseFloat(customLufs), truePeakDbtp: parseFloat(customPeak) }
         : { loudnessPreset: loudnessChoice }),
-    });
+    };
+    // D-256 / B-208 / B-276 / D-411 — the queue freezes a job's argv at
+    // enqueue time (D-198), and that argv names each graded clip's `.cube` by
+    // path and sizes every `scale`d clip against the composition, so both have
+    // to be current NOW, for the timeline being exported, after any pending
+    // save has landed. `prepareEditorExport` does all of it (the same function
+    // `editor_export` runs) and returns the timeline to compile.
+    setQueueing(true);
+    const prepared = await prepareEditorExport(exportArgs);
+    setQueueing(false);
+    if ('error' in prepared) {
+      setValidationError(prepared.error);
+      return;
+    }
+    setGradeNotes(prepared.gradeWarnings);
+
+    const result = useExportQueueStore.getState().enqueue(stemOf(outPath), exportArgs, prepared.timeline);
     if ('error' in result) {
       setValidationError(result.error);
       return;
@@ -387,6 +426,32 @@ export function EditorExportDialog() {
           </DialogHeader>
 
           <div className="flex flex-col gap-4 text-sm">
+            {/* D-411 Phase 0 — which timeline. Shown only when there is a choice. */}
+            {timelines.length > 1 && (
+              <div className="flex flex-col gap-1.5">
+                <Label>Timeline</Label>
+                <Select
+                  value={exportTimelineId ?? timeline?.id ?? ''}
+                  onValueChange={(v) => {
+                    if (typeof v === 'string' && v) void chooseTimeline(v);
+                  }}
+                >
+                  <SelectTrigger className="h-9 w-full" data-chroma-field="export-timeline">
+                    <SelectValue>{target?.name || 'Untitled timeline'}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {timelines.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {(t.active && timeline ? timeline.name : t.name) || 'Untitled timeline'}
+                        {t.output ? ` · ${t.output.width}×${t.output.height}` : ''}
+                        {t.active ? ' (open)' : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             {/* output path */}
             <div className="flex flex-col gap-1.5">
               <Label>Output file</Label>
