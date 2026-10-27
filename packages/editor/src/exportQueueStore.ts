@@ -29,6 +29,7 @@ import { compileEditorExportArgs, readTimelineExportStatus, runCompiledExport } 
 import type { TimelineExportStatus } from './editorExport';
 import type { TimelineRenderPlan } from './timelinePipeExport';
 import type { LoudnessReport, LoudnessTarget } from './loudness';
+import type { Timeline } from './timeline';
 
 /** How often a running compositor job's real progress is re-read (D-362).
  *
@@ -60,6 +61,10 @@ export interface ExportJob {
   render?: TimelineRenderPlan;
   /** D-401 — the loudness target frozen at enqueue, like `args`. */
   loudness?: LoudnessTarget;
+  /** D-411 Phase 0 — the id of the timeline `args` was compiled from, frozen
+   *  like `args`: the compositor render draws that timeline even if another
+   *  is active (or was switched to) by the time the job reaches the front. */
+  timelineId?: string;
   /** D-401 — measured before/after loudness once the job is done. */
   loudnessReport?: LoudnessReport;
   status: ExportJobStatus;
@@ -87,6 +92,9 @@ interface ExportQueueState {
   enqueue(
     name: string,
     exportArgs: Parameters<typeof compileEditorExportArgs>[0],
+    /** D-411 Phase 0 — the timeline to compile (from `prepareEditorExport`);
+     *  omitted, the active one. */
+    timeline?: Timeline,
   ): { id: string } | { error: string };
   /** Drop every finished (`done`/`failed`) job from the list — a `queued`/
    *  `running` job is never removed by this (there is no cancel this pass;
@@ -156,7 +164,7 @@ function runNext(): void {
     }));
   };
 
-  runCompiledExport(next.args, next.render, next.outPath, next.loudness)
+  runCompiledExport(next.args, next.render, next.outPath, next.loudness, next.timelineId)
     .then((outcome) => {
       settle({ status: outcome.ok ? 'done' : 'failed', error: outcome.error, loudnessReport: outcome.loudness });
     })
@@ -168,8 +176,8 @@ function runNext(): void {
 
 export const useExportQueueStore = create<ExportQueueState>((set) => ({
   jobs: [],
-  enqueue: (name, exportArgs) => {
-    const compiled = compileEditorExportArgs(exportArgs);
+  enqueue: (name, exportArgs, timeline) => {
+    const compiled = compileEditorExportArgs(exportArgs, timeline);
     if (!('ok' in compiled)) return { error: compiled.error };
     const id = `export-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const job: ExportJob = {
@@ -179,6 +187,7 @@ export const useExportQueueStore = create<ExportQueueState>((set) => ({
       args: compiled.args,
       render: compiled.render,
       loudness: compiled.loudness,
+      timelineId: compiled.timelineId,
       status: 'queued',
       progress: null,
       error: null,

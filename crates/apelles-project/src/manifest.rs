@@ -2301,6 +2301,7 @@ pub fn new_project_in(
             rate: infer_timeline_rate(media_paths.first().map(String::as_str)),
             tracks: Vec::new(),
             markers: Vec::new(),
+            ..Default::default()
         };
         manifest.timelines.push(timeline);
         manifest.active_timeline = manifest.timelines.len() - 1;
@@ -4345,6 +4346,7 @@ mod tests {
             rate: None,
             tracks: Vec::new(),
             markers: Vec::new(),
+            ..Default::default()
         });
         manifest.active_timeline = 0;
 
@@ -4401,6 +4403,7 @@ mod tests {
             rate: None,
             tracks: Vec::new(),
             markers: Vec::new(),
+            ..Default::default()
         });
         manifest.active_timeline = 0;
         let path = root.join("a.mov").to_string_lossy().to_string();
@@ -4473,6 +4476,7 @@ mod tests {
                 ..Default::default()
             }],
             markers: Vec::new(),
+            ..Default::default()
         });
 
         let report = migrate_shot_grades_to_clips(&manifest, &grade_dir);
@@ -4514,6 +4518,7 @@ mod tests {
             rate: None,
             tracks: Vec::new(),
             markers: Vec::new(),
+            ..Default::default()
         });
 
         let report = migrate_shot_grades_to_clips(&manifest, &grade_dir);
@@ -4573,6 +4578,7 @@ mod tests {
                 ..Default::default()
             }],
             markers: Vec::new(),
+            ..Default::default()
         });
 
         let report = migrate_shot_grades_to_clips(&manifest, &grade_dir);
@@ -4628,6 +4634,7 @@ mod tests {
                 ..Default::default()
             }],
             markers: Vec::new(),
+            ..Default::default()
         });
 
         let first = migrate_shot_grades_to_clips(&manifest, &grade_dir);
@@ -4782,6 +4789,7 @@ mod tests {
                 },
             ],
             markers: Vec::new(),
+            ..Default::default()
         });
         m.active_timeline = 0;
 

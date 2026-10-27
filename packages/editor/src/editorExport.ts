@@ -99,6 +99,16 @@ export interface CompiledExport {
   outPath: string;
   args: string[];
   renderer: ExportRenderer;
+  /** D-411 Phase 0 — the output size this was compiled at (the timeline's own
+   *  composition size when the caller passed none). */
+  width: number;
+  height: number;
+  /** D-411 Phase 0 — the id of the timeline this was compiled from. The
+   *  compositor render draws THAT timeline (`chroma_render_timeline_export`'s
+   *  `timelineId`), not whichever is active when a queued job reaches the
+   *  front, so the picture always matches the audio graph compiled here. Empty
+   *  only for a legacy timeline with no id, which renders the active one. */
+  timelineId: string;
   /** D-350 — how many frames of what size the compositor must write into the
    *  pipe. Present only for `renderer: 'compositor'`. */
   render?: TimelineRenderPlan;
@@ -267,13 +277,59 @@ function parseClipIdRecord<T>(
   return { ok: true, value: out };
 }
 
+/** D-411 Phase 0 — the export args' optional `timelineId`, read the one way
+ *  every export path reads it: absent / `null` / `""` means the active
+ *  timeline. */
+function requestedTimelineId(raw: unknown): string | undefined {
+  return typeof raw === 'string' && raw.length > 0 ? raw : undefined;
+}
+
+/**
+ * D-411 Phase 0 — the timeline an export (or an FCPXML write) of `timelineId`
+ * compiles from: the store's own copy when it is the active timeline (or no id
+ * was given) — the document on screen, edits included — and otherwise that
+ * timeline as persisted, read by id without switching the view. Always settles
+ * the store's pending save first, because every backend read that follows (the
+ * composition size, the compositor render) reads the persisted document.
+ */
+export async function resolveExportTimeline(
+  timelineId: unknown,
+): Promise<{ timeline: Timeline; timelineId: string | undefined } | CompileError> {
+  if (timelineId !== undefined && timelineId !== null && typeof timelineId !== 'string') {
+    return { error: 'timelineId must be a timeline id string (editor_list_timelines lists them)' };
+  }
+  const flushed = await flushTimelineForBackend();
+  if (flushed) return flushed;
+  const id = requestedTimelineId(timelineId);
+  const active = useEditorTimelineStore.getState().timeline;
+  if (id === undefined || (active && active.id === id)) {
+    if (!active) return { error: 'no timeline — open a project first' };
+    return { timeline: active, timelineId: id };
+  }
+  try {
+    return { timeline: await invoke<Timeline>('chroma_timeline_get_by_id', { id }), timelineId: id };
+  } catch (e) {
+    return { error: String((e as Error)?.message ?? e) };
+  }
+}
+
 /**
  * Validate `a` (the same loose `any` args shape every `editor_*` op reads —
- * MCP args, or now a plain object the GUI dialog builds directly) against
- * the CURRENT active timeline, and compile it to a real ffmpeg argv. No I/O.
+ * MCP args, or now a plain object the GUI dialog builds directly) against a
+ * timeline, and compile it to a real ffmpeg argv. No I/O.
+ *
+ * D-411 Phase 0 — `timeline` is the timeline to compile (from
+ * {@link resolveExportTimeline}); omitted, the active one. `a.timelineId`
+ * names the composition-size snapshot to read, so it must be the id that
+ * timeline was resolved for. `width`/`height` are optional now: omitted, the
+ * export is written at that timeline's own composition size (its `output`
+ * override, else the project's) — which is what makes exporting a batch of
+ * 9:16 shorts from a 16:9 project one call each with no sizes to restate.
  */
-export function compileEditorExportArgs(a: {
+export function compileEditorExportArgs(
+  a: {
   outPath?: unknown;
+  timelineId?: unknown;
   width?: unknown;
   height?: unknown;
   fps?: unknown;
@@ -287,9 +343,12 @@ export function compileEditorExportArgs(a: {
   loudnessLufs?: unknown;
   /** D-401 — the true-peak ceiling for a custom target, dBTP (default -1). */
   truePeakDbtp?: unknown;
-}): CompiledExport | CompileError {
-  const tl = useEditorTimelineStore.getState().timeline;
+  },
+  timeline?: Timeline,
+): CompiledExport | CompileError {
+  const tl = timeline ?? useEditorTimelineStore.getState().timeline;
   if (!tl) return { error: 'no timeline — open a project first' };
+  const snapshotId = requestedTimelineId(a?.timelineId);
 
   const renderer: ExportRenderer =
     a?.renderer === undefined ? DEFAULT_EXPORT_RENDERER : a.renderer === 'compositor' ? 'compositor' : 'filter';
@@ -303,8 +362,20 @@ export function compileEditorExportArgs(a: {
 
   const outPath = a?.outPath;
   if (typeof outPath !== 'string' || !outPath) return { error: 'outPath must be a non-empty absolute file path' };
-  const width = Math.round(Number(a?.width));
-  const height = Math.round(Number(a?.height));
+  // D-411 Phase 0 — omitted sizes default to this timeline's own composition.
+  const warmedComp = compositionSizeSnapshot(snapshotId);
+  const sizeGiven = a?.width !== undefined && a?.width !== null && a?.height !== undefined && a?.height !== null;
+  if (!sizeGiven && (a?.width != null || a?.height != null)) {
+    return { error: 'pass both width and height, or neither (to export at the timeline’s own size)' };
+  }
+  if (!sizeGiven && !warmedComp) {
+    return {
+      error:
+        'this timeline has no frame size to export at — pass width and height, or give it one (editor_set_timeline_output, or the project settings)',
+    };
+  }
+  const width = sizeGiven ? Math.round(Number(a?.width)) : (warmedComp?.width ?? NaN);
+  const height = sizeGiven ? Math.round(Number(a?.height)) : (warmedComp?.height ?? NaN);
   if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
     return { error: 'width and height must be positive numbers (the output composition size)' };
   }
@@ -433,7 +504,7 @@ export function compileEditorExportArgs(a: {
   // passes anyway. This is NOT refused the way a cold font/grade cache is:
   // those would silently drop a title or a grade from the file, where this
   // falls back to a real, documented reading of the same document.
-  const comp = compositionSizeSnapshot() ?? { width, height };
+  const comp = warmedComp ?? { width, height };
 
   const opts: TimelineExportOptions = {
     fps,
@@ -470,6 +541,9 @@ export function compileEditorExportArgs(a: {
       outPath,
       args: plan.args,
       renderer,
+      timelineId: tl.id,
+      width,
+      height,
       render: {
         width: plan.width,
         height: plan.height,
@@ -481,7 +555,7 @@ export function compileEditorExportArgs(a: {
   }
 
   const args = buildExportFfmpegArgs(tl, outPath, opts);
-  return { ok: true, outPath, args, renderer, loudness };
+  return { ok: true, outPath, args, renderer, timelineId: tl.id, width, height, loudness };
 }
 
 /**
@@ -503,8 +577,10 @@ export async function warmAnimatedCaptionMetrics(
   width: number,
   height: number,
   fps: number,
+  timeline?: Timeline,
 ): Promise<void> {
-  const tl = useEditorTimelineStore.getState().timeline;
+  // D-411 Phase 0 — the timeline being exported, which need not be the active one.
+  const tl = timeline ?? useEditorTimelineStore.getState().timeline;
   if (!tl || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
     return;
   }
@@ -535,6 +611,11 @@ export interface EditorExportResult {
   ok: boolean;
   error: string | null;
   outPath: string;
+  /** D-411 Phase 0 — which timeline was exported, and at what size (the
+   *  timeline's own when the caller passed none). */
+  timelineId?: string;
+  width?: number;
+  height?: number;
   stdoutTail?: string;
   stderrTail?: string;
   args?: string[];
@@ -543,59 +624,84 @@ export interface EditorExportResult {
   loudness?: LoudnessReport;
 }
 
-/** Compile + actually run — what the MCP `editor_export` op calls. */
-export async function runEditorExport(
+/**
+ * Everything the synchronous compiler needs in memory before it can compile an
+ * export of `a.timelineId` (D-411 Phase 0; omitted: the active timeline), then
+ * the timeline itself — the one async half of an export, shared by
+ * {@link runEditorExport} (MCP) and the Export dialog's enqueue (GUI), so the
+ * two warm the same caches for the same timeline.
+ */
+export async function prepareEditorExport(
   a: Parameters<typeof compileEditorExportArgs>[0],
-): Promise<EditorExportResult | CompileError> {
+): Promise<{ timeline: Timeline; gradeWarnings: string[] } | CompileError> {
   // B-276 — the backend reads the PERSISTED timeline (the composition size
   // below, and the compositor render itself), while edits persist on a
   // debounce. An agent that places a clip and exports in the same breath
   // otherwise has its export sized and rendered from the document as it was
   // before the edit: a still placed a moment earlier is not there, and a
   // fresh project reads as having nothing to size a composition from.
-  const flushed = await flushTimelineForBackend();
-  if (flushed) return flushed;
+  // `resolveExportTimeline` settles that save before it reads anything.
+  const resolved = await resolveExportTimeline(a?.timelineId);
+  if ('error' in resolved) return resolved;
+  const tl = resolved.timeline;
   // D-211 — the ONE place the (synchronous) compiler's font-catalogue read
   // can be guaranteed warm before it runs: an MCP `editor_export` can be the
   // very first thing an agent does after opening a project, before the
   // Inspector has ever rendered a font picker. Idempotent and a no-op once
   // loaded (see `textFonts.ts`), so this costs nothing on every later call.
   await loadTextFonts();
-  // B-208/D-353 — and the project's composition size, for the identical
-  // reason: `compileEditorExportArgs` normalises every clip's probed source
-  // resolution against it to resolve what `scale` means, and it is
-  // synchronous, so the async answer has to be in memory before it runs.
-  await warmCompositionSize();
+  // B-208/D-353 — and the composition size, for the identical reason:
+  // `compileEditorExportArgs` normalises every clip's probed source
+  // resolution against it to resolve what `scale` means (and, D-411, falls
+  // back to it when no size was passed), and it is synchronous, so the async
+  // answer has to be in memory before it runs. Keyed by the timeline being
+  // exported.
+  const comp = await warmCompositionSize(resolved.timelineId);
   // D-243 — and the per-word advances every ANIMATED caption needs, for the
   // identical reason: the compiler below is synchronous, so anything it needs
   // from the backend has to already be in memory. Derived from the timeline
   // the compiler is about to read, and a no-op for a timeline whose captions
   // are all static.
-  {
-    const tl = useEditorTimelineStore.getState().timeline;
-    const w = Math.round(Number(a?.width));
-    const h = Math.round(Number(a?.height));
-    const fps = a?.fps !== undefined ? Number(a.fps) : tl ? timelineFps(tl) : NaN;
-    await warmAnimatedCaptionMetrics(w, h, fps);
-    // D-256 — and each graded clip's baked Colorist grade, for the identical
-    // reason. Throws on a bake failure rather than exporting an ungraded file;
-    // caught here so an MCP `editor_export` gets a real message instead of an
-    // unhandled rejection.
-    if (tl) {
-      try {
-        await warmGradeLuts(tl);
-      } catch (e) {
-        return { error: `could not bake a clip's Colorist grade for export: ${String((e as Error)?.message ?? e)}` };
-      }
-    }
+  const sized = a?.width != null && a?.height != null;
+  const w = sized ? Math.round(Number(a?.width)) : (comp?.width ?? NaN);
+  const h = sized ? Math.round(Number(a?.height)) : (comp?.height ?? NaN);
+  const fps = a?.fps !== undefined ? Number(a.fps) : timelineFps(tl);
+  await warmAnimatedCaptionMetrics(w, h, fps, tl);
+  // D-256 — and each graded clip's baked Colorist grade, for the identical
+  // reason. Throws on a bake failure rather than exporting an ungraded file;
+  // caught here so an MCP `editor_export` gets a real message instead of an
+  // unhandled rejection.
+  let gradeWarnings: string[];
+  try {
+    gradeWarnings = (await warmGradeLuts(tl)).warnings;
+  } catch (e) {
+    return { error: `could not bake a clip's Colorist grade for export: ${String((e as Error)?.message ?? e)}` };
   }
-  const compiled = compileEditorExportArgs(a);
+  return { timeline: tl, gradeWarnings };
+}
+
+/** Compile + actually run — what the MCP `editor_export` op calls. */
+export async function runEditorExport(
+  a: Parameters<typeof compileEditorExportArgs>[0],
+): Promise<EditorExportResult | CompileError> {
+  const prepared = await prepareEditorExport(a);
+  if ('error' in prepared) return prepared;
+  const compiled = compileEditorExportArgs(a, prepared.timeline);
   if (!('ok' in compiled)) return compiled;
-  const outcome = await runCompiledExport(compiled.args, compiled.render, compiled.outPath, compiled.loudness);
+  const outcome = await runCompiledExport(
+    compiled.args,
+    compiled.render,
+    compiled.outPath,
+    compiled.loudness,
+    compiled.timelineId,
+  );
   return {
     ok: outcome.ok,
     error: outcome.error,
     outPath: compiled.outPath,
+    timelineId: compiled.timelineId,
+    width: compiled.width,
+    height: compiled.height,
     stdoutTail: outcome.stdoutTail,
     stderrTail: outcome.stderrTail,
     args: compiled.args,
@@ -682,6 +788,9 @@ export async function runCompiledExport(
   render?: TimelineRenderPlan,
   outPath?: string,
   loudness?: LoudnessTarget,
+  /** D-411 Phase 0 — the compiled timeline's id; the compositor renders that
+   *  timeline. Absent (a job queued before D-411) renders the active one. */
+  timelineId?: string,
 ): Promise<{
   ok: boolean;
   error: string | null;
@@ -716,6 +825,8 @@ export async function runCompiledExport(
           // D-401 — normalised INSIDE the render job (so the status poller sees
           // a `normalising` phase, not a premature `done`).
           loudness: loudness ?? null,
+          // D-411 Phase 0 — render the timeline this argv was compiled from.
+          timelineId: timelineId ? timelineId : null,
         },
       });
       return {

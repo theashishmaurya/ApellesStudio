@@ -23,7 +23,7 @@
 
 use std::path::Path;
 
-use apelles_timeline::Timeline;
+use apelles_timeline::{OutputSpec, Timeline};
 
 use crate::{
     ProjectManifest, ProjectSettings, load_manifest, load_manifest_cached, now_rfc3339,
@@ -130,6 +130,223 @@ pub fn resolve_timeline_and_settings(
         manifest.timelines[manifest.active_timeline].clone(),
         manifest.settings.clone(),
     ))
+}
+
+// --------------------------------------------------------------------------- //
+// D-411 Phase 0 — timeline management: create / rename / duplicate / delete /
+// set output, by id. Pure manifest edits (plus the grade-file copy a
+// duplicate owes), so the Tauri commands in `chroma::edit` are thin
+// load-edit-save wrappers and every rule here is unit-tested without an app.
+// --------------------------------------------------------------------------- //
+
+/// The index of the timeline with `id`, or an error naming the id (the
+/// message every by-id command and MCP tool reports back verbatim).
+pub fn timeline_index(manifest: &ProjectManifest, id: &str) -> Result<usize, String> {
+    manifest
+        .timelines
+        .iter()
+        .position(|tl| tl.id == id)
+        .ok_or_else(|| format!("no timeline with id {id}"))
+}
+
+/// A timeline name as stored: trimmed, and refused when that leaves nothing —
+/// the switcher tab and every MCP listing show the name, and an empty one is
+/// indistinguishable from a broken entry.
+fn clean_timeline_name(name: &str) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("a timeline name must not be empty".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+/// Append a new, empty timeline named `name` with an optional own output size
+/// (D-411), make it active when `activate`, and return it.
+///
+/// **Its rate is the active timeline's rate.** A new timeline used to be
+/// created with `rate: None`, which every reader resolves as
+/// [`apelles_timeline::DEFAULT_FPS`] (24) — so a short started in a 30 fps
+/// project silently ran at 24 fps (the B-097 class of defect, at the one
+/// creation site B-097 did not reach; logged as B-284). The active timeline
+/// is the right seed: it is what the person is working in, and for the
+/// clipper it is the long-form the short is cut from.
+pub fn create_timeline(
+    manifest: &mut ProjectManifest,
+    name: &str,
+    output: Option<OutputSpec>,
+    activate: bool,
+) -> Result<Timeline, String> {
+    let name = clean_timeline_name(name)?;
+    let rate = manifest
+        .timelines
+        .get(manifest.active_timeline)
+        .and_then(|tl| tl.rate);
+    let tl = Timeline {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        rate,
+        output,
+        ..Default::default()
+    };
+    manifest.timelines.push(tl.clone());
+    if activate {
+        manifest.active_timeline = manifest.timelines.len() - 1;
+    }
+    manifest.modified = now_rfc3339();
+    Ok(tl)
+}
+
+/// Rename the timeline with `id`.
+pub fn rename_timeline(manifest: &mut ProjectManifest, id: &str, name: &str) -> Result<(), String> {
+    let idx = timeline_index(manifest, id)?;
+    manifest.timelines[idx].name = clean_timeline_name(name)?;
+    manifest.modified = now_rfc3339();
+    Ok(())
+}
+
+/// Set (`Some`) or clear (`None` — back to the project's size) the output
+/// size of the timeline with `id`.
+pub fn set_timeline_output(
+    manifest: &mut ProjectManifest,
+    id: &str,
+    output: Option<OutputSpec>,
+) -> Result<(), String> {
+    let idx = timeline_index(manifest, id)?;
+    manifest.timelines[idx].output = output;
+    manifest.modified = now_rfc3339();
+    Ok(())
+}
+
+/// The suffix [`duplicate_clip_id`] appends: `~` plus this many hex digits.
+const DUPLICATE_ID_SUFFIX_HEX: usize = 8;
+
+/// A duplicated clip's new id: the original's, with a short random suffix
+/// (replacing an earlier duplicate's suffix rather than stacking a second).
+///
+/// The original id is kept as the stem, not thrown away for a bare uuid,
+/// because ids carry meaning a reader relies on: `text-…`, `adjust-…`,
+/// `<media-id>-<stamp>` and a split's `<left>·<frame>` all say what a clip is
+/// and where it came from.
+fn duplicate_clip_id(id: &str) -> String {
+    let stem = match id.rsplit_once('~') {
+        Some((stem, tail))
+            if tail.len() == DUPLICATE_ID_SUFFIX_HEX
+                && tail.chars().all(|c| c.is_ascii_hexdigit()) =>
+        {
+            stem
+        }
+        _ => id,
+    };
+    let fresh = uuid::Uuid::new_v4().simple().to_string();
+    format!("{stem}~{}", &fresh[..DUPLICATE_ID_SUFFIX_HEX])
+}
+
+/// Duplicate the timeline with `id` (Premiere's "Duplicate Sequence",
+/// Resolve's "Duplicate Timeline", FCP's "Duplicate Project"): a fresh id, the
+/// name `name` (default "<original> copy"), placed right after the original,
+/// active when `activate`. Returns the copy.
+///
+/// **The copy is independent, grades included.** Every clip gets a new id and
+/// its Colorist grade file (`grades/<clip.id>.grade.json`, D-070/D-256 — the
+/// grade is keyed by clip id) is copied to the new id, so grading a clip in
+/// the copy does not regrade the original. That is what the reference NLEs do,
+/// and it is the only reading under which "duplicate, then change the copy" is
+/// safe. Link groups, transitions (anchored by frame), markers, `output` and
+/// `origin` are copied as they are: none of them is identified across
+/// timelines.
+///
+/// `dir` is the project directory (for the grade copy). A grade file that
+/// fails to copy is an error, and nothing is added to the manifest: a
+/// duplicate that silently dropped a grade would show different pictures.
+pub fn duplicate_timeline(
+    dir: &Path,
+    manifest: &mut ProjectManifest,
+    id: &str,
+    name: Option<&str>,
+    activate: bool,
+) -> Result<Timeline, String> {
+    let idx = timeline_index(manifest, id)?;
+    let original = &manifest.timelines[idx];
+    let name = match name {
+        Some(n) => clean_timeline_name(n)?,
+        None => format!("{} copy", original.name.trim()),
+    };
+    let mut copy = original.clone();
+    copy.id = uuid::Uuid::new_v4().to_string();
+    copy.name = name;
+
+    let grades = crate::grade_dir(dir);
+    let mut copied: Vec<std::path::PathBuf> = Vec::new();
+    for track in &mut copy.tracks {
+        for clip in &mut track.clips {
+            let new_id = duplicate_clip_id(&clip.id);
+            let from = grades.join(format!("{}.grade.json", clip.id));
+            if from.is_file() {
+                let to = grades.join(format!("{new_id}.grade.json"));
+                if let Err(e) = std::fs::copy(&from, &to) {
+                    // Undo the copies already made, so a failed duplicate
+                    // leaves no orphaned grade files behind it.
+                    for done in &copied {
+                        let _ = std::fs::remove_file(done);
+                    }
+                    return Err(format!(
+                        "could not copy the grade of clip {} for the duplicate: {e}",
+                        clip.id
+                    ));
+                }
+                copied.push(to);
+            }
+            clip.id = new_id;
+        }
+    }
+
+    let at = idx + 1;
+    manifest.timelines.insert(at, copy.clone());
+    if activate {
+        manifest.active_timeline = at;
+    } else if manifest.active_timeline >= at {
+        manifest.active_timeline += 1;
+    }
+    manifest.modified = now_rfc3339();
+    Ok(copy)
+}
+
+/// Delete the timeline with `id`. Refused for a project's only timeline (a
+/// project always has one — `ensure_timeline` would only rebuild it from the
+/// legacy shots). Deleting the active timeline activates the one that slides
+/// into its place (the next, or the previous when it was last), the way a
+/// closed tab hands focus on; deleting one before the active keeps the same
+/// timeline active.
+///
+/// Grade files of its clips are left on disk: a clip id may still be live in
+/// another timeline (a copy made before D-411 duplicated by hand shares ids),
+/// and an orphaned grade file costs a few KB while a deleted shared one loses
+/// work.
+pub fn delete_timeline(manifest: &mut ProjectManifest, id: &str) -> Result<Timeline, String> {
+    let idx = timeline_index(manifest, id)?;
+    if manifest.timelines.len() <= 1 {
+        return Err("cannot delete the project's only timeline".to_string());
+    }
+    let removed = manifest.timelines.remove(idx);
+    if manifest.active_timeline > idx {
+        manifest.active_timeline -= 1;
+    } else if manifest.active_timeline == idx {
+        manifest.active_timeline = idx.min(manifest.timelines.len() - 1);
+    }
+    manifest.modified = now_rfc3339();
+    Ok(removed)
+}
+
+/// The timeline with `id` plus the project's settings — what an export of a
+/// timeline that is NOT the active one needs (D-411: export by id). Read
+/// through the same cached load the active path uses.
+pub fn resolve_timeline_by_id_and_settings(
+    dir: &Path,
+    id: &str,
+) -> Result<(Timeline, ProjectSettings), String> {
+    let manifest = load_and_ensure_timeline(dir, false)?;
+    let idx = timeline_index(&manifest, id)?;
+    Ok((manifest.timelines[idx].clone(), manifest.settings.clone()))
 }
 
 #[cfg(test)]
@@ -254,6 +471,7 @@ mod tests {
                 ..Default::default()
             }],
             markers: Vec::new(),
+            ..Default::default()
         });
         manifest.active_timeline = 0;
 
@@ -277,6 +495,7 @@ mod tests {
             rate: None,
             tracks: Vec::new(),
             markers: Vec::new(),
+            ..Default::default()
         });
         manifest.active_timeline = 7;
 
@@ -299,6 +518,7 @@ mod tests {
             rate: None,
             tracks: Vec::new(),
             markers: Vec::new(),
+            ..Default::default()
         });
         manifest.timelines.push(Timeline {
             id: "t2".into(),
@@ -306,6 +526,7 @@ mod tests {
             rate: None,
             tracks: Vec::new(),
             markers: Vec::new(),
+            ..Default::default()
         });
         manifest.active_timeline = 1;
         manifest.settings.width = Some(1280);
@@ -364,6 +585,7 @@ mod tests {
                     ..Default::default()
                 }],
                 markers: Vec::new(),
+                ..Default::default()
             });
             manifest.active_timeline = 0;
             save_manifest(&dir, &manifest).unwrap();
@@ -398,5 +620,221 @@ mod tests {
             );
             let _ = std::fs::remove_dir_all(dir.parent().unwrap_or(&dir));
         }
+    }
+
+    // ----------------------------------------------------------------------- //
+    // D-411 Phase 0 — timeline management
+    // ----------------------------------------------------------------------- //
+
+    fn named(id: &str, name: &str) -> Timeline {
+        Timeline {
+            id: id.into(),
+            name: name.into(),
+            ..Default::default()
+        }
+    }
+
+    fn three_timelines(tag: &str) -> (std::path::PathBuf, std::path::PathBuf, ProjectManifest) {
+        let root = tmp(tag);
+        let (dir, mut manifest) = new_project_in(&root, "Manage", &[]).unwrap();
+        manifest.timelines = vec![named("a", "A"), named("b", "B"), named("c", "C")];
+        manifest.active_timeline = 1;
+        (root, dir, manifest)
+    }
+
+    #[test]
+    fn create_seeds_the_active_rate_and_the_output_and_activates_on_request() {
+        let (root, _dir, mut m) = three_timelines("create");
+        m.timelines[1].rate = Some(apelles_types::Rational::new(30, 1));
+        let spec = OutputSpec::new(1080, 1920).unwrap();
+        let tl = create_timeline(&mut m, "  Short 1 ", Some(spec), false).unwrap();
+        assert_eq!(tl.name, "Short 1", "trimmed");
+        assert_eq!(
+            tl.rate,
+            Some(apelles_types::Rational::new(30, 1)),
+            "B-284: the active rate, not 24"
+        );
+        assert_eq!(tl.output, Some(spec));
+        assert_eq!(
+            m.active_timeline, 1,
+            "activate: false leaves the active one alone"
+        );
+        let tl2 = create_timeline(&mut m, "Short 2", None, true).unwrap();
+        assert_eq!(m.timelines[m.active_timeline].id, tl2.id);
+        assert!(
+            create_timeline(&mut m, "   ", None, true).is_err(),
+            "an empty name is refused"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rename_and_set_output_address_a_timeline_by_id() {
+        let (root, _dir, mut m) = three_timelines("rename");
+        rename_timeline(&mut m, "c", "Trailer").unwrap();
+        assert_eq!(m.timelines[2].name, "Trailer");
+        assert!(rename_timeline(&mut m, "c", "").is_err());
+        assert_eq!(
+            rename_timeline(&mut m, "zz", "x").unwrap_err(),
+            "no timeline with id zz"
+        );
+
+        let spec = OutputSpec::new(1080, 1080).unwrap();
+        set_timeline_output(&mut m, "a", Some(spec)).unwrap();
+        assert_eq!(m.timelines[0].output, Some(spec));
+        set_timeline_output(&mut m, "a", None).unwrap();
+        assert_eq!(
+            m.timelines[0].output, None,
+            "None clears back to the project size"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn duplicate_is_independent_grades_included_and_lands_after_the_original() {
+        let (root, dir, mut m) = three_timelines("duplicate");
+        m.timelines[0].tracks = vec![Track {
+            kind: TrackKind::Video,
+            clips: vec![
+                Clip {
+                    id: "text-1".into(),
+                    name: "t".into(),
+                    duration: 10,
+                    ..Default::default()
+                },
+                Clip {
+                    id: "graded".into(),
+                    name: "g".into(),
+                    source_path: "/g.mov".into(),
+                    duration: 10,
+                    start_frame: 10,
+                    link_group: Some("lg".into()),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }];
+        m.timelines[0].output = Some(OutputSpec::new(1080, 1920).unwrap());
+        let grades = crate::grade_dir(&dir);
+        std::fs::write(grades.join("graded.grade.json"), br#"{"exposure":1}"#).unwrap();
+
+        let copy = duplicate_timeline(&dir, &mut m, "a", None, false).unwrap();
+        assert_eq!(copy.name, "A copy");
+        assert_ne!(copy.id, "a");
+        assert_eq!(
+            m.timelines[1].id, copy.id,
+            "placed right after the original"
+        );
+        assert_eq!(
+            m.timelines[m.active_timeline].id, "b",
+            "the active timeline is still B"
+        );
+        assert_eq!(
+            copy.output, m.timelines[0].output,
+            "the output size travels with it"
+        );
+
+        let ids: Vec<&str> = copy.tracks[0].clips.iter().map(|c| c.id.as_str()).collect();
+        assert!(
+            ids[0].starts_with("text-1~"),
+            "the id stem is kept: {}",
+            ids[0]
+        );
+        assert!(ids[1].starts_with("graded~"));
+        assert_eq!(copy.tracks[0].clips[1].link_group.as_deref(), Some("lg"));
+        let copied = std::fs::read(grades.join(format!("{}.grade.json", ids[1]))).unwrap();
+        assert_eq!(
+            copied, br#"{"exposure":1}"#,
+            "the grade was copied to the new id"
+        );
+        assert!(
+            grades.join("graded.grade.json").is_file(),
+            "the original keeps its grade"
+        );
+        // The original timeline is untouched.
+        assert_eq!(m.timelines[0].tracks[0].clips[1].id, "graded");
+
+        // Duplicating a duplicate replaces the suffix rather than stacking one.
+        let again = duplicate_timeline(&dir, &mut m, &copy.id, Some("v3"), true).unwrap();
+        let id = &again.tracks[0].clips[1].id;
+        assert_eq!(id.matches('~').count(), 1, "{id}");
+        assert_eq!(
+            m.timelines[m.active_timeline].id, again.id,
+            "activate: true"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn delete_keeps_a_sensible_active_timeline_and_refuses_the_last_one() {
+        let (root, _dir, mut m) = three_timelines("delete");
+        // Delete one BEFORE the active: the same timeline stays active.
+        delete_timeline(&mut m, "a").unwrap();
+        assert_eq!(m.timelines[m.active_timeline].id, "b");
+        // Delete the active one: the next slides into its place.
+        delete_timeline(&mut m, "b").unwrap();
+        assert_eq!(m.timelines[m.active_timeline].id, "c");
+        assert_eq!(
+            delete_timeline(&mut m, "c").unwrap_err(),
+            "cannot delete the project's only timeline"
+        );
+
+        let (root2, _dir2, mut m2) = three_timelines("delete_last");
+        m2.active_timeline = 2;
+        delete_timeline(&mut m2, "c").unwrap();
+        assert_eq!(
+            m2.timelines[m2.active_timeline].id, "b",
+            "deleting the last hands focus back"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root2);
+    }
+
+    #[test]
+    fn a_timeline_that_is_not_active_resolves_by_id_off_disk() {
+        let (root, dir, mut m) = three_timelines("by_id");
+        m.timelines[2].output = Some(OutputSpec::new(1080, 1350).unwrap());
+        m.settings.width = Some(1920);
+        m.settings.height = Some(1080);
+        save_manifest(&dir, &m).unwrap();
+        let (tl, settings) = resolve_timeline_by_id_and_settings(&dir, "c").unwrap();
+        assert_eq!(tl.id, "c");
+        assert_eq!(tl.output.map(OutputSpec::size), Some((1080, 1350)));
+        assert_eq!(settings.width, Some(1920));
+        assert!(resolve_timeline_by_id_and_settings(&dir, "nope").is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// D-411 Phase 0's compatibility promise, against a real `project.json`
+    /// written by the shipped app before `Timeline.output`/`origin` existed
+    /// (`tests/fixtures/pre_d411_project.json`, a scratch project with its
+    /// media paths anonymised): it loads with neither field set, and saving it
+    /// back writes the timelines out unchanged — no new keys, no reordering of
+    /// values, nothing an older build could trip on.
+    #[test]
+    fn a_pre_d411_project_loads_and_saves_its_timelines_unchanged() {
+        const FIXTURE: &str = include_str!("../tests/fixtures/pre_d411_project.json");
+        let root = tmp("pre_d411");
+        let dir = root.join("Old.chroma");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("project.json"), FIXTURE).unwrap();
+
+        let manifest = load_manifest(&dir).unwrap();
+        assert_eq!(manifest.timelines.len(), 1);
+        assert!(manifest.timelines[0].output.is_none());
+        assert!(manifest.timelines[0].origin.is_none());
+
+        save_manifest(&dir, &manifest).unwrap();
+        let before: serde_json::Value = serde_json::from_str(FIXTURE).unwrap();
+        let after: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("project.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            after["timelines"], before["timelines"],
+            "the timelines round-trip exactly"
+        );
+        assert!(after["timelines"][0].get("output").is_none());
+        assert!(after["timelines"][0].get("origin").is_none());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

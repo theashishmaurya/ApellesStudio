@@ -123,6 +123,17 @@ function button(): HTMLButtonElement {
   return el as HTMLButtonElement;
 }
 
+/** D-411 — the button opens a menu; pick "From the timeline" or "From the
+ *  selected clip's file". The menu renders in a portal, so it is looked up on
+ *  `document`, not in the mounted container. */
+async function choose(action: 'timeline' | 'file') {
+  click(button());
+  await waitMs(10);
+  const item = document.querySelector<HTMLElement>(`[data-chroma-captions-action="${action}"]`);
+  if (!item) throw new Error(`no "${action}" menu item rendered`);
+  actSync(() => item.click());
+}
+
 describe('CaptionsFromTranscriptButton (D-238)', () => {
   it('generates a subtitle track from the selected clip’s cached transcript', async () => {
     // Pre-populated cache — `useMediaUnderstandingStore.getTranscript` returns
@@ -131,7 +142,7 @@ describe('CaptionsFromTranscriptButton (D-238)', () => {
     useMediaUnderstandingStore.setState({ transcripts: { [SOURCE_PATH]: fixtureTranscript() } });
     mounted = mount(React.createElement(CaptionsFromTranscriptButton));
 
-    click(button());
+    await choose('file');
     await waitMs(20);
 
     const tl = useEditorTimelineStore.getState().timeline!;
@@ -146,11 +157,35 @@ describe('CaptionsFromTranscriptButton (D-238)', () => {
     expect(mounted.container.textContent).not.toMatch(/select exactly one clip/);
   });
 
+  it('D-411: "From the timeline" captions the whole edit, at the frames its words play', async () => {
+    // The clip plays source 0.5–1.4 s at timeline frame 48 ("visit this
+    // beach."): the timeline captions start where "visit" PLAYS, and the
+    // trimmed-away "We always" is not captioned.
+    const trimmed = fixtureTimeline();
+    const clip = trimmed.tracks[0].clips[0];
+    clip.source_start = 12;
+    clip.duration = 22;
+    clip.start_frame = 48;
+    useEditorTimelineStore.setState({ timeline: trimmed, selection: [] });
+    useMediaUnderstandingStore.setState({ transcripts: { [SOURCE_PATH]: fixtureTranscript() } });
+    mounted = mount(React.createElement(CaptionsFromTranscriptButton));
+
+    await choose('timeline');
+    await waitMs(20);
+    await waitMs(20);
+
+    const tl = useEditorTimelineStore.getState().timeline!;
+    expect(tl.tracks).toHaveLength(2);
+    const cue = tl.tracks[1].clips[0];
+    expect(cue.caption?.text).toBe('visit this beach.');
+    expect(cue.start_frame).toBe(48);
+  });
+
   it('refuses with a real message when nothing is selected', async () => {
     useEditorTimelineStore.setState({ selection: [] });
     mounted = mount(React.createElement(CaptionsFromTranscriptButton));
 
-    click(button());
+    await choose('file');
     await waitMs(5);
 
     expect(mounted.container.textContent).toMatch(/select exactly one clip/);
@@ -172,7 +207,7 @@ describe('CaptionsFromTranscriptButton (D-238)', () => {
     });
     mounted = mount(React.createElement(CaptionsFromTranscriptButton));
 
-    click(button());
+    await choose('file');
     await waitMs(20);
 
     expect(mounted.container.textContent).toMatch(/no word-level timestamps/);
@@ -224,7 +259,7 @@ describe('while the AI environment is still building (D-315)', () => {
     useMediaUnderstandingStore.setState({ transcripts: { [SOURCE_PATH]: fixtureTranscript() } });
     mounted = mount(React.createElement(CaptionsFromTranscriptButton));
 
-    click(button());
+    await choose('file');
     await waitMs(20);
 
     const tl = useEditorTimelineStore.getState().timeline!;

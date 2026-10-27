@@ -473,6 +473,7 @@ mod motion_relink_tests {
                 ..Default::default()
             }],
             markers: Vec::new(),
+            ..Default::default()
         }];
         // The pool half, through the real reconcile — this is what stamps the
         // provenance and probes the file.

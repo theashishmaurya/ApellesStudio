@@ -37,6 +37,7 @@ from mcp.types import TextContent
 # turns a validated model back into the exact dict the caller sent; see schemas.py.
 from schemas import (
     ActiveScheduleEntry,
+    CaptionScope,
     Camera2DKey,
     Camera3DKey,
     ClipHighlightSpec,
@@ -443,7 +444,7 @@ def get_timeline() -> str:
     """The active edit timeline: every track and every clip on it, with the
     indices the mutating Edit-tab tools address clips by.
 
-    Returns {id, name, durationFrames, tracks: [{index, kind: "video"|"audio",
+    Returns {id, name, output, origin, durationFrames, tracks: [{index, kind: "video"|"audio",
     gain, locked, hidden, duckFrom, duckDb, duckAttackMs, duckReleaseMs,
     clips: [{index, id, name, sourcePath, startFrame, duration, sourceStart,
     sourceLen, sourceFps, linkGroup, fadeInFrames, fadeOutFrames, fadeInCurve,
@@ -1084,6 +1085,53 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "the transition sits on, so the two cannot both be honoured."
         ),
     },
+    "timelines": {
+        "several_per_project": (
+            "D-411: a project holds several named timelines (a long-form and "
+            "the shorts cut from it), one ACTIVE. Every editor_* tool that "
+            "edits, reads or previews acts on the ACTIVE timeline only. "
+            "editor_list_timelines lists them (id, name, output, frameSize, "
+            "origin); editor_set_active_timeline switches; "
+            "editor_create_timeline / editor_rename_timeline / "
+            "editor_duplicate_timeline / editor_delete_timeline manage them. "
+            "editor_get_state reports activeTimeline so you always know which "
+            "one you are editing."
+        ),
+        "own_output_size": (
+            "D-411: a timeline may have its OWN output size "
+            "(editor_set_timeline_output, or width/height on "
+            "editor_create_timeline), overriding the project's settings for "
+            "that timeline only: a 1080x1920 short in a 1920x1080 project. "
+            "`output: null` means it follows the project. The preview canvas, "
+            "the transform handles, both export renderers and FCPXML use it; "
+            "editor_export and editor_export_fcpxml default to it when you "
+            "omit width/height. Sizes must be even and 16..8192. Changing it "
+            "moves no clip: position/scale are fractions of the frame, so a "
+            "16:9 layout is simply measured against the new frame (reframe "
+            "the clips yourself, e.g. scale up and offset position_x)."
+        ),
+        "export_by_id": (
+            "D-411: editor_export(timeline_id=...) and "
+            "editor_export_fcpxml(timeline_id=...) export ANY timeline "
+            "without switching the view; omit width/height to use that "
+            "timeline's own frame size. Batch-exporting shorts is one call "
+            "per id."
+        ),
+        "duplicate_is_independent": (
+            "editor_duplicate_timeline gives every clip a NEW id and copies "
+            "its Colorist grade to that id, so the copy grades and edits "
+            "independently of the original (Premiere/Resolve semantics). "
+            "Delete is not undoable and needs an explicit id; rename and "
+            "resize of the ACTIVE timeline are ordinary undoable edits."
+        ),
+        "captions_follow_cuts": (
+            "editor_generate_captions_from_transcript(scope=\"timeline\") "
+            "captions the whole EDIT from the stitched timeline transcript: "
+            "each cue lands where its words play after every trim, cut and "
+            "reorder. The default scope=\"file\" captions one source file "
+            "shifted by offset_frames, which is only right for an uncut clip."
+        ),
+    },
     "still_images": {
         "a_still_is_an_ordinary_clip": (
             "D-292: a STILL IMAGE (.png/.jpg/.jpeg/.webp/.tif/.tiff/.bmp) is a "
@@ -1136,7 +1184,9 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "`<project>/grades/<clip.id>.grade.json`. Two clips cut from the "
             "same file grade independently — which is Resolve's own default "
             "and is usually what you want, but does mean that splitting a "
-            "graded clip does NOT copy its grade onto the new half. Check "
+            "graded clip does NOT copy its grade onto the new half. "
+            "Duplicating a whole TIMELINE (editor_duplicate_timeline, D-411) "
+            "does copy each clip's grade to the copy's new clip ids. Check "
             "with editor_get_grade_status."
         ),
         "what_it_carries": (
@@ -1342,10 +1392,166 @@ def editor_get_state() -> str:
 
     Also reports `waveformView` (D-232) — whether the viewer is showing its
     audio waveform strip under the picture. `editor_set_waveform_view` is that
-    one's write half; `editor_get_waveform` reads the envelope itself."""
+    one's write half; `editor_get_waveform` reads the envelope itself.
+
+    Also reports `activeTimeline` (D-411) — `{id, name, output}` of the
+    timeline every other `editor_*` tool acts on — and `timelineCount`. A
+    project can hold several timelines (a long-form and its shorts);
+    `editor_list_timelines` lists them and `editor_set_active_timeline`
+    switches."""
     import json
 
     return json.dumps(_op("editor_get_state"), indent=2, default=str)
+
+
+# --------------------------------------------------------------------------- #
+# D-411 Phase 0 — timeline management. A project holds several named
+# timelines (D-045) and every other `editor_*` tool acts on the ACTIVE one;
+# these list, create, switch, rename, duplicate, delete and resize them. Each
+# drives the same store action as the Edit tab's timeline tabs and their
+# menu, so an agent and a person manage timelines the same way.
+# --------------------------------------------------------------------------- #
+@mcp.tool()
+def editor_list_timelines() -> str:
+    """Every timeline in the open project, in tab order: `{id, name, active,
+    durationFrames, output, origin, frameSize}` each, plus `activeId`.
+
+    `output` is the timeline's OWN size (`{width, height}`), or `null` when it
+    follows the project's size (every timeline made before D-411, and every
+    one nobody resized). `frameSize` is the size it actually renders and
+    exports at — `output` when set, else the project's. `origin` is how a tool
+    built it (the Automatic Clipper's shorts and trailers: run, proposal,
+    source segments), `null` for a hand-made timeline.
+
+    Every other `editor_*` tool acts on the ACTIVE timeline only; switch with
+    `editor_set_active_timeline`. `editor_export(timeline_id=...)` exports any
+    of them without switching."""
+    import json
+
+    return json.dumps(_op("editor_list_timelines"), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_create_timeline(
+    name: str,
+    width: int | None = None,
+    height: int | None = None,
+    activate: bool = True,
+) -> str:
+    """Create a new, empty timeline named `name` — the Edit tab's `+` tab.
+
+    `width`/`height` give it its OWN output size (both or neither; even
+    numbers, 16 to 8192), e.g. 1080x1920 for a 9:16 short in a 16:9 project.
+    Omitted, it follows the project's size. Its frame rate is the active
+    timeline's. `activate` (default true) makes it the active timeline, as the
+    GUI does; pass false to create several without switching the view (they
+    stay listed by `editor_list_timelines`). Returns the new timeline's
+    summary, including its `id`."""
+    import json
+
+    args: dict = {"name": name, "activate": activate}
+    if width is not None:
+        args["width"] = width
+    if height is not None:
+        args["height"] = height
+    return json.dumps(_op("editor_create_timeline", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_active_timeline(id: str) -> str:
+    """Switch the Edit tab to the timeline with `id` (from
+    `editor_list_timelines`) — the same as clicking its tab. Every other
+    `editor_*` tool acts on the active timeline from then on. Any pending edit
+    to the timeline being left is saved first; if that save fails the switch
+    is refused, with the reason, rather than losing the edit. Resets the
+    playhead to 0."""
+    import json
+
+    return json.dumps(_op("editor_set_active_timeline", id=id), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_rename_timeline(name: str, id: str | None = None) -> str:
+    """Rename a timeline — the tab's double-click / "Rename…". `id` omitted
+    means the active timeline. The name is trimmed and must not be empty.
+    Renaming the active timeline is an ordinary undoable edit (a GUI undo
+    reverts it); renaming another one is a project-level change."""
+    import json
+
+    args: dict = {"name": name}
+    if id is not None:
+        args["id"] = id
+    return json.dumps(_op("editor_rename_timeline", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_duplicate_timeline(
+    id: str | None = None,
+    name: str | None = None,
+    activate: bool = False,
+) -> str:
+    """Duplicate a timeline — the tab menu's "Duplicate" (Premiere's
+    Duplicate Sequence). `id` omitted means the active timeline; `name`
+    defaults to "<name> copy". The copy lands right after the original and is
+    INDEPENDENT: every clip gets a new id and its Colorist grade is copied to
+    that id, so grading or editing the copy never changes the original. Its
+    own output size and markers travel with it. `activate` (default false)
+    switches to the copy. Returns the copy's summary, including its `id`."""
+    import json
+
+    args: dict = {"activate": activate}
+    if id is not None:
+        args["id"] = id
+    if name is not None:
+        args["name"] = name
+    return json.dumps(_op("editor_duplicate_timeline", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_delete_timeline(id: str) -> str:
+    """Delete the timeline with `id` — the tab menu's "Delete…". **Not
+    undoable** (a project-level action, like removing a media-pool item; the
+    GUI asks for confirmation first), so `id` is required: there is no
+    default to the active timeline. The project's only timeline cannot be
+    deleted. Deleting the active timeline activates the one that takes its
+    place. The media and every other timeline are untouched. Returns the new
+    `activeId` and how many timelines remain."""
+    import json
+
+    return json.dumps(_op("editor_delete_timeline", id=id), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_timeline_output(
+    id: str | None = None,
+    width: int | None = None,
+    height: int | None = None,
+    clear: bool = False,
+) -> str:
+    """Give a timeline its OWN output size, or put it back on the project's —
+    the tab menu's Size and the Project Settings panel's "This timeline"
+    section (Resolve's per-timeline "Use Project Settings").
+
+    Pass `width` and `height` (even, 16 to 8192; e.g. 1080x1920 for 9:16,
+    1080x1080 for 1:1, 1080x1350 for 4:5), or `clear=true` to follow the
+    project's size again. `id` omitted means the active timeline. The preview
+    canvas, the on-canvas transform handles, `editor_export` (which then
+    defaults to this size) and FCPXML all use it. Clip transforms are
+    fractions of the frame, so nothing on the timeline is moved — a 16:9
+    layout is simply measured against the new frame. Resizing the active
+    timeline is an undoable edit."""
+    import json
+
+    args: dict = {}
+    if id is not None:
+        args["id"] = id
+    if width is not None:
+        args["width"] = width
+    if height is not None:
+        args["height"] = height
+    if clear:
+        args["clear"] = True
+    return json.dumps(_op("editor_set_timeline_output", **args), indent=2, default=str)
 
 
 @mcp.tool()
@@ -2490,6 +2696,7 @@ def editor_generate_captions_from_transcript(
     align: str | None = None,
     position_x: float | None = None,
     position_y: float | None = None,
+    scope: CaptionScope | None = None,
 ) -> str:
     """Auto-caption a file straight from its D-189 transcript — the timed-word
     follow-up to `editor_import_subtitles` (D-229/D-238). Same result (a new
@@ -2525,10 +2732,24 @@ def editor_generate_captions_from_transcript(
     `offset_frames` shifts every cue — pass the playhead frame to drop the
     track in mid-timeline rather than at 00:00. The style arguments are
     identical to `editor_import_subtitles`'s own (they set the whole new
-    TRACK's style); use `editor_set_caption_style` afterwards to change it."""
+    TRACK's style); use `editor_set_caption_style` afterwards to change it.
+
+    **`scope="timeline"` (D-411) captions the EDIT instead of one file:** no
+    `path`/`media_id`/`source_path`/`offset_frames` (refused if given). Every
+    source file the timeline's video clips play from is transcribed (one job
+    per file, cached; the same `state` polling applies, with `pending`
+    counting files still running), and the cues are grouped from the stitched
+    timeline transcript (`editor_get_timeline_transcript`'s rows), so each cue
+    sits on the frames where its words actually play after every trim, cut,
+    reorder and tightened pause. A sentence split by a cut stays one grouping
+    unit; the pause rule measures the gap as it plays. Use it for anything
+    edited — above all a short assembled from several moments. The default
+    `scope="file"` is the behaviour described above."""
     import json
 
     args = _media_args(path, media_id, source_path)
+    if scope is not None:
+        args["scope"] = scope
     if offset_frames is not None:
         args["offsetFrames"] = offset_frames
     if max_words is not None:
@@ -4104,8 +4325,8 @@ def _await_compositor_export(env: dict, out_path: str) -> dict:
 @mcp.tool()
 def editor_export(
     out_path: str,
-    width: int,
-    height: int,
+    width: int | None = None,
+    height: int | None = None,
     fps: float | None = None,
     speed_overrides: dict[str, float] | None = None,
     fit_overrides: dict[str, FitMode] | None = None,
@@ -4114,6 +4335,7 @@ def editor_export(
     loudness_preset: LoudnessPreset | None = None,
     loudness_lufs: float | None = None,
     true_peak_dbtp: float | None = None,
+    timeline_id: str | None = None,
 ) -> str:
     """Render the open project's ENTIRE multi-track timeline — every visible
     video track/clip, composited in z-order (track 0 on top), cropped,
@@ -4124,7 +4346,14 @@ def editor_export(
 
     `width`/`height` are the output composition's pixel size (every clip's
     `position_x`/`position_y`/`scale` from `editor_set_clip_transform` are
-    fractions of this). `fps` defaults to the timeline's own rate.
+    fractions of this). Omit BOTH to export at the timeline's own frame size
+    (its `editor_set_timeline_output` size, else the project's — D-411); pass
+    both or neither. `fps` defaults to the timeline's own rate.
+
+    **`timeline_id` (D-411) exports that timeline without switching to it** —
+    the active one when omitted. `editor_list_timelines` lists the ids; a
+    batch of shorts is one call per id, each at its own size. The result
+    reports which `timelineId` was exported and at what `width`/`height`.
     `speed_overrides` is `{clip_id: multiplier}` (e.g. `{"clip-abc": 1.2}`)
     — an EXPORT-TIME-ONLY speed change; it does not touch the clip's stored
     trim/duration, so scrubbing it in the GUI still plays at 1x.
@@ -4223,7 +4452,13 @@ def editor_export(
     rather than silently ignoring one."""
     import json
 
-    args: dict = {"outPath": out_path, "width": width, "height": height}
+    args: dict = {"outPath": out_path}
+    if width is not None:
+        args["width"] = width
+    if height is not None:
+        args["height"] = height
+    if timeline_id is not None:
+        args["timelineId"] = timeline_id
     if fps is not None:
         args["fps"] = fps
     if speed_overrides is not None:
@@ -4308,10 +4543,11 @@ def editor_export_status() -> str:
 @mcp.tool()
 def editor_export_fcpxml(
     out_path: str,
-    width: int,
-    height: int,
+    width: int | None = None,
+    height: int | None = None,
     fps: float | None = None,
     project_name: str | None = None,
+    timeline_id: str | None = None,
 ) -> str:
     """Export the open project's ENTIRE multi-track timeline as a real,
     standard **FCPXML 1.7** document — the Final Cut Pro X XML Interchange
@@ -4357,13 +4593,20 @@ def editor_export_fcpxml(
     always called out by name in `warnings` when it's actually load-bearing.
 
     `width`/`height` are the output composition's pixel size, the same
-    convention `editor_export` already uses. `fps` defaults to the
-    timeline's own exact rate. Does NOT export XMEML/FCP7 XML (the
+    convention `editor_export` already uses; omit both to use the timeline's
+    own frame size (D-411). `timeline_id` writes that timeline instead of the
+    active one. `fps` defaults to the timeline's own exact rate. Does NOT export XMEML/FCP7 XML (the
     Premiere-targeted sibling interchange format) — a precise, scoped,
     not-yet-built follow-up, see D-196."""
     import json
 
-    args: dict = {"outPath": out_path, "width": width, "height": height}
+    args: dict = {"outPath": out_path}
+    if width is not None:
+        args["width"] = width
+    if height is not None:
+        args["height"] = height
+    if timeline_id is not None:
+        args["timelineId"] = timeline_id
     if fps is not None:
         args["fps"] = fps
     if project_name is not None:

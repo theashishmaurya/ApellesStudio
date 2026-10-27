@@ -340,7 +340,11 @@ export function PreviewPane() {
   // Refetches itself on a `CanvasSettingsPopover` save via the backend's own
   // `chroma://project-settings-changed` broadcast (B-086) — see that hook's
   // own doc.
-  const compSize = useCompositionSize(!!timeline);
+  // D-411 Phase 0 — keyed on WHICH timeline (a short and the long-form are
+  // two frames in one project), its own size override, and the saved revision.
+  const compSize = useCompositionSize(
+    timeline ? { id: timeline.id, output: timeline.output, revision: savedVersion } : null,
+  );
 
   // D-204 (B-085) — canvas click-to-select. A behaviour, not a surface: it
   // listens on the preview surface in the CAPTURE phase so it can decide, per

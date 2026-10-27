@@ -93,6 +93,7 @@ __all__ = [
     "DynamicZoomFraming",
     "EaseCurve",
     "EasePresetName",
+    "CaptionScope",
     "ExportRenderer",
     "LoudnessPreset",
     "FitMode",
@@ -483,6 +484,12 @@ ExportRenderer = Literal["filter", "compositor"]
 # D-401 — `editor_export`'s `loudness_preset`: the delivery spec the finished
 # mix is normalised to. "off" is the default (no post-processing at all).
 LoudnessPreset = Literal["youtube", "broadcast", "podcast", "off"]
+
+# D-411 Phase 0 — `editor_generate_captions_from_transcript`'s `scope`: caption
+# one source FILE (shifted by `offset_frames`), or the whole TIMELINE from its
+# stitched transcript, so every cue follows the edit's cuts. (The design note
+# calls it `from`, which Python cannot take as a parameter name.)
+CaptionScope = Literal["file", "timeline"]
 
 
 # --------------------------------------------------------------------------- #

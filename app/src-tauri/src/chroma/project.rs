@@ -1496,7 +1496,7 @@ mod tests {
         assert!(listed[0].active);
         let main_id = listed[0].id.clone();
 
-        let alt = super::super::edit::chroma_timeline_create("Alt cut".into()).unwrap();
+        let alt = super::super::edit::chroma_timeline_create("Alt cut".into(), None, None).unwrap();
         assert_eq!(alt.name, "Alt cut");
         assert!(!alt.id.is_empty());
         assert_ne!(alt.id, main_id);
@@ -1529,6 +1529,97 @@ mod tests {
         // an unknown id errors, active timeline unchanged
         assert!(super::super::edit::chroma_timeline_set_active("no-such-id".into()).is_err());
         assert_eq!(timeline_get().unwrap().id, main_id);
+
+        state::set_project(None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// D-411 Phase 0 — the timeline-management commands end to end against a
+    /// real project on disk: create a 9:16 short without activating it, read
+    /// it and its composition size by id, rename, resize, duplicate, delete.
+    #[test]
+    fn timeline_management_commands_round_trip_by_id() {
+        use super::super::edit;
+        use apelles_timeline::OutputSpec;
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = tmp("timeline_manage");
+        let (dir, mut manifest) = new_project_in(&root, "manage", &[]).unwrap();
+        manifest.settings.width = Some(1920);
+        manifest.settings.height = Some(1080);
+        save_manifest(&dir, &manifest).unwrap();
+        state::set_project(Some(ProjectRef {
+            path: dir.clone(),
+            name: "manage".into(),
+        }));
+        let main_id = edit::chroma_timeline_list().unwrap()[0].id.clone();
+
+        let short = edit::chroma_timeline_create(
+            "Short 1".into(),
+            Some(OutputSpec {
+                width: 1080,
+                height: 1920,
+            }),
+            Some(false),
+        )
+        .unwrap();
+        let listed = edit::chroma_timeline_list().unwrap();
+        assert_eq!(listed.len(), 2);
+        assert!(
+            listed[0].active,
+            "activate: false left the main timeline active"
+        );
+        assert_eq!(listed[1].output.map(OutputSpec::size), Some((1080, 1920)));
+        // An odd size is refused before anything is written.
+        assert!(
+            edit::chroma_timeline_create(
+                "Odd".into(),
+                Some(OutputSpec {
+                    width: 1081,
+                    height: 1920
+                }),
+                None
+            )
+            .is_err()
+        );
+
+        let tokio = tokio::runtime::Runtime::new().unwrap();
+        let by_id = tokio
+            .block_on(edit::chroma_timeline_get_by_id(short.id.clone()))
+            .unwrap();
+        assert_eq!(by_id.name, "Short 1");
+        let size = tokio
+            .block_on(edit::chroma_timeline_composition_size(Some(
+                short.id.clone(),
+            )))
+            .unwrap();
+        assert_eq!((size.comp_width, size.comp_height), (1080, 1920));
+        let active_size = tokio
+            .block_on(edit::chroma_timeline_composition_size(None))
+            .unwrap();
+        assert_eq!(
+            (active_size.comp_width, active_size.comp_height),
+            (1920, 1080)
+        );
+
+        edit::chroma_timeline_rename(short.id.clone(), "Hook short".into()).unwrap();
+        edit::chroma_timeline_set_output(
+            short.id.clone(),
+            Some(OutputSpec {
+                width: 1080,
+                height: 1080,
+            }),
+        )
+        .unwrap();
+        let copy = edit::chroma_timeline_duplicate(short.id.clone(), None, None).unwrap();
+        assert_eq!(copy.name, "Hook short copy");
+        assert_eq!(copy.output.map(OutputSpec::size), Some((1080, 1080)));
+        edit::chroma_timeline_delete(short.id.clone()).unwrap();
+        let after: Vec<String> = edit::chroma_timeline_list()
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(after, vec![main_id, copy.id]);
 
         state::set_project(None);
         let _ = std::fs::remove_dir_all(&root);
@@ -2102,6 +2193,7 @@ mod tests {
                     ..Default::default()
                 }],
                 markers: Vec::new(),
+                ..Default::default()
             }],
             active_timeline: 0,
             media: Vec::new(),

@@ -1,0 +1,179 @@
+{
+  "schema": "chroma.project/1.1",
+  "name": "Pre-D-411 project",
+  "created": "2026-10-26T16:41:52.026683+00:00",
+  "modified": "2026-10-27T10:44:03.276317+00:00",
+  "shots": [],
+  "activeShot": 0,
+  "activeClipId": "92d64691-2572-40e2-b334-135e6682f4af-mvphi1zi-zuw9",
+  "settings": {},
+  "timelines": [
+    {
+      "id": "3c25d967-4558-4ea5-90b0-87dfa981628d",
+      "name": "Pre-D-411 project",
+      "rate": null,
+      "tracks": [
+        {
+          "kind": "video",
+          "clips": [
+            {
+              "id": "92d64691-2572-40e2-b334-135e6682f4af-mvphi1zi-zuw9",
+              "media_id": "92d64691-2572-40e2-b334-135e6682f4af",
+              "name": "still-no-track",
+              "source_path": "/fixtures/media/title-card.png",
+              "source_start": 0,
+              "duration": 240,
+              "source_len": 86400,
+              "start_frame": 0,
+              "opacity": 1.0,
+              "position_x": 0.0,
+              "position_y": 0.0,
+              "scale": 1.0,
+              "rotation": 0.0,
+              "crop_left": 0.0,
+              "crop_top": 0.0,
+              "crop_right": 0.0,
+              "crop_bottom": 0.0,
+              "corner_radius": 0.0,
+              "fade_in_frames": 0,
+              "fade_out_frames": 0,
+              "fade_in_curve": {
+                "x1": 0.3333333333333333,
+                "y1": 0.3333333333333333,
+                "x2": 0.6666666666666666,
+                "y2": 0.6666666666666666
+              },
+              "fade_out_curve": {
+                "x1": 0.3333333333333333,
+                "y1": 0.3333333333333333,
+                "x2": 0.6666666666666666,
+                "y2": 0.6666666666666666
+              },
+              "volume": 1.0,
+              "pan": 0.0
+            }
+          ],
+          "gain": 1.0,
+          "locked": false,
+          "hidden": false,
+          "sync_locked": true,
+          "duck_from": null,
+          "duck_db": 0.0,
+          "duck_attack_ms": 10.0,
+          "duck_release_ms": 300.0,
+          "transitions": []
+        },
+        {
+          "kind": "video",
+          "clips": [],
+          "gain": 1.0,
+          "locked": false,
+          "hidden": false,
+          "sync_locked": true,
+          "duck_from": null,
+          "duck_db": 0.0,
+          "duck_attack_ms": 10.0,
+          "duck_release_ms": 300.0,
+          "transitions": []
+        },
+        {
+          "kind": "audio",
+          "clips": [
+            {
+              "id": "3aa74d8c-107e-437f-a916-f13d11b4b511-mvqesmup-t086",
+              "media_id": "3aa74d8c-107e-437f-a916-f13d11b4b511",
+              "name": "vo-no-track",
+              "source_path": "/fixtures/media/voice-over.mp3",
+              "source_start": 0,
+              "duration": 240,
+              "source_len": 21992,
+              "source_fps": 24.0,
+              "start_frame": 0,
+              "opacity": 1.0,
+              "position_x": 0.0,
+              "position_y": 0.0,
+              "scale": 1.0,
+              "rotation": 0.0,
+              "crop_left": 0.0,
+              "crop_top": 0.0,
+              "crop_right": 0.0,
+              "crop_bottom": 0.0,
+              "corner_radius": 0.0,
+              "fade_in_frames": 0,
+              "fade_out_frames": 0,
+              "fade_in_curve": {
+                "x1": 0.3333333333333333,
+                "y1": 0.3333333333333333,
+                "x2": 0.6666666666666666,
+                "y2": 0.6666666666666666
+              },
+              "fade_out_curve": {
+                "x1": 0.3333333333333333,
+                "y1": 0.3333333333333333,
+                "x2": 0.6666666666666666,
+                "y2": 0.6666666666666666
+              },
+              "volume": 1.0,
+              "pan": 0.0
+            }
+          ],
+          "gain": 1.0,
+          "locked": false,
+          "hidden": false,
+          "sync_locked": true,
+          "duck_from": null,
+          "duck_db": 0.0,
+          "duck_attack_ms": 10.0,
+          "duck_release_ms": 300.0,
+          "transitions": []
+        }
+      ],
+      "markers": []
+    }
+  ],
+  "activeTimeline": 0,
+  "media": [
+    {
+      "id": "3aa74d8c-107e-437f-a916-f13d11b4b511",
+      "sourcePath": "/fixtures/media/voice-over.mp3",
+      "name": "voice-over.mp3",
+      "added": "2026-10-26T16:41:52.596763+00:00",
+      "video": {
+        "width": 0,
+        "height": 0,
+        "fps": 24.0,
+        "frameCount": 21992,
+        "durationSecs": 916.333333,
+        "hasAudio": true,
+        "audioChannels": 2
+      }
+    },
+    {
+      "id": "92d64691-2572-40e2-b334-135e6682f4af",
+      "sourcePath": "/fixtures/media/title-card.png",
+      "name": "title-card.png",
+      "added": "2026-10-26T16:41:52.708587+00:00",
+      "image": {
+        "width": 2880,
+        "height": 1620
+      }
+    },
+    {
+      "id": "fa664fa6-7538-4733-b60d-b69321991b59",
+      "sourcePath": "/fixtures/media/music-bed.mp3",
+      "name": "music-bed.mp3",
+      "added": "2026-10-27T08:05:09.927756+00:00",
+      "video": {
+        "width": 0,
+        "height": 0,
+        "fps": 24.0,
+        "frameCount": 13920,
+        "durationSecs": 580.0,
+        "hasAudio": true,
+        "audioChannels": 2
+      }
+    }
+  ],
+  "folders": [],
+  "editJournalSeq": 21
+}

@@ -85,7 +85,11 @@ import {
   type EditLibraryMode,
   useMediaUnderstandingStore,
   type EditOp,
+  type OutputSpec,
   type Timeline,
+  // The store's own mirror of `chroma::edit::TimelineSummary`, imported rather
+  // than restated now it grew D-411's `output`/`origin`.
+  type TimelineSummary,
 } from '@apelles/editor';
 import { DEFAULT_THEME_ID, THEMES } from './utils/themes';
 import '../src/styles.css';
@@ -121,17 +125,6 @@ function setStatus(text: string): void {
   if (el) el.textContent = text;
 }
 
-/** Mirrors `chroma::edit::TimelineSummary` (serde camelCase) — see
- *  `packages/editor/src/timelineStore.ts`'s own TS mirror of the same Rust
- *  type. Kept local rather than imported since only `TimelineSwitcher`'s
- *  props need the shape; the store already exports it but this file
- *  constructs raw invoke-response objects, not store state. */
-interface TimelineSummary {
-  id: string;
-  name: string;
-  duration: number;
-  active: boolean;
-}
 
 /** D-195, Task 3 — the tiny in-memory "project" `chroma_timeline_list`/
  *  `_create`/`_set_active`/`_get`/`_set` all read and write, standing in for
@@ -282,16 +275,67 @@ function installInvokeStub(): void {
     chroma_timeline_list: (): TimelineSummary[] =>
       fakeProject.order.map((id) => {
         const t = fakeProject.timelines.get(id)!;
-        return { id: t.id, name: t.name, duration: timelineDuration(t), active: id === fakeProject.activeId };
+        return {
+          id: t.id,
+          name: t.name,
+          duration: timelineDuration(t),
+          active: id === fakeProject.activeId,
+          output: t.output ?? null,
+          origin: t.origin ?? null,
+        };
       }),
     chroma_timeline_create: (args): Timeline => {
-      const { name } = args as { name: string };
+      const { name, output, activate } = args as { name: string; output?: OutputSpec | null; activate?: boolean };
       const id = `harness-tl-${Math.random().toString(36).slice(2, 8)}`;
-      const tl: Timeline = { id, name, tracks: [] };
+      const tl: Timeline = { id, name, tracks: [], ...(output ? { output } : {}) };
       fakeProject.timelines.set(id, tl);
       fakeProject.order.push(id);
-      fakeProject.activeId = id;
+      if (activate !== false) fakeProject.activeId = id;
       return tl;
+    },
+    // D-411 Phase 0 — the timeline-management commands, mirroring
+    // `chroma::edit` (by id; the active one is normally renamed/resized by the
+    // store's own ops instead, as in the real app).
+    chroma_timeline_get_by_id: (args): Timeline => {
+      const { id } = args as { id: string };
+      const tl = fakeProject.timelines.get(id);
+      if (!tl) throw new Error(`no timeline with id ${id}`);
+      return tl;
+    },
+    chroma_timeline_rename: (args) => {
+      const { id, name } = args as { id: string; name: string };
+      const tl = fakeProject.timelines.get(id);
+      if (!tl) throw new Error(`no timeline with id ${id}`);
+      fakeProject.timelines.set(id, { ...tl, name: name.trim() });
+    },
+    chroma_timeline_set_output: (args) => {
+      const { id, output } = args as { id: string; output: OutputSpec | null };
+      const tl = fakeProject.timelines.get(id);
+      if (!tl) throw new Error(`no timeline with id ${id}`);
+      const next: Timeline = { ...tl };
+      if (output) next.output = output;
+      else delete next.output;
+      fakeProject.timelines.set(id, next);
+    },
+    chroma_timeline_duplicate: (args): Timeline => {
+      const { id, name, activate } = args as { id: string; name?: string | null; activate?: boolean };
+      const tl = fakeProject.timelines.get(id);
+      if (!tl) throw new Error(`no timeline with id ${id}`);
+      const copyId = `harness-tl-${Math.random().toString(36).slice(2, 8)}`;
+      const copy: Timeline = { ...structuredClone(tl), id: copyId, name: name ?? `${tl.name} copy` };
+      fakeProject.timelines.set(copyId, copy);
+      fakeProject.order.splice(fakeProject.order.indexOf(id) + 1, 0, copyId);
+      if (activate) fakeProject.activeId = copyId;
+      return copy;
+    },
+    chroma_timeline_delete: (args) => {
+      const { id } = args as { id: string };
+      const at = fakeProject.order.indexOf(id);
+      if (at < 0) throw new Error(`no timeline with id ${id}`);
+      if (fakeProject.order.length <= 1) throw new Error("cannot delete the project's only timeline");
+      fakeProject.order.splice(at, 1);
+      fakeProject.timelines.delete(id);
+      if (fakeProject.activeId === id) fakeProject.activeId = fakeProject.order[Math.min(at, fakeProject.order.length - 1)];
     },
     chroma_timeline_set_active: (args) => {
       const { id } = args as { id: string };
@@ -319,10 +363,15 @@ function installInvokeStub(): void {
         ...(harnessClipNatural.get(sourcePath) ?? DEFAULT_NATURAL),
       };
     },
-    chroma_timeline_composition_size: () => ({
-      compWidth: harnessSettings.width ?? 1920,
-      compHeight: harnessSettings.height ?? 1080,
-    }),
+    chroma_timeline_composition_size: (args) => {
+      // D-411 Phase 0 — a timeline's own size wins, as in `derived_composition_size`.
+      const id = (args as { timelineId?: string } | undefined)?.timelineId ?? fakeProject.activeId;
+      const own = fakeProject.timelines.get(id)?.output;
+      return {
+        compWidth: own?.width ?? harnessSettings.width ?? 1920,
+        compHeight: own?.height ?? harnessSettings.height ?? 1080,
+      };
+    },
     chroma_project_get_settings: () => ({ width: harnessSettings.width, height: harnessSettings.height }),
     chroma_project_set_settings: (args) => {
       const patch = (args as { partial?: { width?: number | null; height?: number | null } })?.partial ?? {};

@@ -96,6 +96,16 @@ pub struct TimelineRenderRequest {
     /// the poller reads. The picture is never re-encoded (`-c:v copy`).
     #[serde(default)]
     pub loudness: Option<LoudnessTarget>,
+    /// **D-411 Phase 0 — which timeline to render.** `None` is the active
+    /// timeline (every request compiled before D-411). An export of a named
+    /// timeline — `editor_export(timeline_id=…)`, or the Export dialog's
+    /// Timeline picker — carries its id, so the render draws THAT timeline
+    /// rather than whichever one happens to be active when a queued job
+    /// reaches the front. Spelled `timelineId` on the wire, the camelCase the
+    /// TypeScript caller writes every multi-word key in (as
+    /// [`SegmentedEncodePlan`]'s fields are).
+    #[serde(default, rename = "timelineId")]
+    pub timeline_id: Option<String>,
 }
 
 /// The two extra argvs a segmented render needs, compiled by
@@ -948,7 +958,8 @@ fn render_segmented(
 }
 
 /// `editor_export`'s D-350 render path, as a Tauri command: resolve the OPEN
-/// project's active timeline once, then [`render_timeline`] it.
+/// project's timeline once (the active one, or `req.timeline_id`'s — D-411),
+/// then [`render_timeline`] it.
 ///
 /// Resolving once — rather than per frame, as the preview path did before D-350
 /// split `render_timeline_frame` out — is not a micro-optimisation: the
@@ -959,7 +970,8 @@ pub async fn chroma_render_timeline_export(
     req: TimelineRenderRequest,
 ) -> Result<TimelineRenderOutcome, String> {
     tokio::task::spawn_blocking(move || {
-        let (timeline, settings) = edit::resolve_timeline_and_settings(false)?;
+        let (timeline, settings) =
+            edit::resolve_timeline_by_id_and_settings(req.timeline_id.as_deref())?;
         render_timeline(&timeline, &settings, &req)
     })
     .await
@@ -1886,6 +1898,7 @@ mod parity_tests {
                         segments: None,
                         output: None,
                         loudness: None,
+                        timeline_id: None,
                     },
                     &plan,
                     ranges,
@@ -1956,6 +1969,7 @@ mod parity_tests {
                     segments: None,
                     output: None,
                     loudness: None,
+                    timeline_id: None,
                 },
             )
         } else {
@@ -1974,6 +1988,7 @@ mod parity_tests {
                     segments: None,
                     output: None,
                     loudness: None,
+                    timeline_id: None,
                 },
                 &plan,
                 segments,
@@ -2325,6 +2340,7 @@ mod parity_tests {
             segments: None,
             output: None,
             loudness: None,
+            timeline_id: None,
         };
         let outcome = render_timeline(&timeline, &settings, &req).expect("the new render path");
         assert_eq!(
@@ -2471,6 +2487,7 @@ mod parity_tests {
             segments: None,
             output: None,
             loudness: None,
+            timeline_id: None,
         };
         let outcome = render_timeline(&timeline, &settings, &req).expect("the render path");
         assert_eq!(
@@ -2882,6 +2899,7 @@ mod parity_tests {
                 segments: None,
                 output: None,
                 loudness: None,
+                timeline_id: None,
             },
         )
         .expect("the single-stream render");
@@ -2895,6 +2913,7 @@ mod parity_tests {
             segments: None,
             output: None,
             loudness: None,
+            timeline_id: None,
         };
         let plan = SegmentedEncodePlan {
             segment_args: localise(&fx.segment_args, dir, &segmented_out),
@@ -3170,6 +3189,7 @@ mod parity_tests {
             segments: None,
             output: None,
             loudness: None,
+            timeline_id: None,
         };
         let timeline = localise_timeline(&st.timeline, dir);
         let settings = ProjectSettings {
@@ -3408,6 +3428,7 @@ mod parity_tests {
                 },
             ],
             markers: Vec::new(),
+            ..Default::default()
         };
         let settings = ProjectSettings::default();
         assert!(
@@ -3424,6 +3445,7 @@ mod parity_tests {
             segments: None,
             output: None,
             loudness: None,
+            timeline_id: None,
         };
         let outcome = render_timeline(&timeline, &settings, &req)
             .expect("a sizeless project renders at the export's own size");

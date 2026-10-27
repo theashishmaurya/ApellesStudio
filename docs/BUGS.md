@@ -27,6 +27,25 @@ Still real:
 
 ## Open
 
+## B-284 — a new timeline ran at 24 fps whatever the project's rate was
+
+status: **fixed** (2026-10-27) · severity: **medium** (a timeline created in a 30 fps project silently resolved every frame number at 24 fps until someone noticed the clip lengths) · area: `chroma::edit::chroma_timeline_create` (D-045), now `apelles_project::timeline::create_timeline`
+
+- **found:** 2026-10-27, building D-411 Phase 0, reading the create path the Automatic Clipper's shorts will go through.
+- **cause:** `chroma_timeline_create` built the new `Timeline` with `rate: None`, which every reader resolves as `DEFAULT_FPS` (24). B-097 fixed this exact gap at the two other creation sites (a new project, a timeline lazily built from shots) and did not reach this one.
+- **fix:** `create_timeline` seeds the new timeline's rate from the ACTIVE timeline (what the person is working in, and for a short the long-form it is cut from).
+- **verification:** `apelles-project` `create_seeds_the_active_rate_and_the_output_and_activates_on_request`.
+
+## B-283 — undo after switching timelines wrote the other timeline's snapshot over the open one
+
+status: **fixed** (2026-10-27) · severity: **high** (silent data loss: the open timeline's content, and its id, were replaced by another timeline's) · area: `packages/editor/src/timelineStore.ts` `restoreSnapshot` (D-051 undo, D-045 multi-timeline)
+
+- **found:** 2026-10-27, building D-411 Phase 0 (timeline management for agents, which switch timelines constantly), by reading the undo path against `chroma_timeline_set`'s contract.
+- **repro:** edit timeline A (any undoable op), switch to timeline B, press ⌘Z. **Expected:** A's edit is undone. **Actual:** the history entry's `undo` restored A's `before` snapshot into the store and `chroma_timeline_set` wrote it onto the ACTIVE timeline, B — B now held A's content and A's id, and A was unchanged.
+- **cause:** the shared undo stack (D-051) is not per timeline, its entries close over whole-`Timeline` snapshots, and `chroma_timeline_set` writes to whichever timeline is active, never by id.
+- **fix:** `restoreSnapshot` compares the snapshot's id with the open timeline's; when they differ it switches to the snapshot's timeline first (Premiere's behaviour: undo brings its sequence forward) and then restores, and refuses in words if that timeline was deleted.
+- **verification:** `timelineOps.e2e.dom.test.tsx` "B-283: an undo made after a switch lands on its own timeline, not the open one".
+
 ## B-282 — the Motion player never shows a custom layer's proxy frames: it stays on "rendering preview…" after they exist
 
 status: **fixed** (2026-10-27) · severity: **high** (every custom component layer in the live player was a placeholder box, so an agent or a human could not see what they had placed) · area: `packages/motion/src/customProxy.tsx` (D-409's live-player renderer), the React Compiler (D-091)

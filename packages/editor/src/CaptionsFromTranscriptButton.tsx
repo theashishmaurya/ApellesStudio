@@ -29,15 +29,31 @@
  * answers regardless of what the bootstrap reports, and a click that really
  * does fail comes back with the `ai_env_not_ready` explanation rather than a
  * bare connection error.
+ *
+ * **D-411 Phase 0 — two sources, one menu.** The button opens a menu:
+ * **From the timeline** (the default and first item) transcribes every source
+ * the timeline's dialogue clips use and groups the TIMELINE transcript, so the
+ * cues follow every cut, trim and tightened pause (`captionsForTimeline`, the
+ * function `editor_generate_captions_from_transcript(scope="timeline")` calls);
+ * **From the selected clip's file** is the original D-238 behaviour above (one
+ * file, dropped at the playhead). The first is what an edited piece — above
+ * all a short assembled from several moments — needs; the second stays for
+ * captioning one untouched take.
  */
 import { useState } from 'react';
-import { SparkleIcon } from '@phosphor-icons/react';
-import { Button } from '@apelles/ui';
+import { CaretDownIcon, SparkleIcon } from '@phosphor-icons/react';
+import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@apelles/ui';
 import { aiEnvNotice, aiEnvWarning, useAiEnv } from '@apelles/bridge';
 
 import { useEditorTimelineStore } from './timelineStore';
 import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
-import { generatedCuesToCaptions, groupTranscriptIntoCues, sanitiseIdStem } from './captionsFromTranscript';
+import {
+  captionsForTimeline,
+  generatedCuesToCaptions,
+  groupTranscriptIntoCues,
+  sanitiseIdStem,
+} from './captionsFromTranscript';
+import { transcriptSources } from './timelineTranscript';
 import { timelineFps } from './timeline';
 import type { Transcript } from './mediaUnderstandingStore';
 
@@ -63,6 +79,45 @@ export function CaptionsFromTranscriptButton() {
   const { status: aiEnv } = useAiEnv();
   const aiEnvBuilding = aiEnvNotice(aiEnv, 'Captions from Transcript');
   const aiEnvUnavailable = aiEnvWarning(aiEnv);
+
+  /** D-411 Phase 0 — captions from the TIMELINE transcript: every source the
+   *  dialogue clips use is transcribed (one job per file, cached), then the
+   *  stitched words are grouped where they PLAY. */
+  const generateFromTimeline = async () => {
+    setError(null);
+    if (!timeline) return;
+    const sources = transcriptSources(timeline);
+    if (sources.length === 0) {
+      setError('no dialogue-bearing video clips on this timeline to caption');
+      return;
+    }
+    setBusy(true);
+    let failed: string | null = null;
+    try {
+      const store = useMediaUnderstandingStore.getState();
+      await Promise.all(sources.map((s) => store.getTranscript(s.path, { wordTimestamps: true })));
+    } catch (e) {
+      failed = String(e);
+    }
+    setBusy(false);
+    if (failed) {
+      setError(failed);
+      return;
+    }
+    // Read at the point of use (D-330): the timeline may have been edited
+    // while the transcripts ran, and the captions must follow the edit as it
+    // is NOW.
+    const tl = useEditorTimelineStore.getState().timeline;
+    if (!tl) return;
+    const fresh = useMediaUnderstandingStore.getState();
+    const recoveries = Object.fromEntries(sources.map((s) => [s.path, fresh.recoveriesFor(s.path)]));
+    const captions = captionsForTimeline(tl, fresh.transcripts, recoveries);
+    if (captions.length === 0) {
+      setError('the timeline transcript has no word-level timestamps to caption from');
+      return;
+    }
+    applyOp({ kind: 'import_subtitles', cues: captions });
+  };
 
   const generate = async () => {
     setError(null);
@@ -117,20 +172,30 @@ export function CaptionsFromTranscriptButton() {
 
   return (
     <div className="flex items-center gap-2">
-      <Button
-        variant="ghost"
-        size="xs"
-        disabled={busy || !timeline}
-        onClick={generate}
-        title={
-          aiEnvBuilding ??
-          aiEnvUnavailable ??
-          "Generate captions from the selected clip's transcript (D-189)"
-        }
-      >
-        <SparkleIcon className="size-3.5" />
-        <span className="ml-1">{busy ? 'Transcribing…' : 'Captions from Transcript'}</span>
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="xs"
+              disabled={busy || !timeline}
+              title={aiEnvBuilding ?? aiEnvUnavailable ?? 'Generate captions from the transcript (D-189)'}
+            >
+              <SparkleIcon className="size-3.5" />
+              <span className="ml-1">{busy ? 'Transcribing…' : 'Captions from Transcript'}</span>
+              <CaretDownIcon className="size-3" />
+            </Button>
+          }
+        />
+        <DropdownMenuContent align="start" data-chroma-captions-menu="">
+          <DropdownMenuItem data-chroma-captions-action="timeline" onClick={() => void generateFromTimeline()}>
+            From the timeline (follows every cut)
+          </DropdownMenuItem>
+          <DropdownMenuItem data-chroma-captions-action="file" onClick={() => void generate()}>
+            From the selected clip&apos;s file (at the playhead)
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       {aiEnvBuilding && !error && (
         <span className="truncate text-[11px] text-text-secondary" title={aiEnvBuilding}>
           {aiEnvBuilding}

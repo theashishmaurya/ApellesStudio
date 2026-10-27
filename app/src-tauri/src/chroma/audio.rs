@@ -1111,6 +1111,7 @@ mod tests {
                 },
             ],
             markers: Vec::new(),
+            ..Default::default()
         };
         let manifest = super::super::project::ProjectManifest {
             schema: "chroma.project/1".into(),
@@ -1459,6 +1460,7 @@ mod tests {
             rate: None,
             tracks,
             markers: Vec::new(),
+            ..Default::default()
         };
         let manifest = super::super::project::ProjectManifest {
             schema: "chroma.project/1".into(),
@@ -1704,6 +1706,7 @@ mod tests {
                 },
             ],
             markers: Vec::new(),
+            ..Default::default()
         };
         let manifest = super::super::project::ProjectManifest {
             schema: "chroma.project/1".into(),
@@ -1817,6 +1820,7 @@ mod tests {
                 },
             ],
             markers: Vec::new(),
+            ..Default::default()
         };
         let manifest = super::super::project::ProjectManifest {
             schema: "chroma.project/1".into(),

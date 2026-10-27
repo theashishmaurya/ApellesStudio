@@ -146,7 +146,7 @@ export {
   resolveClipInspectorTab,
 } from './clipInspectorTabs';
 export type { ClipInspectorTab } from './clipInspectorTabs';
-export type { TimelineSummary } from './timelineStore';
+export type { TimelineSummary, TimelineActionResult } from './timelineStore';
 // D-252 — the popover/dialog panel registry. Exported for `@apelles/debug`'s
 // `debug_set_popover_open`, which validates against the same id list the
 // panels themselves register with via `usePanelOpen` rather than restating
@@ -209,7 +209,9 @@ export type {
   VideoAnalysis,
   VideoEvent,
 } from './mediaUnderstandingStore';
-export type { Timeline, Track, Clip, EditOp, DraggedMedia, EaseCurve, Marker } from './timeline';
+export type { Timeline, Track, Clip, EditOp, DraggedMedia, EaseCurve, Marker, OutputSpec, TimelineOrigin } from './timeline';
+// D-411 Phase 0 — a timeline's own output size: the one check and the shared presets.
+export { checkTimelineOutput, OUTPUT_MAX_EDGE, OUTPUT_MIN_EDGE, TIMELINE_OUTPUT_PRESETS } from './timeline';
 export {
   // D-328 — the ranged-marker helpers. `markerEndFrame` is the one derivation
   // of a marker's last frame (the ruler bar, the Index panel's time-range

@@ -1767,6 +1767,94 @@ export interface Timeline {
    *  has no key at all, and every read below treats absent and `[]` the same.
    *  Kept **sorted by `frame`** by `applyOp` — see the `add_marker` op. */
   markers?: Marker[];
+  /** D-411 Phase 0 — this timeline's OWN output size, overriding the project's
+   *  D-038 `ProjectSettings {width, height}` for this timeline only (a 9:16
+   *  short beside the 16:9 long-form). Mirrors `apelles_timeline::Timeline::
+   *  output` (`#[serde(default, skip_serializing_if = "Option::is_none")]`),
+   *  which is why it is optional here: absent is "use the project's size",
+   *  every timeline saved before D-411. Written only by the
+   *  `set_timeline_output` op (active timeline) or `chroma_timeline_set_output`
+   *  (any other), both through {@link checkTimelineOutput}. */
+  output?: OutputSpec | null;
+  /** D-411 Phase 0 — how a tool built this timeline (the Automatic Clipper's
+   *  shorts and trailers). Data only in Phase 0: stored, round-tripped and
+   *  reported, read by nothing that renders. Mirrors `apelles_timeline::
+   *  TimelineOrigin`. */
+  origin?: TimelineOrigin | null;
+}
+
+/** D-411 Phase 0 — a timeline's own composition size, in pixels. Mirrors
+ *  `apelles_timeline::OutputSpec`. */
+export interface OutputSpec {
+  width: number;
+  height: number;
+}
+
+/** Mirrors `apelles_timeline::OUTPUT_MIN_EDGE`: below this the caption and text
+ *  layout (fractions of the frame height) has nothing to lay out into. */
+export const OUTPUT_MIN_EDGE = 16;
+/** Mirrors `apelles_timeline::OUTPUT_MAX_EDGE` (8K): the compositor allocates a
+ *  full RGBA canvas at the composition size. */
+export const OUTPUT_MAX_EDGE = 8192;
+
+/** D-411 Phase 0 — the ONE check every writer of a timeline output size goes
+ *  through on this side (the `set_timeline_output` op, the GUI's size controls,
+ *  `editor_set_timeline_output` / `editor_create_timeline`). An exact mirror of
+ *  `apelles_timeline::OutputSpec::new`, including its wording: both edges
+ *  integers inside [OUTPUT_MIN_EDGE, OUTPUT_MAX_EDGE] and EVEN, because every
+ *  export encodes 4:2:0 video, which cannot hold an odd width or height. */
+export function checkTimelineOutput(
+  width: unknown,
+  height: unknown,
+): { ok: true; output: OutputSpec } | { ok: false; error: string } {
+  const out: Record<'width' | 'height', number> = { width: NaN, height: NaN };
+  for (const [axis, raw] of [
+    ['width', width],
+    ['height', height],
+  ] as const) {
+    const v = Number(raw);
+    if (!Number.isInteger(v)) return { ok: false, error: `output ${axis} must be a whole number of pixels, got ${String(raw)}` };
+    if (v < OUTPUT_MIN_EDGE || v > OUTPUT_MAX_EDGE) {
+      return {
+        ok: false,
+        error: `output ${axis} must be between ${OUTPUT_MIN_EDGE} and ${OUTPUT_MAX_EDGE} pixels, got ${v}`,
+      };
+    }
+    if (v % 2 !== 0) {
+      return { ok: false, error: `output ${axis} must be even (4:2:0 video cannot encode an odd ${axis}), got ${v}` };
+    }
+    out[axis] = v;
+  }
+  return { ok: true, output: { width: out.width, height: out.height } };
+}
+
+/** D-411 — the delivery sizes the timeline-size controls offer, shared by the
+ *  switcher's menu and the Project Settings panel so the two list the same
+ *  choices in the same order. The short formats lead: they are why a timeline
+ *  has its own size at all. */
+export const TIMELINE_OUTPUT_PRESETS: readonly { label: string; aspect: string; width: number; height: number }[] = [
+  { label: '1080×1920', aspect: '9:16', width: 1080, height: 1920 },
+  { label: '1080×1080', aspect: '1:1', width: 1080, height: 1080 },
+  { label: '1080×1350', aspect: '4:5', width: 1080, height: 1350 },
+  { label: '1920×1080', aspect: '16:9', width: 1920, height: 1080 },
+  { label: '3840×2160', aspect: '16:9 UHD', width: 3840, height: 2160 },
+];
+
+/** Mirrors `apelles_timeline::TimelineOriginKind`. */
+export type TimelineOriginKind = 'clip_short' | 'clip_trailer';
+
+/** Mirrors `apelles_timeline::TimelineOrigin` (D-411 §5.1), snake_case on the
+ *  wire like the rest of the document. `source` is externally tagged:
+ *  `{media_id}` or `{timeline_id}`. */
+export interface TimelineOrigin {
+  kind: TimelineOriginKind;
+  run_id: string;
+  proposal_id?: string;
+  source: { media_id: string } | { timeline_id: string };
+  segments?: { source_path: string; start_s: number; end_s: number; role: 'hook' | 'body' | 'beat' }[];
+  built_at_view?: string;
+  settings_hash?: string;
+  built_content_hash?: string;
 }
 
 /** One timeline marker (D-222) — a colour-coded flag pinned to a TIMELINE
@@ -4171,6 +4259,18 @@ export type EditOp =
    *  one frame stay in the order they were added. Never rejected — any frame
    *  is a legal place for an annotation, including past the last clip. */
   | { kind: 'add_marker'; marker: Marker }
+  /** D-411 Phase 0 — set (`output`) or clear (`null`: back to the project's
+   *  size) this timeline's own output size. A timeline-level fact like a
+   *  marker: no track, no lock, nothing ripples. Refused as a no-op for a size
+   *  {@link checkTimelineOutput} rejects (the caller reports the reason) and
+   *  for a value equal to the current one, so it never pushes an empty undo
+   *  step. An op rather than a backend write because the Edit store is the
+   *  active timeline's one writer (D-051): a direct write would be overwritten
+   *  by the store's next save, and as an op it is undoable and journalled. */
+  | { kind: 'set_timeline_output'; output: OutputSpec | null }
+  /** D-411 Phase 0 — rename this timeline. Trimmed; an empty or unchanged name
+   *  is a no-op. Same reasoning as `set_timeline_output` for being an op. */
+  | { kind: 'set_timeline_name'; name: string }
   /** D-222 — delete the marker with this id. A no-op (rejected) for an id
    *  that isn't there, same "reject rather than corrupt" discipline every
    *  other op here uses; not gated by any track's lock, since a marker
@@ -4437,6 +4537,10 @@ export function labelForOp(op: EditOp, before: Timeline): string {
     // label ("Add marker" three times over says nothing about which).
     case 'add_marker':
       return op.marker.name ? `Add marker "${op.marker.name}"` : `Add marker at ${op.marker.frame}`;
+    case 'set_timeline_output':
+      return op.output ? `Set timeline size to ${op.output.width}×${op.output.height}` : 'Use project size for timeline';
+    case 'set_timeline_name':
+      return `Rename timeline to "${op.name.trim()}"`;
     case 'remove_marker':
       return `Remove marker ${markerLabel(before, op.id)}`;
     case 'set_marker':
@@ -5488,6 +5592,32 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
   if (op.kind === 'add_marker') {
     const next = clone(tl);
     next.markers = sortedMarkers([...(next.markers ?? []), op.marker]);
+    return next;
+  }
+
+  // D-411 Phase 0 — timeline-level properties, handled with the markers for
+  // the same reason: they belong to no track and no clip.
+  if (op.kind === 'set_timeline_output') {
+    if (op.output === null) {
+      if (!tl.output) return tl;
+      const next = clone(tl);
+      // Deleted, not set to `null`: "use the project's size" has one spelling
+      // in the document, the absent key Rust writes for `None`.
+      delete next.output;
+      return next;
+    }
+    const checked = checkTimelineOutput(op.output.width, op.output.height);
+    if (!checked.ok) return tl;
+    if (tl.output && tl.output.width === checked.output.width && tl.output.height === checked.output.height) return tl;
+    const next = clone(tl);
+    next.output = checked.output;
+    return next;
+  }
+  if (op.kind === 'set_timeline_name') {
+    const name = op.name.trim();
+    if (!name || name === tl.name) return tl;
+    const next = clone(tl);
+    next.name = name;
     return next;
   }
 
