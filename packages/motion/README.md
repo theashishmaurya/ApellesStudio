@@ -342,8 +342,12 @@ commands, the library store and `componentAccess()`. MCP: `motion_list_component
 check results, contact sheet, read-only source, Run check, Certify, Edit as new draft,
 Insert form, New component form), `CustomPropsFields.tsx` in the Inspector, and
 `customProxy.tsx` — the player's renderer, which shows frames the renderer process
-rendered and never runs component code. `customOps.e2e.test.ts` is the write → check →
-certify → insert → validate → preview proof.
+rendered and never runs component code; it reads `customProxyStore.ts` (debounce, one
+render at a time, cache, error reporting) only through `useSyncExternalStore` (B-282).
+`customOps.e2e.test.ts` is the write → check → certify → insert → validate → preview proof;
+`customProxy.dom.test.tsx` is the player drawing the frames. This package's Vitest compiles
+its and the engine's `.tsx` with the app's React Compiler preset (`vitest.config.ts`), so
+DOM tests run the code that ships.
 
 ## Brand building blocks in the GUI (D-404/D-405)
 

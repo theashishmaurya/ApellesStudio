@@ -239,6 +239,26 @@ matches the suppression text itself, so even *mentioning*
 `eslint-disable-next-line react-hooks/…` verbatim in a prose comment
 re-triggers the bailout. Describe the rule by name instead.
 
+## The other direction: a component the compiler DID compile, wrongly for us (B-282, 2026-10-27)
+
+A bailout costs memoization; a successful compile can cost correctness when
+the component breaks the rule the compiler assumes, that a render is a pure
+function of props, state and context. D-409's `customProxy.tsx` read a
+module-level `Map` during render (`return states.get(key)`) and forced
+re-renders with a throwaway `useState` counter. The compiler cached the read
+on `key`, so the forced re-render returned the stale value and the Motion
+player never showed frames that existed. Nothing logs this: it is not a
+bailout. Two rules carried forward:
+
+- **Outside mutable state reaches a render through `useSyncExternalStore`
+  (or a store hook built on it, like zustand's), never by reading it in the
+  render body.** React calls the snapshot function itself, so no memoization
+  can skip it. `customProxyStore.ts` is the shape.
+- **A DOM test of such a component has to run compiled.** The old code passed
+  the same Player test uncompiled and failed it compiled.
+  `packages/motion/vitest.config.ts` compiles `packages/motion(-engine)/src`
+  `.tsx` with the app's preset for that reason.
+
 ## The "possibly a real bug" items — investigated, one by one
 
 | flagged item | verdict |

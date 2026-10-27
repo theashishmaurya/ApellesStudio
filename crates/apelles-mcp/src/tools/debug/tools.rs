@@ -139,10 +139,18 @@ impl ApellesMcp {
     Open dialogs are read off the DOM (`role="dialog"`/`alertdialog`), not off
     a store flag, so the list stays correct as modals are added to the app.
 
+    The Motion player shows a custom component layer (D-409) as frames the
+    renderer process drew. `motion.customProxies` reports each one: component,
+    props, status (waiting / rendering / ready / error), how many layers show
+    it, and its frame count and folder or its error. Use it to confirm the
+    player really draws a custom layer, without a screenshot.
+
     Returns {shell:{activeTab,tabs,sourcesPanelOpen,wgpuSurfaceActive},
              editor:{inspectorOpen,inspectorTab,inspectorTabs,projectOpen,
                      timelineStatus,selection,selectedGap,playing,playhead},
-             openDialogs:[{tag,role,label,rect}]}."#
+             openDialogs:[{tag,role,label,rect}],
+             motion:{customProxies:[{component,props,status,viewers,
+                                     frames?,dir?,cached?,error?}]}}."#
     )]
     pub async fn debug_ui_state(&self) -> Result<CallToolResult, ErrorData> {
         // Tool name and op name differ here too — the op is `debug_get_ui_state`.

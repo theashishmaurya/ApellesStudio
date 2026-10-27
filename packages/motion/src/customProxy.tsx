@@ -10,17 +10,20 @@
  * `chroma_motion_component_proxy` (the same Remotion renderer the export uses),
  * cached by content, and the player draws the PNG of the layer's current local
  * frame. Until the frames exist (a first insert, a props edit) the safe
- * placeholder box is shown with "rendering preview…".
+ * placeholder box is shown with "rendering preview…"; a failed render shows
+ * "preview failed: <why>" there (and in the console, `customProxyStore.ts`).
+ * The status line carries `data-custom-proxy-status`, and the debug-only
+ * `debug_get_ui_state` reports every proxy's state, so an agent can check it
+ * without a screenshot.
  *
- * Requests are debounced (a props edit in progress does not render every
- * keystroke) and run one at a time; a request nobody is showing any more is
- * skipped when its turn comes.
+ * Requesting, debouncing, queueing and caching live in `customProxyStore.ts`;
+ * this file only reads it, through `useSyncExternalStore` (B-282).
  *
  * What it does NOT do: evaluate component code (nothing here imports the
  * engine's `custom/runtime.tsx`), or affect what renders on export (the export
  * runs the real component in the renderer process).
  */
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useSyncExternalStore } from 'react';
 import { useCurrentFrame, useVideoConfig } from 'remotion';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import {
@@ -29,77 +32,26 @@ import {
   type CustomRenderer,
 } from '@apelles/motion-engine/src/custom/renderer';
 import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
-import { PROXY_SCALE, proxyManifest } from './customComponents';
-import { renderComponentProxy, type ComponentProxyResult } from './customComponentLibraryIO';
-
-/** How long a layer's proxy request waits for its props to settle, ms. */
-const PROXY_DEBOUNCE_MS = 450;
-
-type ProxyState =
-  | { status: 'pending' }
-  | { status: 'ready'; files: string[] }
-  | { status: 'error'; error: string };
+import { proxyManifest } from './customComponents';
+import { customProxyStore, type ProxyState } from './customProxyStore';
 
 /** The document fields a proxy manifest inherits. */
 export type ProxyDoc = Pick<Manifest, 'theme' | 'themeDef'>;
 
-const states = new Map<string, ProxyState>();
-const listeners = new Map<string, Set<() => void>>();
-const queue: { key: string; manifest: Manifest }[] = [];
-let running = false;
+/** The status line's size in canvas px: legible once the player scales a
+ *  1080p canvas down into its panel, never louder than the placeholder's own
+ *  label. */
+const STATUS_MIN_PX = 16;
+const STATUS_MAX_PX = 40;
+const STATUS_BOX_DIVISOR = 24;
 
-function notify(key: string) {
-  for (const l of listeners.get(key) ?? []) l();
-}
-
-async function drain(render: (manifest: Manifest) => Promise<ComponentProxyResult>) {
-  if (running) return;
-  running = true;
-  try {
-    for (let job = queue.shift(); job; job = queue.shift()) {
-      // Nobody shows it any more (the props moved on): skip the render.
-      if ((listeners.get(job.key)?.size ?? 0) === 0) {
-        states.delete(job.key);
-        continue;
-      }
-      try {
-        const r = await render(job.manifest);
-        states.set(job.key, { status: 'ready', files: r.files });
-      } catch (e) {
-        states.set(job.key, { status: 'error', error: e instanceof Error ? e.message : String(e) });
-      }
-      notify(job.key);
-    }
-  } finally {
-    running = false;
-  }
-}
-
-/** Subscribe to one proxy's state, requesting its render (debounced). */
-function useProxyFrames(key: string, manifest: Manifest): ProxyState {
-  const [, bump] = useState(0);
-  useEffect(() => {
-    const set = listeners.get(key) ?? new Set<() => void>();
-    const listener = () => bump((n) => n + 1);
-    set.add(listener);
-    listeners.set(key, set);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    if (!states.has(key)) {
-      states.set(key, { status: 'pending' });
-      timer = setTimeout(() => {
-        queue.push({ key, manifest });
-        void drain((m) => renderComponentProxy(m, PROXY_SCALE));
-      }, PROXY_DEBOUNCE_MS);
-    }
-    return () => {
-      if (timer !== undefined) {
-        clearTimeout(timer);
-        if (states.get(key)?.status === 'pending' && !queue.some((j) => j.key === key)) states.delete(key);
-      }
-      set.delete(listener);
-    };
-  }, [key, manifest]);
-  return states.get(key) ?? { status: 'pending' };
+/** One proxy key's state, through React's external-store contract. Never read
+ *  the store during render any other way: the React Compiler memoizes such a
+ *  read on its inputs, and the update then never shows (B-282). */
+function useProxyState(key: string): ProxyState {
+  const subscribe = useCallback((onChange: () => void) => customProxyStore.subscribe(key, onChange), [key]);
+  const get = useCallback(() => customProxyStore.get(key), [key]);
+  return useSyncExternalStore(subscribe, get, get);
 }
 
 const ProxyDocCtx = createContext<ProxyDoc>({});
@@ -115,20 +67,35 @@ const ProxyRenderer: CustomRenderer = (req) => {
     [fps, doc.theme, doc.themeDef, def, raw, durationInFrames],
   );
   const key = useMemo(() => JSON.stringify(manifest), [manifest]);
-  const state = useProxyFrames(key, manifest);
-  if (state.status === 'ready' && state.files.length > 0) {
+  const state = useProxyState(key);
+  if (state.status === 'ready') {
     const file = state.files[Math.max(0, Math.min(frame, state.files.length - 1))];
-    return <img src={convertFileSrc(file)} alt="" style={{ width, height, display: 'block' }} />;
+    return (
+      <img
+        src={convertFileSrc(file)}
+        alt=""
+        data-custom-proxy-status="ready"
+        // A frame the webview cannot load (outside the asset-protocol scope, a
+        // file gone) becomes a named error, not a broken image.
+        onError={() => customProxyStore.frameFailed(key, file)}
+        style={{ width, height, display: 'block' }}
+      />
+    );
   }
+  const statusPx = Math.max(STATUS_MIN_PX, Math.min(STATUS_MAX_PX, Math.round(Math.min(width, height) / STATUS_BOX_DIVISOR)));
   return (
     <div style={{ position: 'relative', width, height }}>
       <PlaceholderRenderer {...req} />
       <span
+        data-custom-proxy-status={state.status}
         style={{
           position: 'absolute',
           left: 8,
+          right: 8,
           bottom: 6,
-          fontSize: 14,
+          fontSize: statusPx,
+          lineHeight: 1.25,
+          overflowWrap: 'anywhere',
           color: req.theme.textDim,
           fontFamily: req.theme.fontUi,
         }}

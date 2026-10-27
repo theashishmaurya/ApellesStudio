@@ -27,7 +27,9 @@
  *
  * Ops:
  *   `debug_get_ui_state`          — read every UI-state flag below, plus the
- *                                   open dialogs the DOM actually has.
+ *                                   open dialogs the DOM actually has and
+ *                                   (B-282) the Motion player's custom-layer
+ *                                   proxy states.
  *   `debug_set_active_tab`        — Edit / Motion / Colorist.
  *   `debug_set_sources_panel`     — the shell's docked library column (Sources
  *                                   is its default content; D-263 lets the
@@ -84,6 +86,7 @@ import {
   EDIT_LIBRARY_MODES,
   parseEditLibraryMode,
 } from '@apelles/editor';
+import { customProxyStore } from '@apelles/motion/src/customProxyStore';
 
 import { describeOpenDialogs, serializeDomTree } from './domTree';
 import {
@@ -155,6 +158,14 @@ function uiStateSnapshot() {
     // the same reason `libraryMode` above is reported; `mounted` is read off
     // the real document, not a flag, so a hand-removed node shows as gone.
     fpsOverlay: fpsOverlayState(),
+    motion: {
+      // B-282 — every custom layer's live-player proxy (D-409): its component
+      // and props, `waiting` / `rendering` / `ready` / `error`, how many
+      // mounted layers show it, and its frame count + folder or its error.
+      // "Is the player drawing this custom layer's frames, and if not, why",
+      // answered without reading a screenshot.
+      customProxies: customProxyStore.snapshot(),
+    },
   };
 }
 

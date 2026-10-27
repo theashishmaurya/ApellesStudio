@@ -38,7 +38,7 @@ MCP as tools of the same name.
 
 | op | what it does |
 | --- | --- |
-| `debug_get_ui_state` | active tab, Sources panel, Edit Inspector (open + which of its tabs), selection/playhead, and every dialog the DOM currently has open |
+| `debug_get_ui_state` | active tab, Sources panel, Edit Inspector (open + which of its tabs), selection/playhead, every dialog the DOM currently has open, and `motion.customProxies` — each Motion custom layer's live-player proxy: component, props, status, viewers, frames/folder or error (B-282) |
 | `debug_set_active_tab` | `{tab: 'edit'\|'motion'\|'colorist'}` (or a 1-based index) |
 | `debug_set_sources_panel` | `{open: bool}` — the shell's docked Sources column |
 | `debug_set_library_mode` | `{mode: 'sources'\|'titles'\|'effects'\|'subtitles'\|'recut'\|'music'\|'index'}` — which panel the Edit tab's left library column shows, and opens the column so it is visible; an unknown mode is refused with the accepted list |
@@ -64,8 +64,9 @@ between them.
 
 ## Boundary
 
-- **Depends on** `@apelles/shell` (the tab/Sources store) and `@apelles/editor`
-  (the Inspector flag, the preview timing buffers) — one way only, so this
+- **Depends on** `@apelles/shell` (the tab/Sources store), `@apelles/editor`
+  (the Inspector flag, the preview timing buffers) and `@apelles/motion` (the
+  custom-layer proxy store, `customProxyStore.ts`) — one way only, so this
   package sits *above* the tab packages and below the app.
 - **Does not** import the app (`app/src`). That is why the Colorist tab's own
   panel/visibility/settings state (`app/src/store/useUIStore.ts`, inside the
