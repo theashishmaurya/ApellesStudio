@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-27** — Next release set: **v0.4.0, the Motion release** (owner); no Edit-only v0.3.0. Checklist at the top of `docs/04-roadmap.md`.
+
 - **2026-10-27** — Roadmap **0i**: publish straight to YouTube and Instagram (long-form, Shorts, Reels), opt-in, owner request.
 - **2026-10-27** — **Custom components can use roughjs and d3 (D-412):** the import allowlist gains roughjs (a drawing call without an explicit non-zero `seed` is refused, `rough_unseeded`) and d3-scale/shape/array/interpolate/format, all exact-pinned; two new certified built-ins, `sketch-callout` (hand-drawn box/circle/underline/arrow) and `stat-bars` (d3 bars). `@remotion/skia` spiked and left out (needs react-native + a global bundler override).
 

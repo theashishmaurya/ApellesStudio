@@ -9,6 +9,20 @@ numbers are actually calibrated).
 
 ---
 
+## Next release: v0.4.0, "the Motion release" (owner, 2026-10-27)
+
+Owner: *"Lets do it bigger one with Motion, we will take some time to get the motion right, That is the MOAT actually."* No v0.3.0 Edit-only release; everything merged since v0.2.0 ships together in v0.4.0, which is the first beta with the Motion tab. Get Motion right before tagging; no date. Must have:
+
+- [ ] **Motion ships in the bundle:** lift D-391's hide flag, with Motion's render runtime (Node.js + Chrome Headless Shell + the engine) downloaded on demand in the background the first time the Motion tab opens (owner decision recorded with D-391; editing works at once, Export waits). The D-409 component checker needs Node 22.18+.
+- [ ] **Remotion licence settled** for the founder-studio business: Remotion is free for individuals and companies of up to 3 people; a larger for-profit company needs a Remotion company licence. Confirm with the owner before tagging.
+- [ ] **Unsaved Motion edits survive a reload** (0g).
+- [x] Authoring as data, templates, custom components, rough.js/d3 (D-403..D-407, D-409, D-412); export matches the player (B-281/B-282).
+- [ ] Music-driven motion (beat sync), in progress.
+- [ ] Brand kit (colours, fonts, motion style, references across all tabs).
+- [ ] Automatic Clipper Phases 1-2 (shorts from one agent call; D-411).
+- [ ] A full release-checklist run on the installed app (`docs/releases/README.md`), notes in `docs/releases/v0.4.0.md`.
+- Nice to have: publish to YouTube / Instagram (0i).
+
 ## In flight right now (2026-09-04 afternoon) — live-testing punch list
 
 Owner asked to track this live so nothing found today gets lost — update as each lands
