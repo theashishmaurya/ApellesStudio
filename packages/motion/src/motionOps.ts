@@ -218,6 +218,21 @@ import {
 import type { LoadState, ReloadOutcome, RenderOptions, RenderOutcome, SaveOutcome } from './useMotionManifest';
 import type { MotionRenderStatus } from './renderLoop';
 import type { MotionAssetRecord } from './manifestIO';
+// D-409 — certified custom components as catalog data.
+import {
+  certifyVersion,
+  componentSummary,
+  deleteVersion,
+  ensureComponents,
+  insertCustomLayer,
+  listComponentSummaries,
+  resolveVersion,
+  runProof,
+  writeDraft,
+  type MotionComponentAccess,
+} from './customComponentActions';
+import { customLayerJsonSchema, parseCustomUse } from './customComponents';
+import { COMPONENT_ID_PATTERN, type ComponentSpec } from '@apelles/motion-engine/src/custom/componentDef';
 
 /**
  * The slice of `useMotionManifest()`'s return value these ops actually use.
@@ -308,6 +323,11 @@ export interface MotionOpsContext {
    *  only and the writing ops refuse cleanly. Injected for the same reason
    *  `presets` is. */
   templates?: () => MotionTemplateAccess;
+  /** D-409 — the custom-component library and the backend that checks,
+   *  proves, certifies and installs components, or `undefined` when nothing
+   *  supplies it (the component ops then refuse cleanly and a custom layer
+   *  cannot be inserted). Injected for the same reason `presets` is. */
+  components?: () => MotionComponentAccess;
 }
 
 /** D-407 — the ops layer's window onto the template library. */
@@ -1049,6 +1069,23 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       layerTransformKeyFields: LAYER_TRANSFORM_KEY_FIELDS,
       camera2dKeyFields: CAM2D_KEY_FIELDS,
       camera3dKeyFields: CAM3D_KEY_FIELDS,
+      // D-409 — every certified custom component, as a `use` motion_add_layer
+      // takes (`custom:<id>@<version>`) with its layer's JSON Schema. Drafts
+      // are not listed: only a certified version is data a document may use.
+      customComponents: (ctx.components?.().list() ?? [])
+        .filter((e) => e.meta.status === 'certified')
+        .map((e) => ({
+          use: `custom:${e.id}@${e.version}`,
+          component: `${e.id}@${e.version}`,
+          name: e.meta.name,
+          description: e.meta.description ?? '',
+          source: e.source,
+          size: e.meta.size,
+          duration: e.meta.duration,
+          props: e.meta.props,
+          container: 'scene.layers (target.kind="layer"), or a group\'s children',
+          propsSchema: customLayerJsonSchema(e.meta),
+        })),
     }),
 
     /**
@@ -1481,7 +1518,10 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       }
 
       const values = a?.values ?? {};
-      const plan = planInstantiate(guard.manifest, template, values, target, {
+      // D-409 — a template body may use certified custom components.
+      const withComponents = await ensureComponents(ctx.components?.(), guard.manifest, template.body);
+      if ('error' in withComponents) return { error: withComponents.error };
+      const plan = planInstantiate(withComponents.manifest, template, values, target, {
         iconNames: await iconNamesFor(template.body),
         sceneId,
       });
@@ -1534,7 +1574,9 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
           error: `the instance was made from "${template.id}" version ${found.provenance.version}; the library has version ${template.version}. Pass upgrade=true to re-expand with the new version.`,
         };
       }
-      const plan = planRefill(guard.manifest, ref, template, a?.values, { iconNames: await iconNamesFor(template.body) });
+      const withComponents = await ensureComponents(ctx.components?.(), guard.manifest, template.body);
+      if ('error' in withComponents) return { error: withComponents.error };
+      const plan = planRefill(withComponents.manifest, ref, template, a?.values, { iconNames: await iconNamesFor(template.body) });
       if (!plan.ok) return { error: plan.error, ...(plan.issues.length > 0 ? { issues: plan.issues } : {}) };
       const result = {
         template: { id: template.id, version: template.version, previousVersion: found.provenance.version },
@@ -1546,6 +1588,172 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       if (a?.dry_run === true || a?.dryRun === true) return { dryRun: true, ok: true, ...result };
       cur.commit(plan.manifest, `Refill template: ${template.name}`);
       return result;
+    },
+
+    // ---- custom components (D-409) -------------------------------------
+
+    /** D-409 — the custom-component library: built-ins and the user's, one
+     *  row per id with every version's status, the certified `use` string, the
+     *  declared props and a JSON Schema of a layer of it. Needs no project. */
+    motion_list_components: (a) => {
+      const access = ctx.components?.();
+      if (!access) return { error: 'the component library is unavailable in this context' };
+      const rawStatus = a?.status;
+      if (rawStatus !== undefined && rawStatus !== null && rawStatus !== 'draft' && rawStatus !== 'certified' && rawStatus !== 'all') {
+        return { error: 'status must be draft, certified or all' };
+      }
+      const status = (rawStatus ?? 'all') as 'draft' | 'certified' | 'all';
+      const tag = typeof a?.tag === 'string' && a.tag.length > 0 ? a.tag : undefined;
+      return {
+        components: listComponentSummaries(access.list(), { status, ...(tag ? { tag } : {}) }),
+        loadErrors: access.loadErrors(),
+      };
+    },
+
+    /** D-409 — one version in full: its declaration, status, check warnings,
+     *  proof, and the source (read-only: editing it is a new draft). */
+    motion_get_component: async (a) => {
+      const access = ctx.components?.();
+      if (!access) return { error: 'the component library is unavailable in this context' };
+      const id = a?.id;
+      if (typeof id !== 'string' || id.length === 0) return { error: 'id is required (motion_list_components lists them)' };
+      const rawVersion = a?.version;
+      const version = rawVersion === undefined || rawVersion === null ? undefined : Math.round(Number(rawVersion));
+      if (version !== undefined && !Number.isFinite(version)) return { error: 'version must be an integer' };
+      const entry = resolveVersion(access.list(), id, version);
+      if ('error' in entry) return { error: entry.error };
+      const files = await access.read(entry.id, entry.version);
+      const proof = entry.meta.proof;
+      return {
+        id: entry.id,
+        version: entry.version,
+        status: entry.meta.status,
+        source: entry.source,
+        use: entry.meta.status === 'certified' ? `custom:${entry.id}@${entry.version}` : null,
+        meta: entry.meta,
+        code: files.source,
+        contactSheet: proof?.contactSheet ? `${entry.dir}/${proof.contactSheet}` : null,
+        summary: componentSummary(access.list().filter((e) => e.id === entry.id)),
+      };
+    },
+
+    /** D-409 — write a custom Remotion component as a DRAFT. The declaration
+     *  is checked here, the source by the static check (allowlisted imports,
+     *  the AST ban list, a strict type-check) in Node; nothing is saved unless
+     *  both pass. Writing an id whose newest version is an uncertified draft
+     *  replaces that draft; after a certified version it starts the next one. */
+    motion_write_component: async (a) => {
+      const access = ctx.components?.();
+      if (!access) return { error: 'the component library is unavailable in this context' };
+      const id = a?.id;
+      if (typeof id !== 'string' || !COMPONENT_ID_PATTERN.test(id)) {
+        return { error: 'id is required: lowercase letters, digits and hyphens, at most 64 (e.g. "particle-burst")' };
+      }
+      const source = a?.source;
+      if (typeof source !== 'string' || source.trim().length === 0) return { error: 'source (the component\'s TSX) is required' };
+      const cur = api();
+      const canvas = cur.manifest ? { w: cur.manifest.width, h: cur.manifest.height } : { w: 1920, h: 1080 };
+      const spec = {
+        id,
+        name: typeof a?.name === 'string' && a.name.length > 0 ? a.name : id,
+        ...(typeof a?.description === 'string' ? { description: a.description } : {}),
+        ...(Array.isArray(a?.tags) ? { tags: a.tags } : {}),
+        props: a?.props ?? [],
+        size: a?.size ?? canvas,
+        duration: a?.duration ?? 3,
+      } as ComponentSpec;
+      const dryRun = a?.dry_run === true || a?.dryRun === true;
+      const out = await writeDraft(access, spec, source, dryRun);
+      if (!out.ok) return { error: out.error, ...(out.issues ? { issues: out.issues } : {}) };
+      const { check, draft } = out.result;
+      if (dryRun || !draft) return { dryRun: true, ok: true, id, warnings: check.warnings };
+      const meta = draft.meta as { sourceHash?: string; codeHash?: string };
+      return {
+        id: draft.id,
+        version: draft.version,
+        status: 'draft',
+        replaced: draft.replaced,
+        sourceHash: meta.sourceHash,
+        codeHash: meta.codeHash,
+        warnings: check.warnings,
+        next: `motion_check_component(id="${draft.id}") renders the certification proof; then motion_certify_component`,
+      };
+    },
+
+    /** D-409 — the certification check: render the component's sample frames
+     *  (declared defaults, the low and the high edge of every prop) three ways
+     *  at once — in order in one tab, and as fresh stills in two out-of-order
+     *  orders — and require identical pixels; tile a contact sheet. Recorded
+     *  on a draft; certifies nothing by itself. */
+    motion_check_component: async (a) => {
+      const access = ctx.components?.();
+      if (!access) return { error: 'the component library is unavailable in this context' };
+      const id = a?.id;
+      if (typeof id !== 'string' || id.length === 0) return { error: 'id is required' };
+      const rawVersion = a?.version;
+      const version = rawVersion === undefined || rawVersion === null ? undefined : Math.round(Number(rawVersion));
+      if (version !== undefined && !Number.isFinite(version)) return { error: 'version must be an integer' };
+      const out = await runProof(access, id, version);
+      if (!out.ok) return { error: out.error };
+      const { proof, contactSheet, thumbnail, recorded } = out.result;
+      const mismatched = proof.frames.filter((f) => !f.same);
+      return {
+        ok: proof.ok,
+        id: out.entry.id,
+        version: out.entry.version,
+        path: contactSheet,
+        thumbnail,
+        recorded,
+        frames: proof.frames,
+        passes: proof.passes,
+        ...(mismatched.length > 0
+          ? { mismatched: mismatched.map((f) => ({ variant: f.variant, frame: f.frame })), hint: 'the component is not a pure function of (props, frame): look for state kept between renders, unseeded randomness or time read from anywhere but useCurrentFrame()' }
+          : {}),
+        ...(proof.error ? { error: proof.error } : {}),
+        next: proof.ok && out.entry.meta.status === 'draft' ? `look at the contact sheet, then motion_certify_component(id="${out.entry.id}", version=${out.entry.version})` : undefined,
+      };
+    },
+
+    /** D-409 — certify a draft whose certification check passed for its
+     *  current source: from then on the version is immutable and usable as
+     *  data (`custom:<id>@<version>`). Always an explicit call. */
+    motion_certify_component: async (a) => {
+      const access = ctx.components?.();
+      if (!access) return { error: 'the component library is unavailable in this context' };
+      const id = a?.id;
+      if (typeof id !== 'string' || id.length === 0) return { error: 'id is required' };
+      const rawVersion = a?.version;
+      const version = rawVersion === undefined || rawVersion === null ? undefined : Math.round(Number(rawVersion));
+      if (version !== undefined && !Number.isFinite(version)) return { error: 'version must be an integer' };
+      const out = await certifyVersion(access, id, version);
+      if (!out.ok) return { error: out.error };
+      const e = out.entry;
+      return {
+        certified: true,
+        id: e.id,
+        version: e.version,
+        use: `custom:${e.id}@${e.version}`,
+        component: `${e.id}@${e.version}`,
+        sourceHash: e.meta.sourceHash,
+        codeHash: e.meta.codeHash,
+        propsSchema: customLayerJsonSchema(e.meta),
+      };
+    },
+
+    /** D-409 — delete one version (or, without `version`, every version) of a
+     *  component from the user library. Documents that use it keep their
+     *  copies. Built-ins cannot be deleted. */
+    motion_delete_component: async (a) => {
+      const access = ctx.components?.();
+      if (!access) return { error: 'the component library is unavailable in this context' };
+      const id = a?.id;
+      if (typeof id !== 'string' || id.length === 0) return { error: 'id is required' };
+      const rawVersion = a?.version;
+      const version = rawVersion === undefined || rawVersion === null ? undefined : Math.round(Number(rawVersion));
+      if (version !== undefined && !Number.isFinite(version)) return { error: 'version must be an integer' };
+      const out = await deleteVersion(access, id, version);
+      if (!out.ok) return { error: out.error };
+      return { deleted: id, ...(version !== undefined ? { version } : {}), removed: out.removed };
     },
 
     /** D-407 — remove a template from the user library. Instances already in
@@ -1804,7 +2012,22 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       }
 
       const use = String(a?.use ?? '');
-      if (!VALID_USES.has(use)) return { error: `use must be one of: ${[...VALID_USES].join(', ')}` };
+      // D-409 — `custom:<id>` / `custom:<id>@<v>`: a certified component from
+      // the library, installed into the project and embedded in the document.
+      if (parseCustomUse(use)) {
+        const rawCustomProps = a?.props;
+        if (rawCustomProps !== undefined && rawCustomProps !== null && (typeof rawCustomProps !== 'object' || Array.isArray(rawCustomProps))) {
+          return { error: 'props must be an object of the component\'s declared props (see motion_list_components)' };
+        }
+        const added = await insertCustomLayer(ctx.components?.(), manifest, sceneIndex, use, (rawCustomProps ?? undefined) as Record<string, unknown> | undefined);
+        if (!added.ok) return { error: added.error, ...(added.issues ? { issues: added.issues } : {}) };
+        cur.commit(added.manifest, `Add ${added.component}`);
+        const selection: Selection = { sceneIndex, target: { kind: 'layer', index: added.layerIndex, id: added.id } };
+        return { sceneIndex, selection, addedUse: 'custom', component: added.component };
+      }
+      if (!VALID_USES.has(use)) {
+        return { error: `use must be one of: ${[...VALID_USES].join(', ')}, or custom:<id> for a certified custom component (motion_list_components)` };
+      }
 
       // D-403 — optional `props`, laid over the Catalog default. Validated
       // strictly as the WHOLE merged layer (unknown keys refused), so a typo'd
@@ -1888,7 +2111,10 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         if (!Number.isFinite(at)) return { error: 'at must be an integer index into scene.layers' };
       }
 
-      const plan = planInsertLayers(guard.manifest, sceneIndex, a?.layers, at, await iconNamesFor(a?.layers));
+      // D-409 — any certified component the layers use is embedded first.
+      const withComponents = await ensureComponents(ctx.components?.(), guard.manifest, a?.layers);
+      if ('error' in withComponents) return { error: withComponents.error };
+      const plan = planInsertLayers(withComponents.manifest, sceneIndex, a?.layers, at, await iconNamesFor(a?.layers));
       if (!plan.ok) return { error: plan.error, ...(plan.issues.length > 0 ? { issues: plan.issues } : {}) };
       const { selections, count } = plan;
       if (a?.dry_run === true || a?.dryRun === true) return { dryRun: true, ok: true, sceneIndex, count, selections };
@@ -1911,7 +2137,9 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
 
       const sceneIndex = Math.round(Number(arg(a, 'scene_index', 'sceneIndex')));
       if (!Number.isFinite(sceneIndex)) return { error: 'scene_index (integer) required' };
-      const plan = planSetScene(guard.manifest, sceneIndex, a?.scene, ctx.editLinks?.(), await iconNamesFor(a?.scene));
+      const withComponents = await ensureComponents(ctx.components?.(), guard.manifest, a?.scene);
+      if ('error' in withComponents) return { error: withComponents.error };
+      const plan = planSetScene(withComponents.manifest, sceneIndex, a?.scene, ctx.editLinks?.(), await iconNamesFor(a?.scene));
       if (!plan.ok) return { error: plan.error, ...(plan.issues.length > 0 ? { issues: plan.issues } : {}) };
       const next = plan.manifest;
       const result = {

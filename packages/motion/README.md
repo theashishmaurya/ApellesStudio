@@ -325,6 +325,26 @@ filter, Fill & insert form built from the Inspector's `FieldControl` with live c
 a still preview, Save scene as template from a scene row's bookmark action).
 `templateOps.e2e.test.ts` is the fill-a-saved-design proof.
 
+## Custom components (D-409)
+
+`customComponents.ts`: the pure half — library sanitising (a bad entry drops itself, named),
+`parseCustomUse` (`custom:<id>[@<v>]`), `componentRefFrom` / `embedComponents` /
+`addCustomLayer` (copy semantics: the manifest embeds the pinned definition), `proofPlan`
+(the certification document: defaults, low edge, high edge, four frames each) and
+`proxyManifest` (one custom layer as a transparent one-layer document for the player).
+`customComponentActions.ts`: the actions both interfaces call — `writeDraft`, `runProof`,
+`certifyVersion`, `deleteVersion`, `ensureComponents` (install and embed whatever a fragment
+or template body pins), `insertCustomLayer`. `customComponentLibraryIO.ts`: the nine Tauri
+commands, the library store and `componentAccess()`. MCP: `motion_list_components`,
+`motion_get_component`, `motion_write_component`, `motion_check_component`,
+`motion_certify_component`, `motion_delete_component`, and `motion_add_layer(use:
+"custom:<id>")`. GUI: `CustomComponentsSection.tsx` in the Catalog (drafts/certified,
+check results, contact sheet, read-only source, Run check, Certify, Edit as new draft,
+Insert form, New component form), `CustomPropsFields.tsx` in the Inspector, and
+`customProxy.tsx` — the player's renderer, which shows frames the renderer process
+rendered and never runs component code. `customOps.e2e.test.ts` is the write → check →
+certify → insert → validate → preview proof.
+
 ## Brand building blocks in the GUI (D-404/D-405)
 
 Catalog rows for `image`/`icon`/`shape`/`counter`/`group` (Phosphor glyphs; adding an image

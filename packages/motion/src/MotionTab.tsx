@@ -105,6 +105,12 @@ import { useMotionTemplateLibraryStore } from './templateLibraryIO';
 import { listTemplates, templateTags, versionForSave } from './templateLibrary';
 import { exposableFields, planInstantiate, templateFromSource, type TemplatePlan, type TemplateSpec } from './templates';
 import type { TemplatesSectionProps } from './TemplatesSection';
+// D-409 — custom components: the library store, the shared actions, the
+// Catalog section and the live player's proxy renderer.
+import { allowComponentDirs, componentAccess, useMotionComponentLibraryStore } from './customComponentLibraryIO';
+import { ensureComponents, insertCustomLayer } from './customComponentActions';
+import type { CustomComponentsSectionProps } from './CustomComponentsSection';
+import { CustomProxyProvider } from './customProxy';
 import { useMotionAssetResolver } from './assetResolver';
 import { pickAndImportImage } from './BrandFieldControls';
 import { useMotionProjectStore } from './motionProjectStore';
@@ -216,6 +222,11 @@ export function MotionTab({
   const templateError = useMotionTemplateLibraryStore((s) => s.error);
   const templatesLoaded = useMotionTemplateLibraryStore((s) => s.loaded);
   const [saveTemplateScene, setSaveTemplateScene] = useState<number | null>(null);
+  // D-409 — the custom-component library (user-level plus built-ins, loaded once).
+  const componentEntries = useMotionComponentLibraryStore((s) => s.entries);
+  const componentLoadErrors = useMotionComponentLibraryStore((s) => s.loadErrors);
+  const componentError = useMotionComponentLibraryStore((s) => s.error);
+  const componentsLoaded = useMotionComponentLibraryStore((s) => s.loaded);
   // D-156, Phase 0b — a Phase 1 drag's in-flight preview override; `null`
   // outside a drag. See `MotionPreview.tsx`'s own doc comment for why this
   // is kept separate from `m.manifest` rather than written into it directly.
@@ -301,6 +312,13 @@ export function MotionTab({
   useEffect(() => {
     if (!templatesLoaded) void useMotionTemplateLibraryStore.getState().reload();
   }, [templatesLoaded]);
+  // D-409 - the component library, the same way; its folders are allowed in
+  // the asset scope so contact sheets can be shown.
+  useEffect(() => {
+    if (componentsLoaded) return;
+    void useMotionComponentLibraryStore.getState().reload();
+    void allowComponentDirs().catch(() => undefined);
+  }, [componentsLoaded]);
 
   // B-058 — this screen is now driven by the app's own "a project is open"
   // signal (`motionProjectStore.openProjectPath`) and nothing else, so it can no
@@ -504,15 +522,19 @@ export function MotionTab({
     }
     // D-405 — icon names are checked against the installed library, as the ops do.
     const icons = await iconNamesFor(value);
+    // D-409 — any certified component the fragment uses is embedded first.
+    const withComponents = await ensureComponents(componentAccess(), m.manifest, value);
+    if ('error' in withComponents) return { error: withComponents.error, issues: [] };
+    const base = withComponents.manifest;
     if (mode === 'layers') {
       const layers = Array.isArray(value) ? value : [value];
-      const plan = planInsertLayers(m.manifest, targetSceneIndex, layers, undefined, icons);
+      const plan = planInsertLayers(base, targetSceneIndex, layers, undefined, icons);
       if (!plan.ok) return plan;
       m.commit(plan.manifest, plan.count === 1 ? 'Insert layer' : `Insert ${plan.count} layers`);
       if (plan.selections[0]) onSelect(plan.selections[0]);
       return null;
     }
-    const plan = planSetScene(m.manifest, targetSceneIndex, value, editLinks, icons);
+    const plan = planSetScene(base, targetSceneIndex, value, editLinks, icons);
     if (!plan.ok) return plan;
     m.commit(plan.manifest, 'Replace scene');
     return null;
@@ -528,7 +550,9 @@ export function MotionTab({
     }
     const t = found.template;
     const target = t.kind === 'scene' ? { afterSceneIndex: targetSceneIndex } : { intoSceneIndex: targetSceneIndex };
-    return planInstantiate(m.manifest, t, values, target, { iconNames: await iconNamesFor(t.body) });
+    const withComponents = await ensureComponents(componentAccess(), m.manifest, t.body);
+    if ('error' in withComponents) return { ok: false, error: withComponents.error, issues: [] };
+    return planInstantiate(withComponents.manifest, t, values, target, { iconNames: await iconNamesFor(t.body) });
   };
 
   const templatesProps: TemplatesSectionProps = {
@@ -582,6 +606,25 @@ export function MotionTab({
     onCancelSave: () => setSaveTemplateScene(null),
   };
 
+  /** D-409 — the Custom section: the same actions `motion_*_component` and
+   *  `motion_add_layer(use: "custom:<id>")` run. */
+  const customProps: CustomComponentsSectionProps = {
+    entries: componentEntries,
+    loadErrors: componentLoadErrors,
+    libraryError: componentError,
+    targetSceneId,
+    access: componentAccess(),
+    toSrc: (path) => convertFileSrc(path),
+    onInsert: async (use, props) => {
+      if (!m.manifest || targetSceneIndex === null) return { error: 'no scene to insert into', issues: [] };
+      const added = await insertCustomLayer(componentAccess(), m.manifest, targetSceneIndex, use, props);
+      if (!added.ok) return { error: added.error, issues: added.issues ?? [] };
+      m.commit(added.manifest, `Add ${added.component}`);
+      onSelect({ sceneIndex: targetSceneIndex, target: { kind: 'layer', index: added.layerIndex, id: added.id } });
+      return null;
+    },
+  };
+
   const onDeletePreset = (presetId: string) => {
     const next = removePreset(presets, presetId);
     if (next === presets) return;
@@ -616,6 +659,9 @@ export function MotionTab({
 
   return (
     <AssetResolverProvider resolve={resolveAsset}>
+    {/* D-409 — custom layers show frames the renderer process rendered; their
+        code never runs in this webview. */}
+    <CustomProxyProvider doc={{ theme: m.manifest?.theme, themeDef: m.manifest?.themeDef }}>
     <div className="h-full w-full min-h-0 bg-bg-primary flex flex-col">
       {/* D-172 — the always-visible toolbar: the `</>` manifest toggle
           (with an error-state border when a parse error exists and the
@@ -871,6 +917,7 @@ export function MotionTab({
                     onInsertJson={onInsertJson}
                     catalogError={catalogError}
                     templates={templatesProps}
+                    custom={customProps}
                   />
                 )}
             </div>
@@ -907,6 +954,7 @@ export function MotionTab({
       </PanelGroup>
       </div>
     </div>
+    </CustomProxyProvider>
     </AssetResolverProvider>
   );
 }

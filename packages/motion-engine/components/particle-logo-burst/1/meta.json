@@ -1,0 +1,241 @@
+{
+  "certified": {
+    "codeHash": "7299dfa4eb77a784a359673617511558345bcaf03dc297012fb3c326f95d6861",
+    "sourceHash": "a48a6f622a5c2c5de4d28e70ed144d4701ad64bd43bf6773e4132ca4ef25b0e4"
+  },
+  "codeHash": "7299dfa4eb77a784a359673617511558345bcaf03dc297012fb3c326f95d6861",
+  "description": "A logo word punches in while a seeded burst of particles flies out behind it and settles into a halo.",
+  "duration": 2.5,
+  "id": "particle-logo-burst",
+  "name": "Particle logo burst",
+  "proof": {
+    "codeHash": "7299dfa4eb77a784a359673617511558345bcaf03dc297012fb3c326f95d6861",
+    "contactSheet": "contact.png",
+    "frames": [
+      {
+        "frame": 0,
+        "hashes": [
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116",
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116",
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "defaults"
+      },
+      {
+        "frame": 25,
+        "hashes": [
+          "3475b28db2fab77f0e3994f3315f184f6096630c4b9dda5c136ff61b85904eb7",
+          "a3fce330a74846467d7dea161d3cb1d23deeb1beebb60b944a902326cafef27c",
+          "a3fce330a74846467d7dea161d3cb1d23deeb1beebb60b944a902326cafef27c"
+        ],
+        "inOrderMaxDelta": 1,
+        "inOrderPixels": 1,
+        "same": true,
+        "variant": "defaults"
+      },
+      {
+        "frame": 49,
+        "hashes": [
+          "f06b380afe9f5d172d9754867b22a2c4a4f667267cd0c212bd7d5309ecaf620f",
+          "b983ba88f1214b362e0e59b66c5c4407ef4932c83b336c674dcdda8299bf476b",
+          "b983ba88f1214b362e0e59b66c5c4407ef4932c83b336c674dcdda8299bf476b"
+        ],
+        "inOrderMaxDelta": 1,
+        "inOrderPixels": 3,
+        "same": true,
+        "variant": "defaults"
+      },
+      {
+        "frame": 74,
+        "hashes": [
+          "b2ddfdd0afe9b86ead42842590ba60810845083e73658508e53d26e3e0d3fcf9",
+          "b2ddfdd0afe9b86ead42842590ba60810845083e73658508e53d26e3e0d3fcf9",
+          "b2ddfdd0afe9b86ead42842590ba60810845083e73658508e53d26e3e0d3fcf9"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "defaults"
+      },
+      {
+        "frame": 75,
+        "hashes": [
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116",
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116",
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "min"
+      },
+      {
+        "frame": 100,
+        "hashes": [
+          "2401d831da0bcd832a65b34636bc9610de574ec72a0961f44534c707fd4540f6",
+          "2401d831da0bcd832a65b34636bc9610de574ec72a0961f44534c707fd4540f6",
+          "2401d831da0bcd832a65b34636bc9610de574ec72a0961f44534c707fd4540f6"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "min"
+      },
+      {
+        "frame": 124,
+        "hashes": [
+          "fe08524fef9b827fc16294e607eaa76056bff1f7bc253100af565b1dd0e9b1de",
+          "fe08524fef9b827fc16294e607eaa76056bff1f7bc253100af565b1dd0e9b1de",
+          "fe08524fef9b827fc16294e607eaa76056bff1f7bc253100af565b1dd0e9b1de"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "min"
+      },
+      {
+        "frame": 149,
+        "hashes": [
+          "6ff0e368080836044db173c5087bc84cf2eab975d941dc4f0dc9beb89b9c83ee",
+          "6ff0e368080836044db173c5087bc84cf2eab975d941dc4f0dc9beb89b9c83ee",
+          "6ff0e368080836044db173c5087bc84cf2eab975d941dc4f0dc9beb89b9c83ee"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "min"
+      },
+      {
+        "frame": 150,
+        "hashes": [
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116",
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116",
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "max"
+      },
+      {
+        "frame": 175,
+        "hashes": [
+          "05a8c9572dcdba42b3a94b8fb4b6d5fe710930444b2538de5c7e7ed2fb992a43",
+          "0478bdeb4b570fdf6c107b77102c476f6b64c1c7f0e74d0ef2aa63e175b4abdc",
+          "0478bdeb4b570fdf6c107b77102c476f6b64c1c7f0e74d0ef2aa63e175b4abdc"
+        ],
+        "inOrderMaxDelta": 1,
+        "inOrderPixels": 8,
+        "same": true,
+        "variant": "max"
+      },
+      {
+        "frame": 199,
+        "hashes": [
+          "d00bc1b872ddb8bd630b97a7a0df33c067219fb80f665937af774b3f11b7173c",
+          "9d5d33912271d7f320935051c7eb47d83567a195f1528ff3ff64179e21c56517",
+          "9d5d33912271d7f320935051c7eb47d83567a195f1528ff3ff64179e21c56517"
+        ],
+        "inOrderMaxDelta": 1,
+        "inOrderPixels": 8,
+        "same": true,
+        "variant": "max"
+      },
+      {
+        "frame": 224,
+        "hashes": [
+          "401edafac3e84d62c832845de117cbc2987a98f273c00231e0afa6fd5baee04b",
+          "0f7e1f5dcebcfed7d1e31ee3dbaa960560547b70925dfea167d20055792a2adc",
+          "0f7e1f5dcebcfed7d1e31ee3dbaa960560547b70925dfea167d20055792a2adc"
+        ],
+        "inOrderMaxDelta": 1,
+        "inOrderPixels": 3,
+        "same": true,
+        "variant": "max"
+      }
+    ],
+    "ok": true,
+    "passes": [
+      "in order: every frame 0..=last in one browser tab (--concurrency=1), within 2/255 on at most 0.1% of pixels of the fresh stills",
+      "fresh stills, backwards: [224, 199, 175, 150, 149, 124, 100, 75, 74, 49, 25, 0]",
+      "fresh stills, scrambled: [74, 49, 0, 25, 149, 124, 75, 100, 224, 199, 150, 175]"
+    ],
+    "sourceHash": "a48a6f622a5c2c5de4d28e70ed144d4701ad64bd43bf6773e4132ca4ef25b0e4",
+    "thumbnail": "thumbnail.png"
+  },
+  "props": [
+    {
+      "constraints": {
+        "maxLen": 24,
+        "minLen": 1
+      },
+      "default": "APELLES",
+      "id": "text",
+      "label": "Logo text",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "constraints": {
+        "integer": true,
+        "max": 400,
+        "min": 40
+      },
+      "default": 220,
+      "id": "count",
+      "label": "Particles",
+      "type": "number"
+    },
+    {
+      "constraints": {
+        "integer": true,
+        "max": 9999,
+        "min": 0
+      },
+      "default": 7,
+      "description": "Change it for a different, still deterministic, burst.",
+      "id": "seed",
+      "label": "Seed",
+      "type": "number"
+    },
+    {
+      "constraints": {
+        "max": 900,
+        "min": 120
+      },
+      "default": 560,
+      "id": "spread",
+      "label": "Spread (px)",
+      "type": "number"
+    },
+    {
+      "description": "Unset: the theme's accent.",
+      "id": "color",
+      "label": "Particle colour",
+      "type": "color"
+    },
+    {
+      "description": "Unset: the theme's text colour.",
+      "id": "textColor",
+      "label": "Text colour",
+      "type": "color"
+    }
+  ],
+  "schemaVersion": 1,
+  "size": {
+    "h": 1080,
+    "w": 1920
+  },
+  "sourceHash": "a48a6f622a5c2c5de4d28e70ed144d4701ad64bd43bf6773e4132ca4ef25b0e4",
+  "status": "certified",
+  "tags": [
+    "brand",
+    "intro",
+    "particles"
+  ],
+  "version": 1,
+  "warnings": []
+}

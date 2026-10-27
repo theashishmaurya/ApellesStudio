@@ -8,6 +8,10 @@
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
+    // D-409 — `customOps.e2e.test.ts` runs the real component check, whose
+    // module (`motion-engine/src/custom/sourceCheck.ts`) imports with `.ts`
+    // (it also runs under plain Node type stripping).
+    "allowImportingTsExtensions": true,
     // D-407 — the built-in templates ship as JSON data (`src/templates/*.json`).
     "resolveJsonModule": true,
     // B-233 — `theme.test.ts` reads fixtures via `node:fs`/`node:url`/`node:path`

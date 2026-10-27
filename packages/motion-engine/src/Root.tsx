@@ -2,6 +2,9 @@ import "./index.css";
 import { Composition } from "remotion";
 import { motion } from "./design";
 import { Video } from "./engine/Video";
+import type { Manifest } from "./engine/schema";
+import { CustomRendererProvider } from "./custom/renderer";
+import { CodeRenderer } from "./custom/runtime";
 import { metadataFromManifest } from "./engine/build";
 import { sample } from "./engine/sample";
 import { HelloWorld } from "./compositions/HelloWorld";
@@ -20,12 +23,25 @@ import { ClaudeChatDemo } from "./compositions/ClaudeChatDemo";
  *   npx remotion render Animation out.mp4 --props=./projects/<name>/animation/manifest.json
  * The *Demo compositions below are living references for each primitive.
  */
+/**
+ * D-409 — the renderer process's `Animation`: the manifest compiler with the
+ * custom-component CODE renderer installed. This file is the Remotion entry
+ * (`index.ts` → `registerRoot`), which only the renderer process loads; the app
+ * webview imports `Video` directly and installs a proxy renderer instead, so
+ * component code never runs there (`custom/renderer.tsx`).
+ */
+const RenderedVideo: React.FC<Manifest> = (manifest) => (
+  <CustomRendererProvider renderer={CodeRenderer}>
+    <Video {...manifest} />
+  </CustomRendererProvider>
+);
+
 export const RemotionRoot: React.FC = () => {
   return (
     <>
       <Composition
         id="Animation"
-        component={Video}
+        component={RenderedVideo}
         defaultProps={sample}
         calculateMetadata={({ props }) => metadataFromManifest(props)}
         durationInFrames={300}

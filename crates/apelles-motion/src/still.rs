@@ -103,6 +103,143 @@ pub fn build_still_command(req: &StillRequest) -> Command {
     cmd
 }
 
+/// Render one still (on its own port, B-278).
+pub fn render_still(req: &StillRequest) -> Result<(), ChromaError> {
+    finish(
+        crate::output_with_own_port(|| build_still_command(req))?,
+        "still",
+    )
+}
+
+/// D-409 — every frame of `frames` (inclusive, absolute) as a PNG image
+/// sequence in ONE `remotion render` process: what certification's in-order
+/// pass and the live player's proxy frames use. `concurrency: Some(1)` renders
+/// every frame in one browser tab, in order — the pass that would expose state
+/// a component carries from one frame to the next.
+#[derive(Debug, Clone)]
+pub struct SequenceRequest {
+    pub engine_dir: PathBuf,
+    pub bundle_dir: PathBuf,
+    pub manifest_path: PathBuf,
+    /// The folder the PNGs are written into.
+    pub out_dir: PathBuf,
+    pub frames: (u32, u32),
+    pub scale: f64,
+    pub concurrency: Option<u32>,
+}
+
+/// The `npx remotion render … --sequence` invocation for `req` — pure.
+pub fn build_sequence_command(req: &SequenceRequest) -> Command {
+    let mut cmd = Command::new("npx");
+    cmd.current_dir(&req.engine_dir);
+    cmd.args([
+        "remotion",
+        "render",
+        &req.bundle_dir.to_string_lossy(),
+        "Animation",
+        &req.out_dir.to_string_lossy(),
+        "--sequence",
+        "--image-format=png",
+        &format!("--props={}", req.manifest_path.display()),
+        &format!("--frames={}-{}", req.frames.0, req.frames.1),
+        &format!("--scale={}", req.scale),
+    ]);
+    if let Some(n) = req.concurrency {
+        cmd.arg(format!("--concurrency={n}"));
+    }
+    cmd
+}
+
+/// Render `req` (on its own port, B-278) and return the PNGs it wrote, keyed
+/// by the frame number in each file name, sorted by frame.
+///
+/// Remotion refuses an image-sequence folder whose path contains a `.`
+/// ANYWHERE (`getExtensionOfFilename` splits the whole path on dots), and real
+/// paths here do: `<project>.chroma/…`, an app-data folder named by a bundle
+/// identifier. So such a folder is rendered into a dot-free scratch folder
+/// under the system temp dir and its frames moved into `out_dir` afterwards.
+pub fn render_sequence(req: &SequenceRequest) -> Result<Vec<(u32, PathBuf)>, ChromaError> {
+    std::fs::create_dir_all(&req.out_dir)
+        .map_err(|e| ChromaError::Invalid(format!("create {}: {e}", req.out_dir.display())))?;
+    let has_dot = |p: &Path| p.to_string_lossy().contains('.');
+    if !has_dot(&req.out_dir) {
+        finish(
+            crate::output_with_own_port(|| build_sequence_command(req))?,
+            "render --sequence",
+        )?;
+        return sequence_frames(&req.out_dir);
+    }
+    static SCRATCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SCRATCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let scratch = std::env::temp_dir().join(format!("apelles-sequence-{}-{n}", std::process::id()));
+    if has_dot(&scratch) {
+        return Err(ChromaError::Invalid(format!(
+            "remotion cannot write an image sequence under {} (a '.' in the path) and the temp folder {} has one too",
+            req.out_dir.display(),
+            scratch.display()
+        )));
+    }
+    if scratch.exists() {
+        std::fs::remove_dir_all(&scratch)
+            .map_err(|e| ChromaError::Invalid(format!("clear {}: {e}", scratch.display())))?;
+    }
+    let staged = SequenceRequest {
+        out_dir: scratch.clone(),
+        ..req.clone()
+    };
+    let rendered = finish(
+        crate::output_with_own_port(|| build_sequence_command(&staged))?,
+        "render --sequence",
+    )
+    .and_then(|()| sequence_frames(&scratch));
+    let moved = rendered.and_then(|frames| {
+        frames
+            .into_iter()
+            .map(|(frame, from)| {
+                let to = req.out_dir.join(from.file_name().unwrap_or_default());
+                std::fs::rename(&from, &to)
+                    .or_else(|_| std::fs::copy(&from, &to).map(|_| ()))
+                    .map_err(|e| ChromaError::Invalid(format!("move {}: {e}", from.display())))?;
+                Ok((frame, to))
+            })
+            .collect::<Result<Vec<_>, ChromaError>>()
+    });
+    // Scratch only; a leftover costs disk, not correctness.
+    let _ = std::fs::remove_dir_all(&scratch);
+    moved
+}
+
+/// The PNGs in a `--sequence` output folder, by the frame number Remotion puts
+/// at the end of each file name (`element-042.png` → 42), sorted.
+pub fn sequence_frames(dir: &Path) -> Result<Vec<(u32, PathBuf)>, ChromaError> {
+    let mut out = Vec::new();
+    let entries = std::fs::read_dir(dir)
+        .map_err(|e| ChromaError::Invalid(format!("read {}: {e}", dir.display())))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "png") {
+            continue;
+        }
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let digits: String = stem
+            .chars()
+            .rev()
+            .take_while(char::is_ascii_digit)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        if let Ok(frame) = digits.parse::<u32>() {
+            out.push((frame, path));
+        }
+    }
+    out.sort_by_key(|(f, _)| *f);
+    Ok(out)
+}
+
 fn run(mut cmd: Command, what: &str) -> Result<(), ChromaError> {
     let output = cmd
         .output()
@@ -375,10 +512,7 @@ pub fn render_preview(req: &PreviewRequest) -> Result<PreviewOutcome, ChromaErro
             scale: req.scale,
             composition_id: "Animation".to_string(),
         };
-        finish(
-            crate::output_with_own_port(|| build_still_command(&still))?,
-            "still",
-        )?;
+        render_still(&still)?;
         tiles.push(tile);
     }
 

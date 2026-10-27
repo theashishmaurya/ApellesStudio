@@ -109,6 +109,7 @@ import { InspectorEmptyState, InspectorSection } from '@apelles/inspector';
 import { useNumberField } from '@apelles/ui/number-scrub';
 import { EaseFieldControl } from './EaseCurveEditor';
 import { AssetFieldControl, IconFieldControl } from './BrandFieldControls';
+import { CustomPropsFields } from './CustomPropsFields';
 import { checkSceneRename } from './editLinks';
 import type { MotionEditLinks } from './motionOps';
 import { layerLabel, type Selection } from './LayerList';
@@ -1182,6 +1183,15 @@ export function InspectorPanel({
         <InspectorEmptyState>
           No editable fields recognized for "{found.use}" — edit its manifest JSON directly in the editor pane.
         </InspectorEmptyState>
+      )}
+      {/* D-409 — a custom component's declared props, from the definition the
+          document embeds; edits write the layer's `props` object. */}
+      {found.use === 'custom' && (
+        <CustomPropsFields
+          manifest={manifest}
+          raw={found.raw as Record<string, unknown>}
+          onCommit={(props) => onChange(setLayerField(manifest, selection, 'props', props))}
+        />
       )}
       {isLayer2d && (
         <TransformFieldGroup

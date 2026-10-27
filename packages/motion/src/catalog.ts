@@ -32,8 +32,11 @@
  */
 import type { Layer } from '@apelles/motion-engine/src/engine/schema';
 
-/** the `use` string of a primitive — the engine's own enum, not a re-declaration */
-export type PrimitiveUse = Layer['use'];
+/** the `use` string of a primitive — the engine's own enum, not a re-declaration.
+ *  D-409: `custom` is excluded — a custom component is library data (a pinned,
+ *  certified definition), not a built-in primitive with a Catalog entry; the
+ *  Catalog's Custom section lists those (`customComponents.ts`). */
+export type PrimitiveUse = Exclude<Layer['use'], 'custom'>;
 
 export interface CatalogEntry {
   /** the manifest `use:` value this entry inserts */

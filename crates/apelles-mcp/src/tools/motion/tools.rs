@@ -499,6 +499,43 @@ pub struct MotionDeleteTemplateArgs {
     pub id: String,
 }
 
+// D-409 — custom components.
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionListComponentsArgs {
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub tag: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionComponentVersionArgs {
+    pub id: String,
+    #[serde(default)]
+    pub version: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionWriteComponentArgs {
+    pub id: String,
+    pub source: String,
+    #[serde(default)]
+    pub props: Option<Vec<serde_json::Map<String, Value>>>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub size: Option<serde_json::Map<String, Value>>,
+    #[serde(default)]
+    pub duration: Option<f64>,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
 // D-403 — authoring as data. `serde_json::Map` publishes `{type: object,
 // additionalProperties: true}`, which is the Python server's `dict[str, Any]`.
 
@@ -1131,6 +1168,215 @@ impl ApellesMcp {
     }
 
     #[tool(
+        name = "motion_list_components",
+        description = r#"List the custom Remotion components (D-409): the built-ins plus the
+    user's library, one row per component id with every version and its status
+    (`draft` or `certified`).
+
+    A certified version is plain catalog data: put it in a scene with
+    `motion_add_layer(use="custom:<id>")` (the newest certified version) or
+    `use="custom:<id>@<version>"`, or as a `{"use": "custom", "component":
+    "<id>@<version>", "props": {...}}` layer in `motion_insert_layers`,
+    `motion_set_scene` or a template body. Each row carries `use` (the newest
+    certified version, or null), `props` (the declared props, the same slot
+    shape templates use), `propsSchema` (the JSON Schema of a whole layer of
+    it), `size`, `duration` and per-version check results. Drafts cannot be
+    used until certified. Needs no project open.
+
+    Args:
+        status: "draft", "certified" or "all" (default all).
+        tag: only components with this tag."#
+    )]
+    pub async fn motion_list_components(
+        &self,
+        Parameters(p): Parameters<MotionListComponentsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().put("status", p.status).put("tag", p.tag);
+        let env = self.op("motion_list_components", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_get_component",
+        description = r#"One custom component version in full (D-409): its declaration (props,
+    size, duration), status, static-check warnings, certification proof, the
+    contact sheet's path, and its SOURCE (`code`). The source is read-only:
+    to change it, write the id again with `motion_write_component`, which
+    makes a new draft. Needs no project open.
+
+    Args:
+        id: the component id.
+        version: which version (default: the newest)."#
+    )]
+    pub async fn motion_get_component(
+        &self,
+        Parameters(p): Parameters<MotionComponentVersionArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("id", p.id).put("version", p.version);
+        let env = self.op("motion_get_component", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_write_component",
+        description = r#"Write a custom Remotion component as a DRAFT (D-409) -- for what the
+    primitives cannot build (a particle logo, a 3D product spin, a bespoke
+    chart or transition). Lifecycle: write (draft) -> `motion_check_component`
+    (certification renders) -> `motion_certify_component` -> use it as data.
+
+    `source` is one TSX module whose DEFAULT export is a React component
+    called with `{props, theme, width, height, durationInFrames}` (type it with
+    `import type { ComponentProps } from "@apelles/component"`). Draw inside
+    the `width` x `height` box; `useCurrentFrame()` counts from the layer's
+    start. Read colours and fonts from `theme` (`theme.accent`, `theme.text`,
+    `theme.bg`, `theme.fontDisplay`, ...) unless a colour prop is set.
+
+    The static check refuses, with `issues` `[{path: "source:<line>:<col>",
+    code, message, hint}]`: imports outside the allowlist (react, remotion,
+    @remotion/shapes, @remotion/paths, @remotion/noise,
+    @remotion/animation-utils, @remotion/three, three, @react-three/fiber,
+    d3-force, @apelles/component); `Math.random` (use `random(seed)` from
+    remotion); `Date`, `performance`, timers, `requestAnimationFrame` (use
+    `useCurrentFrame()` / fps); `fetch`, `XMLHttpRequest`, `WebSocket`;
+    `eval` / `Function`; dynamic `import()` / `require`; `window`,
+    `globalThis`, `document`, `process`, `__TAURI__*`, storage, `constructor`
+    / `__proto__`; a missing default export; and any TypeScript error (strict,
+    against the real remotion/React types). Hard-coded colours come back as
+    `warnings`.
+
+    `props` declares the props, as template slots: `[{id, type: text |
+    number | color | enum | list, label, description?, default?, required?,
+    constraints?: {min, max, integer, maxLen, minLen, options, minItems,
+    maxItems, itemType}}]`. A colour prop has NO default (unset, the
+    component reads the theme). Numbers and colours are keyframeable on a
+    layer (`anim: {"props.<id>": [...]}`).
+
+    Nothing is saved unless the declaration and the source both pass. If the
+    id's newest version is an uncertified draft it is replaced; after a
+    certified version the next version number starts. Certified versions
+    never change. Returns `{id, version, status, sourceHash, codeHash,
+    warnings}`; `dry_run=true` checks only. Needs no project open.
+
+    Args:
+        id: lowercase letters, digits, hyphens (e.g. "particle-burst").
+        source: the component's TSX.
+        props: the declared props (default none).
+        name: a display name (default: the id).
+        description: one line on what it is for.
+        tags: e.g. ["data", "intro"].
+        size: its design box `{"w": 1920, "h": 1080}` (default: the project
+            canvas); a layer's w/h default to it.
+        duration: seconds it is meant to play (default 3); what the check
+            renders.
+        dry_run: check only, save nothing."#
+    )]
+    pub async fn motion_write_component(
+        &self,
+        Parameters(p): Parameters<MotionWriteComponentArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("id", p.id)
+            .set("source", p.source)
+            .put("props", p.props)
+            .put("name", p.name)
+            .put("description", p.description)
+            .put("tags", p.tags)
+            .put("size", p.size)
+            .put("duration", p.duration)
+            .put_if("dry_run", p.dry_run);
+        let env = self
+            .op_with(
+                "motion_write_component",
+                crate::MOTION_COMPONENT_TIMEOUT_MS,
+                args,
+            )
+            .await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_check_component",
+        description = r#"Run a custom component's CERTIFICATION CHECK and see it (D-409).
+
+    Renders sample frames (start, a third, two thirds, end) of three variants
+    -- the declared defaults, every prop at the LOW edge of its constraints,
+    every prop at the HIGH edge (colour props set) -- three ways at once: every
+    frame in order in one browser tab, and two passes of fresh stills seeking
+    backwards and out of order. Every frame's pixels must be identical across
+    the three, which proves the component is a pure function of (props,
+    frame). Renders run in the Remotion renderer process, never in the app.
+
+    Returns the contact sheet (one row per variant) as an image, then `{ok,
+    id, version, path, frames: [{variant, frame, hashes, same}], passes,
+    mismatched?, hint?, error?}`. The result is recorded on a draft; it
+    certifies nothing by itself -- look at the sheet, then
+    `motion_certify_component`. The first check after an engine change
+    bundles it (~20 s), then about a minute. Needs no project open.
+
+    Args:
+        id: the component id.
+        version: which version (default: the newest)."#
+    )]
+    pub async fn motion_check_component(
+        &self,
+        Parameters(p): Parameters<MotionComponentVersionArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("id", p.id).put("version", p.version);
+        let env = self
+            .op_with(
+                "motion_check_component",
+                crate::MOTION_COMPONENT_TIMEOUT_MS,
+                args,
+            )
+            .await?;
+        Ok(render::file_png_result(&env, true, "rendered"))
+    }
+
+    #[tool(
+        name = "motion_certify_component",
+        description = r#"Certify a custom component version (D-409): refused unless its
+    certification check (`motion_check_component`) passed for exactly the
+    source and module it has now. From then on the version is immutable and
+    usable as data: `motion_add_layer(use="custom:<id>@<version>")`. Projects
+    that use it get their own copy (a render never depends on the library).
+    Certification is always this explicit call; passing the check never
+    certifies on its own. Returns `{certified, id, version, use, component,
+    sourceHash, codeHash, propsSchema}`. Needs no project open.
+
+    Args:
+        id: the component id.
+        version: which version (default: the newest)."#
+    )]
+    pub async fn motion_certify_component(
+        &self,
+        Parameters(p): Parameters<MotionComponentVersionArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("id", p.id).put("version", p.version);
+        let env = self.op("motion_certify_component", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_delete_component",
+        description = r#"Delete a custom component from the user's library (D-409): one version,
+    or every version when `version` is omitted. Documents that use it keep
+    their own copies and still render. Built-in components cannot be deleted.
+    Needs no project open.
+
+    Args:
+        id: the component id.
+        version: the version to delete (default: all of them)."#
+    )]
+    pub async fn motion_delete_component(
+        &self,
+        Parameters(p): Parameters<MotionComponentVersionArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("id", p.id).put("version", p.version);
+        let env = self.op("motion_delete_component", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
         name = "motion_set_project_settings",
         description = r#"Set the manifest's OWN top-level fields — the document's name and its
     output spec. The Motion twin of `set_project_settings` (Colorist), and
@@ -1461,10 +1707,17 @@ impl ApellesMcp {
     `id` cannot be set through `props`. To insert several finished layers in
     one undo step, use `motion_insert_layers`.
 
+    `use="custom:<id>"` (D-409) inserts a CERTIFIED custom component instead
+    (`motion_list_components`): the newest certified version, or
+    `custom:<id>@<version>` to pin one. It is installed into the project and
+    embedded in the document, placed centred at its own size; `props` are its
+    declared props, checked against their constraints.
+
     Args:
         scene_index: which scene to add to.
-        use: the primitive, e.g. "text". An unknown value is refused with the
-            full legal list.
+        use: the primitive, e.g. "text", or "custom:<id>" for a certified
+            custom component. An unknown value is refused with the full legal
+            list.
         props: optional fields of the new layer, e.g.
             `{"text": "Ship it", "size": 96, "x": 200, "y": 300}`."#
     )]

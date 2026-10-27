@@ -1,0 +1,257 @@
+{
+  "certified": {
+    "codeHash": "97f6fc2549568d7f78b223b94c7c37ec334409ec1238bb54842de5f15381f4bc",
+    "sourceHash": "414fe36668800fac65c6d64cae20b9c5a4f8d8373b2c4da8f8ed3bd442228af7"
+  },
+  "codeHash": "97f6fc2549568d7f78b223b94c7c37ec334409ec1238bb54842de5f15381f4bc",
+  "description": "Bars spring up one by one with their values counting, then a trend line draws through their tops.",
+  "duration": 3,
+  "id": "bar-line-chart",
+  "name": "Bar and line chart",
+  "proof": {
+    "codeHash": "97f6fc2549568d7f78b223b94c7c37ec334409ec1238bb54842de5f15381f4bc",
+    "contactSheet": "contact.png",
+    "frames": [
+      {
+        "frame": 0,
+        "hashes": [
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116",
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116",
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "defaults"
+      },
+      {
+        "frame": 30,
+        "hashes": [
+          "c2392d5f82ee72c2042fa73527b72ccef6996bf944e65507e316d87c15f5eea7",
+          "c2392d5f82ee72c2042fa73527b72ccef6996bf944e65507e316d87c15f5eea7",
+          "c2392d5f82ee72c2042fa73527b72ccef6996bf944e65507e316d87c15f5eea7"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "defaults"
+      },
+      {
+        "frame": 59,
+        "hashes": [
+          "e6b38856fda5366ca138f104c62955ead8fc062ac2eb84382487810557886003",
+          "e6b38856fda5366ca138f104c62955ead8fc062ac2eb84382487810557886003",
+          "e6b38856fda5366ca138f104c62955ead8fc062ac2eb84382487810557886003"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "defaults"
+      },
+      {
+        "frame": 89,
+        "hashes": [
+          "22b5946ba1b69659b11eb4c8322c58959e117ee0352954cda3955c0a7b67f234",
+          "22b5946ba1b69659b11eb4c8322c58959e117ee0352954cda3955c0a7b67f234",
+          "22b5946ba1b69659b11eb4c8322c58959e117ee0352954cda3955c0a7b67f234"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "defaults"
+      },
+      {
+        "frame": 90,
+        "hashes": [
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116",
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116",
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "min"
+      },
+      {
+        "frame": 120,
+        "hashes": [
+          "8d0c17ff41c546db37bd2abf1274d5fa80c8a79f0bea3773aec58a2027db6e00",
+          "8d0c17ff41c546db37bd2abf1274d5fa80c8a79f0bea3773aec58a2027db6e00",
+          "8d0c17ff41c546db37bd2abf1274d5fa80c8a79f0bea3773aec58a2027db6e00"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "min"
+      },
+      {
+        "frame": 149,
+        "hashes": [
+          "eca52876c063ae8029d956c0282abb7293667810631ff9284264ef5c9aa7d19e",
+          "eca52876c063ae8029d956c0282abb7293667810631ff9284264ef5c9aa7d19e",
+          "eca52876c063ae8029d956c0282abb7293667810631ff9284264ef5c9aa7d19e"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "min"
+      },
+      {
+        "frame": 179,
+        "hashes": [
+          "eca52876c063ae8029d956c0282abb7293667810631ff9284264ef5c9aa7d19e",
+          "eca52876c063ae8029d956c0282abb7293667810631ff9284264ef5c9aa7d19e",
+          "eca52876c063ae8029d956c0282abb7293667810631ff9284264ef5c9aa7d19e"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "min"
+      },
+      {
+        "frame": 180,
+        "hashes": [
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116",
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116",
+          "56eb241120916c48be4e42b4bb4f8c672d595f3b9c5975db30aebd8d3b8bf116"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "max"
+      },
+      {
+        "frame": 210,
+        "hashes": [
+          "a81e11ec724c4ff1d7677a9c09a857e216db066247dcdbc2dab2b4d4ecbf97d2",
+          "a81e11ec724c4ff1d7677a9c09a857e216db066247dcdbc2dab2b4d4ecbf97d2",
+          "a81e11ec724c4ff1d7677a9c09a857e216db066247dcdbc2dab2b4d4ecbf97d2"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "max"
+      },
+      {
+        "frame": 239,
+        "hashes": [
+          "2008562ae6de4f9d13d8abb4a59bd5b3e1a1a6ae0de2751d82e516c1cec9b117",
+          "2008562ae6de4f9d13d8abb4a59bd5b3e1a1a6ae0de2751d82e516c1cec9b117",
+          "2008562ae6de4f9d13d8abb4a59bd5b3e1a1a6ae0de2751d82e516c1cec9b117"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "max"
+      },
+      {
+        "frame": 269,
+        "hashes": [
+          "27f2b28e88994fca4b84432b00d3bc641e064a72280ee732155a1b1faa6eb97e",
+          "27f2b28e88994fca4b84432b00d3bc641e064a72280ee732155a1b1faa6eb97e",
+          "27f2b28e88994fca4b84432b00d3bc641e064a72280ee732155a1b1faa6eb97e"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "max"
+      }
+    ],
+    "ok": true,
+    "passes": [
+      "in order: every frame 0..=last in one browser tab (--concurrency=1), within 2/255 on at most 0.1% of pixels of the fresh stills",
+      "fresh stills, backwards: [269, 239, 210, 180, 179, 149, 120, 90, 89, 59, 30, 0]",
+      "fresh stills, scrambled: [89, 59, 0, 30, 179, 149, 90, 120, 269, 239, 180, 210]"
+    ],
+    "sourceHash": "414fe36668800fac65c6d64cae20b9c5a4f8d8373b2c4da8f8ed3bd442228af7",
+    "thumbnail": "thumbnail.png"
+  },
+  "props": [
+    {
+      "constraints": {
+        "maxLen": 60
+      },
+      "default": "Weekly active users",
+      "id": "title",
+      "label": "Title",
+      "type": "text"
+    },
+    {
+      "constraints": {
+        "itemType": "number",
+        "max": 100000,
+        "maxItems": 12,
+        "min": 0,
+        "minItems": 2
+      },
+      "default": [
+        12,
+        19,
+        15,
+        28,
+        34,
+        30,
+        42
+      ],
+      "id": "values",
+      "label": "Values",
+      "required": true,
+      "type": "list"
+    },
+    {
+      "constraints": {
+        "maxItems": 12,
+        "maxLen": 12
+      },
+      "default": [
+        "Mon",
+        "Tue",
+        "Wed",
+        "Thu",
+        "Fri",
+        "Sat",
+        "Sun"
+      ],
+      "id": "labels",
+      "label": "Labels",
+      "type": "list"
+    },
+    {
+      "constraints": {
+        "options": [
+          "on",
+          "off"
+        ]
+      },
+      "default": "on",
+      "id": "line",
+      "label": "Trend line",
+      "type": "enum"
+    },
+    {
+      "description": "Unset: the theme's accent.",
+      "id": "barColor",
+      "label": "Bar colour",
+      "type": "color"
+    },
+    {
+      "description": "Unset: the theme's signal colour.",
+      "id": "lineColor",
+      "label": "Line colour",
+      "type": "color"
+    }
+  ],
+  "schemaVersion": 1,
+  "size": {
+    "h": 900,
+    "w": 1600
+  },
+  "sourceHash": "414fe36668800fac65c6d64cae20b9c5a4f8d8373b2c4da8f8ed3bd442228af7",
+  "status": "certified",
+  "tags": [
+    "data",
+    "chart"
+  ],
+  "version": 1,
+  "warnings": []
+}

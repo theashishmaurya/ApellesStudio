@@ -1,0 +1,250 @@
+{
+  "title": "Launch",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "scenes": [
+    {
+      "id": "intro",
+      "dur": 3,
+      "layers": [
+        {
+          "use": "custom",
+          "id": "particle-logo-burst",
+          "component": "particle-logo-burst@1",
+          "x": 0,
+          "y": 0,
+          "w": 1920,
+          "h": 1080,
+          "props": {
+            "text": "ACME",
+            "seed": 42
+          }
+        }
+      ]
+    },
+    {
+      "id": "numbers",
+      "dur": 3,
+      "layers": [
+        {
+          "use": "group",
+          "id": "chart-card",
+          "at": 0.2,
+          "children": [
+            {
+              "use": "custom",
+              "id": "chart",
+              "component": "bar-line-chart@1",
+              "x": 160,
+              "y": 90,
+              "props": {
+                "title": "Revenue ($k)",
+                "values": [
+                  8,
+                  14,
+                  11,
+                  22,
+                  31
+                ],
+                "labels": [
+                  "Q1",
+                  "Q2",
+                  "Q3",
+                  "Q4",
+                  "Q5"
+                ]
+              },
+              "anim": {
+                "props.barColor": [
+                  {
+                    "at": 0,
+                    "v": "#38bdf8"
+                  },
+                  {
+                    "at": 2,
+                    "v": "#a78bfa"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "components": {
+    "particle-logo-burst@1": {
+      "id": "particle-logo-burst",
+      "name": "Particle logo burst",
+      "description": "A logo word punches in while a seeded burst of particles flies out behind it and settles into a halo.",
+      "tags": [
+        "brand",
+        "intro",
+        "particles"
+      ],
+      "props": [
+        {
+          "id": "text",
+          "type": "text",
+          "label": "Logo text",
+          "default": "APELLES",
+          "required": true,
+          "constraints": {
+            "maxLen": 24,
+            "minLen": 1
+          }
+        },
+        {
+          "id": "count",
+          "type": "number",
+          "label": "Particles",
+          "default": 220,
+          "constraints": {
+            "min": 40,
+            "max": 400,
+            "integer": true
+          }
+        },
+        {
+          "id": "seed",
+          "type": "number",
+          "label": "Seed",
+          "description": "Change it for a different, still deterministic, burst.",
+          "default": 7,
+          "constraints": {
+            "min": 0,
+            "max": 9999,
+            "integer": true
+          }
+        },
+        {
+          "id": "spread",
+          "type": "number",
+          "label": "Spread (px)",
+          "default": 560,
+          "constraints": {
+            "min": 120,
+            "max": 900
+          }
+        },
+        {
+          "id": "color",
+          "type": "color",
+          "label": "Particle colour",
+          "description": "Unset: the theme's accent."
+        },
+        {
+          "id": "textColor",
+          "type": "color",
+          "label": "Text colour",
+          "description": "Unset: the theme's text colour."
+        }
+      ],
+      "size": {
+        "w": 1920,
+        "h": 1080
+      },
+      "duration": 2.5,
+      "version": 1,
+      "sourceHash": "a48a6f622a5c2c5de4d28e70ed144d4701ad64bd43bf6773e4132ca4ef25b0e4",
+      "codeHash": "7299dfa4eb77a784a359673617511558345bcaf03dc297012fb3c326f95d6861",
+      "code": "sha256:7299dfa4eb77a784a359673617511558345bcaf03dc297012fb3c326f95d6861.js",
+      "source": "sha256:a48a6f622a5c2c5de4d28e70ed144d4701ad64bd43bf6773e4132ca4ef25b0e4.tsx"
+    },
+    "bar-line-chart@1": {
+      "id": "bar-line-chart",
+      "name": "Bar and line chart",
+      "description": "Bars spring up one by one with their values counting, then a trend line draws through their tops.",
+      "tags": [
+        "data",
+        "chart"
+      ],
+      "props": [
+        {
+          "id": "title",
+          "type": "text",
+          "label": "Title",
+          "default": "Weekly active users",
+          "constraints": {
+            "maxLen": 60
+          }
+        },
+        {
+          "id": "values",
+          "type": "list",
+          "label": "Values",
+          "default": [
+            12,
+            19,
+            15,
+            28,
+            34,
+            30,
+            42
+          ],
+          "required": true,
+          "constraints": {
+            "min": 0,
+            "max": 100000,
+            "minItems": 2,
+            "maxItems": 12,
+            "itemType": "number"
+          }
+        },
+        {
+          "id": "labels",
+          "type": "list",
+          "label": "Labels",
+          "default": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "constraints": {
+            "maxLen": 12,
+            "maxItems": 12
+          }
+        },
+        {
+          "id": "line",
+          "type": "enum",
+          "label": "Trend line",
+          "default": "on",
+          "constraints": {
+            "options": [
+              "on",
+              "off"
+            ]
+          }
+        },
+        {
+          "id": "barColor",
+          "type": "color",
+          "label": "Bar colour",
+          "description": "Unset: the theme's accent."
+        },
+        {
+          "id": "lineColor",
+          "type": "color",
+          "label": "Line colour",
+          "description": "Unset: the theme's signal colour."
+        }
+      ],
+      "size": {
+        "w": 1600,
+        "h": 900
+      },
+      "duration": 3,
+      "version": 1,
+      "sourceHash": "414fe36668800fac65c6d64cae20b9c5a4f8d8373b2c4da8f8ed3bd442228af7",
+      "codeHash": "97f6fc2549568d7f78b223b94c7c37ec334409ec1238bb54842de5f15381f4bc",
+      "code": "sha256:97f6fc2549568d7f78b223b94c7c37ec334409ec1238bb54842de5f15381f4bc.js",
+      "source": "sha256:414fe36668800fac65c6d64cae20b9c5a4f8d8373b2c4da8f8ed3bd442228af7.tsx"
+    }
+  }
+}

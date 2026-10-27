@@ -26,6 +26,16 @@ src/
                          schema, `migrateTemplate`, slot value checks, `fillTemplateBody`
                          (`{"$slot"}`, `"{x}"` interpolation, `$when`; no expressions).
                          Scenes and groups carry `template` provenance (`schema.ts`)
+  slots.ts             ← the typed, constrained FIELD (D-407 slot, D-409 component prop):
+                         schema, value checks, JSON Schema; re-exported by templateDef.ts
+  custom/              ← custom Remotion components (D-409):
+    componentDef.ts    ←   spec / library meta / manifest-embedded ref (zod), pins
+    renderer.tsx       ←   the `custom` layer node + the injected CustomRenderer
+                           (default: a placeholder; the code never runs here)
+    runtime.tsx        ←   the CODE renderer — imported by Root.tsx ONLY (renderer process)
+    allowlist.ts       ←   the modules a component may import
+    componentApi.ts    ←   `@apelles/component`: `ComponentProps<P>` (types only)
+    sourceCheck.ts     ←   the static check (TypeScript compiler API), Node-only
   ThemeContext.tsx     ← `ThemeProvider` / `useTheme()` — how a resolved theme
                          reaches every primitive
   themeFonts.ts        ← each theme's webfaces, loaded once per theme per process
@@ -40,8 +50,29 @@ src/
   compositions/        ← *Demo compositions (living primitive references)
   lib/  helpers/        ← deterministic roughjs + frame helpers, device geometry
                          (device.ts) and chat thread layout/scheduling (chatLayout.ts)
-  Root.tsx             ← registers compositions
+  Root.tsx             ← registers compositions (and installs the custom-component
+                         code renderer for `Animation`, D-409)
+scripts/
+  check-component.mts  ← `node scripts/check-component.mts` (stdin `{source}` → the static
+                         check's JSON), spawned by `apelles_motion::components` (D-409)
+components/            ← the shipped, certified custom components as library DATA
+                         (`<id>/<version>/{component.tsx,component.js,meta.json,contact.png,
+                         thumbnail.png}`), produced by `cargo run -p apelles-motion --example
+                         certify_component`; excluded from tsc
 ```
+
+## Custom components (D-409)
+
+A custom Remotion component is code up to certification and data afterwards. The engine's
+half: `custom/componentDef.ts` (the shapes), the `custom` layer in `engine/schema.ts`
+(`customLayerSchema`; the manifest's `components` map holds each pinned definition, and the
+schema checks props and `anim` tracks against it at load), `custom/renderer.tsx` (times,
+places and resolves the layer, then calls the injected renderer), `custom/runtime.tsx` (the
+renderer process's renderer: fetches `sha256:<hex>.js` from `public/`, checks the bytes
+against `codeHash`, evaluates once with an allowlist-only `require`), and
+`custom/sourceCheck.ts` (imports, ban list, strict type-check, compile). Nothing the app
+webview imports reaches `runtime.tsx`. The full design, the security boundary and what was
+verified are in D-409.
 
 ## Commands
 

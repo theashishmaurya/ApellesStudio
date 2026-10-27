@@ -1,4 +1,4 @@
-# Motion authoring from MCP — new graphics and templates as data, not code (Phases 0-2 built, D-403/D-404/D-405/D-407; Phases 3-4 design)
+# Motion authoring from MCP — new graphics and templates as data, not code (Phases 0-2 and 5 built, D-403/D-404/D-405/D-407/D-409; Phases 3-4 design)
 
 Owner request (2026-10-26): "look into a way to create new catalog / motion graphics from MCP
 directly instead of tweaking the code." Context: Apelles' founder/brand-video studio direction needs
@@ -45,6 +45,22 @@ each phase needs its own D-NNN when built (numbers below are provisional; D-402 
   (`<use>-<n>`, scene named after the template), not randomly; refill across template versions
   needs `upgrade`; the "make slot" toggle became a field list with "expose" checkboxes in the save
   form (one place, the Essential Graphics / Figma Properties pattern; reasoning in D-407).
+- **Phase 5 — built (D-409, 2026-10-27): custom Remotion components, certified into the catalog.**
+  Owner (2026-10-27): "we should be able to do custom animation build new catalogs, custom things
+  and then certify it as data point :) and use it" — for what primitives cannot express (particle
+  logos, 3D spins, bespoke charts and transitions). Lifecycle: draft (TSX + props declared as
+  D-407 slots) → static check in Node (`packages/motion-engine/src/custom/sourceCheck.ts`:
+  TypeScript compiler API, import allowlist, AST ban list, strict type-check) → certification proof
+  (`apelles_motion::components::prove`: defaults and both edges of every prop, rendered in order
+  in one tab and as fresh stills in two out-of-order orders, pixels compared; contact sheet) →
+  explicit certify (immutable version) → used as data (`{"use": "custom", "component":
+  "<id>@<v>", "props"}`, keyframeable number/colour props, in groups and template bodies). Copy
+  semantics: the module and source are installed into `motion/assets/` by content hash and the
+  definition embedded in `manifest.components`. Code runs ONLY in the Remotion renderer process
+  (`custom/runtime.tsx`, installed by `Root.tsx`); the app's player shows frames the renderer
+  rendered (`customProxy.tsx`). Six MCP tools, a Catalog Custom section, built-ins
+  `particle-logo-burst` and `bar-line-chart` (`packages/motion-engine/components/`). **This
+  partially reverses the "Sandboxed user JS: rejected" bullet below** — see that bullet and D-409.
 - Phases 3-4: design below, not built.
 
 ## What existed before Phase 0 (checked in the code, 2026-10-26)
@@ -125,6 +141,13 @@ animated underlines, icon rows and badge bursts entirely in JSON.
   per-frame WASM calls are slow in headless renders, the webview has Tauri IPC (no
   `allow-same-origin`), and the output would have to be a display list of primitives anyway, i.e.
   the generic-primitives option. It also reintroduces the code the owner asked to avoid.
+  **Partially reversed by D-409 (2026-10-27), at the owner's request:** user code is now allowed,
+  but not as a sandbox and not in the webview. Each reason is answered differently: determinism by
+  refusing the clock/randomness statically and PROVING purity by rendering three ways (not by
+  stubbing); speed by running the code natively as React in the Remotion renderer (no WASM); the
+  IPC risk by never executing it in the webview (proxy frames there); and "code" stops at
+  certification — afterwards an agent uses the component purely as data (pinned id@version, typed
+  props). A sandbox in the webview remains rejected.
 
 ## MCP surface for authoring safely
 
@@ -150,6 +173,7 @@ animated underlines, icon rows and badge bursts entirely in JSON.
 | 2 | Templates: `templateDef.ts`, `templates.ts`/`templateIO.ts`, Rust load/save beside themes, 7 MCP tools, GUI, starter pack. Records the rejections above. | D-407 (built) |
 | 3 | Expressive: `path` (draw-on, morph), `repeater`, `textonpath`. | next free D-number when built |
 | 4 | Lottie import as an asset, refusing expressions. | next free D-number when built |
+| 5 | Custom Remotion components: draft → static check → proof → certify → data. | D-409 (built) |
 
 Every phase ships the GUI and MCP halves together, re-captures the MCP parity corpus, and verifies
 determinism (render the same frame twice, compare hashes).

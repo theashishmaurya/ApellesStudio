@@ -6297,7 +6297,7 @@
     },
     {
       "name": "motion_add_layer",
-      "description": "Create a layer \u2014 the same action the Catalog panel's own primitive rows\n    perform. This is how anything gets onto a Motion scene.\n\n    `use` names the primitive (`motion_list_primitives` lists them all with\n    what each is for). A schema-valid DEFAULT instance is inserted, so the\n    result renders immediately; shape it afterwards with\n    `motion_set_layer_field` (its own content/preset fields),\n    `motion_set_layer_position` / `_size` (where and how big) and\n    `motion_set_layer_transform_field` (scale/rotation/opacity).\n\n    Placement is automatic and not yours to choose: a 2D primitive goes into\n    `scene.layers`, a 3D one into `scene.scene3d.children` (creating that\n    block, with a default camera, if the scene had none). Layers paint in\n    array order \u2014 a later layer draws ON TOP \u2014 so use `motion_reorder_layers`\n    to change what covers what.\n\n    Returns the `selection` addressing the new layer; hand it straight to the\n    next call.\n\n    `props` (D-403) creates a FINISHED layer in this one call: the fields you\n    name are laid over the default instance (the rest keep their defaults),\n    and the merged layer is validated against the primitive's `propsSchema`\n    (`motion_list_primitives`) before anything changes. A wrong type or an\n    unknown key (a typo such as `colour`) is refused with `issues`\n    `[{path, code, message, expected, hint}]` and nothing is added. `use` and\n    `id` cannot be set through `props`. To insert several finished layers in\n    one undo step, use `motion_insert_layers`.\n\n    Args:\n        scene_index: which scene to add to.\n        use: the primitive, e.g. \"text\". An unknown value is refused with the\n            full legal list.\n        props: optional fields of the new layer, e.g.\n            `{\"text\": \"Ship it\", \"size\": 96, \"x\": 200, \"y\": 300}`.",
+      "description": "Create a layer \u2014 the same action the Catalog panel's own primitive rows\n    perform. This is how anything gets onto a Motion scene.\n\n    `use` names the primitive (`motion_list_primitives` lists them all with\n    what each is for). A schema-valid DEFAULT instance is inserted, so the\n    result renders immediately; shape it afterwards with\n    `motion_set_layer_field` (its own content/preset fields),\n    `motion_set_layer_position` / `_size` (where and how big) and\n    `motion_set_layer_transform_field` (scale/rotation/opacity).\n\n    Placement is automatic and not yours to choose: a 2D primitive goes into\n    `scene.layers`, a 3D one into `scene.scene3d.children` (creating that\n    block, with a default camera, if the scene had none). Layers paint in\n    array order \u2014 a later layer draws ON TOP \u2014 so use `motion_reorder_layers`\n    to change what covers what.\n\n    Returns the `selection` addressing the new layer; hand it straight to the\n    next call.\n\n    `props` (D-403) creates a FINISHED layer in this one call: the fields you\n    name are laid over the default instance (the rest keep their defaults),\n    and the merged layer is validated against the primitive's `propsSchema`\n    (`motion_list_primitives`) before anything changes. A wrong type or an\n    unknown key (a typo such as `colour`) is refused with `issues`\n    `[{path, code, message, expected, hint}]` and nothing is added. `use` and\n    `id` cannot be set through `props`. To insert several finished layers in\n    one undo step, use `motion_insert_layers`.\n\n    `use=\"custom:<id>\"` (D-409) inserts a CERTIFIED custom component instead\n    (`motion_list_components`): the newest certified version, or\n    `custom:<id>@<version>` to pin one. It is installed into the project and\n    embedded in the document, placed centred at its own size; `props` are its\n    declared props, checked against their constraints.\n\n    Args:\n        scene_index: which scene to add to.\n        use: the primitive, e.g. \"text\", or \"custom:<id>\" for a certified\n            custom component. An unknown value is refused with the full legal\n            list.\n        props: optional fields of the new layer, e.g.\n            `{\"text\": \"Ship it\", \"size\": 96, \"x\": 200, \"y\": 300}`.",
       "inputSchema": {
         "properties": {
           "scene_index": {
@@ -6674,6 +6674,64 @@
       }
     },
     {
+      "name": "motion_certify_component",
+      "description": "Certify a custom component version (D-409): refused unless its\n    certification check (`motion_check_component`) passed for exactly the\n    source and module it has now. From then on the version is immutable and\n    usable as data: `motion_add_layer(use=\"custom:<id>@<version>\")`. Projects\n    that use it get their own copy (a render never depends on the library).\n    Certification is always this explicit call; passing the check never\n    certifies on its own. Returns `{certified, id, version, use, component,\n    sourceHash, codeHash, propsSchema}`. Needs no project open.\n\n    Args:\n        id: the component id.\n        version: which version (default: the newest).",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Version"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object",
+        "title": "motion_certify_componentArguments"
+      }
+    },
+    {
+      "name": "motion_check_component",
+      "description": "Run a custom component's CERTIFICATION CHECK and see it (D-409).\n\n    Renders sample frames (start, a third, two thirds, end) of three variants\n    -- the declared defaults, every prop at the LOW edge of its constraints,\n    every prop at the HIGH edge (colour props set) -- three ways at once: every\n    frame in order in one browser tab, and two passes of fresh stills seeking\n    backwards and out of order. Every frame's pixels must be identical across\n    the three, which proves the component is a pure function of (props,\n    frame). Renders run in the Remotion renderer process, never in the app.\n\n    Returns the contact sheet (one row per variant) as an image, then `{ok,\n    id, version, path, frames: [{variant, frame, hashes, same}], passes,\n    mismatched?, hint?, error?}`. The result is recorded on a draft; it\n    certifies nothing by itself -- look at the sheet, then\n    `motion_certify_component`. The first check after an engine change\n    bundles it (~20 s), then about a minute. Needs no project open.\n\n    Args:\n        id: the component id.\n        version: which version (default: the newest).",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Version"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object",
+        "title": "motion_check_componentArguments"
+      }
+    },
+    {
       "name": "motion_define_template",
       "description": "Save a Motion template written as JSON into the user's library (D-407).\n\n    Shape: `{schemaVersion: 1, id, name, version, description?, tags?,\n    kind: \"scene\" | \"group\", authoredAt: {width, height, fps}, slots, body,\n    themeDef?}`.\n      * `slots`: `[{id, type, label, description?, default?, required?,\n        constraints?}]`; `type` is text | number | color | image | icon | enum |\n        list; `constraints` may hold `maxLen`, `minLen`, `min`, `max`,\n        `integer`, `options` (enum), `minItems`, `maxItems`, `itemType`\n        (\"text\" | \"number\", list). Slot ids are identifiers (letters, digits,\n        `_`). An image value is an asset id from `motion_import_asset`\n        (`sha256:<hex>.<ext>`), an icon a Phosphor name (`rocket-launch`), a\n        colour `#rrggbb`.\n      * `body`: for `kind: \"scene\"` a scene WITHOUT `id` (`{dur, layers, ...}`);\n        for `kind: \"group\"` a list of 2D layers (instantiated as one group\n        layer). Bind any value to a slot with `{\"$slot\": \"<id>\"}`; interpolate\n        into text with `\"{price}/mo\"` (`{{` / `}}` are literal braces; a list\n        slot interpolates one item per line); keep an array element (a layer)\n        only when a slot has a value with `\"$when\": \"<id>\"`. That is ALL: there\n        is no expression language. An unset optional slot REMOVES the key it is\n        bound to, so the primitive's theme default applies -- leave colour slots\n        optional to keep a template theme-aware.\n      * pixel values are authored for `authoredAt` and reflowed to each\n        project's canvas when instantiated.\n\n    The template must parse AND expand with its defaults (a sample value is\n    used for a required slot without one) into a valid scene, icon names\n    included; otherwise nothing is saved and the answer carries `issues`\n    `[{path, code, message, expected, hint}]`. Saving under an id the library\n    already has makes it the next `version`; built-in ids are reserved.\n    `dry_run=true` checks only. Returns `{saved, id, name, kind, version,\n    previousVersion, slots, valuesSchema}`. Needs no project open; the library\n    is user-level and not in the undo stack.\n\n    Args:\n        template: the template object.\n        dry_run: check only, save nothing.",
       "inputSchema": {
@@ -7035,6 +7093,35 @@
           }
         },
         "title": "motion_define_themeArguments"
+      }
+    },
+    {
+      "name": "motion_delete_component",
+      "description": "Delete a custom component from the user's library (D-409): one version,\n    or every version when `version` is omitted. Documents that use it keep\n    their own copies and still render. Built-in components cannot be deleted.\n    Needs no project open.\n\n    Args:\n        id: the component id.\n        version: the version to delete (default: all of them).",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Version"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object",
+        "title": "motion_delete_componentArguments"
       }
     },
     {
@@ -7564,6 +7651,35 @@
       }
     },
     {
+      "name": "motion_get_component",
+      "description": "One custom component version in full (D-409): its declaration (props,\n    size, duration), status, static-check warnings, certification proof, the\n    contact sheet's path, and its SOURCE (`code`). The source is read-only:\n    to change it, write the id again with `motion_write_component`, which\n    makes a new draft. Needs no project open.\n\n    Args:\n        id: the component id.\n        version: which version (default: the newest).",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Version"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object",
+        "title": "motion_get_componentArguments"
+      }
+    },
+    {
       "name": "motion_get_edit_links",
       "description": "What each Motion scene feeds in the Edit tab: its rendered file, and\n    every clip on the open Edit timeline reading it (D-260).\n\n    This is the read half of \"re-render, auto-replace\" \u2014 call it to see what a\n    `motion_render` will refresh before you run one, or to confirm what it\n    refreshed after. The Motion tab shows a human the identical fact as an\n    \"N in Edit\" badge on the scene row, off the identical value.\n\n    Per scene: `index`, `sceneId`, `rendered` (has this scene ever been\n    rendered into this project's Sources?), `mediaId` / `sourcePath` (its pool\n    item and file, null when not), `clipCount`, and `clips` \u2014 each with the\n    `track`/`clip` indices `editor_*` tools address by, plus the clip's id and\n    name.\n\n    `rendered: false` and a top-level `available: false` are different\n    answers. The first means that scene has no render in the pool yet. The\n    second means no link data reached the tab at all (no project open) \u2014 do\n    not read the per-scene rows as \"nothing is linked\" in that case.\n\n    A scene that is `rendered: true` with `clipCount: 0` has been rendered and\n    is sitting in Sources, but has never been placed \u2014 re-rendering it changes\n    nothing on the timeline. Use `editor_add_clip` with its `mediaId` to place\n    it.\n\n    **`rendered` and `clipCount` are answered against the file a re-render\n    will actually WRITE (B-219).** A project copied on the filesystem (Finder,\n    `cp -R`) keeps the ORIGINAL project's absolute media paths, so its Motion\n    pool items point at files no render of this project can reach. Such a\n    scene reads `rendered: false`, `clipCount: 0`, `refreshedByRender: false`,\n    with the whole inherited link reported separately as `staleLink`\n    (`mediaId` / `sourcePath` / `clipCount` / `clips` / `reason`), and the\n    response carries a top-level `warning`. Those clips are really on the\n    timeline and really play \u2014 they just will not be refreshed by a render.\n    Fix: `motion_render` the scene to produce this project's own file, then\n    `editor_swap_clip_media` those clips onto it.\n\n    `refreshedByRender` is three-valued: `true` (the render lands on this\n    file), `false` (the copied-project case above), `null` (no project root\n    reached the tab \u2014 the question was not asked, which is not a \"no\").",
       "inputSchema": {
@@ -7741,6 +7857,40 @@
         ],
         "type": "object",
         "title": "motion_instantiate_templateArguments"
+      }
+    },
+    {
+      "name": "motion_list_components",
+      "description": "List the custom Remotion components (D-409): the built-ins plus the\n    user's library, one row per component id with every version and its status\n    (`draft` or `certified`).\n\n    A certified version is plain catalog data: put it in a scene with\n    `motion_add_layer(use=\"custom:<id>\")` (the newest certified version) or\n    `use=\"custom:<id>@<version>\"`, or as a `{\"use\": \"custom\", \"component\":\n    \"<id>@<version>\", \"props\": {...}}` layer in `motion_insert_layers`,\n    `motion_set_scene` or a template body. Each row carries `use` (the newest\n    certified version, or null), `props` (the declared props, the same slot\n    shape templates use), `propsSchema` (the JSON Schema of a whole layer of\n    it), `size`, `duration` and per-version check results. Drafts cannot be\n    used until certified. Needs no project open.\n\n    Args:\n        status: \"draft\", \"certified\" or \"all\" (default all).\n        tag: only components with this tag.",
+      "inputSchema": {
+        "properties": {
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          },
+          "tag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tag"
+          }
+        },
+        "type": "object",
+        "title": "motion_list_componentsArguments"
       }
     },
     {
@@ -10548,6 +10698,113 @@
         },
         "type": "object",
         "title": "motion_validateArguments"
+      }
+    },
+    {
+      "name": "motion_write_component",
+      "description": "Write a custom Remotion component as a DRAFT (D-409) -- for what the\n    primitives cannot build (a particle logo, a 3D product spin, a bespoke\n    chart or transition). Lifecycle: write (draft) -> `motion_check_component`\n    (certification renders) -> `motion_certify_component` -> use it as data.\n\n    `source` is one TSX module whose DEFAULT export is a React component\n    called with `{props, theme, width, height, durationInFrames}` (type it with\n    `import type { ComponentProps } from \"@apelles/component\"`). Draw inside\n    the `width` x `height` box; `useCurrentFrame()` counts from the layer's\n    start. Read colours and fonts from `theme` (`theme.accent`, `theme.text`,\n    `theme.bg`, `theme.fontDisplay`, ...) unless a colour prop is set.\n\n    The static check refuses, with `issues` `[{path: \"source:<line>:<col>\",\n    code, message, hint}]`: imports outside the allowlist (react, remotion,\n    @remotion/shapes, @remotion/paths, @remotion/noise,\n    @remotion/animation-utils, @remotion/three, three, @react-three/fiber,\n    d3-force, @apelles/component); `Math.random` (use `random(seed)` from\n    remotion); `Date`, `performance`, timers, `requestAnimationFrame` (use\n    `useCurrentFrame()` / fps); `fetch`, `XMLHttpRequest`, `WebSocket`;\n    `eval` / `Function`; dynamic `import()` / `require`; `window`,\n    `globalThis`, `document`, `process`, `__TAURI__*`, storage, `constructor`\n    / `__proto__`; a missing default export; and any TypeScript error (strict,\n    against the real remotion/React types). Hard-coded colours come back as\n    `warnings`.\n\n    `props` declares the props, as template slots: `[{id, type: text |\n    number | color | enum | list, label, description?, default?, required?,\n    constraints?: {min, max, integer, maxLen, minLen, options, minItems,\n    maxItems, itemType}}]`. A colour prop has NO default (unset, the\n    component reads the theme). Numbers and colours are keyframeable on a\n    layer (`anim: {\"props.<id>\": [...]}`).\n\n    Nothing is saved unless the declaration and the source both pass. If the\n    id's newest version is an uncertified draft it is replaced; after a\n    certified version the next version number starts. Certified versions\n    never change. Returns `{id, version, status, sourceHash, codeHash,\n    warnings}`; `dry_run=true` checks only. Needs no project open.\n\n    Args:\n        id: lowercase letters, digits, hyphens (e.g. \"particle-burst\").\n        source: the component's TSX.\n        props: the declared props (default none).\n        name: a display name (default: the id).\n        description: one line on what it is for.\n        tags: e.g. [\"data\", \"intro\"].\n        size: its design box `{\"w\": 1920, \"h\": 1080}` (default: the project\n            canvas); a layer's w/h default to it.\n        duration: seconds it is meant to play (default 3); what the check\n            renders.\n        dry_run: check only, save nothing.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "props": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Props"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tags"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Size"
+          },
+          "duration": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Duration"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "source"
+        ],
+        "type": "object",
+        "title": "motion_write_componentArguments"
       }
     },
     {
@@ -17578,6 +17835,102 @@
       ]
     },
     {
+      "tool": "motion_certify_component",
+      "case": "minimal",
+      "arguments": {
+        "id": "v_motion_certify_component.id"
+      },
+      "requests": [
+        {
+          "op": "motion_certify_component",
+          "args": {
+            "id": "v_motion_certify_component.id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_certify_component",
+      "case": "full",
+      "arguments": {
+        "id": "v_motion_certify_component.id",
+        "version": 78
+      },
+      "requests": [
+        {
+          "op": "motion_certify_component",
+          "args": {
+            "id": "v_motion_certify_component.id",
+            "version": 78
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_check_component",
+      "case": "minimal",
+      "arguments": {
+        "id": "v_motion_check_component.id"
+      },
+      "requests": [
+        {
+          "op": "motion_check_component",
+          "args": {
+            "id": "v_motion_check_component.id"
+          },
+          "timeout_ms": 300000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"applied\": true,\n  \"note\": \"stub-default-result\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_check_component",
+      "case": "full",
+      "arguments": {
+        "id": "v_motion_check_component.id",
+        "version": 36
+      },
+      "requests": [
+        {
+          "op": "motion_check_component",
+          "args": {
+            "id": "v_motion_check_component.id",
+            "version": 36
+          },
+          "timeout_ms": 300000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"applied\": true,\n  \"note\": \"stub-default-result\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "motion_define_template",
       "case": "minimal",
       "arguments": {
@@ -17728,6 +18081,54 @@
             "tokens_css": "v_motion_define_theme.tokens_css",
             "to_library": true,
             "apply": false
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_delete_component",
+      "case": "minimal",
+      "arguments": {
+        "id": "v_motion_delete_component.id"
+      },
+      "requests": [
+        {
+          "op": "motion_delete_component",
+          "args": {
+            "id": "v_motion_delete_component.id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_delete_component",
+      "case": "full",
+      "arguments": {
+        "id": "v_motion_delete_component.id",
+        "version": 91
+      },
+      "requests": [
+        {
+          "op": "motion_delete_component",
+          "args": {
+            "id": "v_motion_delete_component.id",
+            "version": 91
           },
           "timeout_ms": 20000
         }
@@ -18018,6 +18419,54 @@
       ]
     },
     {
+      "tool": "motion_get_component",
+      "case": "minimal",
+      "arguments": {
+        "id": "v_motion_get_component.id"
+      },
+      "requests": [
+        {
+          "op": "motion_get_component",
+          "args": {
+            "id": "v_motion_get_component.id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_get_component",
+      "case": "full",
+      "arguments": {
+        "id": "v_motion_get_component.id",
+        "version": 11
+      },
+      "requests": [
+        {
+          "op": "motion_get_component",
+          "args": {
+            "id": "v_motion_get_component.id",
+            "version": 11
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "motion_get_edit_links",
       "case": "minimal",
       "arguments": {},
@@ -18238,6 +18687,50 @@
             "after_scene_index": 55,
             "into_scene_index": 64,
             "scene_id": "v_motion_instantiate_template.scene_id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_list_components",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "motion_list_components",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_list_components",
+      "case": "full",
+      "arguments": {
+        "status": "v_motion_list_components.status",
+        "tag": "v_motion_list_components.tag"
+      },
+      "requests": [
+        {
+          "op": "motion_list_components",
+          "args": {
+            "status": "v_motion_list_components.status",
+            "tag": "v_motion_list_components.tag"
           },
           "timeout_ms": 20000
         }
@@ -20246,6 +20739,85 @@
             "scene_index": 93
           },
           "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_write_component",
+      "case": "minimal",
+      "arguments": {
+        "id": "v_motion_write_component.id",
+        "source": "v_motion_write_component.source"
+      },
+      "requests": [
+        {
+          "op": "motion_write_component",
+          "args": {
+            "id": "v_motion_write_component.id",
+            "source": "v_motion_write_component.source"
+          },
+          "timeout_ms": 300000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_write_component",
+      "case": "full",
+      "arguments": {
+        "id": "v_motion_write_component.id",
+        "source": "v_motion_write_component.source",
+        "props": [
+          {
+            "k_motion_write_component.props[0]": "v_motion_write_component.props[0].value"
+          }
+        ],
+        "name": "v_motion_write_component.name",
+        "description": "v_motion_write_component.description",
+        "tags": [
+          "v_motion_write_component.tags[0]"
+        ],
+        "size": {
+          "k_motion_write_component.size": "v_motion_write_component.size.value"
+        },
+        "duration": -40.06,
+        "dry_run": false
+      },
+      "requests": [
+        {
+          "op": "motion_write_component",
+          "args": {
+            "id": "v_motion_write_component.id",
+            "source": "v_motion_write_component.source",
+            "props": [
+              {
+                "k_motion_write_component.props[0]": "v_motion_write_component.props[0].value"
+              }
+            ],
+            "name": "v_motion_write_component.name",
+            "description": "v_motion_write_component.description",
+            "tags": [
+              "v_motion_write_component.tags[0]"
+            ],
+            "size": {
+              "k_motion_write_component.size": "v_motion_write_component.size.value"
+            },
+            "duration": -40.06
+          },
+          "timeout_ms": 300000
         }
       ],
       "isError": false,

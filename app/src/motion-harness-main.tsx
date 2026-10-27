@@ -136,6 +136,10 @@ function installInvokeStub(): void {
       delete savedTemplates[id];
       return had;
     },
+    // D-409 - the component library: empty in the harness (checking, proving
+    // and installing need Node and the renderer, i.e. the real backend).
+    chroma_motion_load_components: () => ({ entries: [], errors: [] }),
+    chroma_motion_components_dirs: () => [],
   };
   (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__ = {
     invoke: async (cmd: string, args?: unknown) => {

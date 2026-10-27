@@ -300,16 +300,23 @@ const ALL_OPS = [
   'motion_preview_frame',
   // D-404
   'motion_import_asset',
+  // D-409
+  'motion_list_components',
+  'motion_get_component',
+  'motion_write_component',
+  'motion_check_component',
+  'motion_certify_component',
+  'motion_delete_component',
 ];
 
 // ---------------------------------------------------------------------------
 
 describe('the registry itself', () => {
-  it('exposes exactly the 59 documented ops, all motion_-prefixed', () => {
+  it('exposes exactly the 65 documented ops, all motion_-prefixed', () => {
     const { ops } = harness();
     const names = Object.keys(ops).sort();
     expect(names).toEqual([...ALL_OPS].sort());
-    expect(names).toHaveLength(59);
+    expect(names).toHaveLength(65);
     expect(names.every((n) => n.startsWith('motion_'))).toBe(true);
   });
 
@@ -339,6 +346,15 @@ describe('the registry itself', () => {
     'motion_get_template',
     'motion_define_template',
     'motion_delete_template',
+    // D-409 — the component library is user-level: writing, checking,
+    // certifying and deleting a component touch no document (inserting one
+    // goes through motion_add_layer, which does).
+    'motion_list_components',
+    'motion_get_component',
+    'motion_write_component',
+    'motion_check_component',
+    'motion_certify_component',
+    'motion_delete_component',
   ];
 
   it('every op except the orientation reads and the library ops refuses cleanly with no project open, and never commits', async () => {

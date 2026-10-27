@@ -1,0 +1,151 @@
+{
+  "title": "proxy bar-line-chart@1",
+  "width": 1600,
+  "height": 900,
+  "fps": 30,
+  "transparent": true,
+  "grain": false,
+  "vignette": false,
+  "components": {
+    "bar-line-chart@1": {
+      "id": "bar-line-chart",
+      "name": "Bar and line chart",
+      "description": "Bars spring up one by one with their values counting, then a trend line draws through their tops.",
+      "tags": [
+        "data",
+        "chart"
+      ],
+      "props": [
+        {
+          "id": "title",
+          "type": "text",
+          "label": "Title",
+          "default": "Weekly active users",
+          "constraints": {
+            "maxLen": 60
+          }
+        },
+        {
+          "id": "values",
+          "type": "list",
+          "label": "Values",
+          "default": [
+            12,
+            19,
+            15,
+            28,
+            34,
+            30,
+            42
+          ],
+          "required": true,
+          "constraints": {
+            "min": 0,
+            "max": 100000,
+            "minItems": 2,
+            "maxItems": 12,
+            "itemType": "number"
+          }
+        },
+        {
+          "id": "labels",
+          "type": "list",
+          "label": "Labels",
+          "default": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "constraints": {
+            "maxLen": 12,
+            "maxItems": 12
+          }
+        },
+        {
+          "id": "line",
+          "type": "enum",
+          "label": "Trend line",
+          "default": "on",
+          "constraints": {
+            "options": [
+              "on",
+              "off"
+            ]
+          }
+        },
+        {
+          "id": "barColor",
+          "type": "color",
+          "label": "Bar colour",
+          "description": "Unset: the theme's accent."
+        },
+        {
+          "id": "lineColor",
+          "type": "color",
+          "label": "Line colour",
+          "description": "Unset: the theme's signal colour."
+        }
+      ],
+      "size": {
+        "w": 1600,
+        "h": 900
+      },
+      "duration": 3,
+      "version": 1,
+      "sourceHash": "414fe36668800fac65c6d64cae20b9c5a4f8d8373b2c4da8f8ed3bd442228af7",
+      "codeHash": "97f6fc2549568d7f78b223b94c7c37ec334409ec1238bb54842de5f15381f4bc",
+      "code": "sha256:97f6fc2549568d7f78b223b94c7c37ec334409ec1238bb54842de5f15381f4bc.js",
+      "source": "sha256:414fe36668800fac65c6d64cae20b9c5a4f8d8373b2c4da8f8ed3bd442228af7.tsx"
+    }
+  },
+  "scenes": [
+    {
+      "id": "proxy",
+      "dur": 1,
+      "layers": [
+        {
+          "use": "custom",
+          "id": "proxy",
+          "component": "bar-line-chart@1",
+          "x": 0,
+          "y": 0,
+          "w": 1600,
+          "h": 900,
+          "props": {
+            "title": "Revenue ($k)",
+            "values": [
+              8,
+              14,
+              11,
+              22,
+              31
+            ],
+            "labels": [
+              "Q1",
+              "Q2",
+              "Q3",
+              "Q4",
+              "Q5"
+            ]
+          },
+          "anim": {
+            "props.barColor": [
+              {
+                "at": 0,
+                "v": "#38bdf8"
+              },
+              {
+                "at": 2,
+                "v": "#a78bfa"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

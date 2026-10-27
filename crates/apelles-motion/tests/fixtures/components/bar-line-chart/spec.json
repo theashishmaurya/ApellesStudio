@@ -1,0 +1,16 @@
+{
+  "id": "bar-line-chart",
+  "name": "Bar and line chart",
+  "description": "Bars spring up one by one with their values counting, then a trend line draws through their tops.",
+  "tags": ["data", "chart"],
+  "props": [
+    { "id": "title", "type": "text", "label": "Title", "default": "Weekly active users", "constraints": { "maxLen": 60 } },
+    { "id": "values", "type": "list", "label": "Values", "default": [12, 19, 15, 28, 34, 30, 42], "required": true, "constraints": { "itemType": "number", "min": 0, "max": 100000, "minItems": 2, "maxItems": 12 } },
+    { "id": "labels", "type": "list", "label": "Labels", "default": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], "constraints": { "maxItems": 12, "maxLen": 12 } },
+    { "id": "line", "type": "enum", "label": "Trend line", "default": "on", "constraints": { "options": ["on", "off"] } },
+    { "id": "barColor", "type": "color", "label": "Bar colour", "description": "Unset: the theme's accent." },
+    { "id": "lineColor", "type": "color", "label": "Line colour", "description": "Unset: the theme's signal colour." }
+  ],
+  "size": { "w": 1600, "h": 900 },
+  "duration": 3
+}

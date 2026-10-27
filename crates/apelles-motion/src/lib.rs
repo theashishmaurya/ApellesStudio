@@ -26,6 +26,7 @@
 //! **Status:** D-046 — the render-bridge MVP. See `crates/apelles-motion/README.md`.
 
 pub mod assets;
+pub mod components;
 pub mod job;
 pub mod still;
 pub mod templates;

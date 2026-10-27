@@ -27,6 +27,16 @@ Still real:
 
 ## Open
 
+## B-281 — a Motion render of a document that does not set `grain`/`vignette` gets film grain and a vignette the live preview does not show
+
+status: open · severity: medium · area: motion engine (render vs. preview)
+
+- **Repro.** Render (`remotion render` / `still`, i.e. export or `motion_preview_frame`) any manifest with no top-level `grain` or `vignette` key; compare with the live player. Found 2026-10-27 (D-409) when a transparent proxy render came back with a dark radial edge (alpha up to 63) and noise.
+- **Expected.** Absent means off, in both runtimes (the schema's own doc: `.optional()`, not `.default()`).
+- **Actual.** The render has the engine sample's `grain: true` and `vignette: 0.35`.
+- **Cause.** `Root.tsx` registers the `Animation` composition with `defaultProps={sample}`, and Remotion merges a render's input props OVER `defaultProps`, so every key a manifest leaves out is taken from the sample. The player is handed the manifest directly and does not merge.
+- **Fix (not made).** Make the composition's defaults neutral (or strip non-manifest defaults in `calculateMetadata`). Deferred deliberately: it changes the pixels of every existing project's export and every hash recorded in D-403..D-407, so it is a change to make on its own with the owner's say. D-409's proof and proxy documents set `grain: false, vignette: false` explicitly, so they are unaffected.
+
 ## B-280 — in dev, a hot update leaves the control bridge running the old op code
 
 status: **open** · severity: **minor** (dev builds only; but a live check silently tests the old code, and once applied an edit the new code would refuse) · area: the bridge op registration in `packages/editor/src/useEditorControl.ts` (and the other `use*Control` hooks), Vite HMR

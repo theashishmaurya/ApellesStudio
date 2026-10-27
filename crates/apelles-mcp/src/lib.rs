@@ -75,6 +75,11 @@ pub const AUDIO_LIBRARY_TIMEOUT_MS: u64 = 120_000;
 /// bundle (~20 s) before ~1-2 s per frame, up to 12 frames.
 pub const MOTION_PREVIEW_TIMEOUT_MS: u64 = 180_000;
 
+/// Custom components (D-409): the static check runs the TypeScript compiler in Node
+/// (seconds); the certification check bundles (~20 s) and renders three passes of up to
+/// 24 frames at once.
+pub const MOTION_COMPONENT_TIMEOUT_MS: u64 = 300_000;
+
 // D-318's recut detectors used to have a `RECUT_TIMEOUT_MS = 180_000` here, on
 // the reasoning that a cold decode of a long 4K source is not 20s-fast. B-188
 // proved that far too optimistic — a real 16.5-minute 4K file took 244s and

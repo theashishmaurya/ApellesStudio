@@ -35,6 +35,9 @@ import {
   type LeafPrimitiveUse,
   type PrimitiveUse,
 } from "./primitiveProps";
+import { COMPONENT_REF_PATTERN, componentRefSchema, customAnimKind, type ComponentRef } from "../custom/componentDef";
+import { resolveSlotValues } from "../slots";
+import { parsePath } from "./issues";
 
 /**
  * B-059 fix (`docs/BUGS.md`) — `ease` was genuinely supported by `Camera.tsx`
@@ -384,6 +387,27 @@ const groupLayer = z
     }
   });
 
+/**
+ * D-409 — a certified custom component placed as data: `component` pins one
+ * version (`"<id>@<version>"`) whose definition the SAME manifest embeds under
+ * `components` (so it renders without the library), `x`/`y` are its box's
+ * top-left in world px, `w`/`h` its size (default: the component's own), and
+ * `props` its declared props. Whether `component` is embedded, and whether
+ * `props` and any `anim` tracks fit its declaration, is checked at manifest
+ * level (`checkCustomLayers` below), because only the manifest holds the
+ * definition. A 2D layer: it may sit in a group, never in `scene3d`.
+ */
+export const customLayerSchema = z.looseObject({
+  use: z.literal("custom"),
+  ...layerBase,
+  component: z.string().regex(COMPONENT_REF_PATTERN, 'a pinned component: "<id>@<version>", e.g. "particle-burst@1"'),
+  x: z.number().optional(),
+  y: z.number().optional(),
+  w: z.number().positive().optional(),
+  h: z.number().positive().optional(),
+  props: z.record(z.string(), z.unknown()).optional(),
+});
+
 /** `use` → that primitive's whole layer schema. Typed against
  *  `PrimitiveUse`, so a primitive added to `PRIMITIVE_PROPS` without an
  *  option here is a `tsc` error rather than a `use` the schema rejects. */
@@ -434,10 +458,12 @@ type LayerOption = (typeof LAYER_SCHEMAS)[PrimitiveUse];
  * `layerOf`). The cast only restates `Object.values` of a non-empty literal
  * object as the non-empty tuple `discriminatedUnion` asks for.
  */
-export const layerSchema = z.discriminatedUnion(
-  "use",
-  Object.values(LAYER_SCHEMAS) as [LayerOption, ...LayerOption[]],
-);
+export const layerSchema = z.discriminatedUnion("use", [
+  ...(Object.values(LAYER_SCHEMAS) as [LayerOption, ...LayerOption[]]),
+  // D-409 — not a `PrimitiveUse`: a custom component is library data, not a
+  // built-in primitive, so it has no Catalog entry, glyph or registry adapter.
+  customLayerSchema,
+]);
 const layer = layerSchema;
 
 export const sceneSchema = z.object({
@@ -456,6 +482,9 @@ export const sceneSchema = z.object({
         children.forEach((c, i) => {
           if (c.use === "group") {
             ctx.addIssue({ code: "custom", path: [i, "use"], message: "a group is 2D and cannot be a scene3d child" });
+          }
+          if (c.use === "custom") {
+            ctx.addIssue({ code: "custom", path: [i, "use"], message: "a custom component is 2D and cannot be a scene3d child" });
           }
         });
       }),
@@ -495,6 +524,81 @@ export const sceneSchema = z.object({
  */
 const themeName = z.string().min(1).max(48);
 
+/** Every custom layer in a list of layers (groups followed), with its path. */
+function customLayersIn(
+  layers: readonly unknown[] | undefined,
+  path: (string | number)[],
+  out: { layer: Record<string, unknown>; path: (string | number)[] }[],
+): void {
+  (layers ?? []).forEach((raw, i) => {
+    if (!raw || typeof raw !== "object") return;
+    const layer = raw as Record<string, unknown>;
+    if (layer.use === "custom") out.push({ layer, path: [...path, i] });
+    else if (layer.use === "group" && Array.isArray(layer.children)) customLayersIn(layer.children, [...path, i, "children"], out);
+  });
+}
+
+/**
+ * D-409 — the cross-field rules for custom layers, which need the manifest's
+ * embedded definitions: each `components` key matches its definition's own
+ * id and version; each custom layer pins a component this manifest embeds;
+ * its `props` fit that component's declared props (types, constraints, no
+ * unknown key — loading is strict here, because the definition is pinned in
+ * the same document and cannot drift); and each `anim` track targets the box
+ * or a number/colour prop with values of that kind.
+ */
+function checkCustomLayers(
+  m: { components?: Record<string, ComponentRef>; scenes: readonly { layers?: readonly unknown[] }[] },
+  ctx: z.RefinementCtx,
+): void {
+  const components = m.components ?? {};
+  for (const [key, def] of Object.entries(components)) {
+    if (key !== `${def.id}@${def.version}`) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["components", key],
+        message: `is keyed "${key}" but defines ${def.id}@${def.version}; the key is "<id>@<version>"`,
+      });
+    }
+  }
+  const found: { layer: Record<string, unknown>; path: (string | number)[] }[] = [];
+  m.scenes.forEach((s, i) => customLayersIn(s.layers, ["scenes", i, "layers"], found));
+  for (const { layer, path } of found) {
+    const ref = typeof layer.component === "string" ? layer.component : "";
+    const def = components[ref];
+    if (!def) {
+      ctx.addIssue({
+        code: "custom",
+        path: [...path, "component"],
+        message: `"${ref}" is not embedded in this manifest's components; insert it with motion_add_layer(use: "custom:<id>") or list certified ones with motion_list_components`,
+      });
+      continue;
+    }
+    for (const issue of resolveSlotValues({ slots: def.props }, layer.props, undefined, { root: ["props"], owner: `a prop of ${ref}` }).issues) {
+      ctx.addIssue({ code: "custom", path: [...path, ...parsePath(issue.path)], message: issue.message });
+    }
+    const anim = layer.anim && typeof layer.anim === "object" ? (layer.anim as Record<string, unknown>) : {};
+    for (const [track, keys] of Object.entries(anim)) {
+      const kind = customAnimKind(def, track);
+      if (!kind) {
+        ctx.addIssue({
+          code: "custom",
+          path: [...path, "anim", track],
+          message: `"${track}" cannot be animated on ${ref}: tracks target x, y, w, h or props.<id> of a number or colour prop`,
+        });
+        continue;
+      }
+      if (!Array.isArray(keys)) continue;
+      keys.forEach((k, i) => {
+        const v = (k as { v?: unknown }).v;
+        if (kind === "number" ? typeof v !== "number" : typeof v !== "string") {
+          ctx.addIssue({ code: "custom", path: [...path, "anim", track, i, "v"], message: `"${track}" is a ${kind}, so v must be a ${kind === "number" ? "number" : "colour string"}` });
+        }
+      });
+    }
+  }
+}
+
 export const manifestSchema = z.object({
   title: z.string(),
   width: z.number().default(1920),
@@ -510,8 +614,14 @@ export const manifestSchema = z.object({
   vignette: z.union([z.boolean(), z.number()]).optional(),
   /** render with no background paint — for a ProRes4444 overlay to composite in Palmier */
   transparent: z.boolean().optional(),
+  /** D-409 — the certified custom components this document uses, keyed
+   *  `"<id>@<version>"`: a COPY of each definition (copy semantics, D-332), so
+   *  the document renders the same whether or not the library still has it.
+   *  The compiled modules they name live in the project's asset folder. */
+  components: z.record(z.string(), componentRefSchema).optional(),
   scenes: z.array(sceneSchema).min(1),
 }).superRefine((m, ctx) => {
+  checkCustomLayers(m, ctx);
   // D-399 — the theme rules: `theme` names a built-in or the embedded
   // definition, and an embedded definition and a name must agree.
   if (m.themeDef && m.theme !== undefined && m.theme !== m.themeDef.name) {

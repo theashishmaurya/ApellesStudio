@@ -218,6 +218,12 @@
     "motion_save_template",
     "motion_instantiate_template",
     "motion_refill_template",
-    "motion_delete_template"
+    "motion_delete_template",
+    "motion_list_components",
+    "motion_get_component",
+    "motion_write_component",
+    "motion_check_component",
+    "motion_certify_component",
+    "motion_delete_component"
   ]
 }

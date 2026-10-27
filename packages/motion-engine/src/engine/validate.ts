@@ -26,21 +26,14 @@
 import { z } from "zod";
 import { layerSchema, manifestSchema, sceneSchema } from "./schema";
 import { defOf, optionFor, unwrap } from "./zodIntrospect";
+import { closest, formatPath, type PathSeg, type ValidationIssue } from "./issues";
+
+// D-409 — the issue shape and its helpers live in `issues.ts` (the slot checks
+// the schema uses need them without importing this module); re-exported so
+// every existing import from here keeps working.
+export { closest, formatPath, type ValidationIssue };
 
 export { defOf, unwrap };
-
-export interface ValidationIssue {
-  /** where, as `scenes[0].layers[2].size` (empty string for the root). */
-  path: string;
-  /** a stable machine code: zod's own (`invalid_type`, `invalid_value`,
-   *  `too_small`, ...) or one of ours (`unrecognized_key`, `unknown_use`). */
-  code: string;
-  message: string;
-  /** what would have been accepted, when that is knowable. */
-  expected?: unknown;
-  /** what to do about it, when there is something specific to say. */
-  hint?: string;
-}
 
 export interface ValidationResult {
   /** no issues at all, unknown keys included — what authoring requires. */
@@ -48,49 +41,6 @@ export interface ValidationResult {
   /** parses under the manifest schema — what loading requires. */
   loads: boolean;
   issues: ValidationIssue[];
-}
-
-type PathSeg = string | number;
-
-/** `["scenes", 0, "layers", 2, "size"]` → `scenes[0].layers[2].size`. */
-export function formatPath(path: readonly PathSeg[]): string {
-  let out = "";
-  for (const seg of path) {
-    if (typeof seg === "number") out += `[${seg}]`;
-    else out += out ? `.${seg}` : seg;
-  }
-  return out;
-}
-
-/** Levenshtein distance, for "did you mean". Small strings only. */
-function distance(a: string, b: string): number {
-  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...new Array<number>(b.length).fill(0)]);
-  for (let j = 1; j <= b.length; j++) dp[0][j] = j;
-  for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
-      dp[i][j] = Math.min(
-        dp[i - 1][j] + 1,
-        dp[i][j - 1] + 1,
-        dp[i - 1][j - 1] + (a[i - 1].toLowerCase() === b[j - 1].toLowerCase() ? 0 : 1),
-      );
-    }
-  }
-  return dp[a.length][b.length];
-}
-
-/** the closest candidate within a typo's reach, or `undefined`. */
-export function closest(word: string, candidates: readonly string[]): string | undefined {
-  let best: string | undefined;
-  let bestD = Infinity;
-  for (const c of candidates) {
-    const d = distance(word, c);
-    if (d < bestD) {
-      bestD = d;
-      best = c;
-    }
-  }
-  const reach = Math.max(2, Math.floor(word.length / 3));
-  return bestD <= reach ? best : undefined;
 }
 
 // --------------------------------------------------------------------------

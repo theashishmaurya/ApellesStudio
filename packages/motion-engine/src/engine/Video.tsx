@@ -15,6 +15,13 @@ import { ThemeProvider, useTheme } from "../ThemeContext";
 import { ensureThemeFonts } from "../themeFonts";
 import { lookup } from "./registry";
 import { applyAnim } from "../lib/anim";
+import {
+  CustomComponentsProvider,
+  CustomLayerNode,
+  useCustomComponents,
+  withCustomDefaults,
+} from "../custom/renderer";
+import type { ComponentRef } from "../custom/componentDef";
 import type { Layer, LayerTransform, Manifest, Scene as SceneT } from "./schema";
 
 /**
@@ -84,10 +91,13 @@ const renderLayers = (
   fps: number,
   frame: number,
   sceneIndex: number,
+  components: Readonly<Record<string, ComponentRef>>,
   layerKey: ((i: number) => string) | null = (i) => `${sceneIndex}.${i}`,
 ): React.ReactNode[] =>
   (layers ?? []).map((l0, i) => {
-    const l = applyAnim(l0, frame, fps);
+    // D-409 — a custom layer's declared defaults sit under its own props first,
+    // so an `anim` track on `props.<id>` always has an object to land in.
+    const l = applyAnim(withCustomDefaults(l0, components), frame, fps);
     const t = l.transform;
     let tx = t?.x ?? 0;
     let ty = t?.y ?? 0;
@@ -114,6 +124,8 @@ const renderLayers = (
     const content =
       l.use === "group" ? (
         <GroupNode layer={l} fps={fps} sceneIndex={sceneIndex} />
+      ) : l.use === "custom" ? (
+        <CustomLayerNode layer={l} raw={l0} fps={fps} />
       ) : (
         (() => {
           const { component: C, adapt } = lookup(l.use as Layer["use"]);
@@ -187,7 +199,8 @@ const GroupChildren: React.FC<{ layers: readonly RawLayer[]; fps: number; sceneI
   sceneIndex,
 }) => {
   const frame = useCurrentFrame();
-  return <>{renderLayers(layers, fps, frame, sceneIndex, null)}</>;
+  const components = useCustomComponents();
+  return <>{renderLayers(layers, fps, frame, sceneIndex, components, null)}</>;
 };
 
 /**
@@ -248,7 +261,8 @@ const GroupNode: React.FC<{ layer: RawLayer; fps: number; sceneIndex: number }> 
 
 const TwoD: React.FC<{ scene: SceneT; fps: number; sceneIndex: number }> = ({ scene, fps, sceneIndex }) => {
   const frame = useCurrentFrame();
-  const nodes = renderLayers(scene.layers as RawLayer[] | undefined, fps, frame, sceneIndex);
+  const components = useCustomComponents();
+  const nodes = renderLayers(scene.layers as RawLayer[] | undefined, fps, frame, sceneIndex, components);
   if (scene.camera && scene.camera.length) {
     const keys = scene.camera.map((k) => ({ ...k, at: Math.round(k.at * fps) }));
     return <Camera keys={keys}>{nodes}</Camera>;
@@ -352,12 +366,18 @@ const OneScene: React.FC<{
  * `../themeFonts.ts`'s module scope, which is where this file's old
  * unconditional `loadFont()` (Kalam) moved to.
  */
+/** A stable empty map, so a document without components re-renders nothing. */
+const NO_COMPONENTS: Readonly<Record<string, ComponentRef>> = {};
+
 export const Video: React.FC<Manifest> = (manifest) => {
   const { fps } = manifest;
   const theme = resolveManifestTheme(manifest);
   ensureThemeFonts(theme);
   return (
     <ThemeProvider theme={theme}>
+    {/* D-409 — the document's embedded custom-component definitions. Who
+        DRAWS them is the runtime's choice (`../custom/renderer.tsx`). */}
+    <CustomComponentsProvider components={manifest.components ?? NO_COMPONENTS}>
     <Series>
       {manifest.scenes.map((scene, sceneIndex) => (
         <Series.Sequence
@@ -375,6 +395,7 @@ export const Video: React.FC<Manifest> = (manifest) => {
         </Series.Sequence>
       ))}
     </Series>
+    </CustomComponentsProvider>
     </ThemeProvider>
   );
 };

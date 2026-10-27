@@ -147,6 +147,7 @@ import { resolveManifestTheme } from '@apelles/motion-engine/src/themeDef';
 import { ThemeProvider } from '@apelles/motion-engine/src/ThemeContext';
 import { catalogEntry, type PrimitiveUse } from './catalog';
 import { PrimitiveGlyph } from './PrimitiveGlyph';
+import { PuzzlePieceIcon } from '@phosphor-icons/react';
 
 const THUMB_W = 30;
 const THUMB_H = 18;
@@ -201,7 +202,10 @@ function SingleLayerComposition({
 }
 
 export function LayerThumbnail({ layer, manifest }: { layer: Layer; manifest: Manifest }) {
-  const live = LIVE_PREVIEW_USES.has(layer.use);
+  // D-409 — a custom component never renders in the webview (its code runs in
+  // the renderer process only), so its row shows a static glyph, like the 3D
+  // primitives.
+  const live = layer.use !== 'custom' && LIVE_PREVIEW_USES.has(layer.use);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [visible, setVisible] = useState(false);
 
@@ -238,7 +242,7 @@ export function LayerThumbnail({ layer, manifest }: { layer: Layer; manifest: Ma
         style={{ width: THUMB_W, height: THUMB_H }}
         aria-hidden
       >
-        <PrimitiveGlyph use={layer.use} />
+        {layer.use === 'custom' ? <PuzzlePieceIcon size={18} /> : <PrimitiveGlyph use={layer.use} />}
       </span>
     );
   }

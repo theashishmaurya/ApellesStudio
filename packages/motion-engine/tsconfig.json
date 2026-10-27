@@ -6,6 +6,9 @@
     "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,
+    // D-409 — `src/custom/sourceCheck.ts` runs under plain Node type stripping
+    // (`scripts/check-component.mts`), where relative imports need their `.ts`.
+    "allowImportingTsExtensions": true,
     // B-232 — `dom`: `Scene3D.tsx` uses `document`, `Emphasis.dom.test.tsx`
     // uses `HTMLElement`. Remotion compositions render in a browser.
     "lib": ["es2015", "dom"],
@@ -14,5 +17,8 @@
     "forceConsistentCasingInFileNames": true,
     "noUnusedLocals": true
   },
-  "exclude": ["remotion.config.ts"]
+  // D-409 — `components/` holds the shipped custom components as library DATA;
+  // their sources are type-checked by the component check (`src/custom/
+  // sourceCheck.ts`, against `@apelles/component`), not as engine code.
+  "exclude": ["remotion.config.ts", "components"]
 }

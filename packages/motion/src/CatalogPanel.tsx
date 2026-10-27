@@ -11,6 +11,10 @@
  * (`TemplatesSection.tsx`): the built-in and saved templates, each filled
  * through a form generated from its slots.
  *
+ * D-409: a Custom section follows it (`CustomComponentsSection.tsx`): custom
+ * Remotion components — drafts, the certification check and contact sheet,
+ * Certify, and an Insert form for each certified one.
+ *
  * What it does NOT do: it does not construct the manifest fragment
  * (`catalog.ts`'s `defaultLayerFor`) and it does not perform the insert
  * (`manifestEdit.ts`'s `addLayer`). This file is presentation plus one
@@ -60,6 +64,7 @@ import { presetsForDisplay } from './layerPresets';
 import { InsertJsonBox, type InsertJsonMode } from './InsertJsonBox';
 import type { MotionRefusal } from './authoring';
 import { TemplatesSection, type TemplatesSectionProps } from './TemplatesSection';
+import { CustomComponentsSection, type CustomComponentsSectionProps } from './CustomComponentsSection';
 
 /**
  * `sceneLabel` names the insert target in the panel header, so "Add" is
@@ -78,6 +83,7 @@ export function CatalogPanel({
   onInsertJson,
   catalogError = null,
   templates,
+  custom,
 }: {
   targetSceneId: string | null;
   onAdd: (use: PrimitiveUse) => void;
@@ -99,6 +105,8 @@ export function CatalogPanel({
   /** D-407 — the Templates section (built-ins + the user library, the fill
    *  form and the save form). Omitted = no section. */
   templates?: TemplatesSectionProps;
+  /** D-409 — the Custom section (custom components). Omitted = no section. */
+  custom?: CustomComponentsSectionProps;
 }) {
   const saved = presetsForDisplay(presets);
 
@@ -134,6 +142,9 @@ export function CatalogPanel({
         {/* D-407 — templates first: a filled template is a finished scene, the
            biggest step a person can take from this panel. */}
         {templates && <TemplatesSection {...templates} />}
+
+        {/* D-409 — certified custom components, as data. */}
+        {custom && <CustomComponentsSection {...custom} />}
 
         {saved.length > 0 && (
           <>
@@ -186,7 +197,7 @@ export function CatalogPanel({
             ))}
           </>
         )}
-        {(saved.length > 0 || templates) && (
+        {(saved.length > 0 || templates || custom) && (
           <p className="text-[10px] uppercase tracking-wide text-text-secondary/60 px-0.5 mt-1">
             Primitives
           </p>

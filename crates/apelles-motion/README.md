@@ -76,6 +76,23 @@ per template. `load_library` returns what parsed plus one `{file, error}` per fi
 rename) after checking the id is a safe file stem; `delete_template`. No schema validation here:
 `templateDef.ts` (zod) is the one source of truth and the frontend checks each entry.
 
+## Custom components (D-409)
+
+`src/components.rs`: the custom-component backend. The library (`<root>/<id>/<version>/`,
+built-ins under `packages/motion-engine/components/` plus `<app data>/motion/components/`;
+per-folder load errors; staged-then-renamed versions; atomic `meta.json`); `check_source`
+(spawns `node scripts/check-component.mts`); `write_draft` (replaces the open draft, never a
+certified version); `prove` (three passes at once — in order in one tab via
+`still::render_sequence --concurrency=1`, and two out-of-order fresh-still passes — compared by
+decoded pixels: stills bit-exact, in-order within `IN_ORDER_MAX_DELTA`; contact sheet and
+thumbnail); `certify` (only for a proof of the current source and module); `delete`;
+`install_into_project` (hash-checked copy into the asset folder, `assets::store_bytes`); and
+`render_proxy` (a custom layer's frames for the live player, cached by content).
+`examples/certify_component.rs` runs the same path from a fixture folder (how the built-ins
+were made); `tests/component_render.rs` (`--ignored`) re-proves them, renders an agent-built
+document in two parallel renders, renders proxy frames and shows a stateful component fail.
+This crate spawns the renderer; it never evaluates component code.
+
 ## Still frames (D-403)
 
 `src/still.rs` is `motion_preview_frame`'s backend: `build_still_command` (the twin of

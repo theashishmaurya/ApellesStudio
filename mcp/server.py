@@ -123,6 +123,10 @@ AUDIO_LIBRARY_TIMEOUT_MS = 120_000
 #: Motion still frames (D-403): the first preview after an engine change runs a
 #: webpack bundle (~20s) before ~1-2s per frame, up to 12 frames.
 MOTION_PREVIEW_TIMEOUT_MS = 180_000
+#: Custom components (D-409): the static check runs the TypeScript compiler in
+#: Node (seconds); the certification check bundles (~20s) and renders three
+#: passes of up to 24 frames at once.
+MOTION_COMPONENT_TIMEOUT_MS = 300_000
 
 # D-318's recut detectors used to have a 180_000 budget here, on the reasoning
 # that a cold decode of a long 4K source is not 20s-fast. B-188 proved that far
@@ -7221,6 +7225,230 @@ def motion_delete_template(id: str) -> str:
 
 
 @mcp.tool()
+def motion_list_components(status: str | None = None, tag: str | None = None) -> str:
+    """List the custom Remotion components (D-409): the built-ins plus the
+    user's library, one row per component id with every version and its status
+    (`draft` or `certified`).
+
+    A certified version is plain catalog data: put it in a scene with
+    `motion_add_layer(use="custom:<id>")` (the newest certified version) or
+    `use="custom:<id>@<version>"`, or as a `{"use": "custom", "component":
+    "<id>@<version>", "props": {...}}` layer in `motion_insert_layers`,
+    `motion_set_scene` or a template body. Each row carries `use` (the newest
+    certified version, or null), `props` (the declared props, the same slot
+    shape templates use), `propsSchema` (the JSON Schema of a whole layer of
+    it), `size`, `duration` and per-version check results. Drafts cannot be
+    used until certified. Needs no project open.
+
+    Args:
+        status: "draft", "certified" or "all" (default all).
+        tag: only components with this tag."""
+    import json
+
+    args: dict[str, Any] = {}
+    if status is not None:
+        args["status"] = status
+    if tag is not None:
+        args["tag"] = tag
+    return json.dumps(_op("motion_list_components", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_get_component(id: str, version: int | None = None) -> str:
+    """One custom component version in full (D-409): its declaration (props,
+    size, duration), status, static-check warnings, certification proof, the
+    contact sheet's path, and its SOURCE (`code`). The source is read-only:
+    to change it, write the id again with `motion_write_component`, which
+    makes a new draft. Needs no project open.
+
+    Args:
+        id: the component id.
+        version: which version (default: the newest)."""
+    import json
+
+    args: dict[str, Any] = {"id": id}
+    if version is not None:
+        args["version"] = version
+    return json.dumps(_op("motion_get_component", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_write_component(
+    id: str,
+    source: str,
+    props: list[dict[str, Any]] | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    tags: list[str] | None = None,
+    size: dict[str, Any] | None = None,
+    duration: float | None = None,
+    dry_run: bool = False,
+) -> str:
+    """Write a custom Remotion component as a DRAFT (D-409) -- for what the
+    primitives cannot build (a particle logo, a 3D product spin, a bespoke
+    chart or transition). Lifecycle: write (draft) -> `motion_check_component`
+    (certification renders) -> `motion_certify_component` -> use it as data.
+
+    `source` is one TSX module whose DEFAULT export is a React component
+    called with `{props, theme, width, height, durationInFrames}` (type it with
+    `import type { ComponentProps } from "@apelles/component"`). Draw inside
+    the `width` x `height` box; `useCurrentFrame()` counts from the layer's
+    start. Read colours and fonts from `theme` (`theme.accent`, `theme.text`,
+    `theme.bg`, `theme.fontDisplay`, ...) unless a colour prop is set.
+
+    The static check refuses, with `issues` `[{path: "source:<line>:<col>",
+    code, message, hint}]`: imports outside the allowlist (react, remotion,
+    @remotion/shapes, @remotion/paths, @remotion/noise,
+    @remotion/animation-utils, @remotion/three, three, @react-three/fiber,
+    d3-force, @apelles/component); `Math.random` (use `random(seed)` from
+    remotion); `Date`, `performance`, timers, `requestAnimationFrame` (use
+    `useCurrentFrame()` / fps); `fetch`, `XMLHttpRequest`, `WebSocket`;
+    `eval` / `Function`; dynamic `import()` / `require`; `window`,
+    `globalThis`, `document`, `process`, `__TAURI__*`, storage, `constructor`
+    / `__proto__`; a missing default export; and any TypeScript error (strict,
+    against the real remotion/React types). Hard-coded colours come back as
+    `warnings`.
+
+    `props` declares the props, as template slots: `[{id, type: text |
+    number | color | enum | list, label, description?, default?, required?,
+    constraints?: {min, max, integer, maxLen, minLen, options, minItems,
+    maxItems, itemType}}]`. A colour prop has NO default (unset, the
+    component reads the theme). Numbers and colours are keyframeable on a
+    layer (`anim: {"props.<id>": [...]}`).
+
+    Nothing is saved unless the declaration and the source both pass. If the
+    id's newest version is an uncertified draft it is replaced; after a
+    certified version the next version number starts. Certified versions
+    never change. Returns `{id, version, status, sourceHash, codeHash,
+    warnings}`; `dry_run=true` checks only. Needs no project open.
+
+    Args:
+        id: lowercase letters, digits, hyphens (e.g. "particle-burst").
+        source: the component's TSX.
+        props: the declared props (default none).
+        name: a display name (default: the id).
+        description: one line on what it is for.
+        tags: e.g. ["data", "intro"].
+        size: its design box `{"w": 1920, "h": 1080}` (default: the project
+            canvas); a layer's w/h default to it.
+        duration: seconds it is meant to play (default 3); what the check
+            renders.
+        dry_run: check only, save nothing."""
+    import json
+
+    args: dict[str, Any] = {"id": id, "source": source}
+    if props is not None:
+        args["props"] = props
+    if name is not None:
+        args["name"] = name
+    if description is not None:
+        args["description"] = description
+    if tags is not None:
+        args["tags"] = tags
+    if size is not None:
+        args["size"] = size
+    if duration is not None:
+        args["duration"] = duration
+    if dry_run:
+        args["dry_run"] = True
+    return json.dumps(
+        _op("motion_write_component", timeout_ms=MOTION_COMPONENT_TIMEOUT_MS, **args),
+        indent=2,
+        default=str,
+    )
+
+
+@mcp.tool()
+def motion_check_component(id: str, version: int | None = None) -> list:
+    """Run a custom component's CERTIFICATION CHECK and see it (D-409).
+
+    Renders sample frames (start, a third, two thirds, end) of three variants
+    -- the declared defaults, every prop at the LOW edge of its constraints,
+    every prop at the HIGH edge (colour props set) -- three ways at once: every
+    frame in order in one browser tab, and two passes of fresh stills seeking
+    backwards and out of order. Every frame's pixels must be identical across
+    the three, which proves the component is a pure function of (props,
+    frame). Renders run in the Remotion renderer process, never in the app.
+
+    Returns the contact sheet (one row per variant) as an image, then `{ok,
+    id, version, path, frames: [{variant, frame, hashes, same}], passes,
+    mismatched?, hint?, error?}`. The result is recorded on a draft; it
+    certifies nothing by itself -- look at the sheet, then
+    `motion_certify_component`. The first check after an engine change
+    bundles it (~20 s), then about a minute. Needs no project open.
+
+    Args:
+        id: the component id.
+        version: which version (default: the newest)."""
+    import json
+
+    args: dict[str, Any] = {"id": id}
+    if version is not None:
+        args["version"] = version
+    env = _op("motion_check_component", timeout_ms=MOTION_COMPONENT_TIMEOUT_MS, **args)
+
+    res = env.get("result") or {}
+    out: list = []
+    if env.get("ok") and res.get("path"):
+        try:
+            with builtins.open(res["path"], "rb") as fh:
+                out.append(Image(data=fh.read(), format="png").to_image_content())
+        except OSError as e:
+            res = {**res, "inlineError": f"rendered, but could not be read back: {e}"}
+    out.append(
+        TextContent(
+            type="text",
+            text=json.dumps(
+                {"ok": env.get("ok"), "error": env.get("error"), **res},
+                indent=2,
+                default=str,
+            ),
+        )
+    )
+    return out
+
+
+@mcp.tool()
+def motion_certify_component(id: str, version: int | None = None) -> str:
+    """Certify a custom component version (D-409): refused unless its
+    certification check (`motion_check_component`) passed for exactly the
+    source and module it has now. From then on the version is immutable and
+    usable as data: `motion_add_layer(use="custom:<id>@<version>")`. Projects
+    that use it get their own copy (a render never depends on the library).
+    Certification is always this explicit call; passing the check never
+    certifies on its own. Returns `{certified, id, version, use, component,
+    sourceHash, codeHash, propsSchema}`. Needs no project open.
+
+    Args:
+        id: the component id.
+        version: which version (default: the newest)."""
+    import json
+
+    args: dict[str, Any] = {"id": id}
+    if version is not None:
+        args["version"] = version
+    return json.dumps(_op("motion_certify_component", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_delete_component(id: str, version: int | None = None) -> str:
+    """Delete a custom component from the user's library (D-409): one version,
+    or every version when `version` is omitted. Documents that use it keep
+    their own copies and still render. Built-in components cannot be deleted.
+    Needs no project open.
+
+    Args:
+        id: the component id.
+        version: the version to delete (default: all of them)."""
+    import json
+
+    args: dict[str, Any] = {"id": id}
+    if version is not None:
+        args["version"] = version
+    return json.dumps(_op("motion_delete_component", **args), indent=2, default=str)
+
+
+@mcp.tool()
 def motion_set_project_settings(
     title: str | None = None,
     width: int | None = None,
@@ -7530,10 +7758,17 @@ def motion_add_layer(
     `id` cannot be set through `props`. To insert several finished layers in
     one undo step, use `motion_insert_layers`.
 
+    `use="custom:<id>"` (D-409) inserts a CERTIFIED custom component instead
+    (`motion_list_components`): the newest certified version, or
+    `custom:<id>@<version>` to pin one. It is installed into the project and
+    embedded in the document, placed centred at its own size; `props` are its
+    declared props, checked against their constraints.
+
     Args:
         scene_index: which scene to add to.
-        use: the primitive, e.g. "text". An unknown value is refused with the
-            full legal list.
+        use: the primitive, e.g. "text", or "custom:<id>" for a certified
+            custom component. An unknown value is refused with the full legal
+            list.
         props: optional fields of the new layer, e.g.
             `{"text": "Ship it", "size": 96, "x": 200, "y": 300}`."""
     import json

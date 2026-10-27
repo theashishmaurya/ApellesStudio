@@ -109,6 +109,7 @@ import { createMotionOps, type MotionOpsApi, type MotionEditLinks } from './moti
 import { useMotionLayerPresetStore } from './layerPresetIO';
 import { useMotionThemeLibraryStore } from './themeLibraryIO';
 import { useMotionTemplateLibraryStore } from './templateLibraryIO';
+import { componentAccess } from './customComponentLibraryIO';
 import { importAsset, previewFrames } from './manifestIO';
 import type { Selection } from './LayerList';
 import type { MotionCanvasMeasureApi } from './MotionPreview';
@@ -248,6 +249,8 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
         save: (t) => useMotionTemplateLibraryStore.getState().save(t),
         remove: (id) => useMotionTemplateLibraryStore.getState().remove(id),
       }),
+      // D-409 — the custom-component library and its backend commands.
+      components: () => componentAccess(),
     });
 
     // B-272 — this subscription's identity; see `useEditorControl.ts`.

@@ -132,6 +132,46 @@ pub fn import_asset(source: &Path, assets_dir: &Path) -> Result<AssetRecord, Chr
     })
 }
 
+/// SHA-256 of `bytes` as lowercase hex.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// D-409 — put `bytes` into `assets_dir` as `<sha256>.<ext>` (atomically, a
+/// `.part` sibling then a rename) and return the `sha256:<hex>.<ext>` id and
+/// whether anything was written. How a certified custom component's compiled
+/// module (`js`) and source (`tsx`) reach a project: content-addressed beside
+/// its images, so the render serves them from the same `--public-dir` and the
+/// preview bundle's cache key (which names that folder's files) changes with
+/// them. `ext` is the caller's; only the two component kinds use this.
+pub fn store_bytes(
+    bytes: &[u8],
+    ext: &str,
+    assets_dir: &Path,
+) -> Result<(String, bool), ChromaError> {
+    if ext != "js" && ext != "tsx" {
+        return Err(ChromaError::Unsupported(format!(
+            "store_bytes is for component modules (js, tsx), not .{ext}"
+        )));
+    }
+    let file_name = format!("{}.{ext}", sha256_hex(bytes));
+    let dest = assets_dir.join(&file_name);
+    std::fs::create_dir_all(assets_dir)
+        .map_err(|e| ChromaError::Invalid(format!("create {}: {e}", assets_dir.display())))?;
+    if dest.is_file() {
+        return Ok((format!("sha256:{file_name}"), false));
+    }
+    let part = assets_dir.join(format!("{file_name}.part"));
+    std::fs::write(&part, bytes)
+        .map_err(|e| ChromaError::Invalid(format!("write {}: {e}", part.display())))?;
+    std::fs::rename(&part, &dest)
+        .map_err(|e| ChromaError::Invalid(format!("move into {}: {e}", dest.display())))?;
+    Ok((format!("sha256:{file_name}"), true))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

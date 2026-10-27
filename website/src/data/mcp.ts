@@ -93,6 +93,11 @@ export interface ToolGroup {
  * `motion_refill_template` and `motion_delete_template` (Motion 52 → 59).
  * Re-counted against the real file.
  *
+ * 211 → 217 on 2026-10-27 (D-409): the six custom-component tools,
+ * `motion_list_components`, `motion_get_component`, `motion_write_component`,
+ * `motion_check_component`, `motion_certify_component` and
+ * `motion_delete_component` (Motion 59 → 65). Re-counted against the real file.
+ *
  * 207 → 211 on 2026-10-27 (D-408): music edits by story beat,
  * `editor_music_edit`, `editor_propose_music_edits`, `editor_list_music_edits`
  * and `editor_apply_music_edits` (Edit 86 → 90). Re-counted against the real
@@ -111,8 +116,8 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 211,
-  shipped: 199,
+  all: 217,
+  shipped: 205,
   debugOnly: 12,
 } as const;
 
@@ -173,7 +178,7 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
   },
   {
     name: 'Motion',
-    count: 59,
+    count: 65,
     blurb:
       'The motion-graphics room, closed as a gap on 2026-09-09 (D-257/D-259/D-260) after a year of being this surface’s sharpest shortfall. Scenes and layers from a real primitive catalog, per-layer keyframes with bezier easing, 2D and 3D cameras, align and distribute, and a Remotion render that emits one video file per scene.',
     sample: [
@@ -186,6 +191,8 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
       'motion_preview_frame',
       'motion_list_templates',
       'motion_instantiate_template',
+      'motion_write_component',
+      'motion_certify_component',
       'motion_set_layer_field',
       'motion_set_layer_position',
       'motion_add_layer_keyframe',

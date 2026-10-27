@@ -141,6 +141,15 @@ const PRIMITIVE_FIELDS: Record<string, FieldSpec[]> = {
     { key: 'y', label: 'Y', kind: 'number', group: 'layout' },
   ],
   // D-405 — the brand building blocks.
+  // D-409 — a custom component's box. Its own props are not listed here: they
+  // are declared by the component (the manifest embeds the definition), and
+  // the Inspector builds those fields from it (`CustomPropsFields`).
+  custom: [
+    { key: 'x', label: 'X', kind: 'number', group: 'layout' },
+    { key: 'y', label: 'Y', kind: 'number', group: 'layout' },
+    { key: 'w', label: 'Width', kind: 'number', group: 'layout' },
+    { key: 'h', label: 'Height', kind: 'number', group: 'layout' },
+  ],
   image: [
     { key: 'src', label: 'Image', kind: 'asset', group: 'source' },
     { key: 'x', label: 'X', kind: 'number', group: 'layout' },
@@ -462,6 +471,8 @@ export function positionFields(use: string): PositionKind | undefined {
   // D-405 — every brand primitive with a box has plain world-px `x`/`y`. A
   // `group` has none of its own: it moves by its transform.
   if (use === 'image' || use === 'icon' || use === 'shape' || use === 'counter') return 'xy';
+  // D-409 — a custom component's box: world-px top-left `x`/`y`.
+  if (use === 'custom') return 'xy';
   if (use === 'emphasis') return 'box-xy';
   return undefined;
 }
@@ -532,6 +543,8 @@ export function sizeFields(use: string): SizeKind | undefined {
   if (use === 'deviceframe') return { kind: 'scale', key: 'scale' };
   // D-405 — `image` and `shape` are boxes with independent `w`/`h`.
   if (use === 'image' || use === 'shape') return { kind: 'wh', w: 'w', h: 'h' };
+  // D-409 — and its `w`/`h`.
+  if (use === 'custom') return { kind: 'wh', w: 'w', h: 'h' };
   if (use === 'emphasis') return { kind: 'box-wh' };
   if (use === 'matrix')
     return {

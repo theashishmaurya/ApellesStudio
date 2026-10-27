@@ -1,0 +1,222 @@
+{
+  "manifest": {
+    "title": "certification proof: bar-line-chart@1",
+    "width": 1600,
+    "height": 900,
+    "fps": 30,
+    "grain": false,
+    "vignette": false,
+    "components": {
+      "bar-line-chart@1": {
+        "id": "bar-line-chart",
+        "name": "Bar and line chart",
+        "description": "Bars spring up one by one with their values counting, then a trend line draws through their tops.",
+        "tags": [
+          "data",
+          "chart"
+        ],
+        "props": [
+          {
+            "id": "title",
+            "type": "text",
+            "label": "Title",
+            "default": "Weekly active users",
+            "constraints": {
+              "maxLen": 60
+            }
+          },
+          {
+            "id": "values",
+            "type": "list",
+            "label": "Values",
+            "default": [
+              12,
+              19,
+              15,
+              28,
+              34,
+              30,
+              42
+            ],
+            "required": true,
+            "constraints": {
+              "min": 0,
+              "max": 100000,
+              "minItems": 2,
+              "maxItems": 12,
+              "itemType": "number"
+            }
+          },
+          {
+            "id": "labels",
+            "type": "list",
+            "label": "Labels",
+            "default": [
+              "Mon",
+              "Tue",
+              "Wed",
+              "Thu",
+              "Fri",
+              "Sat",
+              "Sun"
+            ],
+            "constraints": {
+              "maxLen": 12,
+              "maxItems": 12
+            }
+          },
+          {
+            "id": "line",
+            "type": "enum",
+            "label": "Trend line",
+            "default": "on",
+            "constraints": {
+              "options": [
+                "on",
+                "off"
+              ]
+            }
+          },
+          {
+            "id": "barColor",
+            "type": "color",
+            "label": "Bar colour",
+            "description": "Unset: the theme's accent."
+          },
+          {
+            "id": "lineColor",
+            "type": "color",
+            "label": "Line colour",
+            "description": "Unset: the theme's signal colour."
+          }
+        ],
+        "size": {
+          "w": 1600,
+          "h": 900
+        },
+        "duration": 3,
+        "version": 1,
+        "sourceHash": "414fe36668800fac65c6d64cae20b9c5a4f8d8373b2c4da8f8ed3bd442228af7",
+        "codeHash": "97f6fc2549568d7f78b223b94c7c37ec334409ec1238bb54842de5f15381f4bc",
+        "code": "sha256:97f6fc2549568d7f78b223b94c7c37ec334409ec1238bb54842de5f15381f4bc.js",
+        "source": "sha256:414fe36668800fac65c6d64cae20b9c5a4f8d8373b2c4da8f8ed3bd442228af7.tsx"
+      }
+    },
+    "scenes": [
+      {
+        "id": "proof-defaults",
+        "dur": 3,
+        "layers": [
+          {
+            "use": "custom",
+            "id": "component",
+            "component": "bar-line-chart@1",
+            "x": 0,
+            "y": 0
+          }
+        ]
+      },
+      {
+        "id": "proof-min",
+        "dur": 3,
+        "layers": [
+          {
+            "use": "custom",
+            "id": "component",
+            "component": "bar-line-chart@1",
+            "x": 0,
+            "y": 0,
+            "props": {
+              "title": "A",
+              "values": [
+                0,
+                0
+              ],
+              "labels": [
+                "A"
+              ],
+              "line": "on"
+            }
+          }
+        ]
+      },
+      {
+        "id": "proof-max",
+        "dur": 3,
+        "layers": [
+          {
+            "use": "custom",
+            "id": "component",
+            "component": "bar-line-chart@1",
+            "x": 0,
+            "y": 0,
+            "props": {
+              "title": "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+              "values": [
+                100000,
+                99999,
+                99998,
+                99997,
+                99996,
+                99995,
+                99994,
+                99993,
+                99992,
+                99991,
+                99990,
+                99989
+              ],
+              "labels": [
+                "WWWWWWWWWWWW",
+                "WWWWWWWWWWWW",
+                "WWWWWWWWWWWW",
+                "WWWWWWWWWWWW",
+                "WWWWWWWWWWWW",
+                "WWWWWWWWWWWW",
+                "WWWWWWWWWWWW",
+                "WWWWWWWWWWWW",
+                "WWWWWWWWWWWW",
+                "WWWWWWWWWWWW",
+                "WWWWWWWWWWWW",
+                "WWWWWWWWWWWW"
+              ],
+              "line": "off",
+              "barColor": "#22d3ee",
+              "lineColor": "#22d3ee"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "variants": [
+    {
+      "name": "defaults",
+      "frames": [
+        0,
+        30,
+        59,
+        89
+      ]
+    },
+    {
+      "name": "min",
+      "frames": [
+        90,
+        120,
+        149,
+        179
+      ]
+    },
+    {
+      "name": "max",
+      "frames": [
+        180,
+        210,
+        239,
+        269
+      ]
+    }
+  ],
+  "scale": 0.3
+}

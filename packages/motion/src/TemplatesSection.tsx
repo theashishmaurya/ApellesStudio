@@ -55,7 +55,7 @@ const smallButton =
 const errorBox = 'text-[10px] text-red-400 border border-red-500/40 rounded px-2 py-1 whitespace-pre-wrap';
 
 /** The Inspector control a slot is edited with. */
-function specForSlot(slot: TemplateSlot): FieldSpec {
+export function specForSlot(slot: TemplateSlot): FieldSpec {
   const kind: FieldSpec['kind'] =
     slot.type === 'text'
       ? 'string'
@@ -76,7 +76,7 @@ function specForSlot(slot: TemplateSlot): FieldSpec {
 }
 
 /** A list slot: one item per line (numbers parsed for a number list). */
-function ListSlotControl({ slot, value, onCommit }: { slot: TemplateSlot; value: unknown; onCommit: (v: unknown) => void }) {
+export function ListSlotControl({ slot, value, onCommit }: { slot: TemplateSlot; value: unknown; onCommit: (v: unknown) => void }) {
   const text = Array.isArray(value) ? value.join('\n') : '';
   const numeric = slot.constraints?.itemType === 'number';
   return (

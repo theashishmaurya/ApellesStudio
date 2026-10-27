@@ -57,7 +57,8 @@ describe("validate (D-403)", () => {
   it("reports an unknown use with the legal ones and a did-you-mean", () => {
     const r = validateLayers([{ use: "txt", text: "x" }]);
     expect(r.issues[0]).toMatchObject({ path: "layers[0].use", code: "unknown_use", hint: 'did you mean "text"?' });
-    expect(r.issues[0].expected).toEqual(PRIMITIVE_USES);
+    // D-409 — plus `custom` (a certified component, pinned by `component`).
+    expect(r.issues[0].expected).toEqual([...PRIMITIVE_USES, "custom"]);
   });
 
   it("reports a bad enum value with the options and the nearest one", () => {
