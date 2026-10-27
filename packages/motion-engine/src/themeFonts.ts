@@ -96,16 +96,53 @@ const loadCustomFonts = (theme: Theme): void => {
   }
 };
 
-/** Load the faces `theme` needs, at most once per theme name per process. A
- *  built-in uses its own loader above; a user theme loads its `fonts`. */
-export const ensureThemeFonts = (theme: Theme): void => {
+/**
+ * D-416 — a theme's font FILES (a brand kit's own type), from the document's
+ * asset folder through the same resolver its images use (`staticFile` in a
+ * render, the Tauri asset URL in the live player). Each is registered with the
+ * browser's `FontFace` under its family and held with `delayRender` until it has
+ * loaded, so no frame is drawn in a fallback face. A file that fails to load is
+ * warned about and the stack's fallbacks render (the D-399 rule for a missing
+ * Google family). Outside a browser (a unit test) there is no `FontFace`, and
+ * nothing is registered.
+ */
+const loadFontFiles = (theme: Theme, resolve: (id: string) => string): void => {
+  if (typeof FontFace === "undefined" || typeof document === "undefined") return;
+  for (const file of theme.fontFiles ?? []) {
+    const handle = delayRender(`theme font file ${file.family}`);
+    const face = new FontFace(file.family, `url("${resolve(file.src)}")`, {
+      weight: file.weight ?? "400",
+      style: file.italic ? "italic" : "normal",
+    });
+    void face
+      .load()
+      .then((loadedFace) => {
+        document.fonts.add(loadedFace);
+      })
+      .catch((e: unknown) => {
+        console.warn(`[themeFonts] theme "${theme.name}": could not load font file ${file.src}: ${String(e)}`);
+      })
+      .finally(() => continueRender(handle));
+  }
+};
+
+/** Load the faces `theme` needs, at most once per theme definition per process.
+ *  A built-in uses its own loader above; a user theme loads its `fonts`, and
+ *  (D-416) its `fontFiles` through `resolve`, the document's asset resolver. */
+export const ensureThemeFonts = (theme: Theme, resolve?: (id: string) => string): void => {
   // A user theme can be redefined under the same name with other fonts, so its
   // key includes them; a built-in's name is its whole identity.
-  const key = theme.name in THEMES ? theme.name : `${theme.name}|${JSON.stringify(theme.fonts ?? [])}`;
+  const key =
+    theme.name in THEMES
+      ? theme.name
+      : `${theme.name}|${JSON.stringify(theme.fonts ?? [])}|${JSON.stringify(theme.fontFiles ?? [])}`;
   if (loaded.has(key)) return;
   loaded.add(key);
   if (theme.name in THEMES) LOADERS[theme.name as ThemeName]();
-  else loadCustomFonts(theme);
+  else {
+    loadCustomFonts(theme);
+    if (resolve) loadFontFiles(theme, resolve);
+  }
 };
 
 // The default theme's face, loaded at module scope exactly as `Video.tsx` did

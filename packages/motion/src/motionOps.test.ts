@@ -307,16 +307,21 @@ const ALL_OPS = [
   'motion_check_component',
   'motion_certify_component',
   'motion_delete_component',
+  // D-413 — soundtrack and beats.
+  'motion_set_soundtrack',
+  'motion_get_beats',
+  'motion_time_to_music',
+  'motion_snap_to_beats',
 ];
 
 // ---------------------------------------------------------------------------
 
 describe('the registry itself', () => {
-  it('exposes exactly the 65 documented ops, all motion_-prefixed', () => {
+  it('exposes exactly the 69 documented ops, all motion_-prefixed', () => {
     const { ops } = harness();
     const names = Object.keys(ops).sort();
     expect(names).toEqual([...ALL_OPS].sort());
-    expect(names).toHaveLength(65);
+    expect(names).toHaveLength(69);
     expect(names.every((n) => n.startsWith('motion_'))).toBe(true);
   });
 

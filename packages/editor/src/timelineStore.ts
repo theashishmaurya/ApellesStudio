@@ -302,6 +302,12 @@ interface EditorTimelineState {
    *  vertical space in the viewer, and a user who has not asked for it should
    *  get the picture. */
   waveformView: boolean;
+  /** D-413 — whether clip drags, trims and the playhead snap to the beat
+   *  grid while one is shown. Session chrome like `waveformView` (not
+   *  persisted, not undoable); defaults ON, because a grid that is shown is
+   *  there to be cut to (FCP/Resolve snap to beats through their ordinary
+   *  snapping toggle). */
+  beatSnap: boolean;
   /** D-266 — the viewer's MASTER MONITORING volume (`0..1`) and mute flag: the
    *  `volume` multiplier `chroma_audio_set_volume` applies in the real `cpal`
    *  output callback, and whether the transport's speaker button is currently
@@ -487,6 +493,8 @@ interface EditorTimelineState {
    *  human's toggle button (`Player`, via `PreviewPane`) and
    *  `editor_set_waveform_view`. */
   setWaveformView: (open: boolean) => void;
+  /** D-413 — turn beat snapping on/off (the timeline toolbar's magnet). */
+  setBeatSnap: (on: boolean) => void;
   /** D-266 — set the monitoring volume and/or the mute flag. Either half may
    *  be omitted to leave it alone, so the speaker button and the slider each
    *  write only what they own. A `volume` outside `0..1` is CLAMPED rather
@@ -728,6 +736,8 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   inspectorTab: DEFAULT_CLIP_INSPECTOR_TAB,
   // D-232 — off by default; see the field's own doc.
   waveformView: false,
+  // D-413 — on; see the field's own doc.
+  beatSnap: true,
   // D-126/D-266 — unity and unmuted: monitoring starts at "what the mix says".
   monitorVolume: 1,
   monitorMuted: false,
@@ -943,6 +953,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   setInspectorTab: (tab) => set({ inspectorTab: tab }),
 
   setWaveformView: (open) => set({ waveformView: open }),
+  setBeatSnap: (on) => set({ beatSnap: on }),
 
   setAudioMonitor: (next) =>
     set((s) => ({

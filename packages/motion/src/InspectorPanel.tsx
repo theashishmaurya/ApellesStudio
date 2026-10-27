@@ -110,6 +110,7 @@ import { useNumberField } from '@apelles/ui/number-scrub';
 import { EaseFieldControl } from './EaseCurveEditor';
 import { AssetFieldControl, IconFieldControl } from './BrandFieldControls';
 import { CustomPropsFields } from './CustomPropsFields';
+import { SoundtrackSection, TimeToMusicSection } from './SoundtrackSection';
 import { checkSceneRename } from './editLinks';
 import type { MotionEditLinks } from './motionOps';
 import { layerLabel, type Selection } from './LayerList';
@@ -920,6 +921,8 @@ function ProjectInspector({ manifest, onChange }: { manifest: Manifest; onChange
           onRemoveFromLibrary={(name) => useMotionThemeLibraryStore.getState().commit(library.filter((t) => t.name !== name))}
         />
       </InspectorSection>
+      {/* D-413 — the music the document's moves are timed to. */}
+      <SoundtrackSection manifest={manifest} onChange={onChange} />
       <InspectorEmptyState>Select a scene, camera, or layer to edit its properties.</InspectorEmptyState>
     </div>
   );
@@ -998,6 +1001,9 @@ function SceneInspector({
           Rename anyway
         </button>
       )}
+      {/* D-413 — map named moves onto this scene's beats (shown only when the
+          document has a soundtrack). */}
+      <TimeToMusicSection manifest={manifest} sceneIndex={sceneIndex} onChange={onChange} />
     </div>
   );
 }

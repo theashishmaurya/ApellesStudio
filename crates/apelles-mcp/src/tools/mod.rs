@@ -20,6 +20,7 @@
 //! name that never existed.
 
 pub mod ai_env;
+pub mod brand;
 pub mod colorist;
 pub mod debug;
 pub mod edit;

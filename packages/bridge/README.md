@@ -72,3 +72,8 @@ D-045/D-046 media-pool store, now consumed by a real panel (D-046's
 nothing in it ever reports a control as unusable; `src/motionRuntime.test.ts` covers
 D-417's blocking reasons, banner lines and the auto-install rule (the DOM wiring is
 `packages/motion/src/MotionRuntimeBanner.dom.test.tsx`).
+
+- `detectBeats` / `useBeats` / `useBeatStore` (`src/beats.ts`, D-413) — the one binding over
+  `chroma_detect_beats` (musical beat analysis, `apelles-beat`) and its session cache keyed by
+  (path, meter, tempo hint), with in-flight requests shared. The Edit tab's beat grid and the
+  Motion tab's soundtrack both read beats through it; the types and maths are `@apelles/beats`.

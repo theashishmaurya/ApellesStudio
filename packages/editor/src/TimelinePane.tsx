@@ -327,7 +327,17 @@ import {
   SpeakerSlashIcon,
   MagnifyingGlassPlusIcon,
   MagnifyingGlassMinusIcon,
+  // D-413 — the beat grid: the track header's "show beats" toggle and the
+  // toolbar's "snap cuts to beats" (a metronome, FCP/Logic's own beat glyph),
+  // and the toolbar's beat-snapping toggle (the NLE-standard magnet).
+  MetronomeIcon,
+  MagnetIcon,
 } from '@phosphor-icons/react';
+import { snapSpan, snapTo } from '@apelles/beats';
+import { beatFramesOf } from './beatGrid';
+import { setBeatGrid, snapCutsToBeats } from './beatOps';
+import { BeatLane } from './TimelineBeats';
+import { useTimelineBeats } from './useTimelineBeats';
 import {
   Button,
   DropdownMenu,
@@ -862,6 +872,8 @@ function SortableTrackHeader({
   onToggleSyncLocked,
   onDuckChange,
   onRemove,
+  beatGrid,
+  onToggleBeats,
 }: {
   index: number;
   height: number;
@@ -886,6 +898,10 @@ function SortableTrackHeader({
     releaseMs?: number;
   }) => void;
   onRemove: () => void;
+  /** D-413 — whether this track's beats are the timeline's grid. */
+  beatGrid: boolean;
+  /** D-413 — show / hide this track's beat grid. */
+  onToggleBeats: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: trackDragId(index),
@@ -994,6 +1010,22 @@ function SortableTrackHeader({
             trackLabels={trackLabels}
             onChange={onDuckChange}
           />
+        )}
+        {/* D-413 — "this track's music sets the beat grid": where FCP and
+            Resolve put beat detection, on the music itself (FCP: Clip >
+            Enable Beat Detection; Resolve: the clip's "Show Music Beats"). */}
+        {!isVideo && (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className={beatGrid ? 'text-accent' : undefined}
+            onClick={onToggleBeats}
+            aria-pressed={beatGrid}
+            aria-label={beatGrid ? 'Hide beats' : 'Show beats'}
+            title={beatGrid ? "Hide this track's beat grid" : "Show this track's beats on the timeline (and snap to them)"}
+          >
+            <MetronomeIcon className="size-3" />
+          </Button>
         )}
         <Button
           variant="ghost"
@@ -1482,6 +1514,37 @@ export function TimelinePane() {
   // library below so its AutoSizer measures a visible element.
   // B-123 — `editArea`, not a ref: this node mounts late; see the `wheel` effect.
   const { width: viewportWidth, epoch: measureEpoch } = useViewportWidth(editArea);
+
+  // D-413 — the beat grid: the grid track's beats on timeline frames, and the
+  // one snapping rule the clip drag, the edge trims and the playhead share
+  // (nearest beat within the same `INSERT_SNAP_PX` reach as edge snapping).
+  const beatView = useTimelineBeats(timeline);
+  const beatSnap = useEditorTimelineStore((s) => s.beatSnap);
+  const setBeatSnap = useEditorTimelineStore((s) => s.setBeatSnap);
+  const beatFrames = useMemo(() => beatFramesOf(beatView.beats), [beatView.beats]);
+  const beatSnapReach = Math.max(1, Math.round((INSERT_SNAP_PX / pxPerSec) * fps));
+  const snapFrameToBeat = (frame: number): number =>
+    beatSnap && beatFrames.length > 0 ? snapTo(frame, beatFrames, beatSnapReach).value : frame;
+  const snapClipToBeat = (start: number, length: number): number =>
+    beatSnap && beatFrames.length > 0 ? snapSpan(start, length, beatFrames, beatSnapReach).value : start;
+  const [snappingCuts, setSnappingCuts] = useState(false);
+  /** The last "Snap cuts to beats" outcome, in words, shown beside the tempo
+   *  (the answer belongs next to the button that asked, B-080's rule). */
+  const [beatNotice, setBeatNotice] = useState<string | null>(null);
+  const doSnapCutsToBeats = () => {
+    if (!primary || snappingCuts) return;
+    setSnappingCuts(true);
+    snapCutsToBeats(primary.track, 'beat')
+      .then(
+        (r) => {
+          if ('error' in r) setBeatNotice(r.error);
+          else if (r.applied === 0) setBeatNotice('no cut moved: each is on a beat already, or too far from one');
+          else setBeatNotice(`snapped ${r.applied} cut${r.applied === 1 ? '' : 's'}`);
+        },
+        (e: unknown) => setBeatNotice(e instanceof Error ? e.message : String(e)),
+      )
+      .finally(() => setSnappingCuts(false));
+  };
 
   // --------------------------------------------------------------------- //
   // D-235 — the context-sensitive trim tool (roadmap item 27). A FIFTH
@@ -2922,13 +2985,14 @@ export function TimelinePane() {
     // unchanged. Armed, the same drag becomes a roll at a real edit point or a
     // ripple anywhere else. The modifiers come from `trimPressRef` because the
     // library's resize callbacks carry no event at all (see that ref's doc).
+    // D-413 — the edge being dragged snaps to a beat (the other one never moves).
     const op = resizeEndOp({
       tl: timeline,
       track: ti,
       clip: i,
       dir,
-      startFrame: s2f(start),
-      endFrame: s2f(end),
+      startFrame: dir === 'left' ? snapFrameToBeat(s2f(start)) : s2f(start),
+      endFrame: dir === 'right' ? snapFrameToBeat(s2f(end)) : s2f(end),
       press: trimPressRef.current,
     });
     if (op) applyOp(op);
@@ -3453,7 +3517,9 @@ export function TimelinePane() {
       const moved = dragPx(event);
       if (!moved) return;
       const deltaFrames = Math.round((moved.contentX / pxPerSec) * fps);
-      const intendedFrame = clip.start_frame + deltaFrames;
+      // D-413 — head or tail onto a beat first; the landing rule below then
+      // resolves that frame to a real slot exactly as before.
+      const intendedFrame = snapClipToBeat(clip.start_frame + deltaFrames, endFrame(clip, fps) - clip.start_frame);
       const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
       // `toTrack` came from `laneDropTrack`, which only ever returns a real
       // track index — so this cannot be the `undefined` that crashed
@@ -3702,7 +3768,9 @@ export function TimelinePane() {
       // possible"). This reverses D-096's cross-track-overlap-allowed
       // policy — see `EditOp`'s `move` case for the full reasoning.
       const deltaFrames = Math.round((moved.contentX / pxPerSec) * fps);
-      const intendedFrame = clip.start_frame + deltaFrames;
+      // D-413 — head or tail onto a beat first; the landing rule below then
+      // resolves that frame to a real slot exactly as before.
+      const intendedFrame = snapClipToBeat(clip.start_frame + deltaFrames, endFrame(clip, fps) - clip.start_frame);
       const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
       const { startFrame, ripple } = resolveClipLanding(tracks[toTrack], clip.id, clip, intendedFrame, snapFrames, fps);
       applyOp({ kind: 'move', fromTrack, toTrack, clip: i, startFrame, ripple });
@@ -4184,6 +4252,71 @@ export function TimelinePane() {
               to keep both. */}
 
           <div className="ml-auto flex items-center gap-0.5">
+            {/* D-413 — the beat grid's controls, shown only while a track's
+                beats are on: its tempo (or that it is still being analysed),
+                beat snapping, and "snap the selected clip's track's cuts to
+                the beat" — the same `snapCutsToBeats` the
+                `editor_snap_cuts_to_beats` tool runs. */}
+            {beatView.track !== null && (
+              <>
+                <span
+                  data-chroma-beat-readout
+                  className="px-1 text-[11px] tabular-nums text-text-secondary/70"
+                  title={beatView.errors.map((e) => `${e.path}: ${e.error}`).join('\n') || undefined}
+                >
+                  {beatView.errors.length > 0
+                    ? 'beats failed'
+                    : beatView.pending.length > 0
+                      ? 'analysing beats…'
+                      : `${Math.round(beatView.tempoBpm)} BPM`}
+                </span>
+                {beatNotice && (
+                  <span role="status" className="max-w-56 truncate px-1 text-[11px] text-text-secondary" title={beatNotice}>
+                    {beatNotice}
+                  </span>
+                )}
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className={beatSnap ? 'text-accent' : undefined}
+                        aria-pressed={beatSnap}
+                        onClick={() => setBeatSnap(!beatSnap)}
+                        aria-label={beatSnap ? 'Turn beat snapping off' : 'Turn beat snapping on'}
+                      >
+                        <MagnetIcon />
+                      </Button>
+                    }
+                  />
+                  <TooltipContent>
+                    {beatSnap ? 'Beat snapping on: drags, trims and the playhead land on beats' : 'Beat snapping off'}
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={!primary || snappingCuts}
+                        onClick={doSnapCutsToBeats}
+                        aria-label="Snap cuts to beats"
+                      >
+                        <MetronomeIcon />
+                      </Button>
+                    }
+                  />
+                  <TooltipContent>
+                    <span className="font-medium">Snap cuts to beats</span>
+                    <span className="ml-1.5 text-text-secondary">
+                      Roll every cut on the selected clip&apos;s track onto its nearest beat (one undo)
+                    </span>
+                  </TooltipContent>
+                </Tooltip>
+              </>
+            )}
             {/* D-249 — D-198's Export button stood here, at the far right of
                 this toolbar. It is now in the Edit tab's own top strip
                 (`EditorTab.tsx`), beside the Inspector toggle: delivering the
@@ -4283,6 +4416,8 @@ export function TimelinePane() {
                     onToggleSyncLocked={() => toggleSyncLocked(i)}
                     onDuckChange={(patch) => changeDuck(i, patch)}
                     onRemove={() => doRemoveTrack(i)}
+                    beatGrid={track.beat_grid != null}
+                    onToggleBeats={() => (track.beat_grid != null ? setBeatGrid(null, null) : setBeatGrid(i, {}))}
                   />
                 );
               })}
@@ -4395,7 +4530,7 @@ export function TimelinePane() {
               getActionRender={getActionRender}
               onClickAction={onClickAction}
               onClickTimeArea={(time) => {
-                setPlayhead(s2f(time));
+                setPlayhead(snapFrameToBeat(s2f(time)));
                 return true;
               }}
               // D-232 — the timeline's own tape-scrub gesture. The library
@@ -4412,7 +4547,7 @@ export function TimelinePane() {
                 beginScrub(frame);
               }}
               onCursorDrag={(time) => {
-                const frame = s2f(time);
+                const frame = snapFrameToBeat(s2f(time));
                 setPlayhead(frame);
                 updateScrub(frame);
               }}
@@ -4580,6 +4715,18 @@ export function TimelinePane() {
                 every other overlay above, and it is pinned vertically (a
                 marker belongs to the ruler, not to a scrolled track row), so
                 `scrollTop` is deliberately not applied. */}
+            {/* D-413 — the beat lane, under the marker flags (a marker stays
+                the thing you can click) and over the clips. */}
+            {beatView.beats.length > 0 && (
+              <BeatLane
+                beats={beatView.beats}
+                fps={fps}
+                pxPerSec={pxPerSec}
+                scrollLeft={scrollLeft}
+                startLeftPx={START_LEFT_PX}
+                viewportWidth={viewportWidth}
+              />
+            )}
             {timeline && (
               <MarkerStrip
                 timeline={timeline}

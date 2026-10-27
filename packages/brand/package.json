@@ -1,0 +1,31 @@
+{
+  "name": "@apelles/brand",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ui": "./src/ui/index.ts"
+  },
+  "description": "Apelles brand kits (D-416): the kit schema (colours, type, logos, motion style, captions, a grade look, sound, references), the WCAG contrast check, the library and project-snapshot store over the `chroma_brand_*` commands, the per-tab applier registry (one undo step per tab), the `brand_*` op registry, and (subpath `./ui`) the Brand panel. Below the tabs: it never imports one; each tab registers its own applier.",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@apelles/bridge": "*",
+    "@apelles/history": "*",
+    "@apelles/store": "*",
+    "@apelles/ui": "*",
+    "@phosphor-icons/react": "^2.1.10",
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
+    "react": "^19.2.8",
+    "zod": "4.4.3",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
+}

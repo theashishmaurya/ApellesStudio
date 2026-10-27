@@ -93,9 +93,22 @@ export interface ToolGroup {
  * `motion_refill_template` and `motion_delete_template` (Motion 52 → 59).
  * Re-counted against the real file.
  *
- * 224 → 227 on 2026-10-27 (D-417): Motion's render runtime,
+ * 241 → 244 on 2026-10-27 (D-417): Motion's render runtime,
  * `motion_runtime_status`, `motion_install_runtime` and
- * `motion_remove_runtime` (Motion 65 → 68). Re-counted against the real file.
+ * `motion_remove_runtime` (Motion 69 → 72). Re-counted against the real file.
+ *
+ * 231 → 241 on 2026-10-27 (D-416): brand kits, a group of their own (they
+ * belong to no single tab): `brand_list_kits`, `brand_get_kit`,
+ * `brand_create_kit`, `brand_update_kit`, `brand_delete_kit`,
+ * `brand_import_asset`, `brand_set_active_kit`, `brand_apply_kit`,
+ * `brand_add_reference` and `brand_get_references`. Re-counted against the
+ * real file.
+ *
+ * 224 → 231 on 2026-10-27 (D-413): music-driven editing and motion,
+ * `editor_detect_beats`, `editor_set_beat_grid`, `editor_snap_cuts_to_beats`
+ * (Edit 97 → 100) and `motion_set_soundtrack`, `motion_get_beats`,
+ * `motion_time_to_music`, `motion_snap_to_beats` (Motion 65 → 69).
+ * Re-counted against the real file.
  *
  * 217 → 224 on 2026-10-27 (D-411 Phase 0): timeline management,
  * `editor_list_timelines`, `editor_create_timeline`,
@@ -127,15 +140,15 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 227,
-  shipped: 215,
+  all: 244,
+  shipped: 232,
   debugOnly: 12,
 } as const;
 
 export const TOOL_GROUPS: readonly ToolGroup[] = [
   {
     name: 'Edit',
-    count: 97,
+    count: 100,
     blurb:
       'The whole multi-track NLE. Browse and organise the media pool, place and trim clips, perform any of the seven edit types at the playhead, roll/slip/slide, manage tracks, key transforms, set transitions, markers, captions and per-clip EQ, then render the timeline to a real file.',
     sample: [
@@ -147,6 +160,8 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
       'editor_edit_in',
       'editor_split_clip',
       'editor_music_edit',
+      'editor_detect_beats',
+      'editor_snap_cuts_to_beats',
       'editor_trim_clip',
       'editor_roll_edit',
       'editor_slip_clip',
@@ -189,7 +204,7 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
   },
   {
     name: 'Motion',
-    count: 68,
+    count: 72,
     blurb:
       'The motion-graphics room, closed as a gap on 2026-09-09 (D-257/D-259/D-260) after a year of being this surface’s sharpest shortfall. Scenes and layers from a real primitive catalog, per-layer keyframes with bezier easing, 2D and 3D cameras, align and distribute, and a Remotion render that emits one video file per scene.',
     sample: [
@@ -204,6 +219,8 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
       'motion_instantiate_template',
       'motion_write_component',
       'motion_certify_component',
+      'motion_set_soundtrack',
+      'motion_time_to_music',
       'motion_set_layer_field',
       'motion_set_layer_position',
       'motion_add_layer_keyframe',
@@ -235,6 +252,13 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
     blurb:
       'Whether the local Python environment every AI feature runs from has finished building yet, and a way to retry the build now. It is downloaded and assembled in the background on first launch, so an agent can tell "still setting up, 47 of 91 packages" apart from a real failure instead of guessing.',
     sample: ['ai_env_status', 'ai_env_retry'],
+  },
+  {
+    name: 'Brand kits',
+    count: 10,
+    blurb:
+      'One brand for every tab: colours with their contrast checked, fonts (including your own licensed files), logos, a motion style, a caption look, a grade LUT, sound and references with a note on what to take from each. A project keeps its own copy, and applying it is one undo step per tab.',
+    sample: ['brand_list_kits', 'brand_get_references', 'brand_create_kit', 'brand_set_active_kit', 'brand_apply_kit', 'brand_add_reference'],
   },
 ];
 

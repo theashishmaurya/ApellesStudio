@@ -13,7 +13,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "mcp__chroma__editor_search_audio|mcp__chroma__editor_import_audio|mcp__chroma__editor_get_credits|mcp__chroma__set_track_duck|mcp__chroma__editor_set_clip_audio",
+        "matcher": "mcp__chroma__editor_search_audio|mcp__chroma__editor_import_audio|mcp__chroma__editor_get_credits|mcp__chroma__set_track_duck|mcp__chroma__editor_set_clip_audio|mcp__chroma__editor_detect_beats|mcp__chroma__editor_snap_cuts_to_beats|mcp__chroma__motion_set_soundtrack|mcp__chroma__motion_time_to_music|mcp__chroma__editor_music_edit|mcp__chroma__editor_propose_music_edits",
         "hooks": [
           {
             "type": "command",

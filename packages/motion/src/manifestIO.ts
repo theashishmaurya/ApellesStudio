@@ -12,6 +12,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
+import type { FileBeats } from '@apelles/beats';
+import { detectBeats } from '@apelles/bridge';
+import { assetFileName } from '@apelles/motion-engine/src/lib/assetId';
+import type { Soundtrack } from '@apelles/motion-engine/src/engine/schema';
+
 import type { MotionRenderStatus, SceneRenderJob } from './renderLoop';
 
 /** The exact message `motion.rs::current_project_dir` rejects with. */
@@ -51,6 +56,41 @@ export async function getSavedManifest(): Promise<unknown | null> {
 export async function saveManifest(manifest: unknown): Promise<string> {
   try {
     return await invoke<string>('chroma_motion_save_manifest', { manifest });
+  } catch (e) {
+    rethrow(e);
+  }
+}
+
+/** D-415 — the unsaved-edit recovery copy of the open project's manifest. */
+export interface RecoveryCopy {
+  /** the unsaved manifest text, exactly as it was written (may be invalid JSON) */
+  text: string;
+  /** the saved manifest changed after this copy was made */
+  stale: boolean;
+}
+
+/** D-415 — the recovery copy, or `null` when there is none. */
+export async function readRecovery(): Promise<RecoveryCopy | null> {
+  try {
+    return await invoke<RecoveryCopy | null>('chroma_motion_recovery_read');
+  } catch (e) {
+    rethrow(e);
+  }
+}
+
+/** D-415 — replace the recovery copy with `text`. Never touches the saved manifest. */
+export async function writeRecovery(text: string): Promise<void> {
+  try {
+    await invoke<void>('chroma_motion_recovery_write', { text });
+  } catch (e) {
+    rethrow(e);
+  }
+}
+
+/** D-415 — remove the recovery copy (saved, undone back to saved, or discarded). */
+export async function clearRecovery(): Promise<void> {
+  try {
+    await invoke<void>('chroma_motion_recovery_clear');
   } catch (e) {
     rethrow(e);
   }
@@ -118,6 +158,8 @@ export interface MotionAssetRecord {
   fileName: string;
   path: string;
   bytes: number;
+  /** D-413 — an image or a soundtrack (absent from builds before D-413). */
+  kind?: 'image' | 'audio';
   /** `false` when the same content was already in the project */
   copied: boolean;
   width: number | null;
@@ -132,6 +174,18 @@ export async function importAsset(path: string): Promise<MotionAssetRecord> {
   } catch (e) {
     rethrow(e);
   }
+}
+
+/** D-413 — the beats of a soundtrack: its asset file in the open project's
+ *  asset folder, analysed through `@apelles/bridge`'s shared, cached
+ *  `detectBeats` (the same binding the Edit tab reads its grid through). */
+export async function soundtrackBeats(soundtrack: Pick<Soundtrack, 'src' | 'meter' | 'tempoHint'>): Promise<FileBeats> {
+  const dir = await getAssetsDir();
+  return detectBeats({
+    path: `${dir.replace(/[\\/]+$/, '')}/${assetFileName(soundtrack.src)}`,
+    meter: soundtrack.meter ?? null,
+    tempoHintBpm: soundtrack.tempoHint ?? null,
+  });
 }
 
 /** D-404 — the open project's asset folder (made readable by the webview, so

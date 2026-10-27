@@ -18,6 +18,12 @@ dragging a pool item in from the shell's Sources panel.
   (also double-click), Duplicate (independent copy, grades copied), Size (project
   size or a delivery preset), Delete (confirmed, not undoable). A timeline with its
   own size shows it on its tab (`9:16`).
+- `beatGrid.ts` / `beatOps.ts` / `useTimelineBeats.ts` / `TimelineBeats.tsx` (D-413) — the
+  timeline's beat grid: the track with `beat_grid` set, its clips' beats placed on timeline
+  frames (through trim, position, native rate and speed ramp), the `set_beat_grid` / `rolls`
+  ops behind `editor_detect_beats`, `editor_set_beat_grid` and `editor_snap_cuts_to_beats`, the
+  beat lane, and the snapping `TimelinePane` applies to clip drags, edge trims and the playhead
+  (toolbar magnet; the track header's metronome toggles the grid).
 - `TimelineOutputForm` (D-411 Phase 0) — "This timeline" in the Project Settings
   panel: the open timeline's own output size (project size / preset / custom),
   through the store's `setTimelineOutput`.
@@ -351,6 +357,14 @@ Two things changed here in the same pass as the owner's live Edit-tab review:
   component that needs them. The gesture's behavioural tests live in this
   package (`ScrubbableNumberInput.dom.test.tsx`) because `@apelles/ui` has no
   test tier and this one owns the real-`PointerEvent` harness.
+
+**Brand kit (D-416).** `brandEdit.ts` is this tab's applier for `@apelles/brand`'s registry
+(registered by `EditorTab`): `planBrandText` resolves a kit into ONE `apply_brand_text` EditOp
+(the kit's caption preset with its font/colour roles on every unlocked subtitle track, its
+display font and text colour on every unlocked title; composes `set_caption_style` and
+`set_text_clip`, so their refusals hold), one undo step. A kit font reaches Edit only as a
+`.ttf`/`.otf` file in the project's kit snapshot (its asset id is the catalogue key
+`chroma_text_fonts` lists) or through the font's `editFallback`.
 
 **Deferred** (later tracked steps): multi-track, audio, transitions, transcript
 cut, GPU compositing, grade-in-preview, OTIO export, MCP, timeline

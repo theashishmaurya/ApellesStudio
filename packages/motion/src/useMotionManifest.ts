@@ -59,6 +59,16 @@
  * (typed `() => void` in `ManifestEditor.tsx`, so a resolved-but-ignored
  * return value is exactly as before) nor any other existing caller reads.
  *
+ * **D-415 — unsaved edits survive a reload.** Whatever the editor text holds
+ * that the saved manifest (or, for a project that never saved one, the engine
+ * sample it started on) does not is mirrored to the project's recovery copy
+ * (`recoveryWriter.ts`, debounced, flushed on `pagehide`); the copy is removed
+ * when the text is saved or is back to the saved document. The first time a
+ * project's manifest is seeded, the copy is read and, if it differs, put back
+ * as the editor text — dirty, never saved on the person's behalf — and the
+ * store's `recovered` flag lets the composition root say so. `loadState` waits
+ * for that read, so the tab never flashes the saved document first.
+ *
  * **B-202/D-359 — the per-scene loop moved OUT of this file.** It is
  * `renderLoop.ts`'s `runSceneRenders`, a pure function, and `render()` here is
  * the shell around it: React state and the real `manifestIO` calls. That is
@@ -75,13 +85,17 @@ import { useHistoryStore } from '@apelles/history';
 
 import {
   acknowledgeRenderedScene,
+  clearRecovery,
   getRenderJobStatus,
   onRenderJobStatus,
+  readRecovery,
   saveManifest,
   startRenderJob,
+  writeRecovery,
   type MotionRenderResult,
 } from './manifestIO';
 import { useMotionProjectStore } from './motionProjectStore';
+import { createRecoveryWriter } from './recoveryWriter';
 import {
   IDLE_RENDER_STATUS,
   deliverFinished,
@@ -211,6 +225,24 @@ export function useMotionManifest(onRendered?: (r: SceneRenderResult) => void | 
 
   const debounceRef = useRef<number | null>(null);
 
+  // D-415 — the recovery copy's writer, and the book-keeping around it.
+  const [recoveryWriter] = useState(() =>
+    createRecoveryWriter({ write: writeRecovery, clear: clearRecovery }, (e) =>
+      console.warn('motion recovery copy:', e),
+    ),
+  );
+  // the document the editor started from (the engine sample for a project with
+  // no saved manifest), the baseline while nothing has been saved
+  const seedTextRef = useRef('');
+  // the project whose recovery copy has been looked at, and the one whose read
+  // has finished (what `loadState` waits for)
+  const recoveryCheckedFor = useRef<string | null>(null);
+  const [recoveryReadyFor, setRecoveryReadyFor] = useState<string | null>(null);
+  // whether a recovery copy may exist on disk (so a clean text only asks the
+  // backend to remove one when there is something to remove)
+  const mayHaveRecovery = useRef(false);
+  const recovered = useMotionProjectStore((s) => s.recovered);
+
   const applyParse = useCallback((raw: string) => {
     let json: unknown;
     try {
@@ -238,6 +270,9 @@ export function useMotionManifest(onRendered?: (r: SceneRenderResult) => void | 
   useEffect(() => {
     if (!loaded) {
       seededGeneration.current = null;
+      recoveryCheckedFor.current = null;
+      mayHaveRecovery.current = false;
+      setRecoveryReadyFor(null);
       setText('');
       setSavedText(null);
       setManifest(null);
@@ -247,12 +282,33 @@ export function useMotionManifest(onRendered?: (r: SceneRenderResult) => void | 
     if (seededGeneration.current === loaded.generation) return;
     seededGeneration.current = loaded.generation;
     const initialText = JSON.stringify(loaded.manifest ?? sample, null, 2);
+    seedTextRef.current = initialText;
     setText(initialText);
     // a project with no saved manifest starts on the engine's sample, which is
     // by definition not "what's on disk" — so it starts dirty, as before.
     setSavedText(loaded.manifest ? initialText : null);
     applyParse(initialText);
-  }, [loaded, applyParse]);
+
+    // D-415 — once per project, look for the previous page's unsaved edits.
+    if (recoveryCheckedFor.current === openProjectPath) return;
+    recoveryCheckedFor.current = openProjectPath;
+    const generation = loaded.generation;
+    void readRecovery()
+      .then((copy) => {
+        if (copy === null) return;
+        mayHaveRecovery.current = true;
+        if (seededGeneration.current !== generation) return; // a newer document took over
+        if (copy.text === initialText) {
+          recoveryWriter.clear(); // saved after the copy was made: nothing to restore
+          return;
+        }
+        setText(copy.text);
+        applyParse(copy.text);
+        useMotionProjectStore.getState().setRecovered({ stale: copy.stale });
+      })
+      .catch((e: unknown) => console.warn('motion recovery copy could not be read:', e))
+      .finally(() => setRecoveryReadyFor(openProjectPath));
+  }, [loaded, applyParse, openProjectPath, recoveryWriter]);
 
   // B-058: re-check on window focus only when the last read actually *failed*.
   // The old version re-read whenever it believed no project was open, which was
@@ -277,7 +333,7 @@ export function useMotionManifest(onRendered?: (r: SceneRenderResult) => void | 
     ? 'no-project'
     : status === 'error'
       ? 'error'
-      : status === 'ready' && text !== ''
+      : status === 'ready' && text !== '' && recoveryReadyFor === openProjectPath
         ? 'ready'
         : 'loading';
 
@@ -291,6 +347,40 @@ export function useMotionManifest(onRendered?: (r: SceneRenderResult) => void | 
   );
 
   const dirty = savedText !== text;
+
+  // D-415 — keep the recovery copy equal to "the unsaved text": scheduled while
+  // the text differs from the document on disk (or the seed, before any save),
+  // removed once it matches again. Holds off until the restore read is done.
+  useEffect(() => {
+    if (openProjectPath === null || recoveryReadyFor !== openProjectPath) return;
+    const baseline = savedText ?? seedTextRef.current;
+    if (text !== baseline) {
+      mayHaveRecovery.current = true;
+      recoveryWriter.schedule(text);
+    } else {
+      useMotionProjectStore.getState().setRecovered(null);
+      if (mayHaveRecovery.current) {
+        mayHaveRecovery.current = false;
+        recoveryWriter.clear();
+      }
+    }
+  }, [text, savedText, openProjectPath, recoveryReadyFor, recoveryWriter]);
+
+  // The page may be killed with no further warning: write what is pending now
+  // whenever it is hidden, and when this tab unmounts.
+  useEffect(() => {
+    const onHide = () => recoveryWriter.flush();
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') recoveryWriter.flush();
+    };
+    window.addEventListener('pagehide', onHide);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', onHide);
+      document.removeEventListener('visibilitychange', onVisibility);
+      recoveryWriter.flush();
+    };
+  }, [recoveryWriter]);
 
   // D-155 — the one commit path for a whole-manifest change that should be
   // undoable: an Inspector field edit (first customer, per the research
@@ -457,6 +547,9 @@ export function useMotionManifest(onRendered?: (r: SceneRenderResult) => void | 
     commit,
 
     dirty,
+    /** D-415 — the previous page's unsaved edits were put back (`stale`: the
+     *  saved manifest changed since, so saving replaces it); null otherwise. */
+    recovered,
     saving,
     saveError,
     save,

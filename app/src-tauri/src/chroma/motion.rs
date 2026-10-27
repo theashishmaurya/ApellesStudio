@@ -82,6 +82,10 @@ pub fn chroma_motion_save_manifest(manifest: Value) -> Result<String, String> {
     let pretty = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
     std::fs::write(&path, format!("{pretty}\n"))
         .map_err(|e| format!("write {}: {e}", path.display()))?;
+    // D-415 — the unsaved-edit recovery copy is superseded by this save.
+    if let Some(parent) = path.parent() {
+        apelles_motion::recovery::clear(parent)?;
+    }
     Ok(path.to_string_lossy().to_string())
 }
 

@@ -476,6 +476,242 @@
       }
     },
     {
+      "name": "brand_add_reference",
+      "description": "Add a reference to a brand kit (D-416): an image or video the person wants\n    the work to learn from, with a `note` saying WHAT to take from it (\"use my\n    work for materials and framing\"; \"use the reference for type and\n    hierarchy\"). `kind` is \"own-work\" (the person's own) or \"reference\" (someone\n    else's). The file is imported into the brand asset store; the kit is the\n    project's kit unless `kit_id` names another. When the project uses that kit,\n    its copy is updated too, so `brand_get_references` shows it at once.",
+      "inputSchema": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "kind": {
+            "default": "reference",
+            "title": "Kind",
+            "type": "string"
+          },
+          "kit_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kit Id"
+          }
+        },
+        "required": [
+          "path",
+          "note"
+        ],
+        "type": "object",
+        "title": "brand_add_referenceArguments"
+      }
+    },
+    {
+      "name": "brand_apply_kit",
+      "description": "Apply the project's brand kit to the tabs (D-416): ONE undo step in each tab.\n\n    `tabs` is any of \"edit\", \"motion\", \"colorist\" (default all):\n      * motion: the kit becomes the document's theme (`brand-<kit id>`, embedded,\n        so renders never read the kit); its font files and logos are copied into\n        the Motion asset folder under the same ids. Templates and custom\n        components pick colours and fonts up from the theme. From then on new\n        layers take the kit's entrance and new keyframes its ease as DEFAULTS.\n        `restyle_existing` also rewrites EXISTING entrances and keyframe eases\n        with the kit's motion style; off by default.\n      * edit: every unlocked subtitle track gets the kit's caption preset with\n        its font and colour roles, and (unless `titles` is false) every title its\n        display font and text colour. Fonts reach Edit only as .ttf/.otf files\n        or through a font's `editFallback`; the answer says when one did not.\n      * colorist: the open shot gets the kit's LUT at its intensity.\n    Returns per tab `{ok, changed, summary, details}` or `{ok: false, error}` (a\n    tab not in this build is reported, not skipped silently).",
+      "inputSchema": {
+        "properties": {
+          "tabs": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tabs"
+          },
+          "restyle_existing": {
+            "default": false,
+            "title": "Restyle Existing",
+            "type": "boolean"
+          },
+          "titles": {
+            "default": true,
+            "title": "Titles",
+            "type": "boolean"
+          }
+        },
+        "type": "object",
+        "title": "brand_apply_kitArguments"
+      }
+    },
+    {
+      "name": "brand_create_kit",
+      "description": "Create a brand kit in the user's library (D-416).\n\n    `kit` needs `id` (lowercase letters, digits, hyphens, at most 40) and `name`;\n    everything else you leave out comes from a neutral starter, so a few fields\n    are enough. Shape: `{id, name, description?, colors: {primary, secondary,\n    accent, background, text, palette?: [{name, hex}]}, typography: {display,\n    body, mono?: {family, source: \"google\"|\"system\"|\"file\", file?, licence?,\n    weights?, editFallback?}, scale?: {base, ratio, displayWeight, bodyWeight}},\n    logos?: {light?, dark?, mark?}, motion?: {ease: \"out\"|\"inOut\"|\"anticipate\"|\n    \"linear\"|[x1,y1,x2,y2], speed, stagger, entrance: \"none\"|\"fade\"|\"pop\"|\"rise\"|\n    \"draw\"}, captions?: {preset, font?: \"display\"|\"body\", color?, boxColor?\n    (colour roles)}, look?: {lut, intensity, name?}, sound?: {sonicLogo?, music?:\n    {mood?, bpm?: [low, high], tracks?}}, references?}`. Colours are `#rrggbb`.\n    Files (logos, a font file, a LUT, references, audio) are asset ids from\n    `brand_import_asset`, never paths. A `file` font needs its `licence` (what it\n    allows, in the person's words). `editFallback` is the Edit tab's font key\n    for a face that is not a .ttf/.otf file.\n\n    Refused with `issues` `[{path, message}]` naming every problem; nothing is\n    saved. `dry_run` validates and reports contrast without saving. Returns the\n    saved kit (version 1), `contrast` and `warnings`.",
+      "inputSchema": {
+        "properties": {
+          "kit": {
+            "additionalProperties": true,
+            "title": "Kit",
+            "type": "object"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kit"
+        ],
+        "type": "object",
+        "title": "brand_create_kitArguments"
+      }
+    },
+    {
+      "name": "brand_delete_kit",
+      "description": "Delete a brand kit from the user's library (D-416). Projects that use it keep\n    their own copy, so nothing already branded changes.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object",
+        "title": "brand_delete_kitArguments"
+      }
+    },
+    {
+      "name": "brand_get_kit",
+      "description": "Read one brand kit in full (D-416): `id` from the library, or omit it for the\n    project's own copy (what `brand_apply_kit` applies).\n\n    Returns `source` (library | project), the whole `kit`, its WCAG `contrast`\n    (every colour pair that ends up on top of another: ratio, AA/AAA level, what\n    it is used for) and `warnings` for the pairs too low for their use, and\n    `files` (each asset id the kit names \u2192 its absolute file, so you can look at\n    a logo).",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "title": "brand_get_kitArguments"
+      }
+    },
+    {
+      "name": "brand_get_references",
+      "description": "Everything an agent should read BEFORE designing for this brand (D-416): the\n    kit's direction (colours, typography, motion style, captions, logos as\n    absolute files, sound) and its references, each with its note, kind, media\n    (image | video) and absolute `path` to open and look at. The project's kit by\n    default; `kit_id` reads a library kit instead.",
+      "inputSchema": {
+        "properties": {
+          "kit_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kit Id"
+          }
+        },
+        "type": "object",
+        "title": "brand_get_referencesArguments"
+      }
+    },
+    {
+      "name": "brand_import_asset",
+      "description": "Import a file into the brand asset store (D-416): a logo (png, jpg, webp,\n    gif, svg), a font file (ttf, otf, woff, woff2), a LUT (cube), a reference video\n    (mp4, mov, m4v, webm) or audio (mp3, wav, m4a, aac, flac, ogg). The file is\n    copied and named by the SHA-256 of its bytes; the same file twice is the same\n    id. Returns `asset.id` (`sha256:<hex>.<ext>`) to put in a kit field with\n    `brand_update_kit`. For a reference with a note, use `brand_add_reference`.",
+      "inputSchema": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object",
+        "title": "brand_import_assetArguments"
+      }
+    },
+    {
+      "name": "brand_list_kits",
+      "description": "List the user's brand kits and the one THIS project uses (D-416). Start here\n    before designing anything for a person: read the project's kit, then\n    `brand_get_references`.\n\n    A brand kit is the one brand definition every tab reads: colours (primary,\n    secondary, accent, background, text + an extended palette), typography\n    (display/body/mono, each a Google, system or licensed font file), logos\n    (light/dark/mark), a motion style (ease, speed, stagger, entrance), a caption\n    style (an Edit caption preset), an optional grade look (a LUT for the\n    Colorist), sound (sonic logo, music mood) and references (images/videos with\n    a note on what to take from each).\n\n    Returns `kits` (a summary each), `loadErrors` (library files that did not\n    load, each named with why), `project` (the project's own copy, with\n    `libraryVersion` and `newerInLibrary`) or null, and `tabs` (which tabs can\n    apply a kit in this build).",
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+        "title": "brand_list_kitsArguments"
+      }
+    },
+    {
+      "name": "brand_set_active_kit",
+      "description": "Make a library kit this project's brand kit, or clear it with null (D-416).\n\n    The kit and every file it names are COPIED into the project\n    (`<project>.chroma/brand/`), so the project never depends on the library:\n    editing or deleting the library kit later changes nothing here until this is\n    called again. Setting a kit does not restyle anything yet; `brand_apply_kit`\n    does, one undo step per tab. Clearing leaves looks already applied in place\n    (undo them in their tab).",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object",
+        "title": "brand_set_active_kitArguments"
+      }
+    },
+    {
+      "name": "brand_update_kit",
+      "description": "Change a brand kit in the library (D-416). `patch` merges into the kit: objects\n    key by key (`{\"colors\": {\"accent\": \"#ff5a1f\"}}` changes one colour), lists and\n    values replace, and `null` removes an optional section (`{\"look\": null}`).\n    `id`, `version` and `schemaVersion` are not yours to change.\n\n    Every save is the next `version`. A project that uses this kit keeps its own\n    copy until `brand_set_active_kit` is called again; the answer says so\n    (`projectOutOfDate`). Refused with `issues` when the result would not be a\n    valid kit; `dry_run` checks without saving.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "patch": {
+            "additionalProperties": true,
+            "title": "Patch",
+            "type": "object"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "patch"
+        ],
+        "type": "object",
+        "title": "brand_update_kitArguments"
+      }
+    },
+    {
       "name": "clear_mask_keyframe",
       "description": "Remove ONE geometry keyframe (D-034), the one at `frame` (a frame from\n    list_mask_keyframes). When the last keyframe is removed the sub-mask becomes\n    fully static again.",
       "inputSchema": {
@@ -1884,6 +2120,93 @@
         ],
         "type": "object",
         "title": "editor_delete_timelineArguments"
+      }
+    },
+    {
+      "name": "editor_detect_beats",
+      "description": "Find the beats of the music on a track \u2014 tempo, every beat, the\n    downbeats (bar starts) and how hard each beat hits \u2014 and, by default, show\n    them as the timeline's beat grid (one undo step), so drags, trims and the\n    playhead snap to them in the GUI (D-413).\n\n    - `track` \u2014 required: the track holding the music (usually an audio\n      track). Every clip on it is analysed from its file, and its beats are\n      placed through the clip's trim, position and speed, so a bed cut by\n      music edits keeps its beats where they are heard.\n    - `meter` \u2014 beats per bar, 2..7 (default 4; 3 for a waltz).\n    - `tempo_hint_bpm` \u2014 30..300: where the tempo estimate looks first. Pass\n      it when the answer came back at half or double the real tempo.\n    - `show` \u2014 set this track as the timeline's beat grid (default true).\n    - `kind` \u2014 which beats to return: `beat` (default), `downbeat` or `strong`\n      (a downbeat or a beat that hits hard).\n    - `start_frame` / `end_frame` \u2014 only beats in this timeline window.\n    - `force` \u2014 re-analyse even if this exact file was analysed before.\n\n    Answers `tempoBpm`, `meter`, `beatSpacingFrames`, per-file facts and\n    `beats`: `[{frame, bar, beat, downbeat, strong, strength, clip}]` in\n    TIMELINE frames (at most 1000; narrow the window or the kind for more).\n    Downbeats are a heuristic (low-end onsets + harmonic change): right on\n    music that marks its bars, possibly a beat off on music that does not.\n    Nothing is cut.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "meter": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Meter"
+          },
+          "tempo_hint_bpm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tempo Hint Bpm"
+          },
+          "show": {
+            "default": true,
+            "title": "Show",
+            "type": "boolean"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kind"
+          },
+          "start_frame": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start Frame"
+          },
+          "end_frame": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Frame"
+          },
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "track"
+        ],
+        "type": "object",
+        "title": "editor_detect_beatsArguments"
       }
     },
     {
@@ -4438,6 +4761,52 @@
       }
     },
     {
+      "name": "editor_set_beat_grid",
+      "description": "Show a track's beats as the timeline's beat grid, or hide the grid\n    (`track` omitted / null) \u2014 the track header's metronome toggle (D-413).\n    One undo step; only one track carries the grid. `meter` (2..7) and\n    `tempo_hint_bpm` (30..300) are the analysis parameters, stored on the\n    track. Use `editor_detect_beats` to also read the beats back.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Track"
+          },
+          "meter": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Meter"
+          },
+          "tempo_hint_bpm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tempo Hint Bpm"
+          }
+        },
+        "type": "object",
+        "title": "editor_set_beat_gridArguments"
+      }
+    },
+    {
       "name": "editor_set_caption",
       "description": "Change one existing caption's text. Newlines are allowed (that is what\n    makes it a caption rather than a title).\n\n    Refused if `track`/`clip` names something that is not a caption, or if the\n    track is locked. A caption's TIMING is its clip's own timing \u2014 move or trim\n    it with the ordinary clip tools (`editor_move_clip`, `editor_trim_clip`,\n    `editor_split_clip`), which all work on a caption exactly as on any other\n    clip.",
       "inputSchema": {
@@ -6180,6 +6549,67 @@
         ],
         "type": "object",
         "title": "editor_slip_clipArguments"
+      }
+    },
+    {
+      "name": "editor_snap_cuts_to_beats",
+      "description": "Roll every cut on a track onto its nearest beat of the timeline's beat\n    grid, as ONE undo step (D-413). A roll moves the edit point between two\n    touching clips: the outgoing clip ends later or earlier and the incoming\n    one starts there, so nothing else moves and the sequence keeps its length.\n\n    - `track` \u2014 the track whose cuts to move (e.g. the picture track); the\n      grid itself comes from the track `editor_detect_beats` / the metronome\n      toggle set (refused when there is none).\n    - `to` \u2014 `beat` (default), `downbeat` or `strong`.\n    - `max_shift_frames` \u2014 how far a cut may move (default: half the beat\n      spacing, so every cut reaches its nearest beat).\n    - `clips` \u2014 only the cuts after these clip indices (the OUTGOING clip).\n    - `dry_run` \u2014 report what would move, change nothing.\n\n    Answers per cut `{clip, fromFrame, toFrame}` or `toFrame: null` with a\n    `reason` (already on a beat, too far, not enough media handle to roll).",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "To"
+          },
+          "max_shift_frames": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Shift Frames"
+          },
+          "clips": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Clips"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "track"
+        ],
+        "type": "object",
+        "title": "editor_snap_cuts_to_beatsArguments"
       }
     },
     {
@@ -7927,6 +8357,35 @@
       }
     },
     {
+      "name": "motion_get_beats",
+      "description": "The soundtrack's beats inside one scene, in SCENE seconds (D-413):\n    `[{n, at, bar, beat, downbeat, strong, strength}]`, `n` counting from 1\n    within the scene \u2014 the numbers the cues of `motion_time_to_music` use.\n    `kind`: `beat` (default), `downbeat` or `strong`. Refused when the\n    document has no soundtrack (`motion_set_soundtrack`).",
+      "inputSchema": {
+        "properties": {
+          "scene_index": {
+            "title": "Scene Index",
+            "type": "integer"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kind"
+          }
+        },
+        "required": [
+          "scene_index"
+        ],
+        "type": "object",
+        "title": "motion_get_beatsArguments"
+      }
+    },
+    {
       "name": "motion_get_component",
       "description": "One custom component version in full (D-409): its declaration (props,\n    size, duration), status, static-check warnings, certification proof, the\n    contact sheet's path, and its SOURCE (`code`). The source is read-only:\n    to change it, write the id again with `motion_write_component`, which\n    makes a new draft. Needs no project open.\n\n    Args:\n        id: the component id.\n        version: which version (default: the newest).",
       "inputSchema": {
@@ -7975,7 +8434,7 @@
     },
     {
       "name": "motion_get_state",
-      "description": "Orientation for the Motion tab \u2014 call this FIRST. The Motion analogue of\n    `editor_get_state`, and the read half of `motion_select`/\n    `motion_set_selection`.\n\n    Returns:\n      * `loadState` / `dirty` / `parseError` / `saveError` \u2014 is this tab usable\n        at all. A Motion manifest lives inside a project, so `\"no-project\"`\n        means open one in the Colorist tab first. This tool ANSWERS in that\n        case rather than erroring, which is how you find it out.\n      * `selection` \u2014 what is selected right now, as `[{sceneIndex, target}]`,\n        the exact shape `motion_set_selection` takes back.\n      * `playheadFrame` / `playerMounted` \u2014 where the preview is parked.\n      * `fps`, `totalFrames`, `width`, `height`, `title` \u2014 the document's own\n        output spec, all four of them written by\n        `motion_set_project_settings`.\n      * `render` \u2014 where a `motion_render` is: `state` (`idle`/`running`/\n        `error`/`interrupted`), `scenesTotal` / `scenesDone` / `doneSceneIds`\n        (real progress), `remainingSceneIds` (what is left), `sceneId` (the one\n        rendering right now), and `failedSceneId` + `error` when one failed.\n        `interrupted` is a render the app lost (a restart); `motion_render` with\n        `resume=true` continues it. **This is how you find out\n        a render failed.** A multi-scene render always outlives the 20s\n        control-bridge timeout, so `motion_render`'s own reply is gone before\n        a mid-loop failure happens; poll here instead of counting files on\n        disk, which cannot tell \"still rendering\" from \"stopped on a failure\".\n        A failed render stops at the failing scene, so `doneSceneIds` is\n        exactly what is on disk and `failedSceneId` is what to fix.\n      * `scenes` \u2014 one row per scene: `index`, `id`, `dur` (SECONDS), its\n        absolute `startFrame` in the combined timeline, `layerCount`,\n        `scene3dChildCount`, `camera2dKeys`, `camera3dKeys`.\n\n    **Times in this tab are SECONDS, per scene, not absolute frames.** A\n    keyframe's `at` is seconds from its own scene's start; `startFrame` here is\n    what converts between the two (`frame = startFrame + at * fps`), and\n    `motion_seek` accepts either form so you rarely have to do it yourself.",
+      "description": "Orientation for the Motion tab \u2014 call this FIRST. The Motion analogue of\n    `editor_get_state`, and the read half of `motion_select`/\n    `motion_set_selection`.\n\n    Returns:\n      * `loadState` / `dirty` / `parseError` / `saveError` \u2014 is this tab usable\n        at all. A Motion manifest lives inside a project, so `\"no-project\"`\n        means open one in the Colorist tab first. This tool ANSWERS in that\n        case rather than erroring, which is how you find it out.\n      * `recovered` \u2014 `null`, or `{stale}` when a page reload put the previous\n        page's UNSAVED edits back from the project's recovery copy (they are\n        still unsaved: `motion_save_manifest` keeps them, `motion_reload_manifest`\n        with `force=true` discards them). `stale: true` means the saved manifest\n        changed after those edits were made, so saving replaces it.\n      * `selection` \u2014 what is selected right now, as `[{sceneIndex, target}]`,\n        the exact shape `motion_set_selection` takes back.\n      * `playheadFrame` / `playerMounted` \u2014 where the preview is parked.\n      * `fps`, `totalFrames`, `width`, `height`, `title` \u2014 the document's own\n        output spec, all four of them written by\n        `motion_set_project_settings`.\n      * `render` \u2014 where a `motion_render` is: `state` (`idle`/`running`/\n        `error`/`interrupted`), `scenesTotal` / `scenesDone` / `doneSceneIds`\n        (real progress), `remainingSceneIds` (what is left), `sceneId` (the one\n        rendering right now), and `failedSceneId` + `error` when one failed.\n        `interrupted` is a render the app lost (a restart); `motion_render` with\n        `resume=true` continues it. **This is how you find out\n        a render failed.** A multi-scene render always outlives the 20s\n        control-bridge timeout, so `motion_render`'s own reply is gone before\n        a mid-loop failure happens; poll here instead of counting files on\n        disk, which cannot tell \"still rendering\" from \"stopped on a failure\".\n        A failed render stops at the failing scene, so `doneSceneIds` is\n        exactly what is on disk and `failedSceneId` is what to fix.\n      * `scenes` \u2014 one row per scene: `index`, `id`, `dur` (SECONDS), its\n        absolute `startFrame` in the combined timeline, `layerCount`,\n        `scene3dChildCount`, `camera2dKeys`, `camera3dKeys`.\n\n    **Times in this tab are SECONDS, per scene, not absolute frames.** A\n    keyframe's `at` is seconds from its own scene's start; `startFrame` here is\n    what converts between the two (`frame = startFrame + at * fps`), and\n    `motion_seek` accepts either form so you rarely have to do it yourself.",
       "inputSchema": {
         "properties": {},
         "type": "object",
@@ -10940,6 +11399,211 @@
       }
     },
     {
+      "name": "motion_set_soundtrack",
+      "description": "Set the document's soundtrack \u2014 the music its moves are timed to \u2014 and\n    analyse its beats (D-413). One undo step. ONE track for the whole document:\n    music time at composition second t is `offset + t`, in every scene.\n\n    - `path` \u2014 an audio file to import (mp3, wav, m4a, aac, flac, ogg); it is\n      copied into the project by content hash, like an image. Or `asset` \u2014 an\n      audio asset id already imported. Omit both to change the other fields\n      of the current soundtrack.\n    - `offset` \u2014 seconds INTO the song at which the video starts.\n    - `volume` \u2014 0..1, for the player and a render.\n    - `render` \u2014 mux the music into the rendered scene files (default false:\n      it is a timing reference, and scenes are usually cut together under one\n      bed on the Edit timeline). The live player always plays it.\n    - `meter` (2..7, default 4) and `tempo_hint` (30..300 BPM) \u2014 the beat\n      analysis parameters, stored in the document.\n    - `clear` \u2014 remove the soundtrack.\n\n    Answers the soundtrack, `tempoBpm`, and per scene its beat and downbeat\n    counts and first downbeat (scene seconds) \u2014 read `motion_get_beats` next.\n    Audio never changes a rendered pixel.",
+      "inputSchema": {
+        "properties": {
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Path"
+          },
+          "asset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Asset"
+          },
+          "offset": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Offset"
+          },
+          "volume": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Volume"
+          },
+          "render": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Render"
+          },
+          "meter": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Meter"
+          },
+          "tempo_hint": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tempo Hint"
+          },
+          "clear": {
+            "default": false,
+            "title": "Clear",
+            "type": "boolean"
+          }
+        },
+        "type": "object",
+        "title": "motion_set_soundtrackArguments"
+      }
+    },
+    {
+      "name": "motion_snap_to_beats",
+      "description": "Move every key of the chosen layers onto its nearest soundtrack beat\n    within `tolerance_s` (default 0.1 s), as ONE undo step (D-413) \u2014 the\n    keyframe timeline's magnet, in bulk.\n\n    - `layers` \u2014 layer ids; default every layer in the scene.\n    - `track` \u2014 `all` (default), `transform`, `anim`, `anim:<prop>`, `enter`.\n    - `to` \u2014 `beat` (default), `downbeat` or `strong`.\n    - `include_camera` \u2014 the scene's 2D camera keys too.\n    - `dry_run` \u2014 report, change nothing.\n\n    A key with no beat close enough, or whose beat is taken by its neighbour,\n    stays where it is and says why.",
+      "inputSchema": {
+        "properties": {
+          "scene_index": {
+            "title": "Scene Index",
+            "type": "integer"
+          },
+          "layers": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Layers"
+          },
+          "track": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Track"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "To"
+          },
+          "tolerance_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tolerance S"
+          },
+          "include_camera": {
+            "default": false,
+            "title": "Include Camera",
+            "type": "boolean"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "scene_index"
+        ],
+        "type": "object",
+        "title": "motion_snap_to_beatsArguments"
+      }
+    },
+    {
+      "name": "motion_time_to_music",
+      "description": "Time named moves to the soundtrack's beats in one scene, as ONE undo\n    step (D-413). E.g. \"time the hero reveal to the first downbeat, land the\n    scale-up on the next strong beat, smaller accents on the beats between\":\n\n        moves = [\n          {\"name\": \"reveal\",  \"cue\": \"downbeat 1\",       \"layer\": \"hero\", \"track\": \"enter\"},\n          {\"name\": \"scale\",   \"cue\": \"next strong beat\", \"layer\": \"hero\", \"track\": \"transform\", \"anchor\": \"end\"},\n          {\"name\": \"accents\", \"cue\": \"every beat between\", \"layers\": [\"dot1\", \"dot2\"], \"track\": \"enter\"},\n        ]\n\n    Each move: `name`; `cue`; `layer` (id or index; a group, a template\n    instance or a custom component is one layer) or `layers` (several, each\n    one item); `track` \u2014 which keys: `all` (transform + anim, default),\n    `transform`, `anim`, `anim:<prop>` (e.g. `anim:props.count`), `enter`\n    (the layer's start, `at`) or `camera` (the scene's 2D camera, no layer);\n    `keys` \u2014 `all` (default), `first`, `last` or indices in time order;\n    `anchor` \u2014 `start` (default: the move's first key goes on the beat) or\n    `end` (its last key LANDS on the beat). The move's other keys shift with\n    its anchor, so a move keeps its own timing.\n\n    Cues (1-based, counted within the scene; kind = beat | downbeat | strong\n    beat): `beat N`, `downbeat N`, `strong beat N`, `bar N`, `bar N beat M`,\n    `first <kind>`, `last <kind>`, `next <kind>` (after the previous\n    single-beat move), `next <kind> after <move>`, `every <kind> between`\n    (strictly between the two single-beat moves listed before it; items are\n    spread evenly over those beats), `every <kind> between <a> and <b>`.\n\n    Refused, naming the move, when a cue has no such beat, a key would leave\n    the scene or pass another key, or two moves claim one key. `dry_run`\n    answers the plan without changing anything. Read `motion_get_beats` first.",
+      "inputSchema": {
+        "properties": {
+          "scene_index": {
+            "title": "Scene Index",
+            "type": "integer"
+          },
+          "moves": {
+            "items": {},
+            "title": "Moves",
+            "type": "array"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "scene_index",
+          "moves"
+        ],
+        "type": "object",
+        "title": "motion_time_to_musicArguments"
+      }
+    },
+    {
       "name": "motion_validate",
       "description": "Dry-run the Motion schema (D-403): check a whole `manifest`, one\n    `scene`, or a list of `layers` WITHOUT changing anything. Pass at most one\n    of the three; pass none to check the live document in the app.\n\n    Returns `{checked, ok, loads, issues}`:\n      * `ok` -- no issue at all, unknown keys included. This is what\n        `motion_insert_layers` / `motion_set_scene` / `motion_add_layer(props)`\n        require, so a fragment that is `ok` here will be accepted there.\n      * `loads` -- the app would accept it as-is (types of known fields are\n        right). Existing project files may load with unknown keys; authoring\n        refuses them because an unknown key is almost always a typo that\n        renders as nothing.\n      * `issues` -- `[{path, code, message, expected, hint}]`. `path` reads\n        like `scenes[0].layers[2].size`; `code` is stable (`invalid_type`,\n        `missing_field`, `invalid_value`, `unrecognized_key`, `unknown_use`,\n        `unknown_icon`, `too_small`, ...); `expected` is what would have been accepted (a type,\n        the enum's options, the known keys); `hint` is a concrete fix such as\n        `did you mean \"color\"?`.\n\n    Every mutating `motion_*` tool returns this same `issues` list when it\n    refuses, so you can fix a call from its answer alone.\n\n    Args:\n        manifest: a whole manifest `{title, width?, height?, fps?, scenes}`.\n        scene: one scene `{id?, dur, layers?, camera?, scene3d?, bg?, ...}`.\n        layers: a list of layers, each `{use, ...props}` (see each primitive's\n            `propsSchema` in `motion_list_primitives`).\n        scene_index: with `scene`, report paths under `scenes[scene_index]`.",
       "inputSchema": {
@@ -12846,6 +13510,397 @@
       ]
     },
     {
+      "tool": "brand_add_reference",
+      "case": "minimal",
+      "arguments": {
+        "path": "v_brand_add_reference.path",
+        "note": "v_brand_add_reference.note"
+      },
+      "requests": [
+        {
+          "op": "brand_add_reference",
+          "args": {
+            "path": "v_brand_add_reference.path",
+            "note": "v_brand_add_reference.note",
+            "kind": "reference"
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_add_reference",
+      "case": "full",
+      "arguments": {
+        "path": "v_brand_add_reference.path",
+        "note": "v_brand_add_reference.note",
+        "kind": "v_brand_add_reference.kind",
+        "kit_id": "v_brand_add_reference.kit_id"
+      },
+      "requests": [
+        {
+          "op": "brand_add_reference",
+          "args": {
+            "path": "v_brand_add_reference.path",
+            "note": "v_brand_add_reference.note",
+            "kind": "v_brand_add_reference.kind",
+            "kit_id": "v_brand_add_reference.kit_id"
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_apply_kit",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "brand_apply_kit",
+          "args": {},
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_apply_kit",
+      "case": "full",
+      "arguments": {
+        "tabs": [
+          "v_brand_apply_kit.tabs[0]"
+        ],
+        "restyle_existing": true,
+        "titles": true
+      },
+      "requests": [
+        {
+          "op": "brand_apply_kit",
+          "args": {
+            "tabs": [
+              "v_brand_apply_kit.tabs[0]"
+            ],
+            "restyle_existing": true
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_create_kit",
+      "case": "minimal",
+      "arguments": {
+        "kit": {
+          "k_brand_create_kit.kit": "v_brand_create_kit.kit.value"
+        }
+      },
+      "requests": [
+        {
+          "op": "brand_create_kit",
+          "args": {
+            "kit": {
+              "k_brand_create_kit.kit": "v_brand_create_kit.kit.value"
+            }
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_create_kit",
+      "case": "full",
+      "arguments": {
+        "kit": {
+          "k_brand_create_kit.kit": "v_brand_create_kit.kit.value"
+        },
+        "dry_run": false
+      },
+      "requests": [
+        {
+          "op": "brand_create_kit",
+          "args": {
+            "kit": {
+              "k_brand_create_kit.kit": "v_brand_create_kit.kit.value"
+            }
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_delete_kit",
+      "case": "minimal",
+      "arguments": {
+        "id": "v_brand_delete_kit.id"
+      },
+      "requests": [
+        {
+          "op": "brand_delete_kit",
+          "args": {
+            "id": "v_brand_delete_kit.id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_get_kit",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "brand_get_kit",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_get_kit",
+      "case": "full",
+      "arguments": {
+        "id": "v_brand_get_kit.id"
+      },
+      "requests": [
+        {
+          "op": "brand_get_kit",
+          "args": {
+            "id": "v_brand_get_kit.id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_get_references",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "brand_get_references",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_get_references",
+      "case": "full",
+      "arguments": {
+        "kit_id": "v_brand_get_references.kit_id"
+      },
+      "requests": [
+        {
+          "op": "brand_get_references",
+          "args": {
+            "kit_id": "v_brand_get_references.kit_id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_import_asset",
+      "case": "minimal",
+      "arguments": {
+        "path": "v_brand_import_asset.path"
+      },
+      "requests": [
+        {
+          "op": "brand_import_asset",
+          "args": {
+            "path": "v_brand_import_asset.path"
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_list_kits",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "brand_list_kits",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_set_active_kit",
+      "case": "minimal",
+      "arguments": {
+        "id": "v_brand_set_active_kit.id"
+      },
+      "requests": [
+        {
+          "op": "brand_set_active_kit",
+          "args": {
+            "id": "v_brand_set_active_kit.id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_update_kit",
+      "case": "minimal",
+      "arguments": {
+        "id": "v_brand_update_kit.id",
+        "patch": {
+          "k_brand_update_kit.patch": "v_brand_update_kit.patch.value"
+        }
+      },
+      "requests": [
+        {
+          "op": "brand_update_kit",
+          "args": {
+            "id": "v_brand_update_kit.id",
+            "patch": {
+              "k_brand_update_kit.patch": "v_brand_update_kit.patch.value"
+            }
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "brand_update_kit",
+      "case": "full",
+      "arguments": {
+        "id": "v_brand_update_kit.id",
+        "patch": {
+          "k_brand_update_kit.patch": "v_brand_update_kit.patch.value"
+        },
+        "dry_run": true
+      },
+      "requests": [
+        {
+          "op": "brand_update_kit",
+          "args": {
+            "id": "v_brand_update_kit.id",
+            "patch": {
+              "k_brand_update_kit.patch": "v_brand_update_kit.patch.value"
+            },
+            "dry_run": true
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "clear_mask_keyframe",
       "case": "minimal",
       "arguments": {
@@ -14150,6 +15205,67 @@
             "id": "v_editor_delete_timeline.id"
           },
           "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_detect_beats",
+      "case": "minimal",
+      "arguments": {
+        "track": 42
+      },
+      "requests": [
+        {
+          "op": "editor_detect_beats",
+          "args": {
+            "track": 42,
+            "show": true
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_detect_beats",
+      "case": "full",
+      "arguments": {
+        "track": 42,
+        "meter": 84,
+        "tempo_hint_bpm": -8.35,
+        "show": false,
+        "kind": "v_editor_detect_beats.kind",
+        "start_frame": 9,
+        "end_frame": 37,
+        "force": true
+      },
+      "requests": [
+        {
+          "op": "editor_detect_beats",
+          "args": {
+            "track": 42,
+            "show": false,
+            "meter": 84,
+            "tempoHintBpm": -8.35,
+            "kind": "v_editor_detect_beats.kind",
+            "startFrame": 9,
+            "endFrame": 37,
+            "force": true
+          },
+          "timeout_ms": 120000
         }
       ],
       "isError": false,
@@ -16375,6 +17491,54 @@
       ]
     },
     {
+      "tool": "editor_set_beat_grid",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "editor_set_beat_grid",
+          "args": {
+            "track": null
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_set_beat_grid",
+      "case": "full",
+      "arguments": {
+        "track": 94,
+        "meter": 54,
+        "tempo_hint_bpm": 19.19
+      },
+      "requests": [
+        {
+          "op": "editor_set_beat_grid",
+          "args": {
+            "track": 94,
+            "meter": 54,
+            "tempoHintBpm": 19.19
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "editor_set_caption",
       "case": "minimal",
       "arguments": {
@@ -17526,6 +18690,64 @@
             "delta": 20
           },
           "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_snap_cuts_to_beats",
+      "case": "minimal",
+      "arguments": {
+        "track": 30
+      },
+      "requests": [
+        {
+          "op": "editor_snap_cuts_to_beats",
+          "args": {
+            "track": 30
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_snap_cuts_to_beats",
+      "case": "full",
+      "arguments": {
+        "track": 30,
+        "to": "v_editor_snap_cuts_to_beats.to",
+        "max_shift_frames": 58,
+        "clips": [
+          13
+        ],
+        "dry_run": true
+      },
+      "requests": [
+        {
+          "op": "editor_snap_cuts_to_beats",
+          "args": {
+            "track": 30,
+            "to": "v_editor_snap_cuts_to_beats.to",
+            "maxShiftFrames": 58,
+            "clips": [
+              13
+            ],
+            "dryRun": true
+          },
+          "timeout_ms": 120000
         }
       ],
       "isError": false,
@@ -18970,6 +20192,54 @@
             "scene_index": 83
           },
           "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_get_beats",
+      "case": "minimal",
+      "arguments": {
+        "scene_index": 28
+      },
+      "requests": [
+        {
+          "op": "motion_get_beats",
+          "args": {
+            "scene_index": 28
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_get_beats",
+      "case": "full",
+      "arguments": {
+        "scene_index": 28,
+        "kind": "v_motion_get_beats.kind"
+      },
+      "requests": [
+        {
+          "op": "motion_get_beats",
+          "args": {
+            "scene_index": 28,
+            "kind": "v_motion_get_beats.kind"
+          },
+          "timeout_ms": 120000
         }
       ],
       "isError": false,
@@ -21294,6 +22564,182 @@
             ]
           },
           "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_set_soundtrack",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "motion_set_soundtrack",
+          "args": {},
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_set_soundtrack",
+      "case": "full",
+      "arguments": {
+        "path": "v_motion_set_soundtrack.path",
+        "asset": "v_motion_set_soundtrack.asset",
+        "offset": 38.33,
+        "volume": 1.98,
+        "render": false,
+        "meter": 1,
+        "tempo_hint": 25.29,
+        "clear": false
+      },
+      "requests": [
+        {
+          "op": "motion_set_soundtrack",
+          "args": {
+            "path": "v_motion_set_soundtrack.path",
+            "asset": "v_motion_set_soundtrack.asset",
+            "offset": 38.33,
+            "volume": 1.98,
+            "render": false,
+            "meter": 1,
+            "tempo_hint": 25.29
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_snap_to_beats",
+      "case": "minimal",
+      "arguments": {
+        "scene_index": 31
+      },
+      "requests": [
+        {
+          "op": "motion_snap_to_beats",
+          "args": {
+            "scene_index": 31
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_snap_to_beats",
+      "case": "full",
+      "arguments": {
+        "scene_index": 31,
+        "layers": [
+          "v_motion_snap_to_beats.layers[0]"
+        ],
+        "track": "v_motion_snap_to_beats.track",
+        "to": "v_motion_snap_to_beats.to",
+        "tolerance_s": -40.24,
+        "include_camera": true,
+        "dry_run": true
+      },
+      "requests": [
+        {
+          "op": "motion_snap_to_beats",
+          "args": {
+            "scene_index": 31,
+            "layers": [
+              "v_motion_snap_to_beats.layers[0]"
+            ],
+            "track": "v_motion_snap_to_beats.track",
+            "to": "v_motion_snap_to_beats.to",
+            "tolerance_s": -40.24,
+            "include_camera": true,
+            "dry_run": true
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_time_to_music",
+      "case": "minimal",
+      "arguments": {
+        "scene_index": 88,
+        "moves": [
+          "any_motion_time_to_music.moves[0]"
+        ]
+      },
+      "requests": [
+        {
+          "op": "motion_time_to_music",
+          "args": {
+            "scene_index": 88,
+            "moves": [
+              "any_motion_time_to_music.moves[0]"
+            ]
+          },
+          "timeout_ms": 120000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_time_to_music",
+      "case": "full",
+      "arguments": {
+        "scene_index": 88,
+        "moves": [
+          "any_motion_time_to_music.moves[0]"
+        ],
+        "dry_run": false
+      },
+      "requests": [
+        {
+          "op": "motion_time_to_music",
+          "args": {
+            "scene_index": 88,
+            "moves": [
+              "any_motion_time_to_music.moves[0]"
+            ]
+          },
+          "timeout_ms": 120000
         }
       ],
       "isError": false,

@@ -42,6 +42,9 @@ apelles-ai = { path = "../../crates/apelles-ai" }
 apelles-audio-library = { path = "../../crates/apelles-audio-library" }
 apelles-media = { path = "../../crates/apelles-media" }
 apelles-speech = { path = "../../crates/apelles-speech" }
+apelles-beat = { path = "../../crates/apelles-beat" }
+# D-416 — brand kits: the per-file kit library, the brand asset store, a project's kit snapshot.
+apelles-brand = { path = "../../crates/apelles-brand" }
 apelles-project = { path = "../../crates/apelles-project" }
 # Apelles editor-tab audio playback (D-049) — decode (symphonia) → resample
 # (rubato) → format-convert (dasp_sample) → device output (cpal). Pure Rust,

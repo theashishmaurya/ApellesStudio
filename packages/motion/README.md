@@ -57,6 +57,12 @@ per-row lane timeline).
   saved manifest yet), live-parses every edit (debounced) against
   `@apelles/motion-engine`'s `manifestSchema`, drives save/render. Component-local
   — nothing outside this tab needs it.
+- `recoveryWriter.ts` — D-415: the debounced, serialised writer for the unsaved-edit
+  recovery copy (`<project>/motion/manifest.recovery.json`, owned by
+  `apelles_motion::recovery`). `useMotionManifest` feeds it the text that differs from
+  the saved document, restores a found copy once per project (unsaved, never saved on
+  the person's behalf; `motionProjectStore.recovered` drives the notice), and a Save
+  clears it. Renders never read it.
 - `MotionPreview.tsx` — the `@remotion/player` embed. `durationInFrames` /
   `fps` / `compositionWidth` / `compositionHeight` come from the engine's own
   `totalFrames`/schema defaults (`build.ts`), not reimplemented here. Back to
@@ -305,6 +311,33 @@ The Catalog (D-151) closed the largest
 GUI-creation gap; D-155–D-159 closed the largest on-canvas-manipulation
 gap; D-160/D-161/D-162/D-163 are four of four steps toward a real keyframe
 timeline — the curve/easing editor remains, Phase 5b's own final piece.
+
+## Brand kit (D-416)
+
+`brandTheme.ts` (pure): `themeDefFromBrandKit` (a kit → the D-399 theme `brand-<kit id>`,
+deterministic: colours by role, `bgDeep`/`textDim`/`strokeSoft` mixed from them, Apelles
+Studio's clean geometry, Google faces as `fonts`, font files as `fontFiles`),
+`brandLayerDefaults` (the kit's entrance as a DEFAULT on a new `image`/`icon`/`shape` layer,
+under the caller's props), `brandEase`, and `restyleManifest` (the explicit restyle of existing
+entrances and transform-key eases). `brandApply.ts` is this tab's applier for
+`@apelles/brand`'s registry, registered by `MotionTab`: it imports the kit's font files and logos
+into the Motion asset folder (same ids) and embeds the theme in ONE commit. `motion_add_layer`
+and the Catalog take the entrance default; `motion_add_layer_keyframe` gives a NEW key with no
+ease the kit's ease (`ctx.brandMotion`).
+
+## Soundtrack and time to music (D-413)
+
+`musicTiming.ts` (pure): the soundtrack's beats on the composition and per scene
+(`compositionBeats`, `sceneBeats`), `timeToMusic` (named moves → `@apelles/beats`' cue grammar →
+key times for a layer's transform keys, `anim` tracks, entrance or the scene camera; one new
+manifest) and `snapKeysToBeats`. `musicOps.ts`: `motion_set_soundtrack`, `motion_get_beats`,
+`motion_time_to_music`, `motion_snap_to_beats` (spread into `createMotionOps`; the analysis and
+import arrive through the context's `soundtrackBeats` / `importAsset`). `useSoundtrackBeats.ts`:
+the React view of the same cached analysis (`@apelles/bridge`'s `useBeats`). GUI:
+`SoundtrackSection.tsx` (the document Inspector's Soundtrack section and the scene Inspector's
+Time to music form) and the keyframe timeline's beat lines + magnet. Tests:
+`musicTiming.test.ts`, `musicOps.e2e.test.ts` (fixtures in `src/fixtures/musicDoc.ts`). Design
+and measurements: `docs/notes/music-driven-motion.md`.
 
 ## Templates (D-407)
 

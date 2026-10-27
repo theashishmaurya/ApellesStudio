@@ -10,6 +10,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@apelles/beats": "*",
+    "@apelles/brand": "*",
     "@apelles/bridge": "*",
     "@apelles/history": "*",
     "@apelles/inspector": "*",

@@ -163,7 +163,9 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
-import { MagnifyingGlassPlusIcon, MagnifyingGlassMinusIcon } from '@phosphor-icons/react';
+import { MagnetIcon, MagnifyingGlassPlusIcon, MagnifyingGlassMinusIcon } from '@phosphor-icons/react';
+import { snapTo } from '@apelles/beats';
+import type { MotionBeat } from './musicTiming';
 import type { PlayerRef } from '@remotion/player';
 import { totalFrames, sceneStartFrame, sceneDurationFrames } from '@apelles/motion-engine/src/engine/build';
 import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
@@ -226,6 +228,11 @@ const KEY_DRAG_MIN_PX = 4;
  *  `KeyMoveTarget` and `moveKeysAt`'s own doc comments for why re-reading a
  *  key's CURRENT `at` mid-batch is the exact correctness trap this
  *  discipline avoids). */
+/** D-413 — a key snaps to a beat within this many px of it. */
+const BEAT_SNAP_PX = 8;
+/** D-413 — non-downbeat beats are drawn only this far apart or more. */
+const MIN_BEAT_PX = 6;
+
 interface KeyDragState {
   pointerId: number;
   moves: { lane: KeyframeLane; keyIndex: number; baseAtSeconds: number }[];
@@ -307,6 +314,7 @@ export function KeyframeTimeline({
   onTransientChange,
   onCommit,
   activeSceneIndex = null,
+  beats = null,
 }: {
   /** `null` mirrors every other consumer of the STABLE manifest in this tab
    *  — renders an empty placeholder rather than assuming non-null. */
@@ -333,6 +341,10 @@ export function KeyframeTimeline({
    *  ruler spanning the whole composition. See this file's own "solo-scene
    *  scoping" block below for the absolute↔local conversion this drives. */
   activeSceneIndex?: number | null;
+  /** D-413 — the soundtrack's beats on the composition (absolute seconds),
+   *  drawn on the ruler and every lane and snapped to while retiming a key;
+   *  `null` when the document has no soundtrack (or it is still analysing). */
+  beats?: readonly MotionBeat[] | null;
 }) {
   const [frame, setFrame] = useState(() => playerRef.current?.getCurrentFrame() ?? 0);
   const [pxPerSecond, setPxPerSecond] = useState(DEFAULT_PX_PER_SEC);
@@ -357,6 +369,9 @@ export function KeyframeTimeline({
   const [marqueeRect, setMarqueeRect] = useState<RectLike | null>(null);
 
   const draggable = Boolean(onTransientChange && onCommit);
+  // D-413 — beat snapping while retiming keys; the header's magnet toggles it.
+  const [beatSnap, setBeatSnap] = useState(true);
+  const beatTimes = (beats ?? []).map((b) => b.at);
 
   // Same event `MotionCanvasOverlay.tsx`/D-160's `KeyframeStrip.tsx` already
   // subscribe to — the playhead line on the ruler and every row tracks it
@@ -460,6 +475,28 @@ export function KeyframeTimeline({
   const trackW = trackWidthPx(total, manifest.fps, pxPerSecond);
   const ticks = rulerTicks(totalSeconds, manifest.fps, pxPerSecond);
   const timelineLayout = { laneAreaTop: RULER_HEIGHT, laneHeight: LANE_HEIGHT, labelWidth: LANE_LABEL_WIDTH };
+
+  /** D-413 — the beats drawn at this zoom: downbeats always, other beats only
+   *  when at least `MIN_BEAT_PX` apart (FCP's zoom-dependent density). Frames
+   *  are in this timeline's own (possibly solo'd, local) space. */
+  const beatSpacingPx =
+    beats && beats.length > 1 ? ((beats[beats.length - 1].at - beats[0].at) / (beats.length - 1)) * pxPerSecond : Infinity;
+  const drawnBeats = (beats ?? [])
+    .filter((b) => b.downbeat || beatSpacingPx >= MIN_BEAT_PX)
+    .map((b) => ({ ...b, frame: toLocalFrame(Math.round(b.at * manifest.fps)) }))
+    .filter((b) => b.frame >= 0 && b.frame <= total);
+
+  /** D-413 — `rawDelta` adjusted so the key under the pointer lands on the
+   *  nearest beat within `BEAT_SNAP_PX`; every other key in the drag moves by
+   *  the same delta, so a group keeps its shape. */
+  const snapDeltaToBeat = (drag: KeyDragState, rawDelta: number): number => {
+    if (!beatSnap || beatTimes.length === 0) return rawDelta;
+    const grabbed = drag.moves.find((mv) => laneKey(mv.lane) === laneKey(drag.primaryLane)) ?? drag.moves[0];
+    const sceneStart = sceneStartFrame(manifest, grabbed.lane.sceneIndex) / manifest.fps;
+    const at = sceneStart + grabbed.baseAtSeconds + rawDelta;
+    const snapped = snapTo(at, beatTimes, BEAT_SNAP_PX / pxPerSecond);
+    return snapped.snapped ? snapped.value - sceneStart - grabbed.baseAtSeconds : rawDelta;
+  };
 
   const isSelected = (lane: KeyframeLane): boolean => {
     const sel = selectionForLane(manifest, lane);
@@ -596,7 +633,7 @@ export function KeyframeTimeline({
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== e.pointerId) return;
     if (Math.abs(e.clientX - drag.startClientX) < KEY_DRAG_MIN_PX) return; // not a real drag yet
-    const deltaSeconds = pxDeltaToSeconds(e.clientX - drag.startClientX, pxPerSecond, manifest.fps);
+    const deltaSeconds = snapDeltaToBeat(drag, pxDeltaToSeconds(e.clientX - drag.startClientX, pxPerSecond, manifest.fps));
     setDragPreview(
       drag.moves.map((mv) => ({
         laneKeyStr: laneKey(mv.lane),
@@ -627,7 +664,7 @@ export function KeyframeTimeline({
       selectAndMaybeSeek(drag.primaryLane, drag.primaryFrame);
       return;
     }
-    const deltaSeconds = pxDeltaToSeconds(e.clientX - drag.startClientX, pxPerSecond, manifest.fps);
+    const deltaSeconds = snapDeltaToBeat(drag, pxDeltaToSeconds(e.clientX - drag.startClientX, pxPerSecond, manifest.fps));
     onTransientChange?.(null);
     const next = nextManifestForDrag(drag, deltaSeconds);
     const label = drag.moves.length > 1 ? 'Move keyframes' : labelForLaneKind(drag.moves[0].lane.kind);
@@ -708,6 +745,21 @@ export function KeyframeTimeline({
       <div className="shrink-0 h-6 flex items-center justify-between gap-2 px-2 border-b border-border-color text-[10px] text-text-secondary">
         <span className="uppercase tracking-wide">Keyframes</span>
         <div className="flex items-center gap-0.5">
+          {beats && beats.length > 0 && (
+            <button
+              type="button"
+              className={[
+                'h-5 w-5 flex items-center justify-center rounded hover:bg-hover-color',
+                beatSnap ? 'text-accent' : '',
+              ].join(' ')}
+              title={beatSnap ? 'Snapping keys to the soundtrack beats (click to turn off)' : 'Snap keys to the soundtrack beats'}
+              aria-label={beatSnap ? 'Turn beat snapping off' : 'Turn beat snapping on'}
+              aria-pressed={beatSnap}
+              onClick={() => setBeatSnap((v) => !v)}
+            >
+              <MagnetIcon size={12} />
+            </button>
+          )}
           <button
             type="button"
             className="h-5 w-5 flex items-center justify-center rounded hover:bg-hover-color disabled:opacity-30"
@@ -779,6 +831,19 @@ export function KeyframeTimeline({
                     <div className="w-px h-1.5 bg-border-color" />
                   </div>
                 ))}
+                {/* D-413 — the soundtrack's beats: downbeats full height,
+                    other beats a short tick. */}
+                {drawnBeats.map((b) => (
+                  <div
+                    key={`beat-${b.frame}`}
+                    data-motion-beat={b.downbeat ? 'downbeat' : 'beat'}
+                    className={[
+                      'pointer-events-none absolute w-px',
+                      b.downbeat ? 'top-0 bottom-0 bg-accent/60' : 'top-0 h-1.5 bg-text-secondary/50',
+                    ].join(' ')}
+                    style={{ left: `${frameToPercent(b.frame, total)}%` }}
+                  />
+                ))}
                 {boundaries.map((f) => (
                   <div
                     key={`boundary-${f}`}
@@ -838,6 +903,15 @@ export function KeyframeTimeline({
                         width: `${frameToPercent(toLocalFrame(sceneEnd), total) - frameToPercent(toLocalFrame(sceneStart), total)}%`,
                       }}
                     />
+                    {drawnBeats
+                      .filter((b) => b.downbeat)
+                      .map((b) => (
+                        <div
+                          key={`db-${b.frame}`}
+                          className="pointer-events-none absolute top-0 bottom-0 w-px bg-accent/20"
+                          style={{ left: `${frameToPercent(b.frame, total)}%` }}
+                        />
+                      ))}
                     {boundaries.map((f) => (
                       <div
                         key={`b-${f}`}

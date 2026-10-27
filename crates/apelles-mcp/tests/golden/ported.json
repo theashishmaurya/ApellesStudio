@@ -16,6 +16,16 @@
     "ai_env_retry",
     "ai_env_status",
     "apply_haze",
+    "brand_add_reference",
+    "brand_apply_kit",
+    "brand_create_kit",
+    "brand_delete_kit",
+    "brand_get_kit",
+    "brand_get_references",
+    "brand_import_asset",
+    "brand_list_kits",
+    "brand_set_active_kit",
+    "brand_update_kit",
     "clear_mask_keyframe",
     "clear_mask_keyframes",
     "debug_dom_tree",
@@ -234,6 +244,13 @@
     "motion_delete_component",
     "motion_runtime_status",
     "motion_install_runtime",
-    "motion_remove_runtime"
+    "motion_remove_runtime",
+    "editor_detect_beats",
+    "editor_set_beat_grid",
+    "editor_snap_cuts_to_beats",
+    "motion_set_soundtrack",
+    "motion_get_beats",
+    "motion_time_to_music",
+    "motion_snap_to_beats"
   ]
 }

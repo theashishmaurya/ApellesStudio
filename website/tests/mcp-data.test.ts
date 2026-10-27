@@ -55,9 +55,15 @@ const mediaUnderstanding = TOOLS.filter(
 );
 /** D-315 — belongs to no tab: the AI environment every AI feature runs from. */
 const aiEnv = TOOLS.filter((t) => t.startsWith('ai_env_'));
+/** D-416 — belongs to no tab: the brand kit every tab applies. */
+const brand = TOOLS.filter((t) => t.startsWith('brand_'));
 const colorist = TOOLS.filter(
   (t) =>
-    !debug.includes(t) && !editorAll.includes(t) && !motion.includes(t) && !aiEnv.includes(t),
+    !debug.includes(t) &&
+    !editorAll.includes(t) &&
+    !motion.includes(t) &&
+    !aiEnv.includes(t) &&
+    !brand.includes(t),
 );
 
 describe('mcp/server.py parses', () => {
@@ -110,6 +116,10 @@ describe('per-group counts match the server', () => {
 
   it('AI environment', () => {
     expect(byName['AI environment'].count).toBe(aiEnv.length);
+  });
+
+  it('Brand kits', () => {
+    expect(byName['Brand kits'].count).toBe(brand.length);
   });
 
   it('the group counts sum to the shipped total, with nothing unaccounted for', () => {

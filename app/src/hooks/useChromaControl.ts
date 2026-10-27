@@ -236,7 +236,7 @@ function nonDefault(obj: Record<string, any> | undefined): Record<string, any> {
  *  requests would be emitted into a window where their real registry is not
  *  listening yet. This list must therefore stay identical to the early-return
  *  skip in the handler below; they are the same fact stated to two audiences. */
-const BRIDGE_DEFERS = ['motion_', 'editor_', 'debug_'];
+const BRIDGE_DEFERS = ['motion_', 'editor_', 'debug_', 'brand_'];
 
 /** B-280 — this evaluation of the module: new after a dev hot update to this
  *  file or anything it imports, so the bridge subscription below (which
@@ -1553,11 +1553,8 @@ export function useChromaControl() {
       // response slot. Note `debug_screenshot`/`debug_sample_pixel` (D-210)
       // never reach any frontend listener at all — `control.rs` answers those
       // natively — so this skip covers exactly the frontend ones.
-      if (
-        typeof op === 'string' &&
-        (op.startsWith('motion_') || op.startsWith('editor_') || op.startsWith('debug_'))
-      )
-        return;
+      // D-416 — `brand_*` is `@apelles/brand`'s registry (`useBrandControl`).
+      if (typeof op === 'string' && BRIDGE_DEFERS.some((prefix) => op.startsWith(prefix))) return;
       const respond = (body: any) => emit(`chroma://response/${id}`, body);
 
       const fn = OPS[op];

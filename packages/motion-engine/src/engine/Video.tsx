@@ -4,7 +4,8 @@
  * from the manifest via calculateMetadata).
  */
 import React, { useId } from "react";
-import { AbsoluteFill, Sequence, Series, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, Html5Audio, Sequence, Series, useCurrentFrame, useRemotionEnvironment, useVideoConfig } from "remotion";
+import { useAssetResolver } from "../lib/assets";
 import { Camera } from "../primitives/Camera";
 import { interpolateKeys } from "../lib/interpolateKeys";
 import { Scene3D } from "../primitives/Scene3D";
@@ -22,7 +23,7 @@ import {
   withCustomDefaults,
 } from "../custom/renderer";
 import type { ComponentRef } from "../custom/componentDef";
-import type { Layer, LayerTransform, Manifest, Scene as SceneT } from "./schema";
+import type { Layer, LayerTransform, Manifest, Scene as SceneT, Soundtrack as SoundtrackT } from "./schema";
 
 /**
  * `data-motion-layer="<sceneIndex>.<layerIndex>"` (D-155, `docs/notes/
@@ -366,18 +367,46 @@ const OneScene: React.FC<{
  * `../themeFonts.ts`'s module scope, which is where this file's old
  * unconditional `loadFont()` (Kalam) moved to.
  */
+/**
+ * D-413 — the document's soundtrack, spanning the whole composition (outside
+ * the scene `Series`, so a scene's own frame window of a render gets exactly
+ * its stretch of the music). The live player always plays it, so the music can
+ * be heard while timing moves to it; a RENDER includes it only when the
+ * document says `render: true` — otherwise the render tree has no audio
+ * element at all, exactly as before soundtracks existed. Never draws: audio
+ * cannot change a pixel.
+ */
+const SoundtrackAudio: React.FC<{ soundtrack: SoundtrackT; fps: number }> = ({ soundtrack, fps }) => {
+  const resolve = useAssetResolver();
+  const env = useRemotionEnvironment();
+  if (env.isRendering && soundtrack.render !== true) return null;
+  const src = resolve(soundtrack.src);
+  if (!src) return null;
+  return (
+    <Html5Audio
+      src={src}
+      trimBefore={Math.round((soundtrack.offset ?? 0) * fps)}
+      volume={soundtrack.volume ?? 1}
+    />
+  );
+};
+
 /** A stable empty map, so a document without components re-renders nothing. */
 const NO_COMPONENTS: Readonly<Record<string, ComponentRef>> = {};
 
 export const Video: React.FC<Manifest> = (manifest) => {
   const { fps } = manifest;
   const theme = resolveManifestTheme(manifest);
-  ensureThemeFonts(theme);
+  // D-416 — a theme's font FILES resolve through the same asset resolver as
+  // the document's images.
+  const resolveAsset = useAssetResolver();
+  ensureThemeFonts(theme, resolveAsset);
   return (
     <ThemeProvider theme={theme}>
     {/* D-409 — the document's embedded custom-component definitions. Who
         DRAWS them is the runtime's choice (`../custom/renderer.tsx`). */}
     <CustomComponentsProvider components={manifest.components ?? NO_COMPONENTS}>
+    {manifest.soundtrack ? <SoundtrackAudio soundtrack={manifest.soundtrack} fps={fps} /> : null}
     <Series>
       {manifest.scenes.map((scene, sceneIndex) => (
         <Series.Sequence

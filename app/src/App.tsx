@@ -52,6 +52,8 @@ import { useSortedLibrary } from './hooks/useSortedLibrary';
 import { useAppNavigation } from './hooks/useAppNavigation';
 import { useExternalEditSession } from './hooks/useExternalEditSession';
 import { useChromaControl } from './hooks/useChromaControl';
+import { useBrandControl } from '@apelles/brand';
+import { useColoristBrandApplier } from './hooks/useColoristBrandApplier';
 import { useProjectAutosave } from './hooks/useProjectAutosave';
 import { useColoristHistoryBridge } from './hooks/useColoristHistoryBridge';
 import { useDebugScreenshot } from './hooks/useDebugScreenshot';
@@ -165,6 +167,10 @@ function App() {
   // before a file is open (Phase 4 note in docs/04) — was in Editor, which only
   // renders in the editor view. Single mount: do NOT also call it in Editor.
   useChromaControl();
+  // D-416: the `brand_*` op registry (brand kits belong to no single tab) and
+  // the Colorist's applier in `@apelles/brand`'s registry.
+  useBrandControl();
+  useColoristBrandApplier();
   // D-037: debounced project.json + grade + thumb autosave once a project is loaded
   useProjectAutosave();
   // D-051: bridge useEditorStore's grade history into @apelles/history (shell

@@ -35,6 +35,13 @@ status: **open** · severity: **low** (52 dB PSNR between runs: invisible, but C
 - **repro:** render `crates/apelles-motion/tests/fixtures/sample.json` frames 0-59 to `.mp4` twice (2x scale, 3840×2160, JPEG frames, H.264) and compare decoded frames (`ffmpeg -map 0:v -f framemd5`): 51 of 60 frames differ between two runs of the old `npx remotion render`, 47 of 60 between two runs of the D-417 renderer. Audio is identical. The same frames as a PNG sequence (`render.mts frames`, 0.25 scale) are identical across runs, as every still is (`preview_render.rs`).
 - **cause:** not isolated. Pre-existing (the CLI path shows it too), so not the renderer change. Candidates: the JPEG frame encode at 4K in Chrome, or the encoder's threading.
 - **fix:** none yet. First step: render the same frames as PNG at 2x scale twice, to split the browser from the encoder.
+## B-285 — a dev full page reload took ~48 minutes to come back, with the bridge timing out meanwhile
+
+status: **open, not reproduced** · severity: **unknown** (seen once, dev build) · area: dev page load / Vite under heavy load, the D-410 restore path
+
+- **found:** 2026-10-27, live-verifying D-415. After a Motion edit at 21:41, `touch app/src/main.tsx` forced a full reload; `motion_get_state` got a 504, and the log shows `[page-session] reopened "Fix check (scratch)" on the motion tab` only at 22:29. Machine load average was ~19 (two agent builds running); earlier the same session a Vite resolve failure (a new workspace package not yet linked) had also left the page unregistered until Vite restarted.
+- **after a clean restart** of `npm run tauri:dev`, the same flow worked at once (open project → Motion → the recovered edit is back).
+- **next:** if seen again, capture the webview console and Vite log at that moment; check whether the D-410 restore waits on something slow (an `open_project` while a Rust rebuild or the ai-env start is running).
 
 ## B-284 — a new timeline ran at 24 fps whatever the project's rate was
 

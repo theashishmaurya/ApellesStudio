@@ -73,6 +73,7 @@ impl ApellesMcp {
                 + crate::tools::edit::router()
                 + crate::tools::motion::router()
                 + crate::tools::ai_env::router()
+                + crate::tools::brand::router()
                 + crate::tools::debug::router(),
         }
     }

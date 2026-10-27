@@ -110,7 +110,8 @@ import { useMotionLayerPresetStore } from './layerPresetIO';
 import { useMotionThemeLibraryStore } from './themeLibraryIO';
 import { useMotionTemplateLibraryStore } from './templateLibraryIO';
 import { componentAccess } from './customComponentLibraryIO';
-import { importAsset, previewFrames } from './manifestIO';
+import { useBrandStore } from '@apelles/brand';
+import { importAsset, previewFrames, soundtrackBeats } from './manifestIO';
 import type { Selection } from './LayerList';
 import type { MotionCanvasMeasureApi } from './MotionPreview';
 import type { useMotionManifest } from './useMotionManifest';
@@ -250,6 +251,8 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
       preview: (req) => previewFrames(req),
       // D-404 — the content-hash asset import.
       importAsset: (path) => importAsset(path),
+      // D-413 — the soundtrack's beats, through the bridge's shared cache.
+      soundtrackBeats: (st) => soundtrackBeats(st),
       // D-407 — the template library, read the same way.
       templates: () => ({
         list: () => useMotionTemplateLibraryStore.getState().templates,
@@ -259,6 +262,8 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
       }),
       // D-409 — the custom-component library and its backend commands.
       components: () => componentAccess(),
+      // D-416 — the project's brand-kit motion style, read at call time.
+      brandMotion: () => useBrandStore.getState().project?.motion,
     });
 
     // B-272 — this subscription's identity; see `useEditorControl.ts`.
