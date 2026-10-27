@@ -58,8 +58,16 @@ function safeUnlisten(unlistenPromise: Promise<(() => void) | undefined | void>)
     });
 }
 
+/** B-280 — this evaluation of the module: new after a dev hot update to this
+ *  file or anything it imports, so the bridge subscription below (which
+ *  depends on it) re-subscribes with the new op code. See `@apelles/bridge`'s
+ *  `controlBridge` for why `[]` alone is not enough. */
+const REGISTRY_EVALUATION = Symbol('useDebugControl evaluation');
+
 export function useDebugControl(): void {
+  const evaluation = REGISTRY_EVALUATION;
   useEffect(() => {
+    void evaluation;
     if (!import.meta.env.DEV) return;
 
     let disposed = false;
@@ -108,5 +116,5 @@ export function useDebugControl(): void {
       disposed = true;
       if (unlisten) safeUnlisten(unlisten);
     };
-  }, []);
+  }, [evaluation]);
 }

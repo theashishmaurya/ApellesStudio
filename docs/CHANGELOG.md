@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-27** — **B-280 fixed:** under StrictMode, Fast Refresh never re-ran the bridge registries' `[]` effects, so a hot update left the old op table answering (reproduced in a minimal Vite + React Compiler app); each registry now depends on its module evaluation and re-subscribes, still one subscription (B-272).
+
 - **2026-10-27** — **D-409 + B-282 verified live** in a scratch project: a `Math.random` component refused before saving; `ripple-rings` written, checked (three render paths, identical in 56 s), certified and added as `custom:ripple-rings` with props; `motion_validate` clean; the preview still and, after the B-282 fix, the live player both draw it (`debug_get_ui_state` → `customProxies` waiting → ready, 90 frames). Test layer removed; `ripple-rings@1` stays in the user library as a demo.
 
 - **2026-10-27** — **B-282 fixed:** the Motion player stayed on "rendering preview…" for a custom layer whose proxy frames existed, because the React Compiler memoized the renderer's read of a module-level map. The proxy state is now an external store read through `useSyncExternalStore` (`customProxyStore.ts`); failures show on the layer and in the log; `debug_ui_state` reports `motion.customProxies`; `@apelles/motion`'s tests compile with the app's React Compiler preset. D-409 amended.

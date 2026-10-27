@@ -1881,10 +1881,19 @@ function noTimeline(): { error: string } {
   return { error: 'the timeline is still loading (the project was just opened or switched) — retry' };
 }
 
+/** B-280 — this evaluation of the module. A dev hot update to this file or to
+ *  anything it imports (`timeline.ts`, `musicEditOps.ts`, …) re-evaluates it
+ *  and mints a new value, and the subscription below depends on it, so the
+ *  bridge re-subscribes with the new op table. See `@apelles/bridge`'s
+ *  `controlBridge` for why `[]` alone is not enough. */
+const REGISTRY_EVALUATION = Symbol('useEditorControl evaluation');
+
 /** Mount once from `EditorTab.tsx`. No arguments — see this file's own
  *  module doc comment for why (both stores it reads are module-level). */
 export function useEditorControl(): void {
+  const evaluation = REGISTRY_EVALUATION;
   useEffect(() => {
+    void evaluation;
     const OPS: Record<string, (args: any) => any> = {
       // ---- read / seek / selection ----------------------------------------
       editor_get_state: () => {
@@ -5506,13 +5515,12 @@ export function useEditorControl(): void {
       subscribed = false;
       safeUnlisten(unlistenP);
     };
-    // D-201 — `[]` is honest, and the suppression that used to sit here is
-    // gone. `useEditorControl` takes no arguments and this effect closes over
-    // nothing from a component scope: every store it touches is reached
-    // through `getState()` on a module-level store, and `EDITOR_OP_PREFIX`,
-    // `listen`/`emit` and `safeUnlisten` are module-level too. Suppressing ANY
-    // react-hooks lint rule also switches the React Compiler off for the whole
-    // file (see `docs/notes/react-compiler-coverage.md`), so a stale
-    // suppression is not free.
-  }, []);
+    // D-201 — no suppression here: this effect closes over nothing from a
+    // component scope (every store it touches is reached through `getState()`
+    // on a module-level store). Suppressing ANY react-hooks lint rule also
+    // switches the React Compiler off for the whole file (see
+    // `docs/notes/react-compiler-coverage.md`), so a stale suppression is not
+    // free. B-280 — the one dependency is this module's evaluation: constant
+    // for the life of a module instance, new after a dev hot update.
+  }, [evaluation]);
 }

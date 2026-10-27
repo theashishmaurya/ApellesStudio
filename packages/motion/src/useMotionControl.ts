@@ -186,6 +186,12 @@ function safeUnlisten(unlistenPromise: Promise<(() => void) | undefined | void>)
     });
 }
 
+/** B-280 — this evaluation of the module: new after a dev hot update to this
+ *  file or anything it imports, so the bridge subscription below (which
+ *  depends on it) re-subscribes with the new op code. See `@apelles/bridge`'s
+ *  `controlBridge` for why `[]` alone is not enough. */
+const REGISTRY_EVALUATION = Symbol('useMotionControl evaluation');
+
 /**
  * Mount once from `MotionTab.tsx`, passing the SAME `useMotionManifest()`
  * result the tab itself renders against — this hook never calls that hook
@@ -206,7 +212,9 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
   // identity are already stable across renders.
   const { playerRef, measureApiRef, setSelections } = refs;
 
+  const evaluation = REGISTRY_EVALUATION;
   useEffect(() => {
+    void evaluation;
     // `measureApiRef` is plumbed through for future ops (see the interface's
     // doc comment); referenced here so the dependency is explicit rather
     // than looking accidentally unused.
@@ -307,5 +315,5 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
       safeUnlisten(unlistenP);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [evaluation]);
 }

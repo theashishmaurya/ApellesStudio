@@ -238,11 +238,19 @@ function nonDefault(obj: Record<string, any> | undefined): Record<string, any> {
  *  skip in the handler below; they are the same fact stated to two audiences. */
 const BRIDGE_DEFERS = ['motion_', 'editor_', 'debug_'];
 
+/** B-280 — this evaluation of the module: new after a dev hot update to this
+ *  file or anything it imports, so the bridge subscription below (which
+ *  depends on it) re-subscribes with the new op code. See `@apelles/bridge`'s
+ *  `controlBridge` for why `[]` alone is not enough. */
+const REGISTRY_EVALUATION = Symbol('useChromaControl evaluation');
+
 export function useChromaControl() {
   const { setAdjustments } = useEditorActions();
   const ai = useAiMasking();
 
+  const evaluation = REGISTRY_EVALUATION;
   useEffect(() => {
+    void evaluation;
     const editor = () => useEditorStore.getState();
     const chroma = () => useChromaStore.getState();
 
@@ -1671,5 +1679,5 @@ export function useChromaControl() {
       safeUnlisten(unlistenP);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [evaluation]);
 }

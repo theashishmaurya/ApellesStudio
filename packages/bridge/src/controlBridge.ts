@@ -18,6 +18,20 @@
  * listener is inert by construction: its instance is not the one the server
  * named, however many of them are alive.
  *
+ * **B-280 — a subscription follows its module, not just its component.** Each
+ * registry builds its op table inside its subscribing effect, so the table is
+ * the one from the module evaluation that ran the effect. A dev hot update
+ * re-evaluates the registry module (and the op modules it imports), but under
+ * `<React.StrictMode>` (`app/src/main.tsx`) Fast Refresh does not re-run an
+ * effect whose dependencies are unchanged: React 19's strict second render
+ * (`renderWithHooksAgain`) clears the hot-reload "ignore previous deps" flag
+ * and rebuilds the effect list, so `[]` compares equal and the OLD
+ * subscription, holding the old op table, stays the announced target. Each
+ * registry therefore declares a module-level `REGISTRY_EVALUATION` symbol and
+ * lists it as the effect's dependency: constant for a module instance's life
+ * (one subscription, as before), new after a hot update (cleanup, then a fresh
+ * claim with the new code, which the server then targets).
+ *
  * **What it does NOT do:** register listeners, answer ops, or know any op name.
  * A request with no `target` at all (a unit test driving a handler directly) is
  * accepted; the control server always sets one.
