@@ -4,6 +4,8 @@
 `docs/04-roadmap.md`. Research notes (gitignored): `scratch/clipper-reference/NOTES.md`, with the
 raw Opus Clip help pages in `scratch/clipper-reference/opus/`.
 
+> **Owner decisions, 2026-10-27 (D-411), override this note where they differ:** the **MCP client is the only judge** (no local heuristic picks moments, in the GUI or anywhere; without an agent the panel analyses and shows candidates but cannot propose); shorts live as timelines in the same project; the one call stops at built timelines; media files and long timelines are both sources from Phase 1; Openverse is never automatic.
+
 Owner's ask (2026-10-27): *"Add Automatic Clipper, this finds the best moments and cuts and
 convert it into trailer for your long form video, podcast movies, courses etc.. can be converted
 to short from just one call and work against it. It should feel fast, fit into reel format, should

@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-27** — **D-411 owner decisions:** the MCP client is the only judge of clip moments (no local heuristic); shorts are timelines in the same project; one call stops at built timelines; files and timelines are both sources; Openverse never automatic. Clipper Phase 0 (timelines that can be shorts) started.
+
 - **2026-10-27** — **Automatic Clipper designed (D-411, proposed; `docs/notes/automatic-clipper.md`, roadmap 0h):** shorts (9:16/1:1/4:5) and a trailer from one long video in one MCP call. The app generates sentence-aligned candidates and refuses any cut off a sentence boundary; the MCP client judges, with a local heuristic when no agent is connected. Outputs are timelines in the same project. Reframing uses Apple Vision. Eight phases; Phase 0 (per-timeline output size, timeline MCP tools) comes first. Research: Opus Clip, Descript, Riverside, CapCut, Vizard, Submagic, Premiere Auto Reframe, FCP Smart Conform. No code.
 
 - **2026-10-27** — **B-281 fixed:** a Motion render (export, `motion_preview_frame`) of a document that leaves out `grain`/`vignette` no longer gets the engine sample's film grain and vignette; the `Animation` composition's `defaultProps` are now the neutral `animationDefaultProps` (only `title`, the schema's size/fps and a placeholder scene) and the sample is its own `AnimationSample` composition, so the renderer and the live player draw the same pixels. A test pins that no optional manifest key can come from the defaults. Intentionally changes pixels: every `preview_render.rs` hash whose fixture lacks the keys was re-recorded (D-405, D-407, D-409 entries updated; `sample.json` sets both and is unchanged).
