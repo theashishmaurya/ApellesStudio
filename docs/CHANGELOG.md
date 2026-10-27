@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-27** — **D-416 verified live (Motion path, over the bridge):** an invalid kit was refused with both issues named; a kit was created (contrast table: text 17.9:1 AAA, primary 4.15:1 AA-large), set active and applied to Motion as theme `brand-live-check`; the preview still drew the kit's font, background and primary colour; a new shape layer took the kit's `rise` entrance; one undo each reverted the layer and the theme. Edit/Colorist appliers and the Brand panel not yet checked by hand.
+
 - **2026-10-27** — **Brand kit (D-416, v0.4.0):** one brand for every tab: colours (contrast checked), fonts incl. your own licensed files, logos, motion style, caption look, a grade LUT, sound and references with notes. A user library (one file per kit, new `apelles-brand` crate) and a per-project copy; applying generates the Motion theme (now able to load font files), styles Edit captions/titles and puts the LUT on the Colorist shot, one undo step per tab. Brand panel in the chrome bar, ten `brand_*` MCP tools in both servers (231 → 241), `apelles-brand` skill. Every recorded render hash reproduces; a kit fixture renders identically twice. Not yet checked live.
 - **2026-10-27** — **D-415 verified live:** a Motion edit wrote `manifest.recovery.json` (saved `manifest.json` untouched); after a full app restart, opening the project restored it (`recovered: {stale: false}`, dirty); `motion_reload_manifest(force)` discarded it and removed the copy. Logged **B-285** (one ~48-minute dev reload stall, not reproduced).
 
