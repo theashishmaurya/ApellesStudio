@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-27** — **D-403: Motion authoring as validated data (Phase 0 of `motion-authoring-mcp.md`).** Per-primitive zod prop schemas (the layer schema is a discriminated union on `use`; unknown keys still load, authoring refuses them), `motion_validate` with `{path, code, message, expected, hint}` issues, `motion_insert_layers` / `motion_set_scene` (one undo step), `motion_add_layer(props)`, `propsSchema` in `motion_list_primitives`, and `motion_preview_frame` (cached-bundle `remotion still`, contact sheets); every mutating op refuses a document that would not load. GUI: Catalog **Insert as JSON**, toolbar **Still**. 199 MCP tools (Motion 51).
+
 - **2026-10-26** — **Verified live after merge:** B-273 (no-track `editor_add_clip` → a new audio track for a voice clip, a new top video track for a still), B-276 (a brand-new project exported with no size set: 640×360, 10 s), B-274/D-402 (3 edits then `kill -9` of the web content process: termination logged at `warn`, deliberate reload, all 3 edits replayed and saved). Logged B-277 (open): the reload comes back with no project open.
 
 - **2026-10-26** — Notes: `reference-teardown-lewis-jackson-polymarket.md` (measured sound design: an edited music bed ~19 dB under a levelled voice, 32 dropouts on story beats, few effects; a fill-in script template) and `motion-authoring-mcp.md` (design for new Motion graphics and templates as data over MCP; phased, not built).

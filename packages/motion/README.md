@@ -305,3 +305,20 @@ The Catalog (D-151) closed the largest
 GUI-creation gap; D-155–D-159 closed the largest on-canvas-manipulation
 gap; D-160/D-161/D-162/D-163 are four of four steps toward a real keyframe
 timeline — the curve/easing editor remains, Phase 5b's own final piece.
+
+## Authoring as data (D-403)
+
+`authoring.ts` holds the two validated-fragment plans both interfaces use:
+`planInsertLayers` (whole layers into a scene, one undo step) and `planSetScene`
+(replace or append a whole scene, with D-371's rename pre-flight). Each validates the
+fragment strictly (`@apelles/motion-engine`'s `validate.ts`), applies the pure
+`manifestEdit.ts` edit (`insertLayers` / `replaceScene`) and checks the result loads.
+MCP: `motion_insert_layers`, `motion_set_scene`, `motion_validate`, `motion_add_layer`
+with `props`, `motion_preview_frame` (still frames or a contact sheet through
+`chroma_motion_preview_frame`). GUI: the Catalog's **Insert as JSON** box
+(`InsertJsonBox.tsx`: Check / Insert / Replace scene) and the toolbar's **Still** button.
+Every mutating op now goes through a guarded `commit` (`motionOps.ts`'s `api()`): a
+document that would not parse is refused with the same `issues` list, never committed.
+`propCatalog.schema.test.ts` holds the Inspector catalogue to the zod schemas in both
+directions; `manifestFixtures.test.ts` proves real manifests (`src/fixtures/manifests/`)
+still load unchanged.

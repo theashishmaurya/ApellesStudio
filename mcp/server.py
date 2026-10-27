@@ -120,6 +120,9 @@ AI_MASK_TIMEOUT_MS = 180_000
 #: Openverse search/download (D-400): the app's own HTTP client allows 30s per
 #: request plus one 10s `429` wait, and a download of a long track takes longer.
 AUDIO_LIBRARY_TIMEOUT_MS = 120_000
+#: Motion still frames (D-403): the first preview after an engine change runs a
+#: webpack bundle (~20s) before ~1-2s per frame, up to 12 frames.
+MOTION_PREVIEW_TIMEOUT_MS = 180_000
 
 # D-318's recut detectors used to have a 180_000 budget here, on the reasoning
 # that a cold decode of a long 4K source is not 20s-fast. B-188 proved that far
@@ -7083,7 +7086,9 @@ def motion_set_camera_3d(scene_index: int, keys: list[Camera3DKey]) -> str:
 
 
 @mcp.tool()
-def motion_add_layer(scene_index: int, use: str) -> str:
+def motion_add_layer(
+    scene_index: int, use: str, props: dict[str, Any] | None = None
+) -> str:
     """Create a layer — the same action the Catalog panel's own primitive rows
     perform. This is how anything gets onto a Motion scene.
 
@@ -7103,15 +7108,229 @@ def motion_add_layer(scene_index: int, use: str) -> str:
     Returns the `selection` addressing the new layer; hand it straight to the
     next call.
 
+    `props` (D-403) creates a FINISHED layer in this one call: the fields you
+    name are laid over the default instance (the rest keep their defaults),
+    and the merged layer is validated against the primitive's `propsSchema`
+    (`motion_list_primitives`) before anything changes. A wrong type or an
+    unknown key (a typo such as `colour`) is refused with `issues`
+    `[{path, code, message, expected, hint}]` and nothing is added. `use` and
+    `id` cannot be set through `props`. To insert several finished layers in
+    one undo step, use `motion_insert_layers`.
+
     Args:
         scene_index: which scene to add to.
         use: the primitive, e.g. "text". An unknown value is refused with the
-            full legal list."""
+            full legal list.
+        props: optional fields of the new layer, e.g.
+            `{"text": "Ship it", "size": 96, "x": 200, "y": 300}`."""
     import json
 
-    return json.dumps(
-        _op("motion_add_layer", scene_index=scene_index, use=use), indent=2, default=str
+    args: dict[str, Any] = {"scene_index": scene_index, "use": use}
+    if props is not None:
+        args["props"] = props
+    return json.dumps(_op("motion_add_layer", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_validate(
+    manifest: dict[str, Any] | None = None,
+    scene: dict[str, Any] | None = None,
+    layers: list[dict[str, Any]] | None = None,
+    scene_index: int | None = None,
+) -> str:
+    """Dry-run the Motion schema (D-403): check a whole `manifest`, one
+    `scene`, or a list of `layers` WITHOUT changing anything. Pass at most one
+    of the three; pass none to check the live document in the app.
+
+    Returns `{checked, ok, loads, issues}`:
+      * `ok` -- no issue at all, unknown keys included. This is what
+        `motion_insert_layers` / `motion_set_scene` / `motion_add_layer(props)`
+        require, so a fragment that is `ok` here will be accepted there.
+      * `loads` -- the app would accept it as-is (types of known fields are
+        right). Existing project files may load with unknown keys; authoring
+        refuses them because an unknown key is almost always a typo that
+        renders as nothing.
+      * `issues` -- `[{path, code, message, expected, hint}]`. `path` reads
+        like `scenes[0].layers[2].size`; `code` is stable (`invalid_type`,
+        `missing_field`, `invalid_value`, `unrecognized_key`, `unknown_use`,
+        `too_small`, ...); `expected` is what would have been accepted (a type,
+        the enum's options, the known keys); `hint` is a concrete fix such as
+        `did you mean "color"?`.
+
+    Every mutating `motion_*` tool returns this same `issues` list when it
+    refuses, so you can fix a call from its answer alone.
+
+    Args:
+        manifest: a whole manifest `{title, width?, height?, fps?, scenes}`.
+        scene: one scene `{id?, dur, layers?, camera?, scene3d?, bg?, ...}`.
+        layers: a list of layers, each `{use, ...props}` (see each primitive's
+            `propsSchema` in `motion_list_primitives`).
+        scene_index: with `scene`, report paths under `scenes[scene_index]`."""
+    import json
+
+    args: dict[str, Any] = {}
+    if manifest is not None:
+        args["manifest"] = manifest
+    if scene is not None:
+        args["scene"] = scene
+    if layers is not None:
+        args["layers"] = layers
+    if scene_index is not None:
+        args["scene_index"] = scene_index
+    return json.dumps(_op("motion_validate", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_insert_layers(
+    scene_index: int,
+    layers: list[dict[str, Any]],
+    at: int | None = None,
+    dry_run: bool = False,
+) -> str:
+    """Insert WHOLE layers into one scene in ONE undoable step (D-403) -- the
+    way to build a graphic as data instead of `motion_add_layer` plus a field
+    call per property.
+
+    Each layer is a full manifest fragment `{use, ...props}` validated against
+    its primitive's `propsSchema` (`motion_list_primitives`); unknown keys are
+    refused. If ANY layer has an issue, nothing is inserted and the answer
+    carries `issues` `[{path, code, message, expected, hint}]` (paths like
+    `layers[1].size`) -- the same list `motion_validate` gives.
+
+    Placement follows the primitive: 2D layers go into `scene.layers` (at
+    index `at`, default on top = the end; later layers paint over earlier
+    ones), 3D primitives into `scene.scene3d.children` (created with a
+    default camera when absent). A layer keeps the `id` you give it when that
+    id is free in the scene, so you can address your own layers by name
+    afterwards; otherwise one is minted. Times are SECONDS within the scene.
+
+    Returns `{sceneIndex, count, selections}` -- one selection per inserted
+    layer, in order. `dry_run=true` validates and reports without changing
+    anything.
+
+    Args:
+        scene_index: which scene.
+        layers: the layers, e.g. `[{"use": "text", "id": "headline", "text":
+            "Ship it", "size": 96, "x": 200, "y": 300}]`.
+        at: index in `scene.layers` for the 2D layers (default: the end).
+        dry_run: validate only."""
+    import json
+
+    args: dict[str, Any] = {"scene_index": scene_index, "layers": layers}
+    if at is not None:
+        args["at"] = at
+    if dry_run:
+        args["dry_run"] = True
+    return json.dumps(_op("motion_insert_layers", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_set_scene(
+    scene_index: int, scene: dict[str, Any], dry_run: bool = False
+) -> str:
+    """Replace one WHOLE scene, or append a new one, in ONE undoable step
+    (D-403).
+
+    `scene` is a full scene fragment `{id?, dur, bg?, grain?, vignette?,
+    transition?, camera?, layers?, scene3d?}`, validated strictly (unknown keys
+    refused) with every layer checked against its primitive's `propsSchema`.
+    On any issue nothing changes and the answer carries `issues`
+    `[{path, code, message, expected, hint}]` (paths like
+    `scenes[2].layers[0].text`).
+
+    `scene_index` = an existing index REPLACES that scene entirely (its old
+    layers and camera are gone unless the fragment repeats them);
+    `scene_index` = the scene count APPENDS. Omit `id` to keep the scene's
+    current name (or get a generated one when appending); a different `id` is
+    a rename and is refused when it would collide with another scene or orphan
+    a render already placed on the Edit timeline (the same rules as
+    `motion_set_scene_field`). Layer ids are kept when unique within the scene.
+    Times are SECONDS within the scene.
+
+    Returns `{sceneIndex, sceneId, appended, layerCount, scene3dChildCount}`;
+    `dry_run=true` validates without changing anything.
+
+    Args:
+        scene_index: the scene to replace, or the scene count to append.
+        scene: the scene object.
+        dry_run: validate only."""
+    import json
+
+    args: dict[str, Any] = {"scene_index": scene_index, "scene": scene}
+    if dry_run:
+        args["dry_run"] = True
+    return json.dumps(_op("motion_set_scene", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_preview_frame(
+    scene_index: int,
+    at_seconds: list[float] | None = None,
+    frames: list[int] | None = None,
+    scale: float | None = None,
+    manifest: dict[str, Any] | None = None,
+) -> list:
+    """SEE a Motion scene: render still frames through the real engine (the
+    same Remotion renderer `motion_render` uses) and get the picture back in
+    this call (D-403).
+
+    One frame comes back as one PNG; several come back as ONE contact sheet,
+    tiled left to right then down (at most 4 per row, at most 12 frames), so
+    you can read a motion -- its start, middle and settle -- in one image.
+    Choose frames by `at_seconds` (SECONDS within the scene) or `frames`
+    (frame numbers within the scene), not both; neither renders the scene's
+    midpoint. Out-of-range times are clamped to the scene (with a `warning`).
+
+    What is rendered: the app's LIVE document, unsaved edits included -- or,
+    when you pass `manifest`, that document INSTEAD (validated to load
+    first), so you can look at a change before committing it.
+
+    `scale` is the render scale, 0.1-1 (default 0.5 = half resolution). The
+    first preview after the engine changes bundles it (~20 s); later ones take
+    about 1-2 s per frame.
+
+    Returns the image, then `{path, width, height, columns, rows, sceneIndex,
+    sceneId, scale, frames: [{frame, seconds, absoluteFrame}],
+    previewedUncommitted, warning?}`.
+
+    Args:
+        scene_index: which scene.
+        at_seconds: times within the scene, e.g. `[0.2, 1.0, 2.5]`.
+        frames: frame numbers within the scene, e.g. `[0, 15, 30]`.
+        scale: render scale in (0, 1].
+        manifest: a whole manifest to preview instead of the live one."""
+    import json
+
+    args: dict[str, Any] = {"scene_index": scene_index}
+    if at_seconds is not None:
+        args["at_seconds"] = at_seconds
+    if frames is not None:
+        args["frames"] = frames
+    if scale is not None:
+        args["scale"] = scale
+    if manifest is not None:
+        args["manifest"] = manifest
+    env = _op("motion_preview_frame", timeout_ms=MOTION_PREVIEW_TIMEOUT_MS, **args)
+
+    res = env.get("result") or {}
+    out: list = []
+    if env.get("ok") and res.get("path"):
+        try:
+            with builtins.open(res["path"], "rb") as fh:
+                out.append(Image(data=fh.read(), format="png").to_image_content())
+        except OSError as e:
+            res = {**res, "inlineError": f"rendered, but could not be read back: {e}"}
+    out.append(
+        TextContent(
+            type="text",
+            text=json.dumps(
+                {"ok": env.get("ok"), "error": env.get("error"), **res},
+                indent=2,
+                default=str,
+            ),
+        )
     )
+    return out
 
 
 @mcp.tool()

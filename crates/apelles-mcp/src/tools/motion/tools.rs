@@ -167,6 +167,9 @@ pub struct MotionAddLayerArgs {
     /// the serde rename; the wire key and the parameter name a caller sends are `use`.
     #[serde(rename = "use")]
     pub primitive: String,
+    /// D-403 — fields laid over the default instance, validated as one layer.
+    #[serde(default)]
+    pub props: Option<serde_json::Map<String, Value>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -420,6 +423,52 @@ pub struct MotionDefineThemeArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MotionDeleteThemeArgs {
     pub name: String,
+}
+
+// D-403 — authoring as data. `serde_json::Map` publishes `{type: object,
+// additionalProperties: true}`, which is the Python server's `dict[str, Any]`.
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionValidateArgs {
+    #[serde(default)]
+    pub manifest: Option<serde_json::Map<String, Value>>,
+    #[serde(default)]
+    pub scene: Option<serde_json::Map<String, Value>>,
+    #[serde(default)]
+    pub layers: Option<Vec<serde_json::Map<String, Value>>>,
+    #[serde(default)]
+    pub scene_index: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionInsertLayersArgs {
+    pub scene_index: i64,
+    pub layers: Vec<serde_json::Map<String, Value>>,
+    #[serde(default)]
+    pub at: Option<i64>,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionSetSceneArgs {
+    pub scene_index: i64,
+    pub scene: serde_json::Map<String, Value>,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionPreviewFrameArgs {
+    pub scene_index: i64,
+    #[serde(default)]
+    pub at_seconds: Option<Vec<f64>>,
+    #[serde(default)]
+    pub frames: Option<Vec<i64>>,
+    #[serde(default)]
+    pub scale: Option<f64>,
+    #[serde(default)]
+    pub manifest: Option<serde_json::Map<String, Value>>,
 }
 
 #[tool_router(router = motion_router, vis = "pub")]
@@ -1063,10 +1112,21 @@ impl ApellesMcp {
     Returns the `selection` addressing the new layer; hand it straight to the
     next call.
 
+    `props` (D-403) creates a FINISHED layer in this one call: the fields you
+    name are laid over the default instance (the rest keep their defaults),
+    and the merged layer is validated against the primitive's `propsSchema`
+    (`motion_list_primitives`) before anything changes. A wrong type or an
+    unknown key (a typo such as `colour`) is refused with `issues`
+    `[{path, code, message, expected, hint}]` and nothing is added. `use` and
+    `id` cannot be set through `props`. To insert several finished layers in
+    one undo step, use `motion_insert_layers`.
+
     Args:
         scene_index: which scene to add to.
         use: the primitive, e.g. "text". An unknown value is refused with the
-            full legal list."#
+            full legal list.
+        props: optional fields of the new layer, e.g.
+            `{"text": "Ship it", "size": 96, "x": 200, "y": 300}`."#
     )]
     pub async fn motion_add_layer(
         &self,
@@ -1074,9 +1134,190 @@ impl ApellesMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new()
             .set("scene_index", p.scene_index)
-            .set("use", p.primitive);
+            .set("use", p.primitive)
+            .put("props", p.props);
         let env = self.op("motion_add_layer", args).await?;
         Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_validate",
+        description = r#"Dry-run the Motion schema (D-403): check a whole `manifest`, one
+    `scene`, or a list of `layers` WITHOUT changing anything. Pass at most one
+    of the three; pass none to check the live document in the app.
+
+    Returns `{checked, ok, loads, issues}`:
+      * `ok` -- no issue at all, unknown keys included. This is what
+        `motion_insert_layers` / `motion_set_scene` / `motion_add_layer(props)`
+        require, so a fragment that is `ok` here will be accepted there.
+      * `loads` -- the app would accept it as-is (types of known fields are
+        right). Existing project files may load with unknown keys; authoring
+        refuses them because an unknown key is almost always a typo that
+        renders as nothing.
+      * `issues` -- `[{path, code, message, expected, hint}]`. `path` reads
+        like `scenes[0].layers[2].size`; `code` is stable (`invalid_type`,
+        `missing_field`, `invalid_value`, `unrecognized_key`, `unknown_use`,
+        `too_small`, ...); `expected` is what would have been accepted (a type,
+        the enum's options, the known keys); `hint` is a concrete fix such as
+        `did you mean "color"?`.
+
+    Every mutating `motion_*` tool returns this same `issues` list when it
+    refuses, so you can fix a call from its answer alone.
+
+    Args:
+        manifest: a whole manifest `{title, width?, height?, fps?, scenes}`.
+        scene: one scene `{id?, dur, layers?, camera?, scene3d?, bg?, ...}`.
+        layers: a list of layers, each `{use, ...props}` (see each primitive's
+            `propsSchema` in `motion_list_primitives`).
+        scene_index: with `scene`, report paths under `scenes[scene_index]`."#
+    )]
+    pub async fn motion_validate(
+        &self,
+        Parameters(p): Parameters<MotionValidateArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .put("manifest", p.manifest)
+            .put("scene", p.scene)
+            .put("layers", p.layers)
+            .put("scene_index", p.scene_index);
+        let env = self.op("motion_validate", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_insert_layers",
+        description = r#"Insert WHOLE layers into one scene in ONE undoable step (D-403) -- the
+    way to build a graphic as data instead of `motion_add_layer` plus a field
+    call per property.
+
+    Each layer is a full manifest fragment `{use, ...props}` validated against
+    its primitive's `propsSchema` (`motion_list_primitives`); unknown keys are
+    refused. If ANY layer has an issue, nothing is inserted and the answer
+    carries `issues` `[{path, code, message, expected, hint}]` (paths like
+    `layers[1].size`) -- the same list `motion_validate` gives.
+
+    Placement follows the primitive: 2D layers go into `scene.layers` (at
+    index `at`, default on top = the end; later layers paint over earlier
+    ones), 3D primitives into `scene.scene3d.children` (created with a
+    default camera when absent). A layer keeps the `id` you give it when that
+    id is free in the scene, so you can address your own layers by name
+    afterwards; otherwise one is minted. Times are SECONDS within the scene.
+
+    Returns `{sceneIndex, count, selections}` -- one selection per inserted
+    layer, in order. `dry_run=true` validates and reports without changing
+    anything.
+
+    Args:
+        scene_index: which scene.
+        layers: the layers, e.g. `[{"use": "text", "id": "headline", "text":
+            "Ship it", "size": 96, "x": 200, "y": 300}]`.
+        at: index in `scene.layers` for the 2D layers (default: the end).
+        dry_run: validate only."#
+    )]
+    pub async fn motion_insert_layers(
+        &self,
+        Parameters(p): Parameters<MotionInsertLayersArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("scene_index", p.scene_index)
+            .set("layers", p.layers)
+            .put("at", p.at)
+            .put_if("dry_run", p.dry_run);
+        let env = self.op("motion_insert_layers", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_set_scene",
+        description = r#"Replace one WHOLE scene, or append a new one, in ONE undoable step
+    (D-403).
+
+    `scene` is a full scene fragment `{id?, dur, bg?, grain?, vignette?,
+    transition?, camera?, layers?, scene3d?}`, validated strictly (unknown keys
+    refused) with every layer checked against its primitive's `propsSchema`.
+    On any issue nothing changes and the answer carries `issues`
+    `[{path, code, message, expected, hint}]` (paths like
+    `scenes[2].layers[0].text`).
+
+    `scene_index` = an existing index REPLACES that scene entirely (its old
+    layers and camera are gone unless the fragment repeats them);
+    `scene_index` = the scene count APPENDS. Omit `id` to keep the scene's
+    current name (or get a generated one when appending); a different `id` is
+    a rename and is refused when it would collide with another scene or orphan
+    a render already placed on the Edit timeline (the same rules as
+    `motion_set_scene_field`). Layer ids are kept when unique within the scene.
+    Times are SECONDS within the scene.
+
+    Returns `{sceneIndex, sceneId, appended, layerCount, scene3dChildCount}`;
+    `dry_run=true` validates without changing anything.
+
+    Args:
+        scene_index: the scene to replace, or the scene count to append.
+        scene: the scene object.
+        dry_run: validate only."#
+    )]
+    pub async fn motion_set_scene(
+        &self,
+        Parameters(p): Parameters<MotionSetSceneArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("scene_index", p.scene_index)
+            .set("scene", p.scene)
+            .put_if("dry_run", p.dry_run);
+        let env = self.op("motion_set_scene", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_preview_frame",
+        description = r#"SEE a Motion scene: render still frames through the real engine (the
+    same Remotion renderer `motion_render` uses) and get the picture back in
+    this call (D-403).
+
+    One frame comes back as one PNG; several come back as ONE contact sheet,
+    tiled left to right then down (at most 4 per row, at most 12 frames), so
+    you can read a motion -- its start, middle and settle -- in one image.
+    Choose frames by `at_seconds` (SECONDS within the scene) or `frames`
+    (frame numbers within the scene), not both; neither renders the scene's
+    midpoint. Out-of-range times are clamped to the scene (with a `warning`).
+
+    What is rendered: the app's LIVE document, unsaved edits included -- or,
+    when you pass `manifest`, that document INSTEAD (validated to load
+    first), so you can look at a change before committing it.
+
+    `scale` is the render scale, 0.1-1 (default 0.5 = half resolution). The
+    first preview after the engine changes bundles it (~20 s); later ones take
+    about 1-2 s per frame.
+
+    Returns the image, then `{path, width, height, columns, rows, sceneIndex,
+    sceneId, scale, frames: [{frame, seconds, absoluteFrame}],
+    previewedUncommitted, warning?}`.
+
+    Args:
+        scene_index: which scene.
+        at_seconds: times within the scene, e.g. `[0.2, 1.0, 2.5]`.
+        frames: frame numbers within the scene, e.g. `[0, 15, 30]`.
+        scale: render scale in (0, 1].
+        manifest: a whole manifest to preview instead of the live one."#
+    )]
+    pub async fn motion_preview_frame(
+        &self,
+        Parameters(p): Parameters<MotionPreviewFrameArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("scene_index", p.scene_index)
+            .put("at_seconds", p.at_seconds)
+            .put("frames", p.frames)
+            .put("scale", p.scale)
+            .put("manifest", p.manifest);
+        let env = self
+            .op_with(
+                "motion_preview_frame",
+                crate::MOTION_PREVIEW_TIMEOUT_MS,
+                args,
+            )
+            .await?;
+        Ok(render::file_png_result(&env, true, "rendered"))
     }
 
     #[tool(

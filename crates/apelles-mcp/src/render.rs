@@ -93,6 +93,42 @@ fn data_url_png_block(value: Option<&Value>) -> Option<ContentBlock> {
     Some(ContentBlock::image(BASE64.encode(bytes), "image/png"))
 }
 
+/// A tool whose answer is a PNG the APP wrote to disk (`debug_screenshot`,
+/// `motion_preview_frame`): the image read back from `result.path` (when `inline` and
+/// the op succeeded), then `{ok, error, ...result}` as text.
+///
+/// A read failure is reported IN the result as `inlineError` ("`{done}`, but could not
+/// be read back") rather than raised: the app's half succeeded and its path is still the
+/// useful answer. Ported from the identical branch in both Python tools.
+pub fn file_png_result(env: &Value, inline: bool, done: &str) -> CallToolResult {
+    let ok = env.get("ok").and_then(Value::as_bool).unwrap_or(false);
+    let mut result = match env.get("result") {
+        Some(Value::Object(map)) => map.clone(),
+        _ => Map::new(),
+    };
+    let mut blocks = Vec::new();
+    if inline
+        && ok
+        && let Some(path) = result.get("path").and_then(Value::as_str)
+    {
+        match std::fs::read(path) {
+            Ok(bytes) => blocks.push(ContentBlock::image(BASE64.encode(bytes), "image/png")),
+            Err(e) => {
+                result.insert(
+                    "inlineError".into(),
+                    Value::String(format!("{done}, but could not be read back: {e}")),
+                );
+            }
+        }
+    }
+    let mut out = Map::new();
+    out.insert("ok".into(), owned_or_null(env, "ok"));
+    out.insert("error".into(), owned_or_null(env, "error"));
+    out.extend(result);
+    blocks.push(ContentBlock::text(pretty(&Value::Object(out))));
+    CallToolResult::success(blocks)
+}
+
 /// The mutating-tool renderer: the re-rendered frame, then the state after the change.
 ///
 /// The seven summary keys are always present, in this order, whether or not the envelope

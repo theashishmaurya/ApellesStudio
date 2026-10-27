@@ -63,6 +63,7 @@ import {
   Wall,
   type Icon,
 } from "@phosphor-icons/react";
+import type { GraphIconName } from "../engine/primitiveProps";
 
 /**
  * D-395 — the infrastructure vocabulary a `graph` node can draw as an icon, each one a
@@ -97,9 +98,11 @@ export const GRAPH_ICONS = {
   email: Envelope,
   bot: Robot,
   bug: Bug,
-} as const satisfies Record<string, Icon>;
+} as const satisfies Record<GraphIconName, Icon>;
 
-export type GraphIconName = keyof typeof GRAPH_ICONS;
+// D-403 — the name list lives with the manifest schema (`primitiveProps.ts`),
+// which validates `nodes[].icon` against it; the map above is typed against it.
+export type { GraphIconName };
 
 /** B-266 — a graph whose EVERY node carries x/y is laid out by its author: those are
  *  the drawn positions, verbatim. `null` means "not fully pinned — run the force layout". */

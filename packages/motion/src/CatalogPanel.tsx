@@ -53,6 +53,8 @@ import { catalogEntries } from './catalog';
 import { PrimitiveGlyph } from './PrimitiveGlyph';
 import type { MotionLayerPreset } from './layerPresets';
 import { presetsForDisplay } from './layerPresets';
+import { InsertJsonBox, type InsertJsonMode } from './InsertJsonBox';
+import type { MotionRefusal } from './authoring';
 
 /**
  * `sceneLabel` names the insert target in the panel header, so "Add" is
@@ -68,6 +70,7 @@ export function CatalogPanel({
   presetError = null,
   onAddPreset,
   onDeletePreset,
+  onInsertJson,
 }: {
   targetSceneId: string | null;
   onAdd: (use: PrimitiveUse) => void;
@@ -81,6 +84,9 @@ export function CatalogPanel({
   presetError?: string | null;
   onAddPreset?: (presetId: string) => void;
   onDeletePreset?: (presetId: string) => void;
+  /** D-403 — land a pasted JSON fragment (layers or a whole scene) through
+   *  the same plan the MCP ops use; returns the refusal to show, or null. */
+  onInsertJson?: (mode: InsertJsonMode, value: unknown) => MotionRefusal | null;
 }) {
   const saved = presetsForDisplay(presets);
 
@@ -194,6 +200,8 @@ export function CatalogPanel({
           </div>
         ))}
       </div>
+
+      {onInsertJson && <InsertJsonBox disabled={targetSceneId === null} onInsert={onInsertJson} />}
     </div>
   );
 }

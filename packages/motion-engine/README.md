@@ -290,3 +290,18 @@ move-drag's position pair and does not extend to resize.
 ## `graph` vocabulary (D-395)
 
 `node.icon` draws a real Phosphor icon tile for an infrastructure role (`GRAPH_ICONS` in `primitives/Graph.tsx`: client, server, database, cloud, gateway, reverse-proxy, load-balancer, firewall, attacker, …). `pulse.label` rides a packet; `keep`/`dy` leave it under the destination. `edgeWidth`/`edgeTone` make edges read on a light ground. A fully pinned graph is drawn exactly where pinned (B-266).
+
+## Per-primitive prop schemas and validation (D-403)
+
+The layer schema is a discriminated union on `use` (`engine/schema.ts`'s `layerSchema`,
+`LAYER_SCHEMAS`), one option per primitive, built from `engine/primitiveProps.ts`
+(each primitive's manifest-level props) plus the fields every layer carries. Known props
+are type-checked everywhere, loading included; unknown keys still LOAD (every object is
+loose, so no existing file is refused or silently stripped) and are reported by
+`engine/validate.ts`'s strict pass. `validateManifest` / `validateScene` /
+`validateLayers` return `{ok, loads, issues: [{path, code, message, expected?, hint?}]}`:
+`loads` is what the app accepts, `ok` additionally means no unknown key (what the
+authoring ops require). `engine/jsonSchema.ts`'s `primitiveJsonSchema(use)` publishes the
+same zod object as JSON Schema (`additionalProperties: false`) for
+`motion_list_primitives`. Shared atoms (colour, ease, vectors, `active`) live in
+`engine/schemaAtoms.ts`; a colour prop carries `format: "color"`.

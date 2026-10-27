@@ -95,6 +95,22 @@ export async function getRenderJobStatus(): Promise<MotionRenderStatus> {
   }
 }
 
+/** D-403 — render still frames of `manifest` (absolute composition frames)
+ *  through the backend's Remotion `still` path; one PNG, or a contact sheet of
+ *  several. `manifest` is the document as the caller has it, unsaved or not. */
+export async function previewFrames(req: {
+  manifest: unknown;
+  frames: number[];
+  scale: number;
+  label: string;
+}): Promise<{ path: string; width: number; height: number; columns: number; rows: number }> {
+  try {
+    return await invoke('chroma_motion_preview_frame', req);
+  } catch (e) {
+    rethrow(e);
+  }
+}
+
 /** Tell the backend a finished scene has been taken into Sources. */
 export async function acknowledgeRenderedScene(sceneId: string): Promise<void> {
   try {

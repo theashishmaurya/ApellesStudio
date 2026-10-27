@@ -26,39 +26,8 @@
 import { z } from "zod";
 import { THEME_NAMES } from "../design";
 import { themeDefSchema } from "../themeDef";
-
-const vec3 = z.tuple([z.number(), z.number(), z.number()]);
-const timed = z.object({ at: z.number(), i: z.number() });
-/** `active`: a fixed index, or a step schedule [{at, i}] */
-const activeSchema = z.union([z.number(), z.array(timed)]);
-
-/** a bezier easing curve, `Easing.bezier(x1,y1,x2,y2)`'s own four control
- *  points — the SAME shape `motion.ease.*`'s presets already are. Shared by
- *  `cam2dKey`, `cam3dKey`, and `transformKey` below (all three interpolate
- *  through `motion-engine/src/lib/interpolateKeys.ts`'s one shared
- *  `interpolateKeys`, D-159/B-059).
- *
- * B-062 fix (`docs/BUGS.md`) — `remotion`'s own `Easing.bezier(mX1,mY1,mX2,
- * mY2)` (`node_modules/remotion/dist/cjs/bezier.js`) THROWS
- * `'bezier x values must be in [0, 1] range'` unless `0 <= mX1,mX2 <= 1`;
- * `y1`/`y2` carry no such constraint (`motion.ease.anticipate` legitimately
- * overshoots to `y1:-0.55`/`y2:1.55` for its anticipation curve). Before this
- * fix the tuple's shape was declared (four numbers) but not this one real
- * semantic constraint the consuming function enforces at its own call
- * boundary, so an out-of-range `x1`/`x2` (only reachable by hand-editing the
- * manifest text or an external tool — the Inspector's own curve widget,
- * D-164's `pixelToCurve`, clamps `x` to `[0,1]` by construction) validated
- * fine and only threw later, at whatever frame the render/playback actually
- * reached that key — a late, confusing failure that looked like an engine
- * crash rather than a data problem. The `.refine()` below makes it a clear,
- * parse-time rejection instead, at the one place already responsible for
- * this field's shape. */
-const easeCurve = z
-  .tuple([z.number(), z.number(), z.number(), z.number()])
-  .refine(
-    ([x1, , x2]) => x1 >= 0 && x1 <= 1 && x2 >= 0 && x2 <= 1,
-    'ease x1/x2 must be within [0,1]',
-  );
+import { activeSchema, easeCurve, vec3 } from "./schemaAtoms";
+import { PRIMITIVE_PROPS, type PrimitiveUse } from "./primitiveProps";
 
 /**
  * B-059 fix (`docs/BUGS.md`) — `ease` was genuinely supported by `Camera.tsx`
@@ -189,59 +158,91 @@ const layerTransform = z.object({
   keys: z.array(transformKey).optional(),
 });
 
-/** one primitive placement. `use` picks the primitive; the rest are its props.
- *  passthrough so per-primitive props don't all need re-declaring here. */
-const layer = z
-  .object({
-    use: z.enum([
-      "text",
-      "emphasis",
-      "matrix",
-      "graph",
-      "layers",
-      // D-258 — the device/app-UI pair. Two entries, not one, because the
-      // phone chrome and the app content are deliberately separate
-      // primitives: `deviceframe` frames anything, `claudechat` renders
-      // full-bleed or inside a frame, and neither requires the other.
-      "deviceframe",
-      "claudechat",
-      // D-333 — a plotted curve with a labelled reference baseline. Distinct
-      // from `graph` (a d3-force node-link diagram) and `matrix` (a cell
-      // grid): neither can express "the shape of this curve, read against
-      // this line", which is what an accuracy/loss/scaling beat needs.
-      "plot",
-      // scene3d children:
-      "particleflow",
-      "labelbox",
-      "layerstack",
-    ]),
-    /**
-     * D-158, Phase 3 of `docs/notes/motion-visual-builder-research.md`
-     * ("stable layer identity" — §1g's own finding: "identity is
-     * positional... it breaks the moment the builder can reorder, insert, or
-     * delete layers with a selection live"). Purely additive and optional:
-     * `@apelles/motion`'s `addLayer` (D-151) generates one for every layer it
-     * creates from here on; a hand-written or pre-existing manifest simply
-     * has no `id`, and every consumer (`@apelles/motion`'s
-     * `resolveSelection`) falls back to the array index exactly as before
-     * this field existed. Not used by the renderer at all — `Video.tsx`
-     * never reads it — so its presence or absence has zero effect on a
-     * rendered frame (verified byte-for-byte via `remotion still`, D-158's
-     * own decision entry).
-     */
-    id: z.string().optional(),
-    at: z.number().optional(),
-    dur: z.number().optional(),
-    active: activeSchema.optional(),
-    /** D-157 — see `layerTransform`'s own doc comment above. Declared
-     *  explicitly (not left to `.passthrough()`) so it validates against a
-     *  real shape rather than arriving as an untyped blob; every OTHER
-     *  per-primitive prop still passes through unchanged below. */
-    transform: layerTransform.optional(),
-  })
-  .passthrough();
+/**
+ * The fields EVERY layer carries, whatever its `use` — the generic adapter's
+ * timing plus the D-157 transform wrapper. Joined with each primitive's own
+ * props (`primitiveProps.ts`) to make one option of the layer union below.
+ */
+const layerBase = {
+  /**
+   * D-158, Phase 3 of `docs/notes/motion-visual-builder-research.md`
+   * ("stable layer identity" — §1g's own finding: "identity is
+   * positional... it breaks the moment the builder can reorder, insert, or
+   * delete layers with a selection live"). Purely additive and optional:
+   * `@apelles/motion`'s `addLayer` (D-151) generates one for every layer it
+   * creates from here on; a hand-written or pre-existing manifest simply
+   * has no `id`, and every consumer (`@apelles/motion`'s
+   * `resolveSelection`) falls back to the array index exactly as before
+   * this field existed. Not used by the renderer at all — `Video.tsx`
+   * never reads it — so its presence or absence has zero effect on a
+   * rendered frame (verified byte-for-byte via `remotion still`, D-158's
+   * own decision entry).
+   */
+  id: z.string().optional(),
+  at: z.number().optional(),
+  dur: z.number().optional(),
+  active: activeSchema.optional(),
+  /** D-157 — see `layerTransform`'s own doc comment above. */
+  transform: layerTransform.optional(),
+};
 
-const scene = z.object({
+/** The fields every layer carries, by name — what `validate.ts` and the
+ *  Inspector treat as "not a primitive prop". */
+export const LAYER_BASE_KEYS = ["use", ...Object.keys(layerBase)] as const;
+
+/** One option of the layer union: `use` fixed to this primitive, the shared
+ *  base, and the primitive's own props. A LOOSE object — see
+ *  `primitiveProps.ts`'s header for why loading never refuses or strips an
+ *  unknown key, and where unknown keys are reported instead. */
+const layerOf = <U extends PrimitiveUse>(use: U) =>
+  z.looseObject({ use: z.literal(use), ...layerBase, ...PRIMITIVE_PROPS[use] });
+
+/** `use` → that primitive's whole layer schema. Typed against
+ *  `PrimitiveUse`, so a primitive added to `PRIMITIVE_PROPS` without an
+ *  option here is a `tsc` error rather than a `use` the schema rejects. */
+export const LAYER_SCHEMAS = {
+  text: layerOf("text"),
+  emphasis: layerOf("emphasis"),
+  matrix: layerOf("matrix"),
+  graph: layerOf("graph"),
+  layers: layerOf("layers"),
+  // D-258 — the device/app-UI pair. Two entries, not one, because the
+  // phone chrome and the app content are deliberately separate
+  // primitives: `deviceframe` frames anything, `claudechat` renders
+  // full-bleed or inside a frame, and neither requires the other.
+  deviceframe: layerOf("deviceframe"),
+  claudechat: layerOf("claudechat"),
+  // D-333 — a plotted curve with a labelled reference baseline. Distinct
+  // from `graph` (a d3-force node-link diagram) and `matrix` (a cell
+  // grid): neither can express "the shape of this curve, read against
+  // this line", which is what an accuracy/loss/scaling beat needs.
+  plot: layerOf("plot"),
+  // scene3d children:
+  particleflow: layerOf("particleflow"),
+  labelbox: layerOf("labelbox"),
+  layerstack: layerOf("layerstack"),
+} satisfies Record<PrimitiveUse, z.ZodType>;
+
+type LayerOption = (typeof LAYER_SCHEMAS)[PrimitiveUse];
+
+/**
+ * One primitive placement. `use` picks the primitive; the rest are its props.
+ *
+ * D-403 — a discriminated union on `use`, one option per primitive, replacing
+ * the `.passthrough()` object that typed nothing past the shared fields. A
+ * known prop with the wrong type is now a parse error naming the field
+ * (`scenes.0.layers.2.size: expected number`), not a silent misrender or a
+ * throw several frames into a render. Unknown props still load (see
+ * `layerOf`). The cast only restates `Object.values` of a non-empty literal
+ * object as the non-empty tuple `discriminatedUnion` asks for.
+ */
+export const layerSchema = z.discriminatedUnion(
+  "use",
+  Object.values(LAYER_SCHEMAS) as [LayerOption, ...LayerOption[]],
+);
+const layer = layerSchema;
+
+export const sceneSchema = z.object({
   id: z.string(),
   dur: z.number().positive(),
   bg: z.string().optional(),
@@ -302,7 +303,7 @@ export const manifestSchema = z.object({
   vignette: z.union([z.boolean(), z.number()]).optional(),
   /** render with no background paint — for a ProRes4444 overlay to composite in Palmier */
   transparent: z.boolean().optional(),
-  scenes: z.array(scene).min(1),
+  scenes: z.array(sceneSchema).min(1),
 }).superRefine((m, ctx) => {
   // D-399 — the theme rules: `theme` names a built-in or the embedded
   // definition, and an embedded definition and a name must agree.
@@ -324,7 +325,7 @@ export const manifestSchema = z.object({
 
 export type Manifest = z.infer<typeof manifestSchema>;
 export type { ThemeName } from "../design";
-export type Scene = z.infer<typeof scene>;
+export type Scene = z.infer<typeof sceneSchema>;
 export type Layer = z.infer<typeof layer>;
 export type LayerTransform = z.infer<typeof layerTransform>;
 export type TransformKey = z.infer<typeof transformKey>;

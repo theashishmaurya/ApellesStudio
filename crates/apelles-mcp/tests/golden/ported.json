@@ -202,6 +202,10 @@
     "editor_ripple_delete_ranges",
     "editor_get_word_transcript",
     "editor_propose_retakes",
-    "editor_retranscribe_words"
+    "editor_retranscribe_words",
+    "motion_validate",
+    "motion_insert_layers",
+    "motion_set_scene",
+    "motion_preview_frame"
   ]
 }

@@ -142,7 +142,7 @@ import {
   type KeyMoveTarget,
   type ProjectSettingsKey,
 } from './manifestEdit';
-import { catalogEntries, type PrimitiveUse } from './catalog';
+import { catalogEntries, defaultLayerFor, type PrimitiveUse } from './catalog';
 import {
   presetFromLayer,
   presetsForDisplay,
@@ -166,9 +166,27 @@ import { clampEaseCurve, resolveEaseCurve, type EaseCurve } from './easeCurve';
 // whose own import of this file's link types is `import type` and therefore
 // erased, so this is a one-way edge at runtime, not a cycle.
 import { checkSceneRename } from './editLinks';
+// D-403 — the validated-fragment plans this registry and the GUI share.
+import {
+  fragmentRefusal,
+  NEW_SCENE_ID_PLACEHOLDER,
+  planInsertLayers,
+  planSetScene,
+  refusalFor,
+  type MotionRefusal,
+} from './authoring';
+
+export type { MotionRefusal };
 import { layerLabel, type Selection } from './LayerList';
-import { sceneStartFrame, totalFrames } from '@apelles/motion-engine/src/engine/build';
-import type { Cam2dKey, Cam3dKey, Manifest, ThemeName, TransformKey } from '@apelles/motion-engine/src/engine/schema';
+import { sceneDurationFrames, sceneStartFrame, totalFrames } from '@apelles/motion-engine/src/engine/build';
+import { manifestSchema, type Cam2dKey, type Cam3dKey, type Manifest, type ThemeName, type TransformKey } from '@apelles/motion-engine/src/engine/schema';
+import {
+  issuesFromZod,
+  validateLayers,
+  validateManifest,
+  validateScene,
+} from '@apelles/motion-engine/src/engine/validate';
+import { primitiveJsonSchema } from '@apelles/motion-engine/src/engine/jsonSchema';
 import { DEFAULT_THEME_NAME, THEMES, THEME_NAMES } from '@apelles/motion-engine/src/design';
 import type { ThemeDef } from '@apelles/motion-engine/src/themeDef';
 import { buildThemeDef, findNamedTheme, removeTheme, upsertTheme } from './themeLibrary';
@@ -249,6 +267,12 @@ export interface MotionOpsContext {
   presets?: () => MotionPresetAccess;
   /** D-399 — the saved-theme library, accessed the same way `presets` is. */
   themes?: () => MotionThemeAccess;
+  /** D-403 — render still frames of a manifest through the backend
+   *  (`chroma_motion_preview_frame`, the Remotion `still` path), or
+   *  `undefined` when nothing supplies it (a test that does not preview; the op
+   *  then refuses cleanly). Injected for the same reason `presets` is: it is a
+   *  Tauri call, and this factory stays Tauri-free. */
+  preview?: (req: MotionPreviewRequest) => Promise<MotionPreviewResult>;
 }
 
 /** D-399 — the ops layer's window onto the saved-theme library. */
@@ -320,13 +344,6 @@ const KEY_LANES = new Set<string>(['layer', 'camera', 'scene3d-camera', 'active'
  *  floor `useMotionControl`'s Phase 3 ops already applied inline. */
 const FALLBACK_FPS = 30;
 
-/** B-242/D-371 — the stand-in id `motion_add_scene` gives the not-yet-created
- *  scene so it can validate a caller-supplied `id` through the REAL
- *  `checkSceneRename` instead of a second copy of its rules. It contains a
- *  "/", which that function rejects as an id before it compares anything,
- *  precisely so the placeholder can never collide with — or compare equal to —
- *  any id a caller is allowed to pass. */
-const NEW_SCENE_ID_PLACEHOLDER = '/new-scene';
 
 /** reads an arg under either its `snake_case` or `camelCase` spelling. */
 function arg(a: Record<string, unknown>, snake: string, camel: string): unknown {
@@ -554,6 +571,79 @@ function laneKeys(
   return null;
 }
 
+/** Thrown by the guarded `commit` (see `createMotionOps`'s `api`) when the
+ *  document an op is about to commit would not parse. Caught by `guardOps`;
+ *  never escapes an op. */
+export class ManifestRefusedError extends Error {
+  readonly refusal: MotionRefusal;
+  constructor(refusal: MotionRefusal) {
+    super(refusal.error);
+    this.name = 'ManifestRefusedError';
+    this.refusal = refusal;
+  }
+}
+
+/** Wrap every op so a `ManifestRefusedError` (sync or async) becomes that op's
+ *  `{error, issues}` answer instead of an exception. Anything else still
+ *  throws, exactly as before (the shell reports it). */
+function guardOps(ops: MotionOps): MotionOps {
+  const out: MotionOps = {};
+  for (const [name, fn] of Object.entries(ops)) {
+    out[name] = (args) => {
+      const asRefusal = (e: unknown): MotionOpResult => {
+        if (e instanceof ManifestRefusedError) return { ...e.refusal };
+        throw e;
+      };
+      try {
+        const result = fn(args);
+        return result instanceof Promise ? result.catch(asRefusal) : result;
+      } catch (e) {
+        return asRefusal(e);
+      }
+    };
+  }
+  return out;
+}
+
+/** D-403 — the most frames one `motion_preview_frame` call tiles into a
+ *  contact sheet: enough to read a motion (start, middle, settle) without a
+ *  sheet so large each tile is unreadable at the default scale. */
+export const MAX_PREVIEW_FRAMES = 12;
+/** default and bounds of the preview's render scale (Remotion `--scale`). */
+export const DEFAULT_PREVIEW_SCALE = 0.5;
+const MIN_PREVIEW_SCALE = 0.1;
+const MAX_PREVIEW_SCALE = 1;
+
+/** D-403 — what the op hands the backend for a still render. `frames` are
+ *  ABSOLUTE composition frames of `manifest` (the backend stays manifest-shape
+ *  agnostic, D-046); `label` names the output file. */
+export interface MotionPreviewRequest {
+  manifest: Manifest;
+  frames: number[];
+  scale: number;
+  label: string;
+}
+
+/** D-403 — the rendered still, or contact sheet when several frames. */
+export interface MotionPreviewResult {
+  path: string;
+  width: number;
+  height: number;
+  columns: number;
+  rows: number;
+}
+
+/** Parse a `number | number[]` argument into a finite-number list, or an
+ *  error naming the argument. */
+function numberList(raw: unknown, name: string): number[] | { error: string } {
+  const list = Array.isArray(raw) ? raw : [raw];
+  const nums = list.map((v) => Number(v));
+  if (nums.length === 0 || nums.some((n) => !Number.isFinite(n))) {
+    return { error: `${name} must be a number or a non-empty list of numbers` };
+  }
+  return nums;
+}
+
 /**
  * Build the whole `motion_*` op registry against a live context.
  *
@@ -562,13 +652,33 @@ function laneKeys(
  * mount still sees the manifest from the render that just happened.
  */
 export function createMotionOps(ctx: MotionOpsContext): MotionOps {
-  return {
+  /**
+   * D-403 — every op reads the live API through THIS accessor, never
+   * `ctx.api()` directly: it is the real one with `commit` guarded. A commit
+   * whose document would not parse under `manifestSchema` throws
+   * `ManifestRefusedError` before anything changes, and `guardOps` (below)
+   * turns that into the op's `{error, issues}` answer. One guard at the one
+   * commit path, so no op can land a document the app would then show as a
+   * parse error — the same issue list `motion_validate` reports.
+   */
+  const api = (): MotionOpsApi => {
+    const cur = ctx.api();
+    return {
+      ...cur,
+      commit: (next, label) => {
+        const refused = refusalFor(next);
+        if (refused) throw new ManifestRefusedError(refused);
+        cur.commit(next, label);
+      },
+    };
+  };
+  return guardOps({
     // ---- reads --------------------------------------------------------
 
     /** the live in-editor manifest (parsed, not necessarily saved — the same
      *  value `<MotionPreview>` renders from right now). */
     motion_get_manifest: () => {
-      const cur = ctx.api();
+      const cur = api();
       return {
         manifest: cur.manifest,
         loadState: cur.loadState,
@@ -595,7 +705,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * progress, and the failing scene id, on the tab's existing polling read.
      */
     motion_get_state: () => {
-      const cur = ctx.api();
+      const cur = api();
       const manifest = cur.manifest;
       const frame = ctx.player()?.getCurrentFrame() ?? null;
       return {
@@ -669,7 +779,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * flattened away.
      */
     motion_get_edit_links: () => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const links = ctx.editLinks?.();
@@ -722,7 +832,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * JSON itself. Mirrors what `editor_get_timeline` does for clips.
      */
     motion_list_layers: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -781,6 +891,11 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         fields: fieldsForPrimitive(e.use) ?? [],
         position: positionFields(e.use) ?? null,
         size: sizeFields(e.use) ?? null,
+        // D-403 — the primitive's whole layer as JSON Schema, generated from
+        // the SAME zod object the manifest parses with, so it is the exact
+        // contract `motion_insert_layers` / `motion_set_scene` validate
+        // against (unknown keys refused: `additionalProperties: false`).
+        propsSchema: primitiveJsonSchema(e.use),
       })),
       // D-339 — the theme registry, so `motion_set_project_theme`'s legal
       // values are discoverable from the same one static reference call
@@ -831,7 +946,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * is no scene here yet, so there is no render of it to orphan.
      */
     motion_add_scene: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
 
@@ -878,7 +993,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * pointing at a different scene. See `deleteScene`'s own doc comment.
      */
     motion_delete_scene: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -908,7 +1023,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      *  ambiguous afterwards. Every later scene's index shifts by one —
      *  re-read `motion_get_state`. */
     motion_duplicate_scene: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -952,7 +1067,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * as `themeDef` (see `setProjectThemeDef`).
      */
     motion_set_project_theme: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1006,7 +1121,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      */
     motion_list_themes: () => {
       const library = ctx.themes?.().list() ?? [];
-      const cur = ctx.api();
+      const cur = api();
       const manifest = cur.manifest;
       return {
         builtin: THEME_NAMES.map((name) => ({
@@ -1039,7 +1154,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
     motion_define_theme: async (a) => {
       // A theme that is to be applied needs an open project; a library-only or
       // dry-run definition (`apply: false`) does not.
-      if (a?.apply !== false && ctx.api().loadState === 'no-project') {
+      if (a?.apply !== false && api().loadState === 'no-project') {
         return { error: 'no project open — open one in the Colorist tab' };
       }
       const name = a?.name;
@@ -1053,7 +1168,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       }
       if (a?.base !== undefined && typeof a.base !== 'string') return { error: 'base must be a theme name' };
 
-      const cur = ctx.api();
+      const cur = api();
       const library = ctx.themes?.().list() ?? [];
       const built = buildThemeDef(
         {
@@ -1082,8 +1197,8 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         }
       }
       if (apply) {
-        const manifest = requireManifest(ctx.api());
-        if (!isErr(manifest)) ctx.api().commit(setProjectThemeDef(manifest.manifest, def), `Theme: ${def.name}`);
+        const manifest = requireManifest(api());
+        if (!isErr(manifest)) api().commit(setProjectThemeDef(manifest.manifest, def), `Theme: ${def.name}`);
       }
       return { defined: def, savedToLibrary: toLibrary, appliedToProject: apply };
     },
@@ -1125,7 +1240,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * `renderStaleness`.
      */
     motion_set_project_settings: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1186,7 +1301,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * true` accepts the broken link deliberately.
      */
     motion_set_scene_field: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1232,7 +1347,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * over with new logic here.
      */
     motion_set_camera_2d: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1276,7 +1391,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      *  no `scene3d` block yet has no camera to set: the only way to create
      *  one today is `motion_add_layer` with an `in3d` use. */
     motion_set_camera_3d: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1332,7 +1447,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
     /** insert a schema-valid default instance of a primitive into a scene —
      *  the Catalog panel's own action (`MotionTab.tsx`'s `onCatalogAdd`). */
     motion_add_layer: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1346,7 +1461,25 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       const use = String(a?.use ?? '');
       if (!VALID_USES.has(use)) return { error: `use must be one of: ${[...VALID_USES].join(', ')}` };
 
-      const { manifest: next, selection } = addLayer(manifest, sceneIndex, use as PrimitiveUse);
+      // D-403 — optional `props`, laid over the Catalog default. Validated
+      // strictly as the WHOLE merged layer (unknown keys refused), so a typo'd
+      // prop is an issue naming it rather than a layer that silently ignores it.
+      const rawProps = a?.props;
+      let props: Record<string, unknown> | undefined;
+      if (rawProps !== undefined && rawProps !== null) {
+        if (typeof rawProps !== 'object' || Array.isArray(rawProps)) {
+          return { error: 'props must be an object of the primitive\'s fields (see motion_list_primitives)' };
+        }
+        props = rawProps as Record<string, unknown>;
+        if ('use' in props || 'id' in props) {
+          return { error: 'props may not set "use" (that is the use argument) or "id" (minted for you)' };
+        }
+        const merged = { ...defaultLayerFor(use as PrimitiveUse), ...props, use };
+        const checked = validateLayers([merged], ['props']);
+        if (!checked.ok) return fragmentRefusal('props', checked.issues);
+      }
+
+      const { manifest: next, selection } = addLayer(manifest, sceneIndex, use as PrimitiveUse, props);
       if (!selection) {
         // `addLayer` only returns a null selection for an unresolvable scene
         // index — already checked above, so this is a defensive floor.
@@ -1354,6 +1487,174 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       }
       cur.commit(next, `Add ${use} layer`);
       return { sceneIndex, selection, addedUse: use };
+    },
+
+    /**
+     * D-403 — a dry run of the manifest schema: `{ok, loads, issues}` for a
+     * whole `manifest`, one `scene`, or a list of `layers` (exactly one of
+     * the three; none validates the live in-app manifest). `ok` means no issue
+     * at all, unknown keys included — what `motion_insert_layers` /
+     * `motion_set_scene` require; `loads` means the app would accept it as-is.
+     * Each issue is `{path, code, message, expected?, hint?}`, the same list a
+     * refused mutating op returns. Mutates nothing.
+     */
+    motion_validate: (a) => {
+      const given = (['manifest', 'scene', 'layers'] as const).filter((k) => a?.[k] !== undefined && a[k] !== null);
+      if (given.length > 1) return { error: 'pass at most one of manifest, scene, layers' };
+      const which = given[0];
+      if (which === 'manifest') return { checked: 'manifest', ...validateManifest(a.manifest) };
+      if (which === 'scene') {
+        const raw = arg(a, 'scene_index', 'sceneIndex');
+        const sceneIndex = raw === undefined || raw === null ? undefined : Math.round(Number(raw));
+        return { checked: 'scene', ...validateScene(a.scene, sceneIndex) };
+      }
+      if (which === 'layers') return { checked: 'layers', ...validateLayers(a.layers) };
+      const cur = api();
+      const guard = requireManifest(cur);
+      if (isErr(guard)) return guard;
+      return { checked: 'live manifest', ...validateManifest(guard.manifest) };
+    },
+
+    /**
+     * D-403 — insert WHOLE layers (manifest fragments) into one scene in ONE
+     * undoable edit, `insertLayers`. Each layer is validated strictly first
+     * (unknown keys refused); the resulting document must load. `dry_run`
+     * validates and reports what would be inserted without committing.
+     */
+    motion_insert_layers: (a) => {
+      const cur = api();
+      const guard = requireManifest(cur);
+      if (isErr(guard)) return guard;
+
+      const sceneIndex = Math.round(Number(arg(a, 'scene_index', 'sceneIndex')));
+      if (!Number.isFinite(sceneIndex)) return { error: 'scene_index (integer) required' };
+      const rawAt = a?.at;
+      let at: number | undefined;
+      if (rawAt !== undefined && rawAt !== null) {
+        at = Math.round(Number(rawAt));
+        if (!Number.isFinite(at)) return { error: 'at must be an integer index into scene.layers' };
+      }
+
+      const plan = planInsertLayers(guard.manifest, sceneIndex, a?.layers, at);
+      if (!plan.ok) return { error: plan.error, ...(plan.issues.length > 0 ? { issues: plan.issues } : {}) };
+      const { selections, count } = plan;
+      if (a?.dry_run === true || a?.dryRun === true) return { dryRun: true, ok: true, sceneIndex, count, selections };
+      cur.commit(plan.manifest, count === 1 ? 'Insert layer' : `Insert ${count} layers`);
+      return { sceneIndex, count, selections };
+    },
+
+    /**
+     * D-403 — replace one WHOLE scene with a validated scene fragment, or
+     * append one (`scene_index` = the scene count), in ONE undoable edit,
+     * `replaceScene`. Omitting the fragment's `id` keeps the scene's name; a
+     * different `id` is a rename and goes through the same pre-flight as
+     * `motion_set_scene_field` (`checkSceneRename`, D-371). `dry_run`
+     * validates without committing.
+     */
+    motion_set_scene: (a) => {
+      const cur = api();
+      const guard = requireManifest(cur);
+      if (isErr(guard)) return guard;
+
+      const sceneIndex = Math.round(Number(arg(a, 'scene_index', 'sceneIndex')));
+      if (!Number.isFinite(sceneIndex)) return { error: 'scene_index (integer) required' };
+      const plan = planSetScene(guard.manifest, sceneIndex, a?.scene, ctx.editLinks?.());
+      if (!plan.ok) return { error: plan.error, ...(plan.issues.length > 0 ? { issues: plan.issues } : {}) };
+      const next = plan.manifest;
+      const result = {
+        sceneIndex,
+        sceneId: next.scenes[sceneIndex].id,
+        appended: plan.appended,
+        layerCount: next.scenes[sceneIndex].layers?.length ?? 0,
+        scene3dChildCount: next.scenes[sceneIndex].scene3d?.children.length ?? 0,
+      };
+      if (a?.dry_run === true || a?.dryRun === true) return { dryRun: true, ok: true, ...result };
+      cur.commit(next, plan.appended ? 'Add scene' : 'Replace scene');
+      return result;
+    },
+
+    /**
+     * D-403 — render still frames of one scene through the real engine (the
+     * Remotion `still` path, `chroma_motion_preview_frame`) and return the
+     * PNG's path: one frame, or a contact sheet of several, left to right then
+     * down. `at_seconds` (seconds within the scene, a number or a list) or
+     * `frames` (scene-relative frame numbers); neither ⇒ the scene's midpoint.
+     * `manifest`, when given, is previewed INSTEAD of the live document
+     * (validated to load first), so an agent can look before it commits; the
+     * live document itself may carry unsaved edits — it is what is rendered,
+     * never the file on disk.
+     */
+    motion_preview_frame: async (a) => {
+      const cur = api();
+      let manifest: Manifest;
+      if (a?.manifest !== undefined && a.manifest !== null) {
+        const parsed = manifestSchema.safeParse(a.manifest);
+        if (!parsed.success) {
+          const issues = issuesFromZod(parsed.error, manifestSchema, a.manifest);
+          return fragmentRefusal('manifest', issues);
+        }
+        manifest = parsed.data;
+      } else {
+        const guard = requireManifest(cur);
+        if (isErr(guard)) return guard;
+        manifest = guard.manifest;
+      }
+
+      const sceneIndex = Math.round(Number(arg(a, 'scene_index', 'sceneIndex')));
+      if (!Number.isFinite(sceneIndex)) return { error: 'scene_index (integer) required' };
+      if (!manifest.scenes[sceneIndex]) {
+        return { error: `no scene at index ${sceneIndex} (0..${manifest.scenes.length - 1})` };
+      }
+      const fps = manifestFps(manifest);
+      const sceneFrames = sceneDurationFrames(manifest, sceneIndex);
+      const atSeconds = arg(a, 'at_seconds', 'atSeconds');
+      let local: number[];
+      if (a?.frames !== undefined && a.frames !== null) {
+        if (atSeconds !== undefined && atSeconds !== null) return { error: 'pass at_seconds or frames, not both' };
+        const list = numberList(a.frames, 'frames');
+        if (isErr(list)) return list;
+        local = list.map((f) => Math.round(f));
+      } else if (atSeconds !== undefined && atSeconds !== null) {
+        const list = numberList(atSeconds, 'at_seconds');
+        if (isErr(list)) return list;
+        local = list.map((t) => Math.round(t * fps));
+      } else {
+        local = [Math.floor(sceneFrames / 2)];
+      }
+      if (local.length > MAX_PREVIEW_FRAMES) {
+        return { error: `at most ${MAX_PREVIEW_FRAMES} frames per preview (got ${local.length})` };
+      }
+      const clamped = local.map((f) => Math.max(0, Math.min(sceneFrames - 1, f)));
+      const warning = clamped.some((f, i) => f !== local[i])
+        ? `some frames were outside the scene (0..${sceneFrames - 1}) and were clamped`
+        : undefined;
+
+      const rawScale = a?.scale;
+      const scale =
+        rawScale === undefined || rawScale === null
+          ? DEFAULT_PREVIEW_SCALE
+          : Math.max(MIN_PREVIEW_SCALE, Math.min(MAX_PREVIEW_SCALE, Number(rawScale)));
+      if (!Number.isFinite(scale)) return { error: 'scale must be a number in (0, 1]' };
+
+      const preview = ctx.preview;
+      if (!preview) return { error: 'frame preview is not available in this build' };
+      const start = sceneStartFrame(manifest, sceneIndex);
+      const sceneId = manifest.scenes[sceneIndex].id;
+      const result = await preview({
+        manifest,
+        frames: clamped.map((f) => start + f),
+        scale,
+        label: sceneId,
+      });
+      return {
+        ...result,
+        sceneIndex,
+        sceneId,
+        scale,
+        frames: clamped.map((f) => ({ frame: f, seconds: f / fps, absoluteFrame: start + f })),
+        previewedUncommitted: a?.manifest !== undefined && a.manifest !== null,
+        warning,
+      };
     },
 
     /**
@@ -1365,7 +1666,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * function exists — a layer belongs to its scene).
      */
     motion_reorder_layers: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1415,7 +1716,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * canvas target is a worse answer than the neighbour.
      */
     motion_delete_layer: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1449,7 +1750,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      *  it straight to the next call (e.g. `motion_set_layer_position`) to
      *  make the duplicate differ from its original. */
     motion_duplicate_layer: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1467,7 +1768,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
     /** set (or delete, `value: null`) one top-level field on a layer or
      *  scene3d-child — `setLayerField`. */
     motion_set_layer_field: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1508,7 +1809,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * they would be N undo entries instead of the one a human's edit makes.
      */
     motion_set_field_on_layers: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1547,7 +1848,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * `items[]`. Index-only by nature: a card carries no id.
      */
     motion_set_layer_item: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1602,7 +1903,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * gesture had silently diverged. It now runs the same logic.
      */
     motion_select: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1662,7 +1963,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * nothing persists it and the GUI's own click pushes nothing either.
      */
     motion_set_selection: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1696,7 +1997,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
 
     /** move a layer/scene3d-child to a new WORLD-px position — `setLayerPosition`. */
     motion_set_layer_position: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1721,7 +2022,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
 
     /** resize a layer/scene3d-child in WORLD px — `setLayerSize`. */
     motion_set_layer_size: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1763,7 +2064,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * the whole `transform` object rather than leaving an empty one.
      */
     motion_set_layer_transform_field: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1810,7 +2111,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * the only honest base for a one-shot op.
      */
     motion_move_layers_by_delta: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1873,7 +2174,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
 
     /** align a 2+ multi-selection to a shared edge/center line. */
     motion_align_layers: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1899,7 +2200,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
 
     /** space a 3+ multi-selection with equal gaps along one axis. */
     motion_distribute_layers: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1929,7 +2230,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      *  EMPTY array deletes the field entirely (the convention
      *  `setLayerTransformKeys` itself holds). */
     motion_set_layer_transform_keys: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -1975,7 +2276,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      *  optional explicit overrides; `ease` is applied to the same key in the
      *  SAME commit (one undo step). */
     motion_add_layer_keyframe: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -2042,7 +2343,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      *  (D-158's shared `moveKeyAt` core: reorders past a neighbour, clamps to
      *  the scene's own `[0, dur]`, never blocks). */
     motion_move_layer_keyframe: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -2099,7 +2400,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * rather than leaving an empty array (that function's own convention).
      */
     motion_delete_layer_keyframe: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -2136,7 +2437,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * every retime in this package holds.
      */
     motion_move_camera_keyframe: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -2202,7 +2503,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * there while the rest move the full delta.
      */
     motion_move_keys_by_delta: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -2279,7 +2580,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * reads.
      */
     motion_set_keyframe_ease: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -2363,7 +2664,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * field entirely, back to whatever static `active` the layer had.
      */
     motion_set_layer_active_schedule: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -2399,7 +2700,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      *  (seconds within that scene). `frame` wins if both are given.
      *  Out-of-range clamps to `[0, totalFrames-1]` with a warning. */
     motion_seek: (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -2438,7 +2739,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
     /** force-write the manifest sidecar now — `useMotionManifest().save`, the
      *  action the toolbar's own Save button calls. */
     motion_save_manifest: async () => {
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur, 'save');
       if (isErr(guard)) return guard;
 
@@ -2482,7 +2783,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       const access = ctx.presets?.();
       if (!access) return { error: 'the saved-component library is unavailable in this context' };
 
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur, 'save a preset from');
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -2518,7 +2819,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       const access = ctx.presets?.();
       if (!access) return { error: 'the saved-component library is unavailable in this context' };
 
-      const cur = ctx.api();
+      const cur = api();
       const guard = requireManifest(cur, 'add a layer to');
       if (isErr(guard)) return guard;
       const manifest = guard.manifest;
@@ -2575,7 +2876,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * in-app document has unsaved edits (they would be lost) unless `force`.
      */
     motion_reload_manifest: async (a) => {
-      const cur = ctx.api();
+      const cur = api();
       if (cur.loadState === 'no-project') return { error: 'no project open — open one in the Colorist tab' };
       const outcome = await cur.reloadFromDisk(a?.force === true);
       if (!outcome.ok) return { error: outcome.error ?? 'reload failed' };
@@ -2590,7 +2891,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * as before: poll `motion_get_state`'s `render` block.
      */
     motion_render: async (a) => {
-      const cur = ctx.api();
+      const cur = api();
       const resume = a?.resume === true;
       if (!resume) {
         const guard = requireManifest(cur, 'render');
@@ -2617,5 +2918,5 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         })),
       };
     },
-  };
+  });
 }

@@ -1629,17 +1629,29 @@ export function addCamera2d(
   return { manifest: next, selection: { sceneIndex, target: { kind: 'camera' } } };
 }
 
+/**
+ * Insert a primitive's Catalog default into a scene — the Catalog panel's own
+ * action and `motion_add_layer`.
+ *
+ * D-403 — `props`, when given, are laid over the default fragment (a prop the
+ * caller names wins; the rest keep their visible-on-insert defaults), so an
+ * agent can create a finished layer in one call instead of one call plus N
+ * `motion_set_layer_field`s. `use` and `id` are never taken from `props`: the
+ * primitive is the argument, and the id is always freshly minted. The op layer
+ * validates the merged fragment before committing; this function does not.
+ */
 export function addLayer(
   manifest: Manifest,
   sceneIndex: number,
   use: PrimitiveUse,
+  props?: Record<string, unknown>,
 ): { manifest: Manifest; selection: Selection | null } {
   if (!manifest.scenes[sceneIndex]) return { manifest, selection: null };
 
   const next = clone(manifest);
   const scene = next.scenes[sceneIndex];
   const id = genLayerId();
-  const fragment = { ...defaultLayerFor(use), id } as unknown as Layer;
+  const fragment = { ...defaultLayerFor(use), ...clone(props ?? {}), use, id } as unknown as Layer;
 
   if (catalogEntry(use).in3d) {
     if (!scene.scene3d) scene.scene3d = { camera: DEFAULT_SCENE3D_CAMERA(), children: [] };
@@ -2144,6 +2156,123 @@ export function duplicateScene(
   const insertAt = sceneIndex + 1;
   next.scenes.splice(insertAt, 0, copy);
   return { manifest: next, selection: { sceneIndex: insertAt, target: { kind: 'scene' } } };
+}
+
+/** D-403 — a layer's own `id` when it has a usable one not already taken in
+ *  `taken`, else a freshly minted one. Records the result in `taken`. */
+function keepOrMintId(layer: Record<string, unknown>, taken: Set<string>): string {
+  const own = layer.id;
+  const id = typeof own === 'string' && own.length > 0 && !taken.has(own) ? own : genLayerId();
+  taken.add(id);
+  return id;
+}
+
+/** every layer id already used in a scene (2D and 3D lists together). */
+function sceneLayerIds(scene: Scene): Set<string> {
+  const ids = new Set<string>();
+  for (const l of [...(scene.layers ?? []), ...(scene.scene3d?.children ?? [])]) {
+    if (typeof l.id === 'string') ids.add(l.id);
+  }
+  return ids;
+}
+
+/**
+ * D-403 — insert several WHOLE layers (already-validated manifest fragments)
+ * into one scene, as one edit: `motion_insert_layers`, and the GUI's "Insert
+ * layers (JSON)" action. The agent-side answer to "`motion_add_layer` inserts
+ * defaults only, so building a graphic takes N field calls": a graphic is
+ * authored as data and lands in one undo step.
+ *
+ * Placement follows each layer's own primitive, exactly like `addLayer`:
+ * a 3D-only primitive goes to `scene3d.children` (creating the container with
+ * the default camera when absent), everything else to `scene.layers`. `at`
+ * is the index in `scene.layers` the 2D layers are inserted at, in order
+ * (default: on top, i.e. the end); 3D children are always appended.
+ *
+ * Ids: a layer keeps the `id` it brings when that id is free in the scene, so
+ * an agent can address its own layers by the names it chose; a missing or
+ * colliding id is re-minted. Every fragment is deep-cloned, so the caller's
+ * objects are never shared with the document.
+ *
+ * Does NOT validate — the op layer validates the fragments (strict) and the
+ * resulting document (loads) before committing. Returns the manifest
+ * unchanged with no selections for an unresolvable scene.
+ */
+export function insertLayers(
+  manifest: Manifest,
+  sceneIndex: number,
+  layers: readonly Record<string, unknown>[],
+  at?: number,
+): { manifest: Manifest; selections: Selection[] } {
+  if (!manifest.scenes[sceneIndex]) return { manifest, selections: [] };
+  const next = clone(manifest);
+  const scene = next.scenes[sceneIndex];
+  const taken = sceneLayerIds(scene);
+  const flat: Layer[] = [];
+  const deep: Layer[] = [];
+  for (const raw of layers) {
+    const id = keepOrMintId(raw, taken);
+    const layer = { ...clone(raw), id } as unknown as Layer;
+    const use = raw.use as PrimitiveUse;
+    if (catalogEntries.some((e) => e.use === use) && catalogEntry(use).in3d) deep.push(layer);
+    else flat.push(layer);
+  }
+
+  const selections: Selection[] = [];
+  if (flat.length > 0) {
+    if (!scene.layers) scene.layers = [];
+    const insertAt = at === undefined ? scene.layers.length : Math.max(0, Math.min(scene.layers.length, at));
+    scene.layers.splice(insertAt, 0, ...flat);
+    flat.forEach((l, i) => selections.push({ sceneIndex, target: { kind: 'layer', index: insertAt + i, id: l.id } }));
+  }
+  if (deep.length > 0) {
+    if (!scene.scene3d) scene.scene3d = { camera: DEFAULT_SCENE3D_CAMERA(), children: [] };
+    const base = scene.scene3d.children.length;
+    scene.scene3d.children.push(...deep);
+    deep.forEach((l, i) =>
+      selections.push({ sceneIndex, target: { kind: 'scene3d-child', index: base + i, id: l.id } }),
+    );
+  }
+  return { manifest: next, selections };
+}
+
+/**
+ * D-403 — replace one WHOLE scene with an already-validated scene fragment, or
+ * append it when `sceneIndex` is one past the end: `motion_set_scene`, and the
+ * GUI's "Edit scene as JSON". One edit, one undo step.
+ *
+ * The scene keeps its current `id` when the fragment omits one (so replacing
+ * a scene's content never silently renames it — a rename has rules of its own,
+ * `editLinks.ts`'s `checkSceneRename`, which the op runs when the ids differ);
+ * an appended scene with no `id` gets a generated one. Layer ids follow
+ * `insertLayers`' rule: kept when unique within the scene, minted otherwise.
+ */
+export function replaceScene(
+  manifest: Manifest,
+  sceneIndex: number,
+  fragment: Record<string, unknown>,
+): { manifest: Manifest; selection: Selection | null } {
+  const appending = sceneIndex === manifest.scenes.length;
+  if (!appending && !manifest.scenes[sceneIndex]) return { manifest, selection: null };
+  const scene = clone(fragment) as unknown as Scene;
+  if (typeof scene.id !== 'string' || scene.id.length === 0) {
+    scene.id = appending ? genSceneId() : manifest.scenes[sceneIndex].id;
+  }
+  const taken = new Set<string>();
+  if (scene.layers) {
+    scene.layers = scene.layers.map(
+      (l) => ({ ...l, id: keepOrMintId(l as unknown as Record<string, unknown>, taken) }) as Layer,
+    );
+  }
+  if (scene.scene3d) {
+    scene.scene3d.children = scene.scene3d.children.map(
+      (l) => ({ ...l, id: keepOrMintId(l as unknown as Record<string, unknown>, taken) }) as Layer,
+    );
+  }
+  const next = clone(manifest);
+  if (appending) next.scenes.push(scene);
+  else next.scenes[sceneIndex] = scene;
+  return { manifest: next, selection: { sceneIndex, target: { kind: 'scene' } } };
 }
 
 /** parses a `kind:'json'` field's textarea content back into a value.

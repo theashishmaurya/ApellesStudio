@@ -98,6 +98,72 @@ pub fn chroma_motion_save_manifest(manifest: Value) -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+/// D-403 — the rendered preview, as `motion_preview_frame` reports it.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MotionPreviewResult {
+    pub path: String,
+    pub width: u32,
+    pub height: u32,
+    pub columns: u32,
+    pub rows: u32,
+}
+
+/// D-403 — render still frames of `manifest` (the Remotion `still` path, through
+/// `apelles_motion::still`) and return the PNG: one frame, or a contact sheet of
+/// several. `frames` are ABSOLUTE composition frames — the frontend owns the
+/// scene math, the same split as the render job (D-398).
+///
+/// `manifest` is the document as the caller has it, NOT the sidecar on disk: an
+/// agent previews unsaved or entirely uncommitted edits through this. It is
+/// written beside the output as `<label>.props.json` (a fixed name per label, not
+/// a temp file, so nothing here depends on the clock). The engine bundle is
+/// cached under `motion/cache/preview/` by content fingerprint, so only the first
+/// preview after an engine change pays for webpack.
+#[tauri::command]
+pub async fn chroma_motion_preview_frame(
+    manifest: Value,
+    frames: Vec<u32>,
+    scale: f64,
+    label: String,
+) -> Result<MotionPreviewResult, String> {
+    let dir = current_project_dir()?;
+    tokio::task::spawn_blocking(move || {
+        let out_dir = dir.join("motion").join("previews");
+        std::fs::create_dir_all(&out_dir)
+            .map_err(|e| format!("create {}: {e}", out_dir.display()))?;
+        let props = out_dir.join(format!(
+            "{}.props.json",
+            label.replace(
+                |c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_',
+                "_"
+            )
+        ));
+        let text = serde_json::to_string(&manifest).map_err(|e| e.to_string())?;
+        std::fs::write(&props, text).map_err(|e| format!("write {}: {e}", props.display()))?;
+        let req = apelles_motion::still::PreviewRequest {
+            engine_dir: engine_dir(),
+            cache_dir: dir.join("motion").join("cache").join("preview"),
+            out_dir,
+            manifest_path: props,
+            frames,
+            scale,
+            label,
+            public_dir: None,
+        };
+        let outcome = apelles_motion::still::render_preview(&req).map_err(|e| e.to_string())?;
+        Ok(MotionPreviewResult {
+            path: outcome.path.to_string_lossy().to_string(),
+            width: outcome.width,
+            height: outcome.height,
+            columns: outcome.columns,
+            rows: outcome.rows,
+        })
+    })
+    .await
+    .map_err(|e| format!("preview task: {e}"))?
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MotionRenderResult {

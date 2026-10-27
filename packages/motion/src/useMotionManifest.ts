@@ -69,6 +69,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { manifestSchema, type Manifest } from '@apelles/motion-engine/src/engine/schema';
+import { formatIssues, issuesFromZod } from '@apelles/motion-engine/src/engine/validate';
 import { sample } from '@apelles/motion-engine/src/engine/sample';
 import { useHistoryStore } from '@apelles/history';
 
@@ -223,11 +224,10 @@ export function useMotionManifest(onRendered?: (r: SceneRenderResult) => void | 
       setManifest(result.data);
       setParseError(null);
     } else {
-      setParseError(
-        result.error.issues
-          .map((i) => `${i.path.length ? i.path.join('.') : '(root)'}: ${i.message}`)
-          .join('\n'),
-      );
+      // D-403 — the same issue list (path, message, did-you-mean hint) that
+      // `motion_validate` and a refused `motion_*` op report, so the human
+      // reading this panel and an agent reading a refusal see one wording.
+      setParseError(formatIssues(issuesFromZod(result.error, manifestSchema, json)));
     }
   }, []);
 

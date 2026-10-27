@@ -60,3 +60,13 @@ is left). It has no threads and renders nothing; the app's worker
 (`app/src-tauri/src/chroma/motion_job.rs`) runs `run_render` per scene and drives the
 transitions. Persistence is an atomic JSON write beside the project. `blake3` hashes the
 snapshot (already in the tree via `apelles-media`).
+
+## Still frames (D-403)
+
+`src/still.rs` is `motion_preview_frame`'s backend: `build_still_command` (the twin of
+`build_command`, `npx remotion still <bundle> Animation <out> --props --frame --scale`),
+`build_bundle_command`, `ensure_bundle` (the engine bundled once into a cache keyed by a
+blake3 content fingerprint of its sources, reused until a file changes: ~1.5 s per still
+instead of ~18 s), and `contact_sheet` (several frames tiled into one PNG, at most four
+per row, with `image`, already in the tree). No clock, no randomness: the same manifest
+and frame give the same PNG bytes (`tests/preview_render.rs`, `--ignored`, real renders).

@@ -5,9 +5,8 @@
 //! string whose bytes must stay exactly the Python docstring's. An indent pass breaks
 //! that silently, and the parity gate catches it — twice, so far.
 
-use base64::Engine as _;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, ContentBlock};
+use rmcp::model::CallToolResult;
 use rmcp::{ErrorData, tool, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -212,45 +211,10 @@ impl ApellesMcp {
             .put("out_path", p.out_path.filter(|s| !s.is_empty()))
             .put("window", p.window.filter(|s| !s.is_empty()));
         let env = self.op("debug_screenshot", args).await?;
-
-        let ok = env.get("ok").and_then(Value::as_bool).unwrap_or(false);
-        let mut result = match env.get("result") {
-            Some(Value::Object(map)) => map.clone(),
-            _ => serde_json::Map::new(),
-        };
-
         // The screenshot is written to disk by the app (this op is answered natively in
         // `control.rs`, with no frontend round trip), so inlining it means reading the
-        // file back. A read failure is reported IN the result rather than raised: the
-        // capture itself succeeded and its path is still the useful answer.
-        let mut blocks = Vec::new();
-        if p.inline
-            && ok
-            && let Some(path) = result.get("path").and_then(Value::as_str)
-        {
-            match std::fs::read(path) {
-                Ok(bytes) => blocks.push(ContentBlock::image(
-                    base64::engine::general_purpose::STANDARD.encode(bytes),
-                    "image/png",
-                )),
-                Err(e) => {
-                    result.insert(
-                        "inlineError".into(),
-                        Value::String(format!("saved, but could not be read back: {e}")),
-                    );
-                }
-            }
-        }
-
-        let mut out = serde_json::Map::new();
-        out.insert("ok".into(), env.get("ok").cloned().unwrap_or(Value::Null));
-        out.insert(
-            "error".into(),
-            env.get("error").cloned().unwrap_or(Value::Null),
-        );
-        out.extend(result);
-        blocks.push(ContentBlock::text(render::pretty(&Value::Object(out))));
-        Ok(CallToolResult::success(blocks))
+        // file back — `render::file_png_result`, shared with `motion_preview_frame`.
+        Ok(render::file_png_result(&env, p.inline, "saved"))
     }
 
     #[tool(

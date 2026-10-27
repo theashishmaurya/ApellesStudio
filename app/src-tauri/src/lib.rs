@@ -2416,6 +2416,7 @@ pub fn run() {
             chroma::grade::chroma_load_grades,
             chroma::motion::chroma_motion_get_manifest,
             chroma::motion::chroma_motion_save_manifest,
+            chroma::motion::chroma_motion_preview_frame,
             chroma::motion_job::chroma_motion_job_start,
             chroma::motion_job::chroma_motion_job_status,
             chroma::motion_job::chroma_motion_job_ack,

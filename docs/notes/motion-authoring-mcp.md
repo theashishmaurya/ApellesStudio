@@ -1,4 +1,4 @@
-# Motion authoring from MCP — new graphics and templates as data, not code (design, not built)
+# Motion authoring from MCP — new graphics and templates as data, not code (Phase 0 built, D-403; Phases 1-4 design)
 
 Owner request (2026-10-26): "look into a way to create new catalog / motion graphics from MCP
 directly instead of tweaking the code." Context: Apelles' founder/brand-video studio direction needs
@@ -6,7 +6,22 @@ agents to author new motion graphics and reusable templates through MCP alone, w
 (CLAUDE.md human-and-AI rule), deterministically, local-first. This note is the design trail;
 each phase needs its own D-NNN when built (numbers below are provisional; D-402 is taken by the B-274 edit journal).
 
-## What exists today (checked in the code)
+## Status
+
+- **Phase 0 — built (D-403, 2026-10-27).** Per-primitive schemas in
+  `packages/motion-engine/src/engine/primitiveProps.ts`; the layer schema is a discriminated
+  union (`schema.ts`), loose on load, strict for authoring (`validate.ts`'s unknown-key
+  pass); `motion_validate`, `motion_insert_layers`, `motion_set_scene`,
+  `motion_add_layer(props)`, `propsSchema` (`jsonSchema.ts`), `motion_preview_frame`
+  (`crates/apelles-motion/src/still.rs`: cached bundle + `remotion still` + contact sheet).
+  Every mutating op refuses a document that would not load, with the same issues.
+  GUI: Catalog **Insert as JSON**, toolbar **Still**. Deviation from the plan below: the
+  preview bundle is cached per project under `motion/cache/preview/`, keyed by a content
+  fingerprint of the engine sources; `propCatalog` is TESTED against the schemas
+  (`propCatalog.schema.test.ts`, both directions) rather than derived from them.
+- Phases 1-4: design below, not built.
+
+## What existed before Phase 0 (checked in the code, 2026-10-26)
 
 - **11 primitives** (`use` values in `packages/motion-engine/src/engine/schema.ts`, `z.enum`, plus a
   hand-written `REGISTRY` in `src/engine/registry.ts`): text, emphasis, matrix, graph, layers,

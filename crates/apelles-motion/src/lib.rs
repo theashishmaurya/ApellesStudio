@@ -26,6 +26,7 @@
 //! **Status:** D-046 — the render-bridge MVP. See `crates/apelles-motion/README.md`.
 
 pub mod job;
+pub mod still;
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -160,7 +161,7 @@ pub fn run_render(req: &RenderRequest) -> Result<RenderOutcome, ChromaError> {
 
 /// The last `n` lines of `s` — enough context to explain a failure without
 /// dumping a whole bundler log into an error string.
-fn tail(s: &str, n: usize) -> String {
+pub(crate) fn tail(s: &str, n: usize) -> String {
     let lines: Vec<&str> = s.lines().collect();
     let start = lines.len().saturating_sub(n);
     lines[start..].join("\n")
