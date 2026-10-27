@@ -1,0 +1,245 @@
+{
+  "certified": {
+    "codeHash": "946617dda4186729e16fbd93b82d88a5899c56cf8c92ba0dc662c2ac4490e9a6",
+    "sourceHash": "2503d559f650f84f54d47f2ef4181e5f540f0410c4ff52eeccfa69a909e756c1"
+  },
+  "codeHash": "946617dda4186729e16fbd93b82d88a5899c56cf8c92ba0dc662c2ac4490e9a6",
+  "description": "A hand-drawn box, circle, underline or arrow draws on around a label, wobbling like a marker (roughjs, fixed seed).",
+  "duration": 2.5,
+  "id": "sketch-callout",
+  "name": "Sketch callout",
+  "proof": {
+    "codeHash": "946617dda4186729e16fbd93b82d88a5899c56cf8c92ba0dc662c2ac4490e9a6",
+    "contactSheet": "contact.png",
+    "frames": [
+      {
+        "frame": 0,
+        "hashes": [
+          "013244994f243f52099a35169a62b94319d1a2e1bed01c218a52c3a5005f2490",
+          "013244994f243f52099a35169a62b94319d1a2e1bed01c218a52c3a5005f2490",
+          "013244994f243f52099a35169a62b94319d1a2e1bed01c218a52c3a5005f2490"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "defaults"
+      },
+      {
+        "frame": 25,
+        "hashes": [
+          "8313ad8bd52f31e7fe0d2915c57f10ec722d25ab598551a01492b44d309b84ec",
+          "8313ad8bd52f31e7fe0d2915c57f10ec722d25ab598551a01492b44d309b84ec",
+          "8313ad8bd52f31e7fe0d2915c57f10ec722d25ab598551a01492b44d309b84ec"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "defaults"
+      },
+      {
+        "frame": 49,
+        "hashes": [
+          "3e01735e76b2cd69e6d2112185d8c46559960ca0c8d908ce75d1f2cfe9bcd244",
+          "3e01735e76b2cd69e6d2112185d8c46559960ca0c8d908ce75d1f2cfe9bcd244",
+          "3e01735e76b2cd69e6d2112185d8c46559960ca0c8d908ce75d1f2cfe9bcd244"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "defaults"
+      },
+      {
+        "frame": 74,
+        "hashes": [
+          "3e01735e76b2cd69e6d2112185d8c46559960ca0c8d908ce75d1f2cfe9bcd244",
+          "3e01735e76b2cd69e6d2112185d8c46559960ca0c8d908ce75d1f2cfe9bcd244",
+          "3e01735e76b2cd69e6d2112185d8c46559960ca0c8d908ce75d1f2cfe9bcd244"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "defaults"
+      },
+      {
+        "frame": 75,
+        "hashes": [
+          "013244994f243f52099a35169a62b94319d1a2e1bed01c218a52c3a5005f2490",
+          "013244994f243f52099a35169a62b94319d1a2e1bed01c218a52c3a5005f2490",
+          "013244994f243f52099a35169a62b94319d1a2e1bed01c218a52c3a5005f2490"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "min"
+      },
+      {
+        "frame": 100,
+        "hashes": [
+          "5fe84c239c0914f7c8d997322ff16e9e950240e024af0e872f99ce7c9e0df247",
+          "5fe84c239c0914f7c8d997322ff16e9e950240e024af0e872f99ce7c9e0df247",
+          "5fe84c239c0914f7c8d997322ff16e9e950240e024af0e872f99ce7c9e0df247"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "min"
+      },
+      {
+        "frame": 124,
+        "hashes": [
+          "6f43610a608a05be1d03b7e04c8130384c09889a72cdc216b88bb84cb81d399f",
+          "6f43610a608a05be1d03b7e04c8130384c09889a72cdc216b88bb84cb81d399f",
+          "6f43610a608a05be1d03b7e04c8130384c09889a72cdc216b88bb84cb81d399f"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "min"
+      },
+      {
+        "frame": 149,
+        "hashes": [
+          "6f43610a608a05be1d03b7e04c8130384c09889a72cdc216b88bb84cb81d399f",
+          "6f43610a608a05be1d03b7e04c8130384c09889a72cdc216b88bb84cb81d399f",
+          "6f43610a608a05be1d03b7e04c8130384c09889a72cdc216b88bb84cb81d399f"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "min"
+      },
+      {
+        "frame": 150,
+        "hashes": [
+          "013244994f243f52099a35169a62b94319d1a2e1bed01c218a52c3a5005f2490",
+          "013244994f243f52099a35169a62b94319d1a2e1bed01c218a52c3a5005f2490",
+          "013244994f243f52099a35169a62b94319d1a2e1bed01c218a52c3a5005f2490"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "max"
+      },
+      {
+        "frame": 175,
+        "hashes": [
+          "b825789f8ce7edbbf9e0155983e7174f0a2bb9942bbc7f059c08a656e9a9cb5a",
+          "b825789f8ce7edbbf9e0155983e7174f0a2bb9942bbc7f059c08a656e9a9cb5a",
+          "b825789f8ce7edbbf9e0155983e7174f0a2bb9942bbc7f059c08a656e9a9cb5a"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "max"
+      },
+      {
+        "frame": 199,
+        "hashes": [
+          "6843e02ef55a8c7e46e5d9731ba39c51187762a6ffd45d64fee3bee00600664d",
+          "6843e02ef55a8c7e46e5d9731ba39c51187762a6ffd45d64fee3bee00600664d",
+          "6843e02ef55a8c7e46e5d9731ba39c51187762a6ffd45d64fee3bee00600664d"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "max"
+      },
+      {
+        "frame": 224,
+        "hashes": [
+          "6843e02ef55a8c7e46e5d9731ba39c51187762a6ffd45d64fee3bee00600664d",
+          "6843e02ef55a8c7e46e5d9731ba39c51187762a6ffd45d64fee3bee00600664d",
+          "6843e02ef55a8c7e46e5d9731ba39c51187762a6ffd45d64fee3bee00600664d"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "max"
+      }
+    ],
+    "ok": true,
+    "passes": [
+      "in order: every frame 0..=last in one browser tab (--concurrency=1), within 2/255 on at most 0.1% of pixels of the fresh stills",
+      "fresh stills, backwards: [224, 199, 175, 150, 149, 124, 100, 75, 74, 49, 25, 0]",
+      "fresh stills, scrambled: [74, 49, 0, 25, 149, 124, 75, 100, 224, 199, 150, 175]"
+    ],
+    "sourceHash": "2503d559f650f84f54d47f2ef4181e5f540f0410c4ff52eeccfa69a909e756c1",
+    "thumbnail": "thumbnail.png"
+  },
+  "props": [
+    {
+      "constraints": {
+        "maxLen": 40,
+        "minLen": 1
+      },
+      "default": "Look here",
+      "id": "text",
+      "label": "Label",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "constraints": {
+        "options": [
+          "box",
+          "circle",
+          "underline",
+          "arrow"
+        ]
+      },
+      "default": "box",
+      "id": "shape",
+      "label": "Shape",
+      "type": "enum"
+    },
+    {
+      "constraints": {
+        "integer": true,
+        "max": 9999,
+        "min": 1
+      },
+      "default": 7,
+      "description": "Change it for a different, still deterministic, wobble.",
+      "id": "seed",
+      "label": "Seed",
+      "type": "number"
+    },
+    {
+      "constraints": {
+        "max": 4,
+        "min": 0
+      },
+      "default": 1.4,
+      "description": "How shaky the marker is; 0 draws clean lines.",
+      "id": "roughness",
+      "label": "Roughness",
+      "type": "number"
+    },
+    {
+      "description": "Unset: the theme's signal colour.",
+      "id": "color",
+      "label": "Stroke colour",
+      "type": "color"
+    },
+    {
+      "description": "Unset: the theme's text colour.",
+      "id": "textColor",
+      "label": "Text colour",
+      "type": "color"
+    }
+  ],
+  "schemaVersion": 1,
+  "size": {
+    "h": 400,
+    "w": 1200
+  },
+  "sourceHash": "2503d559f650f84f54d47f2ef4181e5f540f0410c4ff52eeccfa69a909e756c1",
+  "status": "certified",
+  "tags": [
+    "annotation",
+    "callout",
+    "hand-drawn"
+  ],
+  "version": 1,
+  "warnings": []
+}

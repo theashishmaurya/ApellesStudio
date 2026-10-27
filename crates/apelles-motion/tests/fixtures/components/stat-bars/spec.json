@@ -1,0 +1,16 @@
+{
+  "id": "stat-bars",
+  "name": "Stat bars",
+  "description": "Horizontal bars grow to their values on a d3 scale, each with a counting value label; the largest bar is highlighted.",
+  "tags": ["data", "chart", "stats"],
+  "props": [
+    { "id": "title", "type": "text", "label": "Title", "default": "Share of viewers", "constraints": { "maxLen": 60 } },
+    { "id": "values", "type": "list", "label": "Values", "default": [72, 58, 41, 26], "required": true, "constraints": { "itemType": "number", "min": 0, "max": 1000000, "minItems": 1, "maxItems": 8 } },
+    { "id": "labels", "type": "list", "label": "Labels", "default": ["Mobile", "Desktop", "TV", "Tablet"], "constraints": { "maxItems": 8, "maxLen": 16 } },
+    { "id": "format", "type": "enum", "label": "Value format", "description": "number: 1,234; compact: 1.2k; percent: the value followed by %.", "default": "percent", "constraints": { "options": ["number", "compact", "percent"] } },
+    { "id": "barColor", "type": "color", "label": "Bar colour", "description": "Unset: the theme's accent." },
+    { "id": "highlightColor", "type": "color", "label": "Highlight colour", "description": "Unset: the theme's signal colour." }
+  ],
+  "size": { "w": 1400, "h": 800 },
+  "duration": 3
+}

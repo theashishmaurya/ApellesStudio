@@ -284,4 +284,31 @@ describe('D-409 — write → check → certify → use as data', TYPECHECK, () 
     expect(await h.run('motion_delete_component', { id: 'bar-line-chart' })).toMatchObject({ removed: 2 });
     expect(validateManifest(h.current()).ok).toBe(true);
   });
+
+  // D-413: the built-ins that use the roughjs and d3 allowlist entries. Authored
+  // the same real way; only their proof plans are pinned.
+  it('authors sketch-callout (roughjs) and stat-bars (d3), certifies them and pins their proof plans', async () => {
+    const h = harness();
+    for (const id of ['sketch-callout', 'stat-bars']) {
+      const { source, spec } = example(id);
+      const w = await h.run('motion_write_component', { ...spec, source });
+      expect(w.error, JSON.stringify(w.issues)).toBeUndefined();
+      expect(w).toMatchObject({ id, version: 1, status: 'draft' });
+      expect(w.warnings).toEqual([]);
+      expect(await h.run('motion_check_component', { id })).toMatchObject({ ok: true, id, version: 1 });
+      expect(await h.run('motion_certify_component', { id })).toMatchObject({ certified: true, use: `custom:${id}@1` });
+    }
+    const [calloutPlan, barsPlan] = h.backend.plans;
+    for (const plan of [calloutPlan, barsPlan]) {
+      expect(plan.variants.map((v) => v.name)).toEqual(['defaults', 'min', 'max']);
+      expect(validateManifest(plan.manifest).issues).toEqual([]);
+    }
+    pin('components/sketch-callout/proof-plan.json', calloutPlan);
+    pin('components/stat-bars/proof-plan.json', barsPlan);
+
+    // The roughjs seed rule is enforced on the real write path too.
+    const { source, spec } = example('sketch-callout');
+    const unseeded = await h.run('motion_write_component', { ...spec, source: source.replace('{ seed: props.seed, ...style }', '{ ...style }') });
+    expect(unseeded.issues).toEqual([expect.objectContaining({ code: 'rough_unseeded', path: expect.stringMatching(/^source:\d+:\d+$/) })]);
+  });
 });

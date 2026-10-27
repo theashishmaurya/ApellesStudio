@@ -1,0 +1,179 @@
+{
+  "manifest": {
+    "title": "certification proof: sketch-callout@1",
+    "width": 1200,
+    "height": 400,
+    "fps": 30,
+    "grain": false,
+    "vignette": false,
+    "components": {
+      "sketch-callout@1": {
+        "id": "sketch-callout",
+        "name": "Sketch callout",
+        "description": "A hand-drawn box, circle, underline or arrow draws on around a label, wobbling like a marker (roughjs, fixed seed).",
+        "tags": [
+          "annotation",
+          "callout",
+          "hand-drawn"
+        ],
+        "props": [
+          {
+            "id": "text",
+            "type": "text",
+            "label": "Label",
+            "default": "Look here",
+            "required": true,
+            "constraints": {
+              "maxLen": 40,
+              "minLen": 1
+            }
+          },
+          {
+            "id": "shape",
+            "type": "enum",
+            "label": "Shape",
+            "default": "box",
+            "constraints": {
+              "options": [
+                "box",
+                "circle",
+                "underline",
+                "arrow"
+              ]
+            }
+          },
+          {
+            "id": "seed",
+            "type": "number",
+            "label": "Seed",
+            "description": "Change it for a different, still deterministic, wobble.",
+            "default": 7,
+            "constraints": {
+              "min": 1,
+              "max": 9999,
+              "integer": true
+            }
+          },
+          {
+            "id": "roughness",
+            "type": "number",
+            "label": "Roughness",
+            "description": "How shaky the marker is; 0 draws clean lines.",
+            "default": 1.4,
+            "constraints": {
+              "min": 0,
+              "max": 4
+            }
+          },
+          {
+            "id": "color",
+            "type": "color",
+            "label": "Stroke colour",
+            "description": "Unset: the theme's signal colour."
+          },
+          {
+            "id": "textColor",
+            "type": "color",
+            "label": "Text colour",
+            "description": "Unset: the theme's text colour."
+          }
+        ],
+        "size": {
+          "w": 1200,
+          "h": 400
+        },
+        "duration": 2.5,
+        "version": 1,
+        "sourceHash": "2503d559f650f84f54d47f2ef4181e5f540f0410c4ff52eeccfa69a909e756c1",
+        "codeHash": "946617dda4186729e16fbd93b82d88a5899c56cf8c92ba0dc662c2ac4490e9a6",
+        "code": "sha256:946617dda4186729e16fbd93b82d88a5899c56cf8c92ba0dc662c2ac4490e9a6.js",
+        "source": "sha256:2503d559f650f84f54d47f2ef4181e5f540f0410c4ff52eeccfa69a909e756c1.tsx"
+      }
+    },
+    "scenes": [
+      {
+        "id": "proof-defaults",
+        "dur": 2.5,
+        "layers": [
+          {
+            "use": "custom",
+            "id": "component",
+            "component": "sketch-callout@1",
+            "x": 0,
+            "y": 0
+          }
+        ]
+      },
+      {
+        "id": "proof-min",
+        "dur": 2.5,
+        "layers": [
+          {
+            "use": "custom",
+            "id": "component",
+            "component": "sketch-callout@1",
+            "x": 0,
+            "y": 0,
+            "props": {
+              "text": "A",
+              "shape": "box",
+              "seed": 1,
+              "roughness": 0
+            }
+          }
+        ]
+      },
+      {
+        "id": "proof-max",
+        "dur": 2.5,
+        "layers": [
+          {
+            "use": "custom",
+            "id": "component",
+            "component": "sketch-callout@1",
+            "x": 0,
+            "y": 0,
+            "props": {
+              "text": "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+              "shape": "arrow",
+              "seed": 9999,
+              "roughness": 4,
+              "color": "#22d3ee",
+              "textColor": "#22d3ee"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "variants": [
+    {
+      "name": "defaults",
+      "frames": [
+        0,
+        25,
+        49,
+        74
+      ]
+    },
+    {
+      "name": "min",
+      "frames": [
+        75,
+        100,
+        124,
+        149
+      ]
+    },
+    {
+      "name": "max",
+      "frames": [
+        150,
+        175,
+        199,
+        224
+      ]
+    }
+  ],
+  "scale": 0.4
+}

@@ -1,0 +1,254 @@
+{
+  "certified": {
+    "codeHash": "4f4bfd0a1e399071264f65a415cd1171730bd106426b08aa5738c9fd065dc488",
+    "sourceHash": "626429c1d27715be1c983c945f8f7b65319440b5c268499a713ff0fec5a9e682"
+  },
+  "codeHash": "4f4bfd0a1e399071264f65a415cd1171730bd106426b08aa5738c9fd065dc488",
+  "description": "Horizontal bars grow to their values on a d3 scale, each with a counting value label; the largest bar is highlighted.",
+  "duration": 3,
+  "id": "stat-bars",
+  "name": "Stat bars",
+  "proof": {
+    "codeHash": "4f4bfd0a1e399071264f65a415cd1171730bd106426b08aa5738c9fd065dc488",
+    "contactSheet": "contact.png",
+    "frames": [
+      {
+        "frame": 0,
+        "hashes": [
+          "464bd98013fcd5a47c99fc6160f0f45c3a54d72f00ed982b463898a4206ab4b5",
+          "464bd98013fcd5a47c99fc6160f0f45c3a54d72f00ed982b463898a4206ab4b5",
+          "464bd98013fcd5a47c99fc6160f0f45c3a54d72f00ed982b463898a4206ab4b5"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "defaults"
+      },
+      {
+        "frame": 30,
+        "hashes": [
+          "afc931fce3f59ea3ecca1ea001c4ef2fd24c01886459f8a5c26a8abb7b626b5c",
+          "afc931fce3f59ea3ecca1ea001c4ef2fd24c01886459f8a5c26a8abb7b626b5c",
+          "afc931fce3f59ea3ecca1ea001c4ef2fd24c01886459f8a5c26a8abb7b626b5c"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "defaults"
+      },
+      {
+        "frame": 59,
+        "hashes": [
+          "4924ef6df095269f4a924caa244d623daf3c381e3aae02f0cbbd5c43c0f4ecef",
+          "a77bb0964f60a1e1ab7622aa0e6120fff1aa387c1e16cf6be4cf61742898fe94",
+          "a77bb0964f60a1e1ab7622aa0e6120fff1aa387c1e16cf6be4cf61742898fe94"
+        ],
+        "inOrderMaxDelta": 1,
+        "inOrderPixels": 31,
+        "same": true,
+        "variant": "defaults"
+      },
+      {
+        "frame": 89,
+        "hashes": [
+          "8160689c7638ded753e17780ba99969452abd7d620cb7bc8c10abdd828d1cbce",
+          "8160689c7638ded753e17780ba99969452abd7d620cb7bc8c10abdd828d1cbce",
+          "8160689c7638ded753e17780ba99969452abd7d620cb7bc8c10abdd828d1cbce"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "defaults"
+      },
+      {
+        "frame": 90,
+        "hashes": [
+          "464bd98013fcd5a47c99fc6160f0f45c3a54d72f00ed982b463898a4206ab4b5",
+          "464bd98013fcd5a47c99fc6160f0f45c3a54d72f00ed982b463898a4206ab4b5",
+          "464bd98013fcd5a47c99fc6160f0f45c3a54d72f00ed982b463898a4206ab4b5"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "min"
+      },
+      {
+        "frame": 120,
+        "hashes": [
+          "ad688afe98b84ef826ba39ddfcc5e6983e02d5a89c2c0aad48e8f56f6ab75546",
+          "ad688afe98b84ef826ba39ddfcc5e6983e02d5a89c2c0aad48e8f56f6ab75546",
+          "ad688afe98b84ef826ba39ddfcc5e6983e02d5a89c2c0aad48e8f56f6ab75546"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "min"
+      },
+      {
+        "frame": 149,
+        "hashes": [
+          "ad688afe98b84ef826ba39ddfcc5e6983e02d5a89c2c0aad48e8f56f6ab75546",
+          "ad688afe98b84ef826ba39ddfcc5e6983e02d5a89c2c0aad48e8f56f6ab75546",
+          "ad688afe98b84ef826ba39ddfcc5e6983e02d5a89c2c0aad48e8f56f6ab75546"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "min"
+      },
+      {
+        "frame": 179,
+        "hashes": [
+          "ad688afe98b84ef826ba39ddfcc5e6983e02d5a89c2c0aad48e8f56f6ab75546",
+          "ad688afe98b84ef826ba39ddfcc5e6983e02d5a89c2c0aad48e8f56f6ab75546",
+          "ad688afe98b84ef826ba39ddfcc5e6983e02d5a89c2c0aad48e8f56f6ab75546"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "min"
+      },
+      {
+        "frame": 180,
+        "hashes": [
+          "464bd98013fcd5a47c99fc6160f0f45c3a54d72f00ed982b463898a4206ab4b5",
+          "464bd98013fcd5a47c99fc6160f0f45c3a54d72f00ed982b463898a4206ab4b5",
+          "464bd98013fcd5a47c99fc6160f0f45c3a54d72f00ed982b463898a4206ab4b5"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "max"
+      },
+      {
+        "frame": 210,
+        "hashes": [
+          "fea5e84ab86234a78335b0a74468ec38db6d163e05b71a23fbc782b3c20fa6fb",
+          "fea5e84ab86234a78335b0a74468ec38db6d163e05b71a23fbc782b3c20fa6fb",
+          "fea5e84ab86234a78335b0a74468ec38db6d163e05b71a23fbc782b3c20fa6fb"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "max"
+      },
+      {
+        "frame": 239,
+        "hashes": [
+          "421a8c462a0800e3b5ddb1ec4454072f591421e61b1a9bc8b1789a4195520c59",
+          "421a8c462a0800e3b5ddb1ec4454072f591421e61b1a9bc8b1789a4195520c59",
+          "421a8c462a0800e3b5ddb1ec4454072f591421e61b1a9bc8b1789a4195520c59"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "max"
+      },
+      {
+        "frame": 269,
+        "hashes": [
+          "5f12107bf201c67bea65e4df38a75ce2a97a7b7b4217074506d94d3a54eb26d9",
+          "5f12107bf201c67bea65e4df38a75ce2a97a7b7b4217074506d94d3a54eb26d9",
+          "5f12107bf201c67bea65e4df38a75ce2a97a7b7b4217074506d94d3a54eb26d9"
+        ],
+        "inOrderMaxDelta": 0,
+        "inOrderPixels": 0,
+        "same": true,
+        "variant": "max"
+      }
+    ],
+    "ok": true,
+    "passes": [
+      "in order: every frame 0..=last in one browser tab (--concurrency=1), within 2/255 on at most 0.1% of pixels of the fresh stills",
+      "fresh stills, backwards: [269, 239, 210, 180, 179, 149, 120, 90, 89, 59, 30, 0]",
+      "fresh stills, scrambled: [89, 59, 0, 30, 179, 149, 90, 120, 269, 239, 180, 210]"
+    ],
+    "sourceHash": "626429c1d27715be1c983c945f8f7b65319440b5c268499a713ff0fec5a9e682",
+    "thumbnail": "thumbnail.png"
+  },
+  "props": [
+    {
+      "constraints": {
+        "maxLen": 60
+      },
+      "default": "Share of viewers",
+      "id": "title",
+      "label": "Title",
+      "type": "text"
+    },
+    {
+      "constraints": {
+        "itemType": "number",
+        "max": 1000000,
+        "maxItems": 8,
+        "min": 0,
+        "minItems": 1
+      },
+      "default": [
+        72,
+        58,
+        41,
+        26
+      ],
+      "id": "values",
+      "label": "Values",
+      "required": true,
+      "type": "list"
+    },
+    {
+      "constraints": {
+        "maxItems": 8,
+        "maxLen": 16
+      },
+      "default": [
+        "Mobile",
+        "Desktop",
+        "TV",
+        "Tablet"
+      ],
+      "id": "labels",
+      "label": "Labels",
+      "type": "list"
+    },
+    {
+      "constraints": {
+        "options": [
+          "number",
+          "compact",
+          "percent"
+        ]
+      },
+      "default": "percent",
+      "description": "number: 1,234; compact: 1.2k; percent: the value followed by %.",
+      "id": "format",
+      "label": "Value format",
+      "type": "enum"
+    },
+    {
+      "description": "Unset: the theme's accent.",
+      "id": "barColor",
+      "label": "Bar colour",
+      "type": "color"
+    },
+    {
+      "description": "Unset: the theme's signal colour.",
+      "id": "highlightColor",
+      "label": "Highlight colour",
+      "type": "color"
+    }
+  ],
+  "schemaVersion": 1,
+  "size": {
+    "h": 800,
+    "w": 1400
+  },
+  "sourceHash": "626429c1d27715be1c983c945f8f7b65319440b5c268499a713ff0fec5a9e682",
+  "status": "certified",
+  "tags": [
+    "data",
+    "chart",
+    "stats"
+  ],
+  "version": 1,
+  "warnings": []
+}

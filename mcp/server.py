@@ -7308,7 +7308,9 @@ def motion_write_component(
     code, message, hint}]`: imports outside the allowlist (react, remotion,
     @remotion/shapes, @remotion/paths, @remotion/noise,
     @remotion/animation-utils, @remotion/three, three, @react-three/fiber,
-    d3-force, @apelles/component); `Math.random` (use `random(seed)` from
+    d3-force, d3-scale, d3-shape, d3-array, d3-interpolate, d3-format, roughjs
+    (seeded: every drawing call needs a non-zero `seed`), @apelles/component);
+    `Math.random` (use `random(seed)` from
     remotion); `Date`, `performance`, timers, `requestAnimationFrame` (use
     `useCurrentFrame()` / fps); `fetch`, `XMLHttpRequest`, `WebSocket`;
     `eval` / `Function`; dynamic `import()` / `require`; `window`,

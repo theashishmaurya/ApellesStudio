@@ -32,7 +32,12 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-const BUILTINS: [&str; 2] = ["particle-logo-burst", "bar-line-chart"];
+const BUILTINS: [&str; 4] = [
+    "particle-logo-burst",
+    "bar-line-chart",
+    "sketch-callout",
+    "stat-bars",
+];
 
 fn builtin_dir(id: &str) -> PathBuf {
     components::builtin_components_dir(&engine_dir())
