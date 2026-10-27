@@ -27,6 +27,28 @@ Still real:
 
 ## Open
 
+## B-289 — `editor_detect_silences` marks soft sentence endings and the first word as silence, so cutting its ranges clips real words
+
+status: **open** · severity: **major** (a straight "cut the silences" pass silently removes speech) · area: `editor_detect_silences` (Silero VAD, D-319/D-342) and its consumers
+
+- **found:** 2026-10-28 editing the "Five Levels" voiceover. A 350 ms sweep returned 134 silences; cutting them (each shortened by 3 frames a side) removed the first word ("Two weeks ago") and the trailing word of many sentences ("…where you are *at*", "that's *great*", "amnesia every *morning*", "your *signal*", "lives in a *file*"). The VAD's silence starts inside quiet, trailing-off words. Undone (one undo step).
+- **workaround used:** each VAD silence was intersected with the word transcript so no cut overlaps a word (+3 frames); every word survived (1355/1355) but only 41.7 s was removed instead of 92.7 s.
+- **expected:** the silence tool (or the roadmap 0l cut-words op) is word-aware when a transcript exists, so its ranges never overlap speech; a VAD-only answer says so.
+
+## B-288 — `editor_ripple_delete_ranges` refused one valid range in a 30-range batch ("describes no real material")
+
+status: **open** · severity: **minor** (it reports the skip honestly; the same range applied alone a moment later) · area: `editor_ripple_delete_ranges` / `applyRippleDeleteRanges`
+
+- **found:** 2026-10-28. In a batch of 30 retake cuts on one audio track (two clips, 0..17219 frames), the range 11092..11462 (wholly inside clip 1) was skipped: "nothing on track 0 lies wholly inside frames 11092..11462"; the other 29 applied. Re-sent alone at its shifted position (9193..9563, wholly inside one clip) it applied fine. Suspect: back-to-front application with neighbouring ranges in the same clip (10950..11003 and 11715..11734) validates a range against clips already split by a later range.
+- **expected:** every range wholly inside material is cut in one batch.
+
+## B-287 — whole-file transcription silently dropped ~1.5 minutes of speech in 8 places
+
+status: **open** · severity: **major** (the retake/cut tools then can't see that speech; a cut built on the transcript can remove it) · area: the Parakeet transcription job (`/transcribe`, D-381) that `editor_get_word_transcript(start=true)` runs
+
+- **found:** 2026-10-28, two voiceover files (2:30 and 9:28 m4a, 48 kHz mono). The word view had 8 gaps of 6.5-37 s (e.g. 388.1→425.2 s) where the audio has continuous speech (ffmpeg silencedetect: no silence > 1.5 s there; a direct Parakeet run on the gap transcribed it fully). `editor_retranscribe_words` over each gap recovered every word (+203 words).
+- **expected:** the full-file job never drops speech: windowing/segment merging must not lose a segment, and a stretch with audio energy but no words should be re-read or flagged.
+
 ## B-286 — a Motion VIDEO render is not bit-identical run to run (its PNG frames are)
 
 status: **open** · severity: **low** (52 dB PSNR between runs: invisible, but CLAUDE.md's render-path invariant asks for identical pixels) · area: the Motion scene export (`scripts/render.mts video`, before D-417 `npx remotion render`)
