@@ -533,6 +533,35 @@ describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real audio mixing 
     expect(Math.abs(outStats.mean - inputStats.mean)).toBeLessThan(3);
   });
 
+  // B-290 — an audio-only timeline (no video track at all: a cut voiceover)
+  // exports as a real VIDEO: one black picture stream at the export size
+  // beside the mixed sound, for the sound's full length. The compositor path's
+  // half of this is `an_audio_only_timeline_exports_a_black_picture_and_its_sound`
+  // in `app/src-tauri/src/chroma/edit_render.rs`.
+  it('B-290: an audio-only timeline exports a black picture at the export size plus its sound', () => {
+    const a = clip('vo', { source_path: toneA, duration: 96, source_fps: 24 }); // 4s
+    const tl = timeline([track('audio', [a])]);
+    const out = join(dir, 'audio-only.mp4');
+    const args = buildExportFfmpegArgs(tl, out, { fps: 24, width: 320, height: 180 });
+
+    execFileSync('ffmpeg', ['-y', ...args], { stdio: 'pipe' });
+
+    const video = execFileSync('ffprobe', [
+      '-v', 'error',
+      '-select_streams', 'v',
+      '-show_entries', 'stream=width,height',
+      '-of', 'csv=p=0',
+      out,
+    ]).toString().trim();
+    expect(video).toBe('320,180');
+    expect(hasAudioStream(out)).toBe(true);
+    expect(Math.abs(ffprobeDurationSecs(out) - 4)).toBeLessThan(0.1);
+    for (const [x, y] of [[0, 0], [160, 90], [300, 170]]) {
+      const [r, g, b] = pixelAt(out, 2, x, y);
+      expect(Math.max(r, g, b)).toBeLessThanOrEqual(20);
+    }
+  });
+
   it("D-057: track gain=0.5 measurably lowers the exported level by ~6.02dB (20*log10(0.5)) relative to gain=1", () => {
     const unity = clip('u', { source_path: toneA, duration: 96, source_fps: 24 });
     const halved = clip('h', { source_path: toneA, duration: 96, source_fps: 24 });

@@ -6,6 +6,17 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-419 — A timeline with no video track is a real document: "nothing visible" is black at the composition, captions included; an audio-only file export is deferred
+
+**decided (2026-10-28)** · from B-290 (an audio-only voiceover timeline showed "preview error: timeline has no video track" and played no sound)
+
+- **Context.** Three Rust paths refused a timeline with no video track with `"timeline has no video track"`: the preview/compositor frame (`edit::render_timeline_frame`), and the embedded-audio lookup (`edit::resolve_video_position`) that the audio session's source resolver runs before it looks at audio tracks. The rule dated from D-041's single-track MVP, where such a timeline could not exist; D-056 kept it as "app-level error messaging". B-276 met the export half and left it for "its own decision". Meanwhile the frontend (wall-clock play loop, D-049), the audio mixer (D-057) and the filter export (D-197) all handled audio-only fine. Separately, "nothing visible" in the preview was a 1×1 JPEG, which an `object-contain` `<img>` lays out at one pixel, and a caption over a position with no video layer was never drawn by the preview or the compositor export (the empty-layers return ran ahead of the caption pass), while the filter export drew it over its black base.
+- **Options.** (a) Keep the refusal and make the user add a video clip (a still, or a hidden "black" clip): what the Black October edit did by hand, and a fake clip in the document. (b) Special-case audio-only in each caller (a "has video?" branch in the preview command, the audio resolver, the export). (c) Drop the refusal at the source: no video track is the same answer as a gap everywhere ("nothing visible here", "no embedded audio here"), and decide once what nothing-visible looks like.
+- **Choice: (c).** Both refusals are removed. "Nothing visible" means opaque black at the composition: the compositor export already wrote a black frame at the output size; the preview now answers with a black JPEG at the composition's preview canvas (`black_frame_jpeg`, memoised on its size so a gap costs no encode per frame), and a timeline with no size at all (no output, no project size, no footage) keeps the 1×1 frame, since there is no honest size to draw. A caption visible at such a position is drawn over that black canvas (`captions_over_black`), so preview, compositor export and filter export agree on a voiceover-with-captions timeline. `preview_canvas_size` is the one definition of the preview canvas, shared with `composite_video_frame`. Gaps in an ordinary timeline change with it (black at frame size rather than a dot), which is what NLEs show.
+- **Audio-only FILE export: deferred** (roadmap 0m). It is a new export capability rather than part of the fix: an MCP parameter in both servers with a parity re-capture, an Export-dialog choice (human and AI), changes to both renderers and the loudness pass. An audio-only timeline exports as a video (black picture + mix) today, which plays everywhere; the audio can be pulled from it with `-vn -c:a copy`.
+
+---
+
 ## D-418 — Crash containment: a `PanelErrorBoundary` per tab and per major pane, registries kept above the pane boundaries
 
 **decided (2026-10-28)** · from B-292 (one render throw blanked the window and stalled the bridge)

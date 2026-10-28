@@ -1950,8 +1950,9 @@ mod tests {
         // the command itself is now just a `spawn_blocking` wrapper (D-125),
         // so calling it here needs no tokio runtime.
         // D-217: raw JPEG bytes now, not a base64 data URL — so "is a real
-        // frame" is checked against the JPEG SOI marker and the decoded size,
-        // and "is the blank frame" against its 1×1 dimensions.
+        // frame" is checked against the JPEG SOI marker and the decoded size.
+        // B-290: "nothing visible" is black at the composition's size now (the
+        // picture the export writes there), not the 1×1 frame it used to be.
         let jpeg =
             super::super::edit::timeline_frame(0, None, super::super::edit::FrameIntent::Single)
                 .unwrap();
@@ -1967,11 +1968,17 @@ mod tests {
             super::super::edit::FrameIntent::Single,
         )
         .unwrap();
-        let blank = image::load_from_memory(&blank).expect("decode blank jpeg");
+        let blank = image::load_from_memory(&blank)
+            .expect("decode blank jpeg")
+            .to_rgb8();
         assert_eq!(
-            (blank.width(), blank.height()),
-            (1, 1),
-            "blank frame past the end"
+            blank.dimensions(),
+            (real.width(), real.height()),
+            "past the end: a frame the size of the composition"
+        );
+        assert!(
+            blank.pixels().all(|p| p.0.iter().all(|c| *c <= 2)),
+            "past the end: black"
         );
 
         state::set_project(None);

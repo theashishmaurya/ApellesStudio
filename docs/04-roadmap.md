@@ -306,6 +306,8 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    - GUI: select words in the Index panel transcript and delete (Descript-style), fillers ("uh", "um", "like", "okay", stutters) highlighted for one-click removal with review.
    - Tests including the fragment case (a deleted word adjacent to kept words with padding).
 
+0m. **Export an audio-only FILE (`.m4a` / `.wav`) from a timeline** (scoped and deferred by D-419, 2026-10-28, while fixing B-290). An audio-only timeline now previews, plays and exports as a video (black picture + the mix); a file with no picture at all is still made outside the app (`ffmpeg -i out.mp4 -vn -c:a copy out.m4a`). Not built; needs, in one pass: an `editor_export` option (or the output extension) in both MCP servers with the parity corpus re-captured, an Export-dialog format choice, the filter compiler dropping its video map/base, the compositor path skipping the render entirely (just the audio argv), the D-401 loudness pass on the result, and a real-ffmpeg test of each.
+
 0j. ~~**Music-driven motion: "use your own music; tell Claude which beats the big move should hit"**~~ **built (D-413, 2026-10-27)** (owner, from tip 2 of `scratch/reference-reels/ian-tang-claude-motion-tips.md`). Design and measurements: `docs/notes/music-driven-motion.md`.
    - [x] Beat analysis `apelles-beat` (tempo, beats, downbeats/bars, accents), on-device, deterministic, cached by content hash; measured against ground truth and librosa (`eval/beats/`).
    - [x] Edit: a track's beats as the timeline's beat grid (metronome toggle, beat lane), drags / trims / playhead snap to beats (magnet toggle), "Snap cuts to beats" as one undo step; `editor_detect_beats`, `editor_set_beat_grid`, `editor_snap_cuts_to_beats`.

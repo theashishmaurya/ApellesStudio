@@ -3394,8 +3394,8 @@ mod parity_tests {
     /// clip to derive a composition size from". The export compiler reads such
     /// a project's composition as that same output size, so this is the two
     /// engines agreeing, not a guess. (The fixture keeps the empty video track
-    /// a new project has: a timeline with NO video track at all is refused by
-    /// the frame resolver for its own reason, which this does not change.)
+    /// a new project has; a timeline with NO video track at all is
+    /// [`an_audio_only_timeline_exports_a_black_picture_and_its_sound`], B-290.)
     #[test]
     fn a_sizeless_project_exports_at_the_requested_size() {
         if !ffmpeg_available() {
@@ -3450,5 +3450,153 @@ mod parity_tests {
         let outcome = render_timeline(&timeline, &settings, &req)
             .expect("a sizeless project renders at the export's own size");
         assert_eq!(outcome.frames, 3);
+    }
+
+    /// **B-290 — an audio-only timeline exports through the compositor as a
+    /// black picture at the requested size plus its sound, for its full
+    /// length.** A timeline with NO video track at all (a cut voiceover) used to
+    /// fail at frame 0 with "timeline has no video track"; every frame is now a
+    /// nothing-visible frame, which this path writes as its opaque black
+    /// `blank`.
+    ///
+    /// The argv has the shape `buildPipeExportPlan` compiles for such a
+    /// timeline — the raw-video pipe, one audio input mapped beside it, `-t` at
+    /// the audio's length — and the finished FILE is checked with ffprobe: one
+    /// video stream at the export size, one audio stream, the right duration,
+    /// and black pixels.
+    #[test]
+    fn an_audio_only_timeline_exports_a_black_picture_and_its_sound() {
+        if !ffmpeg_available() {
+            eprintln!("skipping: ffmpeg/ffprobe not on PATH");
+            return;
+        }
+        const FPS: f64 = 24.0;
+        const SECS: f64 = 2.0;
+        const FRAMES: u64 = 48;
+        const OUT: (u32, u32) = (160, 90);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let tone = dir.path().join("vo.wav");
+        run_ffmpeg(&[
+            "-v".into(),
+            "error".into(),
+            "-y".into(),
+            "-f".into(),
+            "lavfi".into(),
+            "-i".into(),
+            format!("sine=frequency=440:duration={SECS}:sample_rate=48000"),
+            tone.to_string_lossy().to_string(),
+        ])
+        .expect("synthesise the voiceover");
+
+        let timeline = Timeline {
+            id: "vo".into(),
+            name: "Voiceover".into(),
+            rate: Some(apelles_types::Rational::new(24, 1)),
+            tracks: vec![apelles_timeline::Track {
+                kind: apelles_timeline::TrackKind::Audio,
+                clips: vec![apelles_timeline::Clip {
+                    id: "vo".into(),
+                    name: "vo".into(),
+                    source_path: tone.to_string_lossy().to_string(),
+                    duration: FRAMES as i64,
+                    source_len: FRAMES as i64,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let settings = ProjectSettings {
+            width: Some(1920),
+            height: Some(1080),
+            fps: Some(FPS),
+            color_space: None,
+        };
+        let out = dir.path().join("vo.mp4");
+        let mut args = super::pipe_input_args(OUT.0, OUT.1, FPS);
+        args.extend(
+            [
+                "-i",
+                &tone.to_string_lossy(),
+                "-map",
+                "0:v",
+                "-map",
+                "1:a",
+                "-c:v",
+                "libx264",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-r",
+                "24",
+                "-t",
+                "2",
+                &out.to_string_lossy(),
+            ]
+            .map(String::from),
+        );
+        let req = TimelineRenderRequest {
+            args,
+            width: OUT.0,
+            height: OUT.1,
+            frames: FRAMES,
+            segments: None,
+            output: None,
+            loudness: None,
+            timeline_id: None,
+        };
+        let outcome =
+            render_timeline(&timeline, &settings, &req).expect("an audio-only timeline exports");
+        assert_eq!(outcome.frames, FRAMES);
+
+        let probe = ffmpeg_locate::ffprobe()
+            .expect("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type,width,height:format=duration",
+                "-of",
+                "json",
+            ])
+            .arg(&out)
+            .output()
+            .expect("spawn ffprobe");
+        let json: serde_json::Value =
+            serde_json::from_slice(&probe.stdout).expect("ffprobe answers JSON");
+        let streams = json["streams"].as_array().expect("a stream list");
+        let video: Vec<&serde_json::Value> = streams
+            .iter()
+            .filter(|s| s["codec_type"] == "video")
+            .collect();
+        assert_eq!(video.len(), 1, "one video stream: {json}");
+        assert_eq!(video[0]["width"], OUT.0);
+        assert_eq!(video[0]["height"], OUT.1);
+        assert_eq!(
+            streams
+                .iter()
+                .filter(|s| s["codec_type"] == "audio")
+                .count(),
+            1,
+            "one audio stream: {json}"
+        );
+        let duration: f64 = json["format"]["duration"]
+            .as_str()
+            .and_then(|d| d.parse().ok())
+            .expect("a container duration");
+        assert!(
+            (duration - SECS).abs() < 0.1,
+            "the export runs the voiceover's {SECS} s, not {duration} s"
+        );
+        assert_eq!(frame_count(&out).expect("frame count"), FRAMES);
+
+        let frame = frame_of(&out, 24, &dir.path().join("f24.png")).expect("decode frame 24");
+        assert!(
+            frame.pixels().all(|p| p.0.iter().all(|c| *c <= 20)),
+            "the picture is black (yuv420p limited range may lift it a few levels)"
+        );
     }
 }

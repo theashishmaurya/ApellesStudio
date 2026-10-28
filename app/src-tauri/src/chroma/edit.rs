@@ -569,10 +569,19 @@ pub(super) fn derived_composition_size(
 /// `apelles-timeline` itself never touches.
 ///
 /// `Ok(None)` when every video track has a gap at `pos` (or `pos` is
-/// negative / past everything) or the winning clip's source path is
-/// empty/offline — the same "just show/play nothing" case both callers
-/// already handle, not an error. Still errors if the timeline has no video
-/// track at all (distinct from "every video track has a gap here").
+/// negative / past everything), the winning clip's source path is
+/// empty/offline, or the timeline has **no video track at all** — the same
+/// "just show/play nothing" case both callers already handle, not an error.
+///
+/// **B-290 — "no video track" is not an error any more.** It used to be
+/// (`"timeline has no video track"`, inherited from D-041's single-track MVP,
+/// when a timeline without one could not exist), and since this is the first
+/// thing `chroma::audio`'s source resolver asks, an audio-only timeline — a cut
+/// voiceover, a podcast — could not start a playback session at all: no sound,
+/// on a timeline that is nothing but sound. A timeline with no video track has
+/// no embedded-audio baseline at any position, which is exactly what `Ok(None)`
+/// already means; the audio-track clips are resolved separately by
+/// [`resolve_audio_track_positions`] and play on their own.
 ///
 /// **D-149 — the winning track's own index comes back as the first element.**
 /// `resolve_video_clip_at` has always computed it and this function threw it
@@ -585,10 +594,6 @@ pub(crate) fn resolve_video_position(
     pos: u64,
 ) -> Result<Option<(usize, Clip, u64, VideoInfo)>, String> {
     let timeline = resolve_timeline(false)?;
-    if !timeline.tracks.iter().any(|t| t.kind == TrackKind::Video) {
-        return Err("timeline has no video track".to_string());
-    }
-
     let Some((track_idx, clip, source_frame)) = timeline.resolve_video_clip_at(pos as i64) else {
         return Ok(None);
     };
@@ -1163,8 +1168,11 @@ fn encode_preview_jpeg(img: &DynamicImage) -> Result<Vec<u8>, String> {
     Ok(buf.into_inner())
 }
 
-/// A 1×1 black JPEG — returned for a timeline position past the end (or before
-/// the start), so the preview `<img>` clears instead of erroring.
+/// A 1×1 black JPEG — the preview's "nothing visible" frame for a timeline
+/// that has **no frame size at all** (no timeline output, no project size, no
+/// footage or still to read one from — see [`derived_composition_size`]), where
+/// there is no honest size to draw black at. Every timeline that has a size
+/// gets [`black_frame_jpeg`] at that size instead (B-290).
 ///
 /// **Black JPEG, not the 1×1 transparent PNG this used to be (D-217).** The
 /// preview payload is raw bytes now and the frontend wraps them in one `Blob`
@@ -1179,6 +1187,54 @@ fn blank_frame_jpeg() -> Result<Vec<u8>, String> {
         1,
         image::Rgb([0, 0, 0]),
     )))
+}
+
+/// The last [`black_frame_jpeg`] encoded, keyed by its size. One entry: the
+/// preview asks at one size for as long as the composition and the preview
+/// quality stay put, so a single slot is a hit on every frame of a gap or of
+/// an audio-only timeline's playback, and holds a few KB.
+type BlackFrameSlot = Option<((u32, u32), Vec<u8>)>;
+static BLACK_FRAME_JPEG: std::sync::Mutex<BlackFrameSlot> = std::sync::Mutex::new(None);
+
+/// **B-290 — what the preview shows where nothing is visible: opaque black at
+/// the composition's own size** (scaled to the preview canvas, see
+/// [`preview_canvas_size`]), the same picture the export writes there (the
+/// compositor export's `blank` frame and the filter export's `color=black`
+/// base) and what every NLE shows over a gap.
+///
+/// It used to be [`blank_frame_jpeg`]'s 1×1 dot for every such position, which
+/// an `object-contain` `<img>` lays out at one pixel: over a gap that read as
+/// "the picture vanished", and on an audio-only timeline (where it is every
+/// position) the viewer had no frame at all to play its sound over.
+///
+/// Memoised in [`BLACK_FRAME_JPEG`] because it is asked for on every displayed
+/// frame of a gap during playback, and the answer only changes with the size.
+fn black_frame_jpeg(size: (u32, u32)) -> Result<Vec<u8>, String> {
+    let mut slot = BLACK_FRAME_JPEG.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((cached_size, bytes)) = slot.as_ref()
+        && *cached_size == size
+    {
+        return Ok(bytes.clone());
+    }
+    let bytes = encode_preview_jpeg(&DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+        size.0,
+        size.1,
+        image::Rgb([0, 0, 0]),
+    )))?;
+    *slot = Some((size, bytes.clone()));
+    Ok(bytes)
+}
+
+/// The pixel size a composition of `comp` is rendered into for a preview
+/// capped at `max_long_edge`: the composition itself, or `scale_target`'s
+/// aspect-preserving (even-dimension) downscale of it. The one definition the
+/// compositor's canvas ([`composite_video_frame`]) and the preview's
+/// nothing-visible frame ([`black_frame_jpeg`]) share, so a gap's black frame
+/// is exactly the size of the composited frames either side of it.
+fn preview_canvas_size(comp: (u32, u32), max_long_edge: Option<u32>) -> (u32, u32) {
+    max_long_edge
+        .and_then(|le| decode_pipe::scale_target(comp.0, comp.1, le))
+        .unwrap_or(comp)
 }
 
 /// Decode the source frame(s) under timeline position `pos` and return the
@@ -1206,8 +1262,9 @@ fn blank_frame_jpeg() -> Result<Vec<u8>, String> {
 /// embedded-audio baseline, both genuinely single-clip concerns this
 /// change has no business touching).
 ///
-/// Out-of-range / nothing visible → a 1×1 black JPEG ([`blank_frame_jpeg`]);
-/// a decode / probe failure → `Err`.
+/// Out-of-range / nothing visible → black at the composition's size
+/// ([`black_frame_jpeg`], B-290), or a 1×1 black JPEG ([`blank_frame_jpeg`])
+/// for a timeline with no size at all; a decode / probe failure → `Err`.
 ///
 /// **Raw bytes over IPC, not a `data:image/jpeg;base64,…` string (D-217).**
 /// Base64 on this path cost a second full pass over the picture plus ~33% more
@@ -1255,14 +1312,49 @@ pub async fn chroma_timeline_frame(
 /// Two phases, deliberately separable so they can be timed apart (D-217):
 /// [`timeline_frame_image`] produces the picture (decode + composite),
 /// [`encode_preview_jpeg`] turns it into the wire payload.
+///
+/// Resolves the timeline once and hands the same document to both the render
+/// and, when nothing is visible, [`nothing_visible_jpeg`].
 pub(crate) fn timeline_frame(
     pos: u64,
     max_long_edge: Option<u32>,
     intent: FrameIntent,
 ) -> Result<Vec<u8>, String> {
-    match timeline_frame_image(pos, max_long_edge, intent)? {
+    let (timeline, settings) = resolve_timeline_and_settings(false)?;
+    match render_timeline_frame(
+        &timeline,
+        &settings,
+        pos,
+        max_long_edge,
+        intent,
+        decode_pipe::PipeLane::LIVE,
+    )? {
         Some(img) => encode_preview_jpeg(&img),
-        None => blank_frame_jpeg(),
+        None => nothing_visible_jpeg(&settings, &timeline, max_long_edge),
+    }
+}
+
+/// B-290 — the preview frame for a position where [`render_timeline_frame`]
+/// found nothing to draw: [`black_frame_jpeg`] at the preview canvas of this
+/// timeline's composition, or [`blank_frame_jpeg`] when it has no size at all.
+///
+/// A composition that fails to RESOLVE (a source on a video track that will not
+/// probe) degrades to the 1×1 frame rather than failing this one: nothing is
+/// visible here, so no clip's probe has any bearing on what this frame shows,
+/// and a preview error over a gap would blame the wrong thing. The failure is
+/// still reported by every frame that does show that clip.
+fn nothing_visible_jpeg(
+    settings: &project::ProjectSettings,
+    timeline: &Timeline,
+    max_long_edge: Option<u32>,
+) -> Result<Vec<u8>, String> {
+    match derived_composition_size(settings, timeline) {
+        Ok(Some(comp)) => black_frame_jpeg(preview_canvas_size(comp, max_long_edge)),
+        Ok(None) => blank_frame_jpeg(),
+        Err(e) => {
+            log::debug!("timeline_frame: no composition for a nothing-visible frame ({e})");
+            blank_frame_jpeg()
+        }
     }
 }
 
@@ -1276,13 +1368,13 @@ pub(crate) fn timeline_frame(
 /// legacy single-clip grab instead of writing a black square to disk.
 ///
 /// **Deliberately not [`timeline_frame`]:** that function turns "nothing
-/// visible" into [`blank_frame_jpeg`] (a 1×1 black JPEG) for the live
+/// visible" into a black frame ([`nothing_visible_jpeg`], B-290) for the live
 /// preview's `<img>`, which is the right answer for a video element but the
 /// wrong one for a thumbnail file — a black square is a worse launcher card
 /// than the pre-B-141 raw frame grab, not a better one.
 ///
-/// `None` on either "no video track at all" (a brand-new project with only
-/// stills, or one whose timeline failed to build) or a genuine decode error —
+/// `None` on either "nothing visible at frame 0" (a gap, or a timeline with no
+/// video track — an audio-only one since B-290) or a genuine decode error —
 /// both cases the caller's own fallback already exists for.
 pub(crate) fn timeline_thumb_jpeg(max_long_edge: u32) -> Option<Vec<u8>> {
     match timeline_frame_image(0, Some(max_long_edge), FrameIntent::Single) {
@@ -1293,7 +1385,7 @@ pub(crate) fn timeline_thumb_jpeg(max_long_edge: u32) -> Option<Vec<u8>> {
 
 /// The decode + composite half of [`timeline_frame`]: the finished preview
 /// picture for timeline position `pos`, or `None` when nothing is visible there
-/// (which [`timeline_frame`] turns into [`blank_frame_jpeg`]).
+/// (which [`timeline_frame`] turns into a black frame, [`nothing_visible_jpeg`]).
 ///
 /// Split out of `timeline_frame` by D-217 so the two halves can be timed
 /// independently — the whole point of that decision was to find out which half
@@ -1389,9 +1481,13 @@ pub(crate) fn render_timeline_frame(
     intent: FrameIntent,
     lane: decode_pipe::PipeLane,
 ) -> Result<Option<DynamicImage>, String> {
-    if !timeline.tracks.iter().any(|t| t.kind == TrackKind::Video) {
-        return Err("timeline has no video track".to_string());
-    }
+    // B-290 — no "timeline has no video track" refusal here any more. An
+    // audio-only timeline (a cut voiceover, a podcast) is a real document: it
+    // simply has no visible layer at any position, which is the same answer a
+    // gap gives, and every caller already turns that into black — the preview
+    // via `nothing_visible_jpeg`, the compositor export via its `blank` frame.
+    // The refusal dated from D-041's single-track MVP and took the preview AND
+    // the compositor export of such a timeline down at frame 0.
     let layers: Vec<VisibleLayer<'_>> = timeline
         .resolve_visible_video_layers_at(pos as i64)
         .into_iter()
@@ -1432,7 +1528,7 @@ pub(crate) fn render_timeline_frame(
         // A gap under the playhead still has a boundary coming, and priming it
         // is the whole reason the keep-list above was extended.
         prime(lane, &upcoming);
-        return Ok(None);
+        return captions_over_black(timeline, settings, pos, max_long_edge);
     }
     let comp = composition_size(settings, timeline)?;
 
@@ -1613,6 +1709,41 @@ fn prime(lane: decode_pipe::PipeLane, targets: &[PrefetchTarget]) {
 /// fractions resolve against the same picture the viewer is looking at. That
 /// is the same resolution-independence contract the export honours by
 /// resolving the identical fractions against the output size.
+/// B-290 — a position with no visible video layer, which is still a frame with
+/// a picture if a caption is up: the caption over opaque black, at the
+/// composition's preview canvas. `None` (nothing to draw at all) when no
+/// caption is visible either, which every caller turns into plain black.
+///
+/// This is what a voiceover timeline with captions shows at every position,
+/// and it is what the filter export already wrote there (its captions are
+/// drawn over the `color=black` base whatever is or is not under them). Before
+/// this, the preview and the compositor export dropped a caption over a gap —
+/// the `layers.is_empty()` return ran ahead of [`draw_captions_onto`].
+///
+/// A timeline with no frame size at all has no canvas to draw on, so it stays
+/// `None`: a project holding nothing but audio and no size set, whose preview
+/// has no frame to show captions in until it is given one.
+fn captions_over_black(
+    timeline: &Timeline,
+    settings: &project::ProjectSettings,
+    pos: u64,
+    max_long_edge: Option<u32>,
+) -> Result<Option<DynamicImage>, String> {
+    if timeline.resolve_visible_captions_at(pos as i64).is_empty() {
+        return Ok(None);
+    }
+    let Some(comp) = derived_composition_size(settings, timeline)? else {
+        return Ok(None);
+    };
+    let (w, h) = preview_canvas_size(comp, max_long_edge);
+    let black = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+        w,
+        h,
+        image::Rgba([0, 0, 0, 255]),
+    ));
+    draw_captions_onto(black, timeline, pos as i64).map(Some)
+}
+
 fn draw_captions_onto(
     frame: DynamicImage,
     timeline: &Timeline,
@@ -2511,10 +2642,8 @@ fn composite_video_frame(
         Adjust(apelles_timeline::AdjustmentOps),
     }
 
-    let (comp_w, comp_h) = comp;
-    let (canvas_w, canvas_h) = max_long_edge
-        .and_then(|le| decode_pipe::scale_target(comp_w, comp_h, le))
-        .unwrap_or((comp_w, comp_h));
+    let (comp_w, _) = comp;
+    let (canvas_w, canvas_h) = preview_canvas_size(comp, max_long_edge);
     // One uniform ratio for both axes (from the width): `scale_target`
     // preserves aspect apart from its even-dimension rounding, and deriving
     // x and y independently would let that ±1 px turn into a visible
@@ -5621,6 +5750,170 @@ mod composition_size_tests {
             derived_composition_size(&project::ProjectSettings::default(), &short).expect("ok"),
             Some((1080, 1920))
         );
+    }
+}
+
+/// **B-290** — an audio-only timeline (no video track at all: a cut voiceover,
+/// a podcast) is previewed as black at its own size, with any caption drawn
+/// over it, instead of failing with "timeline has no video track".
+///
+/// Pure: nothing here decodes. The audio clip's source is never opened (the
+/// picture walk only reads video tracks), so these need no ffmpeg and no
+/// project on disk. They call [`render_timeline_frame`] and
+/// [`nothing_visible_jpeg`] — the two halves [`timeline_frame`] is made of —
+/// against an explicit document. The sound half is `chroma::audio`'s
+/// `resolve_sources_at_a_timeline_with_no_video_track_plays_its_audio`, and the
+/// export half `edit_render`'s
+/// `an_audio_only_timeline_exports_a_black_picture_and_its_sound`.
+#[cfg(test)]
+mod audio_only_preview_tests {
+    use apelles_timeline::caption::CaptionCue;
+    use apelles_timeline::{Clip, OutputSpec, Timeline, Track, TrackKind};
+
+    use super::*;
+
+    /// Same as the preview pane's own `PREVIEW_LONG_EDGE`.
+    const LONG_EDGE: u32 = 960;
+    /// A lane no other test uses, so the declarative pipe release
+    /// `render_timeline_frame` runs cannot touch another test's decoders.
+    const LANE: usize = 290;
+
+    fn voiceover(output: Option<OutputSpec>, subtitle: Option<Track>) -> Timeline {
+        let mut tracks = vec![Track {
+            kind: TrackKind::Audio,
+            clips: vec![Clip {
+                id: "vo".into(),
+                name: "vo".into(),
+                source_path: "/does/not/exist/vo.m4a".into(),
+                duration: 240,
+                source_len: 240,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }];
+        tracks.extend(subtitle);
+        Timeline {
+            id: "vo-tl".into(),
+            name: "Voiceover".into(),
+            rate: Some(apelles_types::Rational::new(24, 1)),
+            output,
+            tracks,
+            ..Default::default()
+        }
+    }
+
+    fn render(timeline: &Timeline, pos: u64) -> Result<Option<DynamicImage>, String> {
+        render_timeline_frame(
+            timeline,
+            &project::ProjectSettings::default(),
+            pos,
+            Some(LONG_EDGE),
+            FrameIntent::Single,
+            decode_pipe::PipeLane::render(LANE),
+        )
+    }
+
+    /// The reported failure itself: before B-290 this was
+    /// `Err("timeline has no video track")` at every position, which the
+    /// preview showed as "preview error: …" and the compositor export failed
+    /// on at frame 0.
+    #[test]
+    fn an_audio_only_timeline_renders_nothing_visible_rather_than_failing() {
+        let tl = voiceover(Some(OutputSpec::new(1920, 1080).expect("size")), None);
+        for pos in [0, 100, 239, 500] {
+            assert!(
+                matches!(render(&tl, pos), Ok(None)),
+                "frame {pos}: nothing visible, not an error"
+            );
+        }
+    }
+
+    /// What the viewer then shows: opaque black at the timeline's own output
+    /// size (D-411), scaled to the preview canvas — a portrait short previews
+    /// as a portrait black frame — not the 1×1 dot it used to be.
+    #[test]
+    fn nothing_visible_previews_as_black_at_the_timelines_own_size() {
+        let tl = voiceover(Some(OutputSpec::new(1080, 1920).expect("size")), None);
+        let settings = project::ProjectSettings::default();
+        let jpeg = nothing_visible_jpeg(&settings, &tl, Some(LONG_EDGE)).expect("a frame");
+        let img = image::load_from_memory(&jpeg).expect("a JPEG").to_rgb8();
+        assert_eq!(
+            img.dimensions(),
+            (540, 960),
+            "the 9:16 output at the 960 px preview edge"
+        );
+        assert!(
+            img.pixels().all(|p| p.0.iter().all(|c| *c <= 2)),
+            "every pixel black (JPEG may round by a level)"
+        );
+        // Asked again at the same size: the same bytes (the memo).
+        let again = nothing_visible_jpeg(&settings, &tl, Some(LONG_EDGE)).expect("a frame");
+        assert_eq!(jpeg, again);
+    }
+
+    /// The project's size stands in when the timeline has no override, and a
+    /// timeline with no size anywhere keeps the 1×1 frame — there is no honest
+    /// size to draw black at.
+    #[test]
+    fn the_black_frame_takes_the_project_size_and_degrades_without_one() {
+        let tl = voiceover(None, None);
+        let settings = project::ProjectSettings {
+            width: Some(1280),
+            height: Some(720),
+            ..Default::default()
+        };
+        let sized = nothing_visible_jpeg(&settings, &tl, Some(LONG_EDGE)).expect("a frame");
+        let img = image::load_from_memory(&sized).expect("a JPEG");
+        assert_eq!((img.width(), img.height()), (960, 540));
+
+        let sizeless =
+            nothing_visible_jpeg(&project::ProjectSettings::default(), &tl, Some(LONG_EDGE))
+                .expect("a frame");
+        let img = image::load_from_memory(&sizeless).expect("a JPEG");
+        assert_eq!((img.width(), img.height()), (1, 1));
+    }
+
+    /// A caption over a voiceover is drawn over black at the preview canvas —
+    /// the same picture the filter export writes (captions over its
+    /// `color=black` base). Before B-290 the `layers.is_empty()` return ran
+    /// ahead of the caption pass, so a caption with no video under it was never
+    /// drawn by the preview or the compositor export.
+    #[test]
+    fn a_caption_over_an_audio_only_timeline_is_drawn_over_black() {
+        let subtitle = Track {
+            kind: TrackKind::Subtitle,
+            clips: vec![Clip {
+                id: "cue".into(),
+                name: "cue".into(),
+                start_frame: 24,
+                duration: 48,
+                source_len: 48,
+                caption: Some(CaptionCue::new("Two weeks ago")),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let tl = voiceover(
+            Some(OutputSpec::new(1920, 1080).expect("size")),
+            Some(subtitle),
+        );
+
+        let img = render(&tl, 30)
+            .expect("renders")
+            .expect("a caption is visible");
+        let rgb = img.to_rgb8();
+        assert_eq!(rgb.dimensions(), (960, 540));
+        assert_eq!(
+            rgb.get_pixel(0, 0).0,
+            [0, 0, 0],
+            "the canvas under the caption is opaque black"
+        );
+        assert!(
+            rgb.pixels().any(|p| p.0.iter().any(|c| *c > 128)),
+            "the caption's text is drawn"
+        );
+        // Outside the cue, nothing is visible again.
+        assert!(matches!(render(&tl, 100), Ok(None)));
     }
 }
 

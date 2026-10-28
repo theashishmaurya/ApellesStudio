@@ -1654,8 +1654,28 @@ mod tests {
     /// investigation found still owed, without needing a real audio device or
     /// a `CHROMA_TEST_AUDIO_VIDEO` fixture. Only real dependency is `ffmpeg`
     /// (already hard, `synth_test_tone`'s own doc).
+    ///
+    /// Keeps the EMPTY video track a new project has;
+    /// [`resolve_sources_at_a_timeline_with_no_video_track_plays_its_audio`] is
+    /// the same check with none at all (B-290).
     #[test]
     fn resolve_sources_at_a_genuine_audio_only_track_clip_uses_the_timeline_fps() {
+        assert_audio_track_clip_resolves(true);
+    }
+
+    /// **B-290** — a timeline with NO video track at all (a cut voiceover, a
+    /// podcast) must resolve its audio-track clips. It used to fail here with
+    /// `"timeline has no video track"`, from the embedded-audio lookup
+    /// (`edit::resolve_video_position`) that runs first, so `chroma_audio_play`
+    /// returned an error and pressing play on such a timeline was silent.
+    #[test]
+    fn resolve_sources_at_a_timeline_with_no_video_track_plays_its_audio() {
+        assert_audio_track_clip_resolves(false);
+    }
+
+    /// The body of the two tests above: one 3 s tone on an audio track, with or
+    /// without an empty video track beside it, resolved at frame 0.
+    fn assert_audio_track_clip_resolves(with_empty_video_track: bool) {
         let _guard = session_test_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
         // A real audio-only source — no video stream at all, exactly B-041's
@@ -1675,36 +1695,37 @@ mod tests {
         // the nominal-24 rate) rather than off by an unreadable rounding hair.
         const CLIP_FRAMES: i64 = 90;
 
+        let mut tracks = Vec::new();
+        if with_empty_video_track {
+            // The shape a new project has: a video track with nothing on it,
+            // which contributes no source.
+            tracks.push(apelles_timeline::Track {
+                kind: apelles_timeline::TrackKind::Video,
+                clips: vec![],
+                ..Default::default()
+            });
+        }
+        tracks.push(apelles_timeline::Track {
+            kind: apelles_timeline::TrackKind::Audio,
+            clips: vec![apelles_timeline::Clip {
+                id: "audio-clip1".into(),
+                shot_id: None,
+                media_id: None,
+                name: "tone".into(),
+                source_path: tone_path.display().to_string(),
+                source_start: 0,
+                duration: CLIP_FRAMES,
+                source_len: CLIP_FRAMES,
+                start_frame: 0,
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
         let timeline = apelles_timeline::Timeline {
             id: "tl1".into(),
             name: "AudioOnlyTest".into(),
             rate: Some(apelles_types::Rational::new(TIMELINE_FPS, 1)),
-            tracks: vec![
-                // `resolve_video_position` errors outright on a timeline with
-                // NO video track at all (a separate, deliberate contract) —
-                // an empty one satisfies that without contributing a source.
-                apelles_timeline::Track {
-                    kind: apelles_timeline::TrackKind::Video,
-                    clips: vec![],
-                    ..Default::default()
-                },
-                apelles_timeline::Track {
-                    kind: apelles_timeline::TrackKind::Audio,
-                    clips: vec![apelles_timeline::Clip {
-                        id: "audio-clip1".into(),
-                        shot_id: None,
-                        media_id: None,
-                        name: "tone".into(),
-                        source_path: tone_path.display().to_string(),
-                        source_start: 0,
-                        duration: CLIP_FRAMES,
-                        source_len: CLIP_FRAMES,
-                        start_frame: 0,
-                        ..Default::default()
-                    }],
-                    ..Default::default()
-                },
-            ],
+            tracks,
             markers: Vec::new(),
             ..Default::default()
         };
@@ -1734,12 +1755,13 @@ mod tests {
 
         let resolved = result.expect(
             "an audio-only clip on a genuine Audio track must resolve, not error \
-             — this is B-041's own originally reported crash",
+             — B-041's own originally reported crash, and with no video track \
+             at all, B-290's",
         );
         assert_eq!(
             resolved.sources.len(),
             1,
-            "the audio-track clip should be the only resolved source (the empty video track contributes nothing)"
+            "the audio-track clip should be the only resolved source (no video track contributes one)"
         );
         // B-192 — and the same resolve reports how far the timeline runs, which
         // is what lets a play session tell a gap from the end of the timeline.
