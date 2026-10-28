@@ -441,7 +441,21 @@ describe('reads', () => {
 
   it('motion_get_state reports an idle render before anything has been rendered', () => {
     const h = harness();
-    expect(h.run('motion_get_state').render).toEqual(IDLE_RENDER_STATUS);
+    const { unreconciled, ...idle } = IDLE_RENDER_STATUS;
+    expect(unreconciled).toEqual([]);
+    expect(h.run('motion_get_state').render).toEqual({ ...idle, unreconciledSceneIds: [] });
+  });
+
+  it('B-301: each finished scene path is listed once, the unreconciled subset by scene id only', () => {
+    const h = harness();
+    const a = { sceneId: 'a', outputPath: '/proj/motion/renders/a.mp4' };
+    const b = { sceneId: 'b', outputPath: '/proj/motion/renders/b.mp4' };
+    h.state.renderStatus = { ...IDLE_RENDER_STATUS, state: 'idle', outputs: [a, b], unreconciled: [b] };
+    const render = h.run('motion_get_state').render as Record<string, unknown>;
+    expect(render.outputs).toEqual([a, b]);
+    expect(render.unreconciledSceneIds).toEqual(['b']);
+    expect(render).not.toHaveProperty('unreconciled');
+    expect(JSON.stringify(render).split('/proj/motion/renders/b.mp4')).toHaveLength(2);
   });
 
   it('THE headline (B-202): a scene that FAILS mid-render is named by motion_get_state', () => {

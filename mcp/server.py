@@ -454,9 +454,25 @@ def seek(frame: int) -> list:
 # each posts to the control server changed to match.
 # --------------------------------------------------------------------------- #
 @mcp.tool()
-def get_timeline() -> str:
+def get_timeline(
+    track: int | None = None,
+    start_frame: int | None = None,
+    end_frame: int | None = None,
+    fields: list[str] | None = None,
+) -> str:
     """The active edit timeline: every track and every clip on it, with the
     indices the mutating Edit-tab tools address clips by.
+
+    A real edit is huge (hundreds of clips can run to ~675K characters), so
+    read a SLICE (B-318): `editor_list_tracks` first for the compact picture,
+    then this with filters. `track` — only that track's clips. `start_frame` /
+    `end_frame` — only clips (and markers) overlapping that TIMELINE-frame
+    window (`end_frame` exclusive). `fields` — only these clip fields, plus
+    `index` and `id` (for example `["name", "startFrame", "duration"]`; an
+    unknown name is refused with the valid list). A filtered answer keeps each
+    track's full `clipCount`, keeps every clip's real `index`, and reports what
+    it was filtered by in `filtered`. With no argument the whole timeline comes
+    back, exactly as before.
 
     Returns {id, name, output, origin, durationFrames, tracks: [{index, kind: "video"|"audio",
     gain, locked, hidden, duckFrom, duckDb, duckAttackMs, duckReleaseMs,
@@ -496,7 +512,16 @@ def get_timeline() -> str:
     Read-only, cheap, no side effects."""
     import json
 
-    return json.dumps(_op("editor_get_timeline"), indent=2, default=str)
+    args: dict = {}
+    for key, value in (
+        ("track", track),
+        ("startFrame", start_frame),
+        ("endFrame", end_frame),
+        ("fields", fields),
+    ):
+        if value is not None:
+            args[key] = value
+    return json.dumps(_op("editor_get_timeline", **args), indent=2, default=str)
 
 
 @mcp.tool()
@@ -3480,6 +3505,47 @@ def editor_set_track_locked(track: int, locked: bool) -> str:
 
 
 @mcp.tool()
+def editor_set_track_sync_locked(track: int, sync_locked: bool) -> str:
+    """Turn a track's SYNC LOCK on or off — the track header's chain button
+    (B-315). A sync-locked track RECEIVES the ripple shift an edit on another
+    track causes (a ripple delete, a ripple trim), so it stays in step with the
+    track being edited; unlocked, it is left where it is. New tracks are
+    sync-locked. This is a different thing from `editor_set_track_locked`,
+    which blocks edits to the track's own clips. One undo step.
+
+    Returns {ok, track, syncLocked}; `track` is the 0-based index from
+    `editor_list_tracks`."""
+    import json
+
+    return json.dumps(
+        _op("editor_set_track_sync_locked", track=track, syncLocked=sync_locked), indent=2, default=str
+    )
+
+
+@mcp.tool()
+def editor_list_tracks() -> str:
+    """The active timeline's tracks, compactly and WITHOUT their clips (B-318)
+    — read this first to find which track holds the voice-over, the music, the
+    captions, instead of pulling every clip through `get_timeline`.
+
+    Returns {ok, timelineId, durationFrames, trackCount, tracks: [{index,
+    kind: "video"|"audio"|"subtitle", name ("Video 1", "Audio 2", ...: numbered
+    per kind, the label the track header shows), gain, muted (gain is 0),
+    hidden, locked, syncLocked, duckFrom (the track whose clips duck this one,
+    or null) and, when ducked, duckDb / duckAttackMs / duckReleaseMs, beatGrid
+    (only on the track whose beats are shown), clipCount, sourceCount, sources
+    (the distinct source file NAMES on the track, at most 12), firstFrame and
+    endFrame (the track's extent in TIMELINE frames; null when empty)}]}.
+
+    `index` is what every track-addressed tool takes. Then slice the clips with
+    `get_timeline(track=..., start_frame=..., end_frame=..., fields=[...])`.
+    The same facts are in the GUI's track headers. Read-only."""
+    import json
+
+    return json.dumps(_op("editor_list_tracks"), indent=2, default=str)
+
+
+@mcp.tool()
 def editor_set_track_hidden(track: int, hidden: bool) -> str:
     """Show or hide a video track. A hidden track is skipped by both the
     live preview compositor and `editor_export`."""
@@ -5860,6 +5926,9 @@ def editor_detect_beats(
     start_frame: int | None = None,
     end_frame: int | None = None,
     force: bool = False,
+    full: bool = False,
+    offset: int | None = None,
+    limit: int | None = None,
 ) -> str:
     """Find the beats of the music on a track — tempo, every beat, the
     downbeats (bar starts) and how hard each beat hits — and, by default, show
@@ -5878,11 +5947,15 @@ def editor_detect_beats(
       (a downbeat or a beat that hits hard).
     - `start_frame` / `end_frame` — only beats in this timeline window.
     - `force` — re-analyse even if this exact file was analysed before.
+    - `full` — return the beat list itself (B-301). By default the answer is a
+      SUMMARY: counts and only the first 8 beats, since a real track has
+      hundreds. With `full`, `offset` / `limit` page the list (at most 1000 a
+      page; `nextOffset` is set while more remain).
 
-    Answers `tempoBpm`, `meter`, `beatSpacingFrames`, per-file facts and
-    `beats`: `[{frame, bar, beat, downbeat, strong, strength, clip}]` in
-    TIMELINE frames (at most 1000; narrow the window or the kind for more).
-    Downbeats are a heuristic (low-end onsets + harmonic change): right on
+    Answers `tempoBpm`, `meter`, `beatSpacingFrames`, per-file facts, the
+    counts (`beatCount`, `downbeatCount`, `strongCount`, `totalBeatsOnTimeline`)
+    and `beats`: `[{frame, bar, beat, downbeat, strong, strength, clip}]` in
+    TIMELINE frames (the first 8, or the page asked for). Downbeats are a heuristic (low-end onsets + harmonic change): right on
     music that marks its bars, possibly a beat off on music that does not.
     Nothing is cut."""
     import json
@@ -5899,6 +5972,11 @@ def editor_detect_beats(
             args[key] = value
     if force:
         args["force"] = True
+    if full:
+        args["full"] = True
+    for key, value in (("offset", offset), ("limit", limit)):
+        if value is not None:
+            args[key] = value
     return json.dumps(
         _op("editor_detect_beats", timeout_ms=BEAT_ANALYSIS_TIMEOUT_MS, **args), indent=2, default=str
     )
@@ -6251,7 +6329,11 @@ def save_project() -> str:
     persist the active shot's grade.json, and regenerate the launcher thumb.
     Autosave already does this on a debounce while editing — call this to force
     an immediate write. Errors if no project is loaded or the session is an
-    unsaved "Untitled" (save it as a project in the app first)."""
+    unsaved "Untitled" (save it as a project in the app first).
+
+    Returns {ok, error, result: {saved, path, thumbRegenerated}} -- nothing
+    else (B-296: it used to attach the whole grade and histogram). Read the
+    grade with `get_state` / `get_grade`."""
     import json
 
     return json.dumps(_op("save_project"), indent=2, default=str)
@@ -7551,6 +7633,9 @@ def motion_get_state() -> str:
         disk, which cannot tell "still rendering" from "stopped on a failure".
         A failed render stops at the failing scene, so `doneSceneIds` is
         exactly what is on disk and `failedSceneId` is what to fix.
+        `outputs` lists each finished scene's file once (`{sceneId,
+        outputPath}`); `unreconciledSceneIds` names the ones the app has not
+        yet taken into Sources (B-301 — the paths used to be listed twice).
       * `scenes` — one row per scene: `index`, `id`, `dur` (SECONDS), its
         absolute `startFrame` in the combined timeline, `layerCount`,
         `scene3dChildCount`, `camera2dKeys`, `camera3dKeys`.

@@ -156,9 +156,13 @@ pub fn probe(path: &Path) -> Result<VideoInfo> {
     let out = ffmpeg_locate::ffprobe()?
         .args([
             "-v", "error",
-            "-select_streams", "v:0",
+            // `v`, not `v:0` (B-298): an audio file's embedded cover art is a
+            // video stream too, and as `v:0` it made an .mp3 probe as a
+            // 90000-fps video. Every video stream is listed with its
+            // disposition so the cover art can be passed over below.
+            "-select_streams", "v",
             "-show_entries",
-            "stream=width,height,avg_frame_rate,r_frame_rate,nb_frames,codec_name,pix_fmt,color_primaries,color_transfer,color_space:format=duration",
+            "stream=width,height,avg_frame_rate,r_frame_rate,nb_frames,codec_name,pix_fmt,color_primaries,color_transfer,color_space:stream_disposition=attached_pic:format=duration",
             "-of", "json",
         ])
         .arg(path)
@@ -185,7 +189,14 @@ pub fn probe(path: &Path) -> Result<VideoInfo> {
     // audio-only source is probed as a real, online item here instead of an
     // error — see `probe_audio_only` below for the actual field-by-field
     // reasoning.
-    let Some(st) = v.get("streams").and_then(|s| s.get(0)) else {
+    // B-298 — a stream flagged `attached_pic` is cover art (an mp3's / m4a's
+    // album picture), not footage: it has no timeline of its own and reports a
+    // meaningless time base. A file whose only "video" is cover art is audio.
+    let Some(st) = v
+        .get("streams")
+        .and_then(|s| s.as_array())
+        .and_then(|streams| streams.iter().find(|st| !is_attached_pic(st)))
+    else {
         return probe_audio_only(path, fmt);
     };
 
@@ -237,6 +248,16 @@ pub fn probe(path: &Path) -> Result<VideoInfo> {
         audio_sample_rate,
         audio_channels,
     })
+}
+
+/// Whether an `ffprobe` stream object carries the `attached_pic` disposition
+/// — an embedded cover image rather than a video track (B-298).
+fn is_attached_pic(stream: &serde_json::Value) -> bool {
+    stream
+        .get("disposition")
+        .and_then(|d| d.get("attached_pic"))
+        .and_then(|a| a.as_i64())
+        == Some(1)
 }
 
 /// B-089 — a pure-audio source (no video stream at all) still returns a real
@@ -836,6 +857,89 @@ mod tests {
         // rather than a gap computed from the wrong packets.
         let csv = "0.0,___\n1.0,___\n2.0,___\n";
         assert_eq!(max_keyframe_gap(csv), DEFAULT_KEYFRAME_INTERVAL_SECS);
+    }
+
+    /// Build an audio file in `dir` with an embedded cover picture: a tone, plus a
+    /// one-frame mjpeg stream flagged `attached_pic` (what a tagged .mp3 / .m4a
+    /// carries). `ext` picks the container; the codec follows from it.
+    fn audio_with_cover_art(dir: &Path, ext: &str) -> std::path::PathBuf {
+        let path = dir.join(format!("cover.{ext}"));
+        let codec = if ext == "mp3" { "libmp3lame" } else { "aac" };
+        let out = crate::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
+            .args(["-hide_banner", "-loglevel", "error", "-y"])
+            .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=1"])
+            .args(["-f", "lavfi", "-i", "testsrc=size=64x64:rate=1"])
+            .args(["-frames:v", "1", "-map", "0:a", "-map", "1:v"])
+            .args(["-c:a", codec, "-c:v", "mjpeg"])
+            .args(["-disposition:v", "attached_pic"])
+            .arg(&path)
+            .output()
+            .expect("spawn ffmpeg");
+        assert!(
+            out.status.success(),
+            "ffmpeg cover-art fixture failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        path
+    }
+
+    /// **B-298.** An audio file whose only video stream is embedded cover art
+    /// probes as AUDIO — no resolution, the nominal 24 fps audio axis — not as a
+    /// picture clip at the art's meaningless 90000 fps time base.
+    #[test]
+    fn an_audio_file_with_cover_art_probes_as_audio_not_video() {
+        if crate::ffmpeg_locate::ffmpeg_path().is_err() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        for ext in ["mp3", "m4a"] {
+            let path = audio_with_cover_art(dir.path(), ext);
+            let info = probe(&path).expect("probe");
+            assert_eq!(
+                info.resolution.width, 0,
+                "{ext}: cover art is not a picture"
+            );
+            assert_eq!(info.resolution.height, 0, "{ext}");
+            assert_eq!(
+                info.fps_num, 24,
+                "{ext}: audio files use the nominal 24 fps"
+            );
+            assert_eq!(info.fps_den, 1, "{ext}");
+            assert!(info.codec.is_empty(), "{ext}: no video codec to report");
+            assert!(info.has_audio, "{ext}");
+            assert!(
+                (info.duration_secs - 1.0).abs() < 0.2,
+                "{ext}: duration {}",
+                info.duration_secs
+            );
+        }
+    }
+
+    /// The other half of B-298: dropping `-select_streams v:0` must not change what
+    /// a real video probes as (this is the file kind the whole editor runs on).
+    #[test]
+    fn a_plain_video_still_probes_as_video() {
+        if crate::ffmpeg_locate::ffmpeg_path().is_err() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("clip.mp4");
+        let out = crate::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
+            .args(["-hide_banner", "-loglevel", "error", "-y"])
+            .args(["-f", "lavfi", "-i", "testsrc=size=320x240:rate=24"])
+            .args(["-t", "1", "-pix_fmt", "yuv420p"])
+            .arg(&path)
+            .output()
+            .expect("spawn ffmpeg");
+        assert!(out.status.success());
+        let info = probe(&path).expect("probe");
+        assert_eq!((info.resolution.width, info.resolution.height), (320, 240));
+        assert_eq!(info.fps_num, 24);
+        assert_eq!(info.frame_count, 24);
     }
 
     #[test]

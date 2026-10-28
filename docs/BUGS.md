@@ -29,11 +29,12 @@ Still real:
 
 ## B-318 — no compact MCP way to read a timeline's tracks; `get_timeline` returns every clip (~675K characters on a real edit)
 
-status: **open** · severity: **major** (agents fall back to scripts against the bridge — the owner asked twice "why python? why not MCP?") · area: MCP Edit tools (human+AI parity), related B-296/B-301
+status: **fixed** (2026-10-28) · severity: **major** (agents fall back to scripts against the bridge — the owner asked twice "why python? why not MCP?") · area: MCP Edit tools (human+AI parity), related B-296/B-301
 
 - **found:** 2026-10-28 exporting the voice of "Five Levels": to find which audio tracks hold the VO vs music/SFX the only MCP read is `get_timeline` (13 tracks, hundreds of clips), far too large for an agent; the agent summarised it through the bridge instead.
 - **expected:** `editor_list_tracks` (index, kind, name, gain, muted/hidden/locked, duck source, clip count, distinct sources, total length) and a paged/filtered `get_timeline` (`track`, `range`, `fields`).
 - **also needed (roadmap 0m):** a real audio-only export (WAV, chosen tracks/stems, no picture). Today it means muting tracks, exporting a throwaway video (AAC 192k, lossy) and extracting the audio with ffmpeg.
+- **fix:** `editor_list_tracks` (both servers; `packages/editor/src/trackOps.ts`) answers one compact row per track with no clips: index, kind, name ("Audio 1", as the track header labels it), gain, muted, hidden, locked, sync-locked, duck source and settings, clip count, distinct source file names, first and end frame. `get_timeline` takes optional `track`, `start_frame` / `end_frame` (clips and markers overlapping the window) and `fields` (an unknown field is refused with the valid list); a filtered answer keeps each track's full `clipCount` and every clip's real index. GUI parity is the track headers, which show the same facts. Op-layer e2e in `trackOps.e2e.dom.test.tsx`. **Still open from this entry:** the audio-only export (roadmap 0m).
 
 ## B-317 — the Markers panel lists markers by timeline position only; the owner needs newest-created first (or a sort choice)
 
@@ -50,9 +51,10 @@ status: **open** · severity: **minor** · area: Edit ↔ Motion render placemen
 
 ## B-315 — no MCP tool to toggle a track's sync-lock (GUI only)
 
-status: **open** · severity: **minor** · area: Edit track tools (human+AI parity)
+status: **fixed** (2026-10-28) · severity: **minor** · area: Edit track tools (human+AI parity)
 
 - **found:** 2026-10-28 by the agent doing the Five Levels pacing pass in the live app. The agent used `editor_set_track_locked` instead, which also blocks edits.
+- **fix:** `editor_set_track_sync_locked(track, sync_locked)` (both servers) applies the same `set_track_sync_locked` op the track header's chain button does (one undo step), refusing a bad track or a non-boolean. Tested in `trackOps.e2e.dom.test.tsx`.
 
 ## B-314 — `editor_move_clip`: ok without moving when the linked partner is on a locked track; moves the clip to the end of the clip list (indices shift); a 20 s timeout still executes later
 
@@ -132,9 +134,10 @@ status: **open** · severity: **minor** · area: Edit text fonts
 
 ## B-301 — `editor_detect_beats` / `motion_get_state` return 40-68 KB every call
 
-status: **open** · severity: **minor** · area: MCP answer shapes (see B-296)
+status: **fixed** (2026-10-28) · severity: **minor** · area: MCP answer shapes (see B-296)
 
 - **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. Compact answers by default.
+- **fix:** `motion_get_state` lists a finished scene's output path once: `render.outputs` carries the `{sceneId, outputPath}` rows and `render.unreconciled` (a strict subset of them) became `render.unreconciledSceneIds`. `editor_detect_beats` answers a summary by default (`beatCount`, `downbeatCount`, `strongCount`, tempo, files, and only the first 8 beats); `full: true` returns the list, paged by `offset` / `limit` with `nextOffset`. Tests: `motionOps.test.ts`, `beatOps.e2e.dom.test.tsx`.
 
 ## B-300 — Motion render of a 1920×1080 manifest is right, but a 3840×2160 manifest renders at 7680×4320 (2× scale applied on top of a 4K manifest)
 
@@ -150,9 +153,10 @@ status: **open** · severity: **minor** · area: `editor_trim_clip` op / its doc
 
 ## B-298 — an .mp3 with embedded cover art imports as VIDEO at 90000 fps
 
-status: **open** · severity: **major** · area: media probe (`editor_import_media`)
+status: **fixed** (2026-10-28) · severity: **major** · area: media probe (`editor_import_media`)
 
 - **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Openverse music with cover art: `editor_add_clip` without `track` created a new video track, and durations/source_start had to be given in 90000-per-second units. Expected: audio files probe as audio (cover art ignored or exposed as an image).
+- **fix:** `video::probe` (`crates/apelles-media`) no longer takes the first video stream blindly: a stream flagged `attached_pic` (an mp3 / m4a's cover image, which ffprobe reports at a 90000 fps time base) is skipped, so a file whose only picture is cover art probes as audio (0x0, the nominal audio axis) and `editor_add_clip` without `track` lands it on an audio track (B-259 / B-273). The probe's disk cache namespace became `probe-v2` so wrong answers cached for already-imported files are not served. Rust tests build mp3 and m4a fixtures with cover art through ffmpeg; the plain-video probe is pinned too.
 
 ## B-297 — Motion scene renders come out one frame short; a layer's `dur` does not hide the layer; rendered scenes bring a silent linked-audio clip onto the timeline
 
@@ -162,9 +166,10 @@ status: **open** · severity: **minor** · area: `apelles-motion` render length,
 
 ## B-296 — `get_timeline`, `motion_get_state` and `save_project` answers can reach ~675K characters (save_project returns the whole grade + histogram)
 
-status: **open** · severity: **minor** · area: MCP answer shapes
+status: **fixed** (2026-10-28) · severity: **minor** · area: MCP answer shapes
 
 - **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Huge answers overflow agent context and slow every edit step. Expected: compact answers by default (counts/ids), with detail on request.
+- **fix:** `save_project` answers `{saved, path, thumbRegenerated}` and nothing else (it joined `undo` / `redo` in `app/src/hooks/bridgeOpClasses.ts`, the ops that answer with their own result and no grade, histogram or frame); nothing depended on the old payload, so there is no flag for it. `motion_get_state` and `editor_detect_beats` are B-301; `get_timeline` is sliceable (B-318).
 
 ## B-295 — title/text clip `position_x/y` are offsets from the centre while image/video use a different convention, undocumented
 

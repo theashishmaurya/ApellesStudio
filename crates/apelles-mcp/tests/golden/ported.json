@@ -119,6 +119,8 @@
     "editor_set_track_gain",
     "editor_set_track_hidden",
     "editor_set_track_locked",
+    "editor_set_track_sync_locked",
+    "editor_list_tracks",
     "editor_set_transition",
     "editor_set_waveform_view",
     "editor_slide_clip",
