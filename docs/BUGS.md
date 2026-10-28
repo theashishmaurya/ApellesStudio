@@ -27,6 +27,13 @@ Still real:
 
 ## Open
 
+## B-317 — the Markers panel lists markers by timeline position only; the owner needs newest-created first (or a sort choice)
+
+status: **open** (owner: "log the bug, will solve it later") · severity: **minor** · area: Edit Index panel › Markers list; marker model (no created-at timestamp today)
+
+- **found:** 2026-10-28 by the owner reviewing "Five Levels" with 25 markers (his own review notes mixed with 21 agent "v3 fix" markers): the note he had just added ("Here is a retake :)", 1:20) sat in the middle of the list ordered by timeline time, so new review notes are hard to find. Screenshot: `scratch/bug-refs/markers-panel-sort-order.png`.
+- **expected:** markers carry a creation time (and author: person vs agent); the Markers panel can sort by created (newest first, the default for review) or by timeline position, and filter by author/colour; `editor_list_markers` returns the timestamp and accepts the same sort.
+
 ## B-316 — placed Motion clips keep their old `sourceLen` after the scene is re-rendered shorter
 
 status: **open** · severity: **minor** · area: Edit ↔ Motion render placement
