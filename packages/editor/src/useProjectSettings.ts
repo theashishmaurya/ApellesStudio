@@ -22,6 +22,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
 import type { ProjectSettingsValue } from './ProjectSettingsForm';
+import { writeProjectSettings } from './projectSettingsWrite';
 
 /** B-032/B-034/D-112's own fix, copied verbatim from `useCompositionSize.ts`
  *  (see that file's own doc for the full "why" — a dev-mode HMR teardown
@@ -89,10 +90,9 @@ export function useProjectSettings(): UseProjectSettingsResult {
     // file (`docs/notes/react-compiler-coverage.md`), and `reactCompiler.
     // test.ts` fails on that. Same shape `CanvasSettingsPopover.tsx` uses.
     try {
-      const merged = await invoke<ProjectSettingsValue>('chroma_project_set_settings', {
-        path: null,
-        partial: patch,
-      });
+      // B-323 — through `writeProjectSettings`, so a changed fps reaches the
+      // timelines (or is refused in words if clips would have to move).
+      const merged = await writeProjectSettings(patch);
       setSettings(merged);
     } catch (e) {
       setError(String(e));

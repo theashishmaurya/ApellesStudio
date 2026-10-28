@@ -1149,6 +1149,21 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "16:9 layout is simply measured against the new frame (reframe "
             "the clips yourself, e.g. scale up and offset position_x)."
         ),
+        "timeline_frame_rate": (
+            "B-323/D-424: every timeline has its own frame rate "
+            "(editor_list_timelines and editor_get_state report `fps`); every "
+            "frame number you pass or read (start_frame, editor_set_playhead, "
+            "markers, durationFrames) is counted at it, so check it before "
+            "computing positions from seconds. A project made without media "
+            "starts at 24 fps. set_project_settings(fps) sets the rate of "
+            "EMPTY timelines only and is refused, storing nothing, when a "
+            "timeline with clips runs at a different rate. "
+            "editor_set_timeline_output(fps=...) is the explicit way to "
+            "change one: it converts that timeline's clip starts, fades, "
+            "markers and transitions BY TIME (a 10 s clip stays 10 s, rounded "
+            "to a frame) and leaves a clip's source-native fields untouched. "
+            "Undoable on the open timeline."
+        ),
         "export_by_id": (
             "D-411: editor_export(timeline_id=...) and "
             "editor_export_fcpxml(timeline_id=...) export ANY timeline "
@@ -1566,19 +1581,31 @@ def editor_set_timeline_output(
     width: int | None = None,
     height: int | None = None,
     clear: bool = False,
+    fps: float | None = None,
 ) -> str:
-    """Give a timeline its OWN output size, or put it back on the project's —
-    the tab menu's Size and the Project Settings panel's "This timeline"
-    section (Resolve's per-timeline "Use Project Settings").
+    """Set a timeline's OWN output size and/or its FRAME RATE — the tab menu's Size
+    and the Project Settings panel's "This timeline" section (Resolve's
+    per-timeline "Use Project Settings", plus its timeline frame rate).
 
-    Pass `width` and `height` (even, 16 to 8192; e.g. 1080x1920 for 9:16,
-    1080x1080 for 1:1, 1080x1350 for 4:5), or `clear=true` to follow the
-    project's size again. `id` omitted means the active timeline. The preview
-    canvas, the on-canvas transform handles, `editor_export` (which then
-    defaults to this size) and FCPXML all use it. Clip transforms are
-    fractions of the frame, so nothing on the timeline is moved — a 16:9
-    layout is simply measured against the new frame. Resizing the active
-    timeline is an undoable edit."""
+    **Size.** Pass `width` and `height` (even, 16 to 8192; e.g. 1080x1920 for
+    9:16, 1080x1080 for 1:1, 1080x1350 for 4:5), or `clear=true` to follow the
+    project's size again. The preview canvas, the on-canvas transform handles,
+    `editor_export` (which then defaults to this size) and FCPXML all use it.
+    Clip transforms are fractions of the frame, so nothing on the timeline is
+    moved — a 16:9 layout is simply measured against the new frame.
+
+    **Frame rate.** Pass `fps` (e.g. 24, 25, 30, 29.97, 60; up to 240) to set the
+    rate the timeline's frame numbers are counted in — every `start_frame`,
+    `editor_set_playhead`, marker and `durationFrames` from then on is at this
+    rate, and `editor_export` defaults to it. A timeline with clips is retimed
+    BY TIME: each clip start, fade, marker and transition moves to the same
+    second (rounded to a frame), and a clip's source-native fields are not
+    touched, so a 10 s clip stays 10 s. `editor_list_timelines` reports each
+    timeline's `fps`. `set_project_settings(fps=…)` only carries to EMPTY
+    timelines and refuses otherwise; this is the tool that retimes one with clips.
+
+    `width`/`height`/`clear` and `fps` may be combined. `id` omitted means the
+    active timeline. Changing the active timeline is an undoable edit."""
     import json
 
     args: dict = {}
@@ -1590,6 +1617,8 @@ def editor_set_timeline_output(
         args["height"] = height
     if clear:
         args["clear"] = True
+    if fps is not None:
+        args["fps"] = fps
     return json.dumps(_op("editor_set_timeline_output", **args), indent=2, default=str)
 
 
@@ -6356,6 +6385,13 @@ def set_project_settings(
     the final step) and fps (encoder timebase). `color_space` (`rec709` /
     `rec2020` / `dci-p3` / `srgb`) is **stored + surfaced only** — a real
     colour-managed pipeline is D-004, not this. Returns the merged settings.
+
+    **`fps` also sets the frame rate of the project's EMPTY timelines** (a new
+    project's first timeline takes it, so frame positions you compute at 30 fps
+    mean 30 fps). It never retimes clips: if a timeline already holds clips at a
+    different rate the call is refused and nothing is stored — retime that
+    timeline first with `editor_set_timeline_output(fps=…)`, which converts its
+    clips by time. A project made without media records 24 fps unless you set it.
 
     Needs a saved project loaded (open_project / new_project first)."""
     import json

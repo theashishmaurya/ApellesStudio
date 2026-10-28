@@ -18,6 +18,11 @@
  * `checkTimelineOutput` refuses (odd, too small, too large) is shown in words
  * next to the fields rather than silently corrected.
  *
+ * **Frame rate (B-323).** The same section holds the timeline's own frame
+ * rate, the human half of `editor_set_timeline_output(fps)`: one store action
+ * (`setTimelineRate`), an undoable op that converts every clip, marker and
+ * transition by time, so a 10 s clip stays 10 s at the new rate.
+ *
  * **What it does NOT do.** It does not resize anything on the timeline: clip
  * transforms are fractions of the composition, so a layout made for 16:9 is
  * simply measured against the new frame (reframing to the subject is D-411
@@ -27,7 +32,8 @@ import { useState } from 'react';
 import { Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@apelles/ui';
 
 import { useEditorTimelineStore } from './timelineStore';
-import { checkTimelineOutput, TIMELINE_OUTPUT_PRESETS, type OutputSpec } from './timeline';
+import { checkTimelineOutput, timelineFps, TIMELINE_OUTPUT_PRESETS, type OutputSpec } from './timeline';
+import { FPS_PRESETS } from './ProjectSettingsForm';
 
 type Mode = 'project' | 'preset' | 'custom';
 
@@ -59,9 +65,13 @@ const pillClass = (active: boolean): string =>
  *  which is why a timeline gets its own size at all. */
 const FIRST_PRESET = TIMELINE_OUTPUT_PRESETS[0];
 
+/** How close a timeline's rate must be to a preset to show as that preset. */
+const FPS_MATCH_TOLERANCE = 0.01;
+
 export function TimelineOutputForm() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const setTimelineOutput = useEditorTimelineStore((s) => s.setTimelineOutput);
+  const setTimelineRate = useEditorTimelineStore((s) => s.setTimelineRate);
   const output = timeline?.output ?? null;
   // Presentation state, like `ProjectSettingsForm`'s modes: seeded from the
   // document, kept while the person works. Re-seeded when the open timeline
@@ -77,6 +87,16 @@ export function TimelineOutputForm() {
     setError(null);
     const res = await setTimelineOutput(timeline.id, next);
     if (!res.ok) setError(res.error ?? 'the size could not be set');
+  };
+
+  const currentFps = timelineFps(timeline);
+  // A rate is a preset when it is within rounding of one (30000/1001 is 29.97).
+  const presetFps = FPS_PRESETS.find((f) => Math.abs(f - currentFps) < FPS_MATCH_TOLERANCE);
+
+  const applyRate = async (fps: number) => {
+    setError(null);
+    const res = await setTimelineRate(timeline.id, fps);
+    if (!res.ok) setError(res.error ?? 'the frame rate could not be set');
   };
 
   const commitCustom = () => {
@@ -162,11 +182,31 @@ export function TimelineOutputForm() {
           </label>
         </div>
       )}
+      <span className="text-text-secondary mt-1">Frame rate</span>
+      <Select
+        value={String(presetFps ?? currentFps)}
+        onValueChange={(v) => {
+          void applyRate(Number(v));
+        }}
+      >
+        <SelectTrigger className="h-7 w-full text-xs" data-chroma-field="timeline-fps">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {presetFps === undefined && <SelectItem value={String(currentFps)}>{+currentFps.toFixed(3)} fps</SelectItem>}
+          {FPS_PRESETS.map((f) => (
+            <SelectItem key={f} value={String(f)}>
+              {f} fps
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       {error && <p className="text-[11px] text-red-400">{error}</p>}
       <p className="text-text-secondary/60 text-[10px] leading-snug">
         {output
           ? `This timeline renders at ${output.width}×${output.height}, whatever the project size is.`
-          : 'This timeline follows the project size above.'}
+          : 'This timeline follows the project size above.'}{' '}
+        Changing the frame rate keeps every clip at the same time in seconds.
       </p>
     </div>
   );

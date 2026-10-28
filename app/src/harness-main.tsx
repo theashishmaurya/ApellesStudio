@@ -317,6 +317,14 @@ function installInvokeStub(): void {
       else delete next.output;
       fakeProject.timelines.set(id, next);
     },
+    chroma_timeline_set_rate: (args) => {
+      const { id, fps } = args as { id: string; fps: number };
+      const tl = fakeProject.timelines.get(id);
+      if (!tl) throw new Error(`no timeline with id ${id}`);
+      // Rate only: the by-time clip conversion is `retimeTimeline`'s (and the
+      // Rust command's) job, pinned by their own tests, not this manual harness.
+      fakeProject.timelines.set(id, { ...tl, rate: { num: fps, den: 1 } });
+    },
     chroma_timeline_duplicate: (args): Timeline => {
       const { id, name, activate } = args as { id: string; name?: string | null; activate?: boolean };
       const tl = fakeProject.timelines.get(id);

@@ -58,7 +58,7 @@ import { trackEvent } from '@apelles/bridge';
 // other store that caches per-project state is measured against what this one
 // holds. See `packages/store/README.md`.
 import { createSharedStore, registerProjectIdentityAuthority } from '@apelles/store';
-import { useEditorTimelineStore, type ProjectSettingsValue } from '@apelles/editor';
+import { useEditorTimelineStore, writeProjectSettings, type ProjectSettingsValue } from '@apelles/editor';
 
 import { useEditorStore } from './useEditorStore';
 import { useChromaStore, ChromaVideoInfo } from './useChromaStore';
@@ -484,10 +484,9 @@ export const useSessionStore = createSharedStore<SessionState>('app.session', (s
       return { ok: false, error: 'no saved project — save this session as a project first' };
     }
     try {
-      const merged = await invoke<ProjectSettings>('chroma_project_set_settings', {
-        path: projectPath,
-        partial,
-      });
+      // B-323 — through the editor package's one settings writer, so a changed
+      // fps reaches the timelines (or is refused in words when it would retime clips).
+      const merged = await writeProjectSettings(partial, projectPath);
       set({ projectSettings: merged });
       return { ok: true, settings: merged };
     } catch (e: any) {

@@ -32,7 +32,8 @@ opinion about Tauri, the GPU, or which project happens to be open right now
     had been living under an Edit-tab name since D-041 — see that module's doc
     for the call-graph evidence. D-411 Phase 0 added by-id management on the
     manifest: `create_timeline` (seeds the active timeline's rate, B-284),
-    `rename_timeline`, `set_timeline_output`, `duplicate_timeline` (new clip
+    `rename_timeline`, `set_timeline_output`, `set_timeline_rate` (B-323:
+    converts by time, `Timeline::set_rate`), `duplicate_timeline` (new clip
     ids, grade files copied to them), `delete_timeline` (never the last; the
     active index follows) and `resolve_timeline_by_id_and_settings`.
     `tests/fixtures/pre_d411_project.json` is a real shipped `project.json`

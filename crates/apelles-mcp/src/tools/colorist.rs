@@ -1217,6 +1217,13 @@ impl ApellesMcp {
     `rec2020` / `dci-p3` / `srgb`) is **stored + surfaced only** — a real
     colour-managed pipeline is D-004, not this. Returns the merged settings.
 
+    **`fps` also sets the frame rate of the project's EMPTY timelines** (a new
+    project's first timeline takes it, so frame positions you compute at 30 fps
+    mean 30 fps). It never retimes clips: if a timeline already holds clips at a
+    different rate the call is refused and nothing is stored — retime that
+    timeline first with `editor_set_timeline_output(fps=…)`, which converts its
+    clips by time. A project made without media records 24 fps unless you set it.
+
     Needs a saved project loaded (open_project / new_project first)."#
     )]
     pub async fn set_project_settings(

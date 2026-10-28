@@ -56,7 +56,11 @@ fn build_from_shots(manifest: &ProjectManifest) -> Timeline {
     // shots' own media actually is. Seeded from the first shot's source, the
     // same one `infer_settings_from_clip` derives the project's output spec
     // from — see `crate::infer_timeline_rate`.
-    tl.rate = crate::infer_timeline_rate(tuples.first().map(|(_, path, _, _)| path.as_str()));
+    tl.rate = crate::infer_timeline_rate(tuples.first().map(|(_, path, _, _)| path.as_str()))
+        // B-323 — media that gave no rate (none, or unprobeable): the project's
+        // recorded one (D-038), so `set_project_settings(fps=30)` made before
+        // the first timeline existed still reaches it.
+        .or_else(|| crate::project_default_rate(&manifest.settings));
     tl
 }
 
@@ -213,6 +217,23 @@ pub fn set_timeline_output(
 ) -> Result<(), String> {
     let idx = timeline_index(manifest, id)?;
     manifest.timelines[idx].output = output;
+    manifest.modified = now_rfc3339();
+    Ok(())
+}
+
+/// Change the frame rate of the timeline with `id`, keeping every clip,
+/// marker and transition at the same time in seconds
+/// ([`apelles_timeline::Timeline::set_rate`]). `fps` is a float as the tools
+/// and the GUI carry it; it becomes the exact rational (29.97 -> 30000/1001).
+pub fn set_timeline_rate(manifest: &mut ProjectManifest, id: &str, fps: f64) -> Result<(), String> {
+    let rate = apelles_timeline::fps_to_rational(fps).ok_or_else(|| {
+        format!(
+            "a frame rate must be positive and at most {} fps (got {fps})",
+            apelles_timeline::MAX_TIMELINE_FPS
+        )
+    })?;
+    let idx = timeline_index(manifest, id)?;
+    manifest.timelines[idx].set_rate(rate)?;
     manifest.modified = now_rfc3339();
     Ok(())
 }
@@ -436,6 +457,66 @@ mod tests {
         let clips = &out.timelines[0].tracks[0].clips;
         assert_eq!(clips.len(), 1);
         assert_eq!(clips[0].source_path, "/a.mov");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// B-323: a project made without media (so nothing to infer a rate from)
+    /// records the default rate in its settings instead of leaving an implicit
+    /// fallback, and the first timeline built later takes whatever the
+    /// project's rate is by then, not 24.
+    #[test]
+    fn a_new_project_records_a_rate_and_its_first_timeline_takes_it() {
+        let root = tmp("b323_first_timeline");
+        let (dir, mut manifest) = new_project_in(&root, "NoMedia", &[]).unwrap();
+        assert_eq!(
+            manifest.settings.fps,
+            Some(apelles_timeline::DEFAULT_FPS),
+            "a default is recorded, not left implicit"
+        );
+        manifest.settings.fps = Some(30.0);
+        let out = ensure_timeline(&dir, manifest, false).unwrap();
+        assert_eq!(
+            out.timelines[0].rate,
+            Some(apelles_types::Rational::new(30, 1))
+        );
+        assert_eq!(out.timelines[0].fps(), 30.0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// B-323: retiming one timeline by id converts its timeline-frame fields
+    /// by time and leaves the other timelines alone.
+    #[test]
+    fn set_rate_retimes_one_timeline_by_id() {
+        let (root, _dir, mut m) = three_timelines("b323_set_rate");
+        m.timelines[0].rate = Some(apelles_types::Rational::new(24, 1));
+        m.timelines[0].tracks = vec![Track {
+            clips: vec![Clip {
+                id: "c".into(),
+                start_frame: 48,
+                duration: 24,
+                source_len: 24,
+                ..Clip::default()
+            }],
+            ..Track::default()
+        }];
+        set_timeline_rate(&mut m, "a", 30.0).unwrap();
+        let c = &m.timelines[0].tracks[0].clips[0];
+        assert_eq!((c.start_frame, c.duration), (60, 30), "seconds preserved");
+        assert_eq!(
+            m.timelines[0].rate,
+            Some(apelles_types::Rational::new(30, 1))
+        );
+        assert_eq!(m.timelines[1].rate, None, "another timeline is untouched");
+        assert!(set_timeline_rate(&mut m, "a", 0.0).is_err());
+        assert_eq!(
+            set_timeline_rate(&mut m, "zz", 30.0).unwrap_err(),
+            "no timeline with id zz"
+        );
+        set_timeline_rate(&mut m, "b", 29.97).unwrap();
+        assert_eq!(
+            m.timelines[1].rate,
+            Some(apelles_types::Rational::new(30000, 1001))
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

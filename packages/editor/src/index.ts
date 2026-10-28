@@ -134,6 +134,7 @@ export {
 export type { EditLibraryMode } from './editLibrary';
 export { TimelineSwitcher } from './TimelineSwitcher';
 export { useEditorTimelineStore } from './timelineStore';
+export { writeProjectSettings } from './projectSettingsWrite';
 // D-246 — the clip Inspector's tab model. Exported for `@apelles/debug`'s
 // `debug_set_inspector_tab`, which validates against the same list the panel
 // renders rather than restating it.
