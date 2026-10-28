@@ -3435,6 +3435,23 @@ def editor_move_track(from_index: int, to_index: int) -> str:
 
 
 @mcp.tool()
+def editor_remove_track(track: int, with_clips: bool = False) -> str:
+    """Remove the track at `track` (D-421). No edit removes a track on
+    its own any more: removing or moving a track's last clip, or ripple
+    deleting it, leaves the track in place and empty, so track indices stay
+    stable across clip edits. This is the explicit way to take one away (the
+    GUI's track-header Delete Track runs the same op).
+
+    Every LATER track's index moves down by one — re-read the timeline
+    before using an index you composed earlier. A track that still holds
+    clips is refused unless `with_clips=True`, in which case its clips go
+    with it (one undo step). A locked track is refused."""
+    import json
+
+    return json.dumps(_op("editor_remove_track", track=track, withClips=with_clips), indent=2, default=str)
+
+
+@mcp.tool()
 def editor_set_track_gain(track: int, gain: float) -> str:
     """Set an audio track's linear gain multiplier (1.0 = unity, 0.0 = muted)."""
     import json

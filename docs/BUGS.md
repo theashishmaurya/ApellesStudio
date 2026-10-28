@@ -98,9 +98,12 @@ status: **open** · severity: **major** · area: `editor_add_clip` linked-audio 
 
 ## B-304 — emptying a track deletes it, silently renumbering every later track; clip indices stop being start-sorted after a move
 
-status: **open** · severity: **major** · area: Edit track pruning / clip indexing
+status: **fixed** (2026-10-28, D-421) · severity: **major** · area: Edit track pruning / clip indexing
 
 - **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. Index-based follow-up calls then hit the wrong track/clip (hit while moving the marble background clip).
+- **cause:** two separate rules. (1) `pruneIfEmptyTrack` (TS) / `prune_if_empty` (Rust mirror) deleted any track a `remove` or cross-track `move` emptied (a ripple delete composes `remove`), shifting every later track index. (2) `move` re-inserted the moved clip with `push`, at the end of the destination's clip list, and re-positioned a linked sibling in place, so the list stopped being in start order.
+- **fix:** D-421 — no clip edit removes a track; `remove_track` (track header, new `editor_remove_track`) is the only way. `move` inserts at the start-order index and re-sorts a sibling's track.
+- **verification:** `timeline.test.ts` "emptied tracks stay (D-421)" and "move keeps clip indices in start order (B-304)"; `timelineStore.test.ts` "emptied tracks stay; selection follows a remove_track"; `rippleEdits.e2e.dom.test.tsx` B-304 block (a call by the original index after emptying track 0 still hits its track; `editor_remove_track` refusals and one undo step; a move keeps indices sorted); `apelles-timeline` tests `remove_keeps_a_track_left_with_zero_clips`, `move_clip_keeps_clip_indices_in_start_order`. Not verified live.
 
 ## B-303 — title/text clips can't be lengthened (`editor_trim_clip`: 'no earlier material')
 

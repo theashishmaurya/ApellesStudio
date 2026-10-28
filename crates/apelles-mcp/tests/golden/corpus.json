@@ -4895,6 +4895,28 @@
       }
     },
     {
+      "name": "editor_remove_track",
+      "description": "Remove the track at `track` (D-421). No edit removes a track on\n    its own any more: removing or moving a track's last clip, or ripple\n    deleting it, leaves the track in place and empty, so track indices stay\n    stable across clip edits. This is the explicit way to take one away (the\n    GUI's track-header Delete Track runs the same op).\n\n    Every LATER track's index moves down by one \u2014 re-read the timeline\n    before using an index you composed earlier. A track that still holds\n    clips is refused unless `with_clips=True`, in which case its clips go\n    with it (one undo step). A locked track is refused.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "with_clips": {
+            "default": false,
+            "title": "With Clips",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "track"
+        ],
+        "type": "object",
+        "title": "editor_remove_trackArguments"
+      }
+    },
+    {
       "name": "editor_remove_transition",
       "description": "Delete one transition, restoring the plain cut. `id` comes from\n    `editor_list_transitions`. An unknown id is an error naming the ids that DO\n    exist, not a silent no-op.\n\n    Touches no clip: the two clips never moved to make room for the transition\n    (they stay abutting and non-overlapping \u2014 D-224), so removing it re-trims\n    nothing and ripples nothing. Undoable in the GUI like any other edit.\n    Returns the transition that was removed.",
       "inputSchema": {
@@ -18060,6 +18082,55 @@
             "ids": [
               "v_editor_remove_media.ids[0]"
             ]
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_remove_track",
+      "case": "minimal",
+      "arguments": {
+        "track": 37
+      },
+      "requests": [
+        {
+          "op": "editor_remove_track",
+          "args": {
+            "track": 37,
+            "withClips": false
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_remove_track",
+      "case": "full",
+      "arguments": {
+        "track": 37,
+        "with_clips": true
+      },
+      "requests": [
+        {
+          "op": "editor_remove_track",
+          "args": {
+            "track": 37,
+            "withClips": true
           },
           "timeout_ms": 20000
         }

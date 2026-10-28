@@ -153,9 +153,7 @@ describe('editor_remove_clip reports what it actually removed (B-221)', () => {
     expect(env.result.removed).toHaveLength(2);
 
     // Both halves are actually gone from the live timeline, not just from
-    // the report. (Track 1 held only `a0`, so removing it prunes the whole
-    // now-empty track — expected, and why this checks every track rather
-    // than assuming track 1 still exists at that index.)
+    // the report. (Track 1 held only `a0`; it stays, empty — D-421.)
     const tl = useEditorTimelineStore.getState().timeline!;
     const remainingIds = tl.tracks.flatMap((t) => t.clips.map((c) => c.id));
     expect(remainingIds).not.toContain('v0');

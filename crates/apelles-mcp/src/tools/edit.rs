@@ -161,6 +161,10 @@ fn default_editor_move_clip_ripple() -> bool {
     false
 }
 
+fn default_editor_remove_track_with_clips() -> bool {
+    false
+}
+
 fn default_editor_set_clip_eq_clear() -> bool {
     false
 }
@@ -750,6 +754,13 @@ pub struct EditorAddTrackArgs {
 pub struct EditorMoveTrackArgs {
     pub from_index: i64,
     pub to_index: i64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorRemoveTrackArgs {
+    pub track: i64,
+    #[serde(default = "default_editor_remove_track_with_clips")]
+    pub with_clips: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -3897,6 +3908,30 @@ impl ApellesMcp {
             .set("from", p.from_index)
             .set("to", p.to_index);
         let env = self.op("editor_move_track", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_remove_track",
+        description = r#"Remove the track at `track` (D-421). No edit removes a track on
+    its own any more: removing or moving a track's last clip, or ripple
+    deleting it, leaves the track in place and empty, so track indices stay
+    stable across clip edits. This is the explicit way to take one away (the
+    GUI's track-header Delete Track runs the same op).
+
+    Every LATER track's index moves down by one — re-read the timeline
+    before using an index you composed earlier. A track that still holds
+    clips is refused unless `with_clips=True`, in which case its clips go
+    with it (one undo step). A locked track is refused."#
+    )]
+    pub async fn editor_remove_track(
+        &self,
+        Parameters(p): Parameters<EditorRemoveTrackArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("track", p.track)
+            .set("withClips", p.with_clips);
+        let env = self.op("editor_remove_track", args).await?;
         Ok(render::json_text(&env))
     }
 

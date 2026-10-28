@@ -4145,6 +4145,37 @@ export function useEditorControl(): void {
         return { ok: true, from, to };
       },
 
+      // D-421 (B-304) — no edit deletes a track any more, so taking one away is
+      // this explicit call (the track header's Delete Track is its GUI side;
+      // both run `remove_track`). A track that still holds clips is refused
+      // unless `withClips` says so: removing one is the only way this tool can
+      // delete material, and an index composed against a stale numbering
+      // should not be able to do that by accident. The store's own remap moves
+      // the selection off the renumbered tracks by clip id.
+      editor_remove_track: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const track = Math.round(Number(a?.track));
+        const tr = Number.isFinite(track) ? tl.tracks[track] : undefined;
+        if (!tr) return { error: `no track ${a?.track} (0..${tl.tracks.length - 1})` };
+        if (tr.locked) return { error: `track ${track} is locked — unlock it first` };
+        if (tr.clips.length > 0 && a?.withClips !== true) {
+          return {
+            error:
+              `track ${track} still holds ${tr.clips.length} clip(s) — pass with_clips=true to remove them with it, ` +
+              `or remove/move them first`,
+          };
+        }
+        useEditorTimelineStore.getState().applyOp({ kind: 'remove_track', track });
+        return {
+          ok: true,
+          track,
+          removedClips: tr.clips.length,
+          tracks: useEditorTimelineStore.getState().timeline?.tracks.length ?? 0,
+          note: 'every later track index moved down by one',
+        };
+      },
+
       // ---- compositing transform + keyframes (D-182's stacking + zoom) ----
       editor_set_clip_transform: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;

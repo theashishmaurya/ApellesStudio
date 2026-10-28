@@ -92,6 +92,7 @@
     "editor_remove_gap",
     "editor_remove_marker",
     "editor_remove_media",
+    "editor_remove_track",
     "editor_remove_transition",
     "editor_reprobe_media",
     "editor_roll_edit",

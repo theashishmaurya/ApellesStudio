@@ -984,9 +984,10 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
     const dur = timelineDuration(after);
     set((s) => ({ timeline: after, playhead: Math.min(s.playhead, Math.max(0, dur - 1)) }));
 
-    // Auto-decommission (owner, live) — `applyOpPure` may have just pruned
-    // one or more emptied tracks for `remove`/cross-track `move` (see
-    // `pruneIfEmptyTrack`'s own doc), which renumbers every later track.
+    // The track list changed length: a `remove_track`, or an op that inserts
+    // a track (`place_on_top`, a linked audio half on a fresh track). Edits no
+    // longer prune an emptied track (D-421, B-304), but these still renumber
+    // every later track.
     //
     // D-129 — this used to derive the ONE pruned index from the op itself
     // (`op.track` for `remove`, `op.fromTrack` for a cross-track `move`).

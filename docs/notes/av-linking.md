@@ -138,7 +138,7 @@ and `timeline.ts`, mirrored field-for-field as every other op is:
 | `move` | every member shifts by the same delta, each staying on its own track | Premiere "click either and drag, the linked clips move as one" |
 | `trim_start` / `trim_end` | every member takes the identical clamped delta | Resolve "trimming … automatically applies to the other" |
 | `split` | every member cut at the same frame; the two halves are two *intact* pairs (left keeps the group, right halves move to `{group}·{frame}`) | Premiere "the Razor Tool cuts both tracks at once" |
-| `remove` | every member deleted; each emptied track pruned | Resolve "…or deleting…" |
+| `remove` | every member deleted; an emptied track stays, empty (D-421 — it used to be pruned) | Resolve "…or deleting…" |
 | `unlink` | dissolves the **complete** group | Palmier's own `unlink` semantics; Premiere `Clip > Unlink`; Resolve *Unlink Clips* |
 
 **When an op cannot be applied identically to every member it is rejected
@@ -182,11 +182,11 @@ references rather than invented: deleting one member deletes the whole group.
   on the next media list (see above), so an existing project's media starts
   producing linked audio halves on drop with no manual re-import.
 - **`selectedGap`**: `timelineStore` used to remap a selected gap's track index
-  across a prune. A linked delete can prune two tracks at indices the op never
-  names, so that remap has no sound basis any more and a gap selection is now
-  cleared on any track-count change. Clip selections still follow the prune —
-  by stable id now, which is correct for any op. Deliberate contract change,
-  documented in the store and its tests.
+  across a prune. A linked delete could prune two tracks at indices the op never
+  named, so that remap had no sound basis and a gap selection is cleared on any
+  track-count change. Clip selections follow by stable id, which is correct for
+  any op. Since D-421 an edit no longer prunes at all; the track count changes
+  only on `remove_track` or a track-inserting op, and the same remap covers it.
 
 ## Built (D-129), then closed out (D-138)
 

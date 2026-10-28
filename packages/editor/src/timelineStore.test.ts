@@ -523,7 +523,9 @@ describe('selection (D-118)', () => {
   });
 });
 
-describe('auto-decommission empty tracks — selection follows the prune (owner, live)', () => {
+// D-421 (B-304) — an edit never deletes a track; only `remove_track` does, and
+// selection follows THAT renumbering by stable clip id.
+describe('emptied tracks stay; selection follows a remove_track', () => {
   function threeTrackTimeline(): Timeline {
     return {
       id: 't1',
@@ -540,62 +542,16 @@ describe('auto-decommission empty tracks — selection follows the prune (owner,
     useEditorTimelineStore.setState({ timeline: threeTrackTimeline(), selection: [], selectedGap: null });
   });
 
-  it('removing the sole selected clip on track 0 clears its own selection and shifts a later track-index selection down', () => {
-    useEditorTimelineStore.setState({
-      selection: [
-        { track: 0, id: 'a' }, // lives on the track about to be pruned
-        { track: 2, id: 'c' }, // lives two tracks later — must become track 1
-      ],
-    });
+  it('removing the last clip on track 0 keeps the track, so no later index moves', () => {
+    useEditorTimelineStore.setState({ selection: [{ track: 2, id: 'c' }] });
     useEditorTimelineStore.getState().applyOp({ kind: 'remove', track: 0, clip: 0 });
     const s = useEditorTimelineStore.getState();
-    expect(s.timeline?.tracks).toHaveLength(2); // track 0 pruned
-    expect(s.selection).toEqual([{ track: 1, id: 'c' }]); // 'a' gone with its track, 'c' shifted 2->1
-  });
-
-  // D-129 — this used to assert that a gap on a LATER track shifted down by
-  // one. That remap was only ever correct because exactly one track could be
-  // pruned per op, at an index the op itself named. A linked A/V delete can
-  // prune two tracks at once, at indices the op never names, so the remap has
-  // no sound basis any more and any change in track count now simply clears
-  // the gap. Deliberate contract change, not a regression: a gap selection is
-  // transient and trivially re-made by clicking, and a silently-wrong track
-  // index is far worse than none. Clip selections keep following the prune
-  // exactly as before (the test above) — they have stable ids to follow.
-  it('any track prune clears a selected gap outright — no index remap to get wrong', () => {
-    useEditorTimelineStore.setState({ selection: [], selectedGap: { track: 2, frame: 0 } });
-    useEditorTimelineStore.getState().applyOp({ kind: 'remove', track: 0, clip: 0 });
-    expect(useEditorTimelineStore.getState().timeline?.tracks).toHaveLength(2);
-    expect(useEditorTimelineStore.getState().selectedGap).toBeNull();
-  });
-
-  // D-129 — a dropped clip's audio half APPENDS an audio track. Appending
-  // renumbers nothing, so neither selection may be disturbed by it (the
-  // clear above is gated on the list shrinking, not merely changing).
-  it('adding a track leaves both selections alone', () => {
-    useEditorTimelineStore.setState({
-      selection: [{ track: 2, id: 'c' }],
-      selectedGap: null,
-    });
-    useEditorTimelineStore.getState().applyOp({ kind: 'add_track', trackKind: 'audio' });
-    const s = useEditorTimelineStore.getState();
-    expect(s.timeline?.tracks).toHaveLength(4);
+    expect(s.timeline?.tracks).toHaveLength(3);
+    expect(s.timeline?.tracks[0].clips).toEqual([]);
     expect(s.selection).toEqual([{ track: 2, id: 'c' }]);
   });
 
-  it('a selected gap survives an op that prunes nothing', () => {
-    const t = threeTrackTimeline();
-    t.tracks[0].clips.push({ id: 'a2', name: 'A2', source_path: '/a2.mov', source_start: 0, duration: 50, source_len: 50, start_frame: 100 } as never);
-    useEditorTimelineStore.setState({ timeline: t, selection: [], selectedGap: { track: 2, frame: 0 } });
-    useEditorTimelineStore.getState().applyOp({ kind: 'remove', track: 0, clip: 0 }); // track 0 keeps 'a2'
-    expect(useEditorTimelineStore.getState().timeline?.tracks).toHaveLength(3);
-    expect(useEditorTimelineStore.getState().selectedGap).toEqual({ track: 2, frame: 0 });
-  });
-
-  /** D-129 — the real reason the remap had to go: one `remove` on a linked
-   *  pair empties (and prunes) BOTH its tracks, and the surviving selection
-   *  still has to end up pointing at the right track. */
-  it('a linked A/V delete prunes two tracks at once and selection still lands correctly', () => {
+  it('a linked A/V delete that empties two tracks keeps both, and a later selection stays put', () => {
     const linked = {
       id: 't1',
       name: 'Timeline',
@@ -605,29 +561,43 @@ describe('auto-decommission empty tracks — selection follows the prune (owner,
         { kind: 'video', clips: [{ id: 'c', name: 'C', source_path: '/c.mov', source_start: 0, duration: 100, source_len: 100, start_frame: 0 }] },
       ],
     } as unknown as Timeline;
-    useEditorTimelineStore.setState({ timeline: linked, selection: [{ track: 2, id: 'c' }], selectedGap: null });
+    useEditorTimelineStore.setState({ timeline: linked, selection: [{ track: 2, id: 'c' }], selectedGap: { track: 2, frame: 0 } });
     useEditorTimelineStore.getState().applyOp({ kind: 'remove', track: 0, clip: 0 });
     const s = useEditorTimelineStore.getState();
-    expect(s.timeline?.tracks).toHaveLength(1); // BOTH the video and audio track pruned
-    expect(s.selection).toEqual([{ track: 0, id: 'c' }]); // followed 2 -> 0, not 2 -> 1
+    expect(s.timeline?.tracks.map((t) => t.clips.length)).toEqual([0, 0, 1]);
+    expect(s.selection).toEqual([{ track: 2, id: 'c' }]);
+    expect(s.selectedGap).toEqual({ track: 2, frame: 0 });
   });
 
-  it('a selection on a track BEFORE the pruned one is untouched', () => {
-    useEditorTimelineStore.setState({ selection: [{ track: 0, id: 'a' }] });
-    // empty track 2's only clip by moving it onto track 1 (cross-track)
+  it('a cross-track move that empties its source track keeps it', () => {
     useEditorTimelineStore.getState().applyOp({ kind: 'move', fromTrack: 2, toTrack: 1, clip: 0, startFrame: 200 });
-    expect(useEditorTimelineStore.getState().timeline?.tracks).toHaveLength(2);
-    expect(useEditorTimelineStore.getState().selection).toEqual([{ track: 0, id: 'a' }]); // unaffected
+    const s = useEditorTimelineStore.getState();
+    expect(s.timeline?.tracks.map((t) => t.clips.map((c) => c.id))).toEqual([['a'], ['b', 'c'], []]);
   });
 
-  it('does not touch selection when no track was actually pruned (track still has a clip)', () => {
-    const t = threeTrackTimeline();
-    t.tracks[0].clips.push({ id: 'a2', name: 'A2', source_path: '/a2.mov', source_start: 0, duration: 50, source_len: 50, start_frame: 100 } as never);
-    useEditorTimelineStore.setState({ timeline: t, selection: [{ track: 2, id: 'c' }] });
-    useEditorTimelineStore.getState().applyOp({ kind: 'remove', track: 0, clip: 0 }); // track 0 still has 'a2' left
+  it('remove_track renumbers later tracks and selection follows by id; a gap selection is cleared', () => {
+    useEditorTimelineStore.setState({
+      selection: [
+        { track: 0, id: 'a' }, // goes with its track
+        { track: 2, id: 'c' }, // must become track 1
+      ],
+      selectedGap: { track: 2, frame: 0 },
+    });
+    useEditorTimelineStore.getState().applyOp({ kind: 'remove_track', track: 0 });
     const s = useEditorTimelineStore.getState();
-    expect(s.timeline?.tracks).toHaveLength(3);
-    expect(s.selection).toEqual([{ track: 2, id: 'c' }]); // untouched — nothing pruned
+    expect(s.timeline?.tracks).toHaveLength(2);
+    expect(s.selection).toEqual([{ track: 1, id: 'c' }]);
+    expect(s.selectedGap).toBeNull();
+  });
+
+  // D-129 — a dropped clip's audio half APPENDS an audio track. Appending
+  // renumbers nothing, so the selection is not disturbed by it.
+  it('adding a track leaves the selection alone', () => {
+    useEditorTimelineStore.setState({ selection: [{ track: 2, id: 'c' }], selectedGap: null });
+    useEditorTimelineStore.getState().applyOp({ kind: 'add_track', trackKind: 'audio' });
+    const s = useEditorTimelineStore.getState();
+    expect(s.timeline?.tracks).toHaveLength(4);
+    expect(s.selection).toEqual([{ track: 2, id: 'c' }]);
   });
 });
 

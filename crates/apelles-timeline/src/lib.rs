@@ -3014,7 +3014,14 @@ impl Timeline {
         }
         clip.start_frame = to_start_frame;
         let moved_id = clip.id.clone();
-        self.tracks[to_track].clips.push(clip);
+        // B-304 — at its place in start order, not at the end of the Vec: the
+        // clip indices callers address by stay sorted by start frame.
+        let dest = &mut self.tracks[to_track].clips;
+        let at = dest
+            .iter()
+            .filter(|o| o.start_frame < to_start_frame)
+            .count();
+        dest.insert(at, clip);
         // D-106 — propagate to every OTHER sync-locked track, same
         // `to_start_frame`/`duration` shift, only when this move's own
         // ripple actually fired (no shift on `to_track` means nothing to
@@ -3028,8 +3035,7 @@ impl Timeline {
         // `from_track` shifted every later index on that track down by one,
         // and the ripple/sync shifts above may have moved siblings too. The
         // absolute target already accounts for both, so this is a plain
-        // assignment, never a second relative shift. Runs BEFORE the prune
-        // below, while every track index is still the one validated against.
+        // assignment, never a second relative shift.
         for (ti, sib_id, target) in &sibling_targets {
             if let Some(sib) = self.tracks.get_mut(*ti).and_then(|t| {
                 t.clips
@@ -3039,10 +3045,12 @@ impl Timeline {
                 sib.start_frame = *target;
             }
         }
-        // Only the source track can have been emptied by a cross-track move
-        // — a same-track move never changes either track's clip count.
-        if from_track != to_track {
-            self.prune_if_empty(from_track);
+        // B-304 — a sibling re-positioned in place can pass its neighbours.
+        // D-421 — an emptied source track stays; no track is renumbered.
+        for (ti, _, _) in &sibling_targets {
+            if let Some(t) = self.tracks.get_mut(*ti) {
+                t.clips.sort_by_key(|c| c.start_frame);
+            }
         }
         Ok(())
     }
@@ -3293,8 +3301,8 @@ impl Timeline {
     /// **D-129 — deleting one member of an A/V link group deletes every
     /// member**, matching both references ("any change made to one — moving,
     /// trimming, or deleting — automatically applies to the other"). Refused
-    /// whole if any member's own track is locked. Each emptied track is
-    /// pruned, highest index first so the lower ones stay valid.
+    /// whole if any member's own track is locked. An emptied track stays
+    /// (D-421): no edit renumbers the tracks.
     pub fn remove(&mut self, track: usize, clip_idx: usize) -> Result<(), TimelineError> {
         let t = self
             .tracks
@@ -3320,30 +3328,10 @@ impl Timeline {
             .unwrap_or_else(|| vec![(track, clip_idx)]);
         targets.sort_unstable();
         targets.reverse();
-        let mut touched: Vec<usize> = targets.iter().map(|(ti, _)| *ti).collect();
         for (ti, ci) in targets {
             self.tracks[ti].clips.remove(ci);
         }
-        touched.sort_unstable();
-        touched.dedup();
-        for ti in touched.into_iter().rev() {
-            self.prune_if_empty(ti);
-        }
         Ok(())
-    }
-
-    /// Auto-decommission an empty track (owner, live: "if we have an empty
-    /// track we auto decommission it and renumber the tracks"). Mirrors
-    /// `timeline.ts::pruneIfEmptyTrack` field-for-field — see that function's
-    /// own doc for the full reasoning (deliberately narrow, only the track a
-    /// `remove`/cross-track `move_clip` call just emptied, not a blanket
-    /// sweep; a real, checked-live deviation from Premiere/Resolve's own
-    /// "manual Delete Empty Tracks only" default). `Vec::remove` renumbers
-    /// every later track by construction.
-    fn prune_if_empty(&mut self, track: usize) {
-        if self.tracks.get(track).is_some_and(|t| t.clips.is_empty()) {
-            self.tracks.remove(track);
-        }
     }
 
     /// D-105 — the ONE ripple op besides `add_clip`'s own insertion ripple
@@ -4604,15 +4592,16 @@ mod tests {
         t.move_clip(0, 1, 1, 0, false).unwrap(); // B -> track 1 @ [0,50)
         t.move_clip(0, 1, 1, 0, true).unwrap(); // C -> track 1 @ [0,200), ripples B later
         let starts: Vec<i64> = t.tracks[1].clips.iter().map(|c| c.start_frame).collect();
+        // In start order (B-304): C at its sorted index ahead of B.
         assert_eq!(
             starts,
-            vec![200, 0],
+            vec![0, 200],
             "B shifted to make room for C, not overlapped"
         );
         let durations: Vec<i64> = t.tracks[1].clips.iter().map(|c| c.duration).collect();
         assert_eq!(
             durations,
-            vec![50, 200],
+            vec![200, 50],
             "only start_frame moved, durations untouched"
         );
 
@@ -4709,81 +4698,44 @@ mod tests {
         );
     }
 
-    // --- auto-decommission empty tracks (owner, live) -----------------------
-    // Mirrors `timeline.ts`'s own `pruneIfEmptyTrack` test coverage
-    // field-for-field — see that function's doc comment for the real
-    // Premiere/Resolve reference check behind the "only the directly-edited
-    // track, never a blanket sweep" scoping.
+    // --- emptied tracks stay (D-421, B-304) ----------------------------------
+    // Mirrors `timeline.ts`'s "emptied tracks stay" / "move keeps clip indices
+    // in start order" coverage.
 
     #[test]
-    fn remove_prunes_a_track_left_with_zero_clips() {
+    fn remove_keeps_a_track_left_with_zero_clips() {
         let mut t = Timeline::from_shots(&shots()); // track 0: A, B, C
         t.add_track(TrackKind::Video); // track 1, empty
-        t.move_clip(0, 0, 1, 0, false).unwrap(); // A -> track 1; track 0 still has B, C
-        assert_eq!(
-            t.tracks.len(),
-            2,
-            "moving one of three clips off does not prune"
-        );
-        t.remove(0, 0).unwrap(); // remove B (now index 0 on track 0)
-        t.remove(0, 0).unwrap(); // remove C — track 0 now has zero clips
-        assert_eq!(t.tracks.len(), 1, "the now-empty track 0 was pruned");
-        assert_eq!(
-            t.tracks[0].clips[0].name, "A",
-            "surviving track renumbers to index 0"
-        );
+        t.move_clip(0, 0, 1, 0, false).unwrap(); // A -> track 1
+        t.remove(0, 0).unwrap();
+        t.remove(0, 0).unwrap(); // track 0 now has zero clips
+        assert_eq!(t.tracks.len(), 2, "the emptied track 0 stays");
+        assert!(t.tracks[0].clips.is_empty());
+        assert_eq!(t.tracks[1].clips[0].name, "A", "track 1 keeps its index");
     }
 
     #[test]
-    fn remove_does_not_prune_a_track_that_still_has_a_clip_left() {
-        let mut t = Timeline::from_shots(&shots()); // 3 clips, one track
-        t.remove(0, 0).unwrap(); // drop A, B and C remain
-        assert_eq!(t.tracks.len(), 1, "still has 2 clips left — not pruned");
-        assert_eq!(t.tracks[0].clips.len(), 2);
-    }
-
-    #[test]
-    fn remove_never_sweeps_an_unrelated_already_empty_track() {
-        let mut t = Timeline::from_shots(&shots());
-        t.add_track(TrackKind::Video); // track 1, deliberately empty, untouched by this op
-        t.remove(0, 0).unwrap(); // track 0 still has B, C left — not pruned either
-        assert_eq!(
-            t.tracks.len(),
-            2,
-            "the unrelated empty track survives — only the directly-edited track prunes"
-        );
-    }
-
-    #[test]
-    fn move_clip_prunes_the_source_track_when_it_becomes_empty() {
+    fn move_clip_keeps_the_emptied_source_track() {
         let mut t = Timeline::from_shots(&shots());
         t.add_track(TrackKind::Video); // track 1
-        // Move A, then B, then C off track 0 one at a time — indices shift
-        // as clips leave, so always take index 0.
         t.move_clip(0, 0, 1, 0, false).unwrap();
         t.move_clip(0, 0, 1, 200, false).unwrap();
-        assert_eq!(t.tracks.len(), 2, "still one clip left on track 0");
-        t.move_clip(0, 0, 1, 500, false).unwrap(); // the last one — track 0 is now empty
-        assert_eq!(
-            t.tracks.len(),
-            1,
-            "source track pruned once it lost its last clip"
-        );
-        assert_eq!(
-            t.tracks[0].clips.len(),
-            3,
-            "all three landed on the surviving track"
-        );
+        t.move_clip(0, 0, 1, 500, false).unwrap(); // the last one
+        assert_eq!(t.tracks.len(), 2, "the emptied source track stays");
+        assert!(t.tracks[0].clips.is_empty());
+        assert_eq!(t.tracks[1].clips.len(), 3);
     }
 
     #[test]
-    fn move_clip_same_track_never_prunes() {
-        let mut t = Timeline::from_shots(&shots());
-        t.move_clip(0, 0, 0, 1000, false).unwrap(); // reposition within the same track
+    fn move_clip_keeps_clip_indices_in_start_order() {
+        let mut t = Timeline::from_shots(&shots()); // A, B, C back to back
+        let first_end = t.tracks[0].clips[2].start_frame + t.tracks[0].clips[2].duration;
+        t.move_clip(0, 0, 0, first_end + 100, false).unwrap(); // A to after C
+        let names: Vec<&str> = t.tracks[0].clips.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(
-            t.tracks.len(),
-            1,
-            "clip count on the track is unchanged by a same-track move"
+            names,
+            ["B", "C", "A"],
+            "the moved clip is at its sorted index"
         );
     }
 
@@ -6334,9 +6286,9 @@ mod tests {
         let mut t = linked_pair();
         t.add_track(TrackKind::Video); // track 2
         t.move_clip(0, 0, 2, 400, false).unwrap();
-        // The old V1 was emptied by the move and auto-decommissioned, so the
-        // remaining tracks renumber: audio at 0, the new video track at 1.
-        assert_eq!(t.tracks.len(), 2, "the emptied V1 was pruned");
+        // The old V1 was emptied by the move and stays, empty (D-421).
+        assert_eq!(t.tracks.len(), 3, "the emptied V1 stays");
+        assert!(t.tracks[0].clips.is_empty());
         let audio = t
             .tracks
             .iter()
@@ -6349,11 +6301,7 @@ mod tests {
             "the audio half followed in TIME but stayed on an audio track — it does \
              NOT follow the video half onto the video half's new track"
         );
-        let video = t
-            .tracks
-            .iter()
-            .find(|tr| tr.kind == TrackKind::Video)
-            .expect("the destination video track");
+        let video = &t.tracks[2]; // the destination video track
         assert_eq!(video.clips[0].id, "v");
         assert_eq!(video.clips[0].start_frame, 400);
     }
@@ -6548,8 +6496,8 @@ mod tests {
     #[test]
     fn remove_deletes_every_member_of_the_link_group() {
         let mut t = linked_pair();
-        // Keep another clip on each track so neither is pruned away, which
-        // would make "did both go?" ambiguous.
+        // Keep another clip on each track so "did both go?" is not answered
+        // by an empty track alone.
         t.tracks[0].clips.push(c("keep_v", 500, 10));
         t.tracks[1].clips.push(c("keep_a", 500, 10));
         t.remove(0, 0).unwrap();
@@ -6560,13 +6508,11 @@ mod tests {
     }
 
     #[test]
-    fn remove_of_a_linked_pair_prunes_every_track_it_empties() {
+    fn remove_of_a_linked_pair_keeps_every_track_it_empties() {
         let mut t = linked_pair(); // one clip on each of two tracks
         t.remove(1, 0).unwrap(); // grab the audio half
-        assert!(
-            t.tracks.is_empty(),
-            "both tracks were emptied by the one delete, so both auto-decommission"
-        );
+        assert_eq!(t.tracks.len(), 2, "both emptied tracks stay (D-421)");
+        assert!(t.tracks.iter().all(|tr| tr.clips.is_empty()));
     }
 
     #[test]

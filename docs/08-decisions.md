@@ -6,7 +6,16 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
-## D-420 — Edit by text: one cut planner and `editor_cut_words` for words, fillers and pauses; word-aware silences; a whole-file transcript that checks its own coverage
+## D-421 — An edit never deletes a track: emptied tracks stay, `editor_remove_track` removes one explicitly
+
+**decided (2026-10-28)** · fixes B-304 · supersedes the auto-decommission rule (the owner's earlier "if we have an empty track we auto decommission it and renumber the tracks")
+
+- **Context.** `remove`, a cross-track `move` and therefore a ripple delete pruned any track they emptied, renumbering every later track in the middle of an edit. An agent's next call, already composed against the old numbering, then hit a different track (B-304, hit live moving the marble background clip). The same report found a moved clip appended to the END of its track's clip list, so clip indices stopped following start order and index-based follow-ups hit the wrong clip.
+- **Options.** (a) Keep pruning and report the renumbering in each answer: every queued follow-up is still wrong, and the GUI has no answer to carry it. (b) Prune lazily, on save: renumbers between two calls instead of inside one, just as silently. (c) Address tracks by a stable id everywhere: right in the long run, but every `editor_*` tool, the Index panel and both MCP servers address tracks by index today. (d) **Keep empty tracks; removing a track is an explicit act**, as in Premiere Pro and DaVinci Resolve, which both keep empty tracks until the user deletes them.
+- **Choice: (d).** No clip edit changes the track count; `remove_track` is the one op that does, from the track header's Delete Track or the new `editor_remove_track(track, with_clips=False)` (both MCP servers, 252 → 253; refuses a track that still holds clips unless `with_clips`, and a locked one). The store's existing selection remap by clip id covers it. A `move` inserts the clip at its start-order index and re-sorts a linked sibling's track, so clip indices stay start-sorted (TS reducer and the `apelles-timeline` mirror both).
+- **Cost, stated plainly.** Empty tracks now accumulate until someone removes them, which is what the owner originally asked not to have; the trade is stable indices for every caller.
+
+Edit by text: one cut planner and `editor_cut_words` for words, fillers and pauses; word-aware silences; a whole-file transcript that checks its own coverage
 
 **decided (2026-10-28)** · roadmap 0l · fixes B-287, B-288, B-289 · detail: `docs/notes/edit-by-text.md`, `docs/notes/asr-backends-and-harness.md` §4.4
 

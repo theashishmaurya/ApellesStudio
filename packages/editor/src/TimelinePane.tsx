@@ -3031,8 +3031,7 @@ export function TimelinePane() {
    *  render's captured `tracks`. Batch ops below apply several `EditOp`s in
    *  one synchronous pass, and every one of them can renumber clips (and now,
    *  with A/V links, clips on tracks the op never named — `remove` deletes a
-   *  linked clip's whole group, `split` cuts every member, either can prune a
-   *  track). Re-reading between ops is what keeps the second op in a batch
+   *  linked clip's whole group, `split` cuts every member). Re-reading between ops is what keeps the second op in a batch
    *  from acting on a stale index; `null` simply means that clip is already
    *  gone (it was some other selected clip's linked half), which is a normal
    *  outcome here, not an error. This replaces the previous

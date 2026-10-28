@@ -115,12 +115,11 @@ function buildFixture(): Timeline {
     name: 'clip drag fixture',
     rate: { num: FPS, den: 1 },
     tracks: [
-      // `decoy` exists for one reason: a cross-track move that EMPTIES its
-      // source track prunes that track (`pruneIfEmptyTrack`, by the owner's own
-      // explicit ask), which renumbers everything below it and would make test
-      // 4's "did it land on track 1" assertion read `0` for a move that
-      // actually worked. It is parked 100 seconds out, far outside every snap
-      // radius and every landing under test, so it changes nothing else.
+      // `decoy` keeps track 0 non-empty after a cross-track move. Emptied
+      // tracks no longer prune (D-421), so it is no longer load-bearing for
+      // test 4's "did it land on track 1", but it keeps the fixture a
+      // two-clip source track. It is parked 100 seconds out, far outside every
+      // snap radius and every landing under test, so it changes nothing else.
       { kind: 'video', clips: [clip('a', CLIP_START), clip('decoy', 2400)] },
       { kind: 'video', clips: [] },
     ],

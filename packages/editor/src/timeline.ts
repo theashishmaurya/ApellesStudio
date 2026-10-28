@@ -1545,7 +1545,7 @@ export function checkAddClip(
     if (tl.tracks.length === 0) return { ok: true };
     return {
       ok: false,
-      reason: `no track ${track} — the timeline has tracks 0..${tl.tracks.length - 1}. Call get_timeline for the current indices (removing a clip can prune the tracks it emptied), or add the clip without a track to get a new one.`,
+      reason: `no track ${track} — the timeline has tracks 0..${tl.tracks.length - 1}. Call get_timeline for the current indices, or add the clip without a track to get a new one.`,
     };
   }
   if (isGeneratedPictureClip(clip) && tr.kind !== 'video') {
@@ -2748,8 +2748,7 @@ export function applyMusicEdit(
   }
 
   // 2. Lift every piece now wholly inside the range. `checkMusicEdit` refused
-  //    a range covering the whole track, so no removal here can empty (and so
-  //    prune and renumber) it.
+  //    a range covering the whole track, so no removal here can empty it.
   let removed = 0;
   for (;;) {
     const tr = next.tracks[e.track];
@@ -2921,27 +2920,26 @@ function shiftClipsAtOrAfter(tr: Track, threshold: number, delta: number): void 
   }
 }
 
-/** Auto-decommission an empty track (owner, live: "if we have an empty
- *  track we auto decommission it and renumber the tracks... not
- *  unnecessary empty tracks"). Deliberately narrow, not a blanket sweep of
- *  every track in the timeline: only the ONE track a `remove`/cross-track
- *  `move` op just directly emptied gets pruned here — a track that started
- *  this op already empty (e.g. one the owner just added via `add_track` and
- *  hasn't placed a clip on yet) is left alone. Checked live against real
- *  reference behavior, not assumed: neither Premiere Pro nor DaVinci
- *  Resolve auto-removes an empty track by default (both require an
- *  explicit "Delete Empty Tracks" action) — this is a deliberate, informed
- *  deviation from that convention for this specific op class, per the
- *  owner's own explicit ask, not an oversight. `Vec`/array removal renumbers
- *  the remaining tracks by construction (index-derived labels, `labels[i]`
- *  in `TimelinePane.tsx`, are already correct with no further change) — the
- *  caller (`timelineStore.ts::applyOp`) is responsible for remapping any
- *  *selection* state that held a track index across this call, the same
- *  class of index-shift the track-reorder drag's own `trackIndexAfterMove`
- *  already has to handle. Mirrors `apelles-timeline::Timeline::{remove,
- *  move_clip}`'s own end-of-function prune exactly. */
-function pruneIfEmptyTrack(tracks: Track[], trackIdx: number): void {
-  if (tracks[trackIdx]?.clips.length === 0) tracks.splice(trackIdx, 1);
+/** D-421 (B-304) — an edit never deletes a track. Emptying a track by
+ *  `remove`, a cross-track `move` or a ripple delete leaves it in place,
+ *  empty, at the same index; only `remove_track` (the track header's Delete
+ *  Track, `editor_remove_track`) takes one away. This used to auto-prune the
+ *  emptied track (the owner's earlier "no unnecessary empty tracks" ask, a
+ *  deliberate deviation from Premiere/Resolve, which both keep empty tracks
+ *  until an explicit "Delete Empty Tracks"), which renumbered every later
+ *  track in the middle of an edit: an agent's next index-based call, already
+ *  composed against the old numbering, then landed on a different track (hit
+ *  live moving the marble background clip). A track index is now stable
+ *  across every clip edit, which is what both callers address tracks by. */
+
+/** B-304 — keep `tr.clips` in start order after an op re-positioned clips in
+ *  place (a `move`'s linked siblings). Stable, so two clips on one frame keep
+ *  their relative order. Index-addressed ops (every `editor_*` clip tool, the
+ *  Index panel) number a track's clips in this order, so a move that left the
+ *  moved clip at the END of the list silently renumbered every clip after its
+ *  old slot. */
+function sortClipsByStart(tr: Track): void {
+  tr.clips.sort((a, b) => a.start_frame - b.start_frame);
 }
 
 /** The sync-lock version of `shiftClipsAtOrAfter` (D-106) — mirrors
@@ -4678,7 +4676,7 @@ function clamp01(v: number): number {
  *  `editor_move_track` MCP op can reuse it verbatim instead of re-deriving
  *  it. Needed because `move_track` reorders WITHOUT changing the track
  *  list's length, so `timelineStore.ts::applyOp`'s own generic selection
- *  remap — gated on the list SHRINKING (see `pruneIfEmptyTrack`'s doc) —
+ *  remap — gated on the list SHRINKING (a `remove_track`, D-421) —
  *  never fires for it; every `move_track` call site is responsible for
  *  calling this itself.
  *
@@ -6371,7 +6369,13 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       shiftClipsAtOrAfter(next.tracks[op.toTrack], op.startFrame, movingDurTimeline);
     }
     moved.start_frame = op.startFrame;
-    destClips.push(moved);
+    // B-304 — at its place in start order, not at the end of the list: the
+    // clip indices callers address by stay sorted by start frame.
+    destClips.splice(
+      destClips.filter((o) => o.start_frame < moved.start_frame).length,
+      0,
+      moved,
+    );
     // D-106 — propagate to every OTHER sync-locked track, same shift, only
     // when this move's own ripple actually fired.
     if (overlaps && op.ripple) {
@@ -6382,17 +6386,15 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // was validated with: splicing the primary out of `fromTrack` shifted
     // every later index there, and the ripple/sync shifts may have moved
     // siblings too. The target is absolute and already accounts for both, so
-    // this is a plain assignment, never a second relative shift. Runs BEFORE
-    // the prune below, while every track index is still the validated one.
+    // this is a plain assignment, never a second relative shift.
     for (const [ti, sibId, target] of siblingTargets) {
       const sib = next.tracks[ti]?.clips.find((s) => s.id === sibId && s.id !== moved.id);
       if (sib) sib.start_frame = target;
     }
-    // Auto-decommission — only the source track can have been emptied by a
-    // cross-track move; a same-track move never changes clip *count* on
-    // either track. Prune AFTER `toTrack`'s own mutations above, and before
-    // returning, so the caller's own selection-remap sees the final shape.
-    if (op.fromTrack !== op.toTrack) pruneIfEmptyTrack(next.tracks, op.fromTrack);
+    // B-304 — a sibling re-positioned in place can pass its neighbours.
+    for (const ti of new Set(siblingTargets.map(([ti]) => ti))) sortClipsByStart(next.tracks[ti]);
+    // D-421 — an emptied source track stays (see `sortClipsByStart`'s neighbour
+    // doc): no track is renumbered by a move.
     return next;
   }
 
@@ -6421,9 +6423,8 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // implicit (nothing occupies that `start_frame` range any more).
       // D-129 — deleting one member of an A/V link group deletes every
       // member (Resolve's own "…or deleting… automatically applies to the
-      // other"). Refused whole if any member's track is locked; each emptied
-      // track prunes, highest index first so lower ones stay valid. Mirrors
-      // `apelles-timeline::Timeline::remove`. B-197 — both that rule and the
+      // other"). Refused whole if any member's track is locked. An emptied
+      // track stays (D-421). Mirrors `apelles-timeline::Timeline::remove`. B-197 — both that rule and the
       // index bound live in `checkRemove` now, so a caller (the batched
       // `ripple_delete_ranges` below) can report WHICH refusal it hit instead
       // of this case's silent `return tl`.
@@ -6433,8 +6434,6 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       targets.sort((a, b) => b[0] - a[0] || b[1] - a[1]);
       const next = clone(tl);
       for (const [ti, ci] of targets) next.tracks[ti].clips.splice(ci, 1);
-      const touched = [...new Set(targets.map(([ti]) => ti))].sort((a, b) => b - a);
-      for (const ti of touched) pruneIfEmptyTrack(next.tracks, ti);
       return next;
     }
     case 'remove_gap': {
