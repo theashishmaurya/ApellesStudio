@@ -69,6 +69,15 @@ status: **open** · severity: **major** (each hit blocks the agent for the full 
   completion of long `invoke`s (the check, still and proxy commands) rather than the MCP
   bridge.
 
+## B-325 — a clip bigger or smaller than the timeline frame sits at its native pixel footprint: a Motion scene render shows only its centre quarter, in the preview and in the export
+
+status: **fixed** (2026-10-28, **D-425**) · severity: **major** · area: clip sizing (`chroma::edit` compositor + `timelineExport.ts` footprints), `@apelles/editor` Inspector, MCP
+
+- **found:** 2026-10-28 from the owner's screenshot of "The Domino" (`scratch/bug-refs/domino-vertical-cut-off.png`). A Motion scene render (manifest 1080x1920 -> file 2160x3840, D-342) placed on a 1080x1920 timeline showed at Width 2160 / Height 3840, Scale 1, so a quarter of it was visible. The export matches the preview (B-281), so the delivered file was cropped too. Agents had been working around it with `scale=0.5` (Five Levels, Black October). Same class for any media larger or smaller than the frame.
+- **cause:** `Clip.scale` multiplies the clip's *native* footprint (D-353) and nothing ever fitted that footprint to the frame; there was no per-clip or per-timeline input scaling at all (every NLE has one).
+- **fix:** an input-scaling mode (`fit` / `fill` / `native`) per clip, a default per timeline stamped onto each clip as it is placed, applied by both renderers through one function (D-425). A same-aspect source now lands exactly full-frame at `scale = 1`. Old clips keep `native`. Tests: `apelles_timeline::scaling` + `edit.rs` compositor tests, `clipScaling.test.ts`, `clipScaling.e2e.dom.test.tsx` (op layer), `timelineExportScaling.ffmpeg.test.ts` (a real 2160x3840 export on a 1080x1920 timeline, pixels read back).
+- **left open:** clips the Rust clipper/timeline builders create directly (no add-clip op) stay `native` until set; FCPXML export reads `fit`/`fill` only when `sourceInfo` supplies the source size.
+
 ## B-324 — the `counter` primitive cannot zero-pad, so a timer cannot read `0:09.00`
 
 status: **open** · severity: **minor** · area: Motion primitives (`Counter.tsx`) · found 2026-10-28

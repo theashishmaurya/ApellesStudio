@@ -99,7 +99,7 @@ export function listTracks(tl: Timeline) {
  *  always returned. A test pins this list to the DTO's real keys. */
 export const CLIP_FIELDS = [
   'index', 'id', 'name', 'sourcePath', 'startFrame', 'duration', 'sourceStart', 'sourceLen', 'sourceFps',
-  'linkGroup', 'opacity', 'positionX', 'positionY', 'scale', 'boxWidth', 'boxHeight', 'rotation',
+  'linkGroup', 'opacity', 'positionX', 'positionY', 'scale', 'boxWidth', 'boxHeight', 'scaling', 'rotation',
   'cropLeft', 'cropTop', 'cropRight', 'cropBottom', 'keyframes', 'fadeInFrames', 'fadeOutFrames',
   'fadeInCurve', 'fadeOutCurve', 'fadeInCurveName', 'fadeOutCurveName', 'volume', 'pan', 'eqBands',
   'eqActive', 'text', 'highlights',

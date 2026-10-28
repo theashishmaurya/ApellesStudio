@@ -749,19 +749,45 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
         "editor_export",
     ],
     "compositing": {
+        "scaling": (
+            "`scaling` on editor_set_clip_transform (D-425, fixes B-325) is how a "
+            "clip's SOURCE is sized into the timeline frame, i.e. what `scale = 1` "
+            "means — DaVinci Resolve's per-clip 'Input Scaling' / Premiere's 'Set "
+            "to Frame Size'. `fit`: the whole picture, scaled up or down until it "
+            "touches the frame on its tight axis (letterbox/pillarbox on the "
+            "other); a source whose aspect matches the frame fills it exactly. "
+            "`fill`: scaled until it covers the frame, the overflow cropped by the "
+            "frame edge. `native`: one source pixel per frame pixel, no resize. A "
+            "newly placed clip (editor_add_clip, a drag from the library, edit_in) "
+            "is stamped with its timeline's default (`editor_set_timeline_output "
+            "default_scaling`, `fit` unless changed); a clip saved BEFORE D-425 "
+            "has no mode and is `native`, so an old project does not change look — "
+            "set `scaling='fit'` on such a clip to fit it. `get_timeline` reports "
+            "every clip's `scaling` and the timeline's `defaultScaling`. Resolve's "
+            "'Stretch' is `box_width=1, box_height=1`. `box_width`/`box_height`, "
+            "when set, override `scaling` entirely; `crop_*` keeps the fitted "
+            "WIDTH and gives the box the cropped picture's aspect. Applies to "
+            "footage and stills only (a title or adjustment clip is generated at "
+            "the frame's own size and refuses a mode)."
+        ),
         "scale": (
             "`scale` on editor_set_clip_transform/editor_export is a stacking / "
             "picture-in-picture primitive, NOT a 'fill this exact box' primitive. "
-            "`overlay_width = the clip's OWN NATIVE footprint in the composition "
-            "* scale`, in BOTH engines — so `scale = 1.0` means 'this clip at its "
-            "own size in the composition', NOT 'fill the frame': a 1280x720 "
-            "source in a 1920x1080 composition is two thirds of the frame wide at "
-            "`scale = 1.0`. D-353 (fixes B-208, 2026-09-18) made the EXPORT agree "
-            "with that. It used to read `scale` as a plain fraction of the output "
+            "`overlay_width = the clip's FOOTPRINT in the composition * scale`, in "
+            "BOTH engines, where the footprint is set by the clip's `scaling` mode "
+            "(D-425, fixes B-325; see the `scaling` entry): `fit` (the default for "
+            "a newly placed clip) sizes the whole source into the frame, so `scale "
+            "= 1.0` means 'fitted' and a source with the frame's aspect (a Motion "
+            "scene render on a timeline of its manifest's size) fills it exactly "
+            "with NO `scale = 0.5` workaround; `native` (what a clip saved before "
+            "D-425 has) is the source's own pixel size, so a 1280x720 source in a "
+            "1920x1080 composition is two thirds of the frame wide at `scale = "
+            "1.0`. D-353 (fixes B-208, 2026-09-18) made the EXPORT agree with "
+            "that. It used to read `scale` as a plain fraction of the output "
             "canvas (`overlay_width = canvas_width * scale`), which is the same "
             "number only when a clip's source resolution matches the project "
-            "composition — the usual case, but never a rule — so a clip cut from "
-            "a differently-sized source exported at a different size than the "
+            "composition — the usual case, but never a rule — so a clip cut from a "
+            "differently-sized source exported at a different size than the "
             "preview had shown. The direction was chosen deliberately: making the "
             "PREVIEW read a canvas fraction instead would have silently resized "
             "every clip in every existing project carrying a non-default `scale`, "
@@ -771,48 +797,47 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "exact box (D-346 closed the one case where that was false — see "
             "B-223). The overlay's HEIGHT is the interesting part: in the live "
             "preview (Rust `composite_layer_onto`, D-136, "
-            "app/src-tauri/src/chroma/edit.rs) it is the overlay's WIDTH times "
-            "the clip's own POST-CROP aspect ratio, which is exactly what the "
-            "export's default `'fit'` asks ffmpeg for (`h='-2'`), so the two "
-            "agree. D-346 (fixes B-218/B-223, 2026-09-18) made that true: it used "
-            "to be the clip's fit-to-canvas footprint's height times `scale`, "
-            "i.e. the UNCROPPED aspect ratio — the same number only for an "
-            "uncropped clip that sets neither `box_width` nor `box_height`, which "
-            "is every clip in every project before that date and why nothing had "
-            "diverged. The preview still has no 'stretch' concept at all; it "
-            "always behaves as `'fit'`. In export (`timelineExport.ts`'s "
-            "`buildClipFilterChain`) it depends on `editor_export`'s "
-            "`fit_overrides` (D-184, fixing B-074): the default, `'fit'`, lets "
-            "ffmpeg auto-compute height from the clip's own real post-crop aspect "
-            "ratio (undistorted, but will not exactly fill an arbitrary target "
-            "box); the explicit opt-in `'stretch'` forces the height from `scale` "
-            "the same native-footprint way (`native_height_in_composition * "
-            "scale`), so the box keeps the UNCROPPED source's shape whatever the "
-            "crop did to the real picture — correct only for a genuine "
-            "same-aspect PIP bubble or a deliberate distort effect. (D-353 "
-            "changed `'stretch'` too, for the same reason: `scale` has to mean "
-            "ONE thing, so both modes read it as a native-footprint multiple and "
-            "`fit_overrides` decides only where the HEIGHT comes from. For a "
-            "source the same shape as the canvas — `'stretch'`'s own main use — "
-            "the box is still canvas-shaped, exactly as before.) Before D-184, "
-            "export had no 'fit' option at all — every overlay was forced to the "
-            "canvas's aspect ratio unconditionally, which is what made a "
-            "full-width/half-height stacked layout mathematically impossible for "
-            "any canvas. Read `editor_export`'s own docstring for the complete "
-            "`fit_overrides` contract before compositing more than one clip onto "
-            "a canvas."
+            "app/src-tauri/src/chroma/edit.rs) it is the overlay's WIDTH times the "
+            "clip's own POST-CROP aspect ratio, which is exactly what the export's "
+            "default `'fit'` asks ffmpeg for (`h='-2'`), so the two agree. D-346 "
+            "(fixes B-218/B-223, 2026-09-18) made that true: it used to be the "
+            "clip's fit-to-canvas footprint's height times `scale`, i.e. the "
+            "UNCROPPED aspect ratio — the same number only for an uncropped clip "
+            "that sets neither `box_width` nor `box_height`, which is every clip "
+            "in every project before that date and why nothing had diverged. The "
+            "preview still has no 'stretch' concept at all; it always behaves as "
+            "`'fit'`. In export (`timelineExport.ts`'s `buildClipFilterChain`) it "
+            "depends on `editor_export`'s `fit_overrides` (D-184, fixing B-074): "
+            "the default, `'fit'`, lets ffmpeg auto-compute height from the clip's "
+            "own real post-crop aspect ratio (undistorted, but will not exactly "
+            "fill an arbitrary target box); the explicit opt-in `'stretch'` forces "
+            "the height from `scale` the same native-footprint way "
+            "(`native_height_in_composition * scale`), so the box keeps the "
+            "UNCROPPED source's shape whatever the crop did to the real picture — "
+            "correct only for a genuine same-aspect PIP bubble or a deliberate "
+            "distort effect. (D-353 changed `'stretch'` too, for the same reason: "
+            "`scale` has to mean ONE thing, so both modes read it as a "
+            "native-footprint multiple and `fit_overrides` decides only where the "
+            "HEIGHT comes from. For a source the same shape as the canvas — "
+            "`'stretch'`'s own main use — the box is still canvas-shaped, exactly "
+            "as before.) Before D-184, export had no 'fit' option at all — every "
+            "overlay was forced to the canvas's aspect ratio unconditionally, "
+            "which is what made a full-width/half-height stacked layout "
+            "mathematically impossible for any canvas. Read `editor_export`'s own "
+            "docstring for the complete `fit_overrides` contract before "
+            "compositing more than one clip onto a canvas."
         ),
         "full_width_half_height_recipe": (
             "To land a clip in exactly one half of a stacked comparison layout "
-            "(e.g. the top half of a 9:16 canvas) with `fit_overrides` left at "
-            "its default `'fit'`, `scale` alone will NOT give you an exact "
-            "half-height box — the height follows the clip's own cropped aspect "
-            "ratio, not the canvas's. Recipe: get the clip's native width/height "
-            "from editor_import_media's probe result; choose crop_top/crop_bottom "
-            "(or crop_left/crop_right) so the CROPPED frame's aspect ratio equals "
-            "the target box's aspect ratio (target_w / target_h); THEN set scale "
-            "so target_w == the clip's own native width in composition pixels * "
-            "scale — i.e. `scale = target_w / native_width`, NOT `target_w / "
+            "(e.g. the top half of a 9:16 canvas) with `fit_overrides` left at its "
+            "default `'fit'`, `scale` alone will NOT give you an exact half-height "
+            "box — the height follows the clip's own cropped aspect ratio, not the "
+            "canvas's. Recipe: get the clip's native width/height from "
+            "editor_import_media's probe result; choose crop_top/crop_bottom (or "
+            "crop_left/crop_right) so the CROPPED frame's aspect ratio equals the "
+            "target box's aspect ratio (target_w / target_h); THEN set scale so "
+            "target_w == the clip's own native width in composition pixels * scale "
+            "— i.e. `scale = target_w / native_width`, NOT `target_w / "
             "canvas_width` (D-353/B-208; for a source at the composition's own "
             "size those are the same number, which is why the old wording worked "
             "for every same-size project). crop is applied before scale. "
@@ -820,7 +845,12 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "of the canvas — in the LIVE PREVIEW too, since D-338/B-201 — and it "
             "does not center or clamp the box into a slot for you, and ffmpeg "
             "rounds the computed height to the nearest even pixel, so treat it as "
-            "approximate when computing an offset against it."
+            "approximate when computing an offset against it. With a D-425 "
+            "`scaling` of `fit` or `fill` (a newly placed clip is `fit`) the base "
+            "is the clip's FITTED width, not `native_width`: `scale = target_w / "
+            "fitted_width`, which is `target_w / canvas_width` when the source has "
+            "the canvas's aspect — or sidestep the arithmetic with "
+            "`box_width`/`box_height`."
         ),
         "position_and_crop_units": (
             "position_x / position_y name the overlay box's TOP-LEFT CORNER "
@@ -1582,8 +1612,10 @@ def editor_set_timeline_output(
     height: int | None = None,
     clear: bool = False,
     fps: float | None = None,
+    default_scaling: str | None = None,
 ) -> str:
-    """Set a timeline's OWN output size and/or its FRAME RATE — the tab menu's Size
+    """Set a timeline's OWN output size, its FRAME RATE and/or how NEW clips are
+    sized into its frame — the tab menu's Size
     and the Project Settings panel's "This timeline" section (Resolve's
     per-timeline "Use Project Settings", plus its timeline frame rate).
 
@@ -1604,8 +1636,19 @@ def editor_set_timeline_output(
     timeline's `fps`. `set_project_settings(fps=…)` only carries to EMPTY
     timelines and refuses otherwise; this is the tool that retimes one with clips.
 
-    `width`/`height`/`clear` and `fps` may be combined. `id` omitted means the
-    active timeline. Changing the active timeline is an undoable edit."""
+    **Default scaling (D-425, B-325).** Pass `default_scaling` (`"fit"`,
+    `"fill"` or `"native"`) to choose how a clip PLACED from now on is sized
+    into this timeline's frame (Resolve's project-level Input Scaling): `fit`
+    (the default) shows the whole picture and fills the frame exactly when the
+    source has the frame's aspect — a 2160x3840 Motion render on a 1080x1920
+    timeline lands full-frame. It is stamped onto each clip as it is placed, so
+    changing it never moves a clip already on the timeline; change one clip
+    with `editor_set_clip_transform(scaling=…)`. `editor_list_timelines` and
+    `get_timeline` report `defaultScaling`.
+
+    `width`/`height`/`clear`, `fps` and `default_scaling` may be combined. `id`
+    omitted means the active timeline. Changing the active timeline is an
+    undoable edit."""
     import json
 
     args: dict = {}
@@ -1619,6 +1662,8 @@ def editor_set_timeline_output(
         args["clear"] = True
     if fps is not None:
         args["fps"] = fps
+    if default_scaling is not None:
+        args["default_scaling"] = default_scaling
     return json.dumps(_op("editor_set_timeline_output", **args), indent=2, default=str)
 
 
@@ -3852,6 +3897,7 @@ def editor_set_clip_transform(
     box_height: float | None = None,
     clear_box_width: bool = False,
     clear_box_height: bool = False,
+    scaling: str | None = None,
     rotation: float | None = None,
     crop_left: float | None = None,
     crop_top: float | None = None,
@@ -3872,6 +3918,19 @@ def editor_set_clip_transform(
     `editor_get_state` first; to move a property that IS keyed, write a
     keyframe for it with `editor_set_clip_keyframes` instead — the same thing
     the GUI's on-canvas drag does (B-093/D-209).
+
+    `scaling` (D-425, fixes B-325) — `"fit"`, `"fill"` or `"native"` — is how
+    the clip's SOURCE is sized into the timeline frame, i.e. what `scale = 1`
+    means (Resolve's per-clip Input Scaling, Premiere's Set to Frame Size).
+    `fit`: the whole picture, letterboxed; a source with the frame's aspect
+    (a Motion scene render on a timeline of its manifest's size) fills the
+    frame exactly, so it needs NO `scale = 0.5` workaround. `fill`: covers the
+    frame, overflow cropped. `native`: one source pixel per frame pixel. A
+    newly placed clip is stamped with its timeline's default (`fit`, see
+    `editor_set_timeline_output(default_scaling=…)`); a clip saved before
+    D-425 is `native` until you set this. Omit to leave the mode alone.
+    `get_timeline` reports each clip's `scaling`. `box_width`/`box_height`
+    override it; it does not apply to titles or adjustment clips (refused).
 
     `scale` is a stacking/picture-in-picture primitive: it ties the
     overlay's width to the canvas, but its HEIGHT follows the CLIP'S OWN
@@ -3928,6 +3987,7 @@ def editor_set_clip_transform(
         ("crop_right", crop_right),
         ("crop_bottom", crop_bottom),
         ("corner_radius", corner_radius),
+        ("scaling", scaling),
     ):
         if val is not None:
             args[key] = val

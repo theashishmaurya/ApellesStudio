@@ -908,6 +908,8 @@ pub struct EditorSetClipTransformArgs {
     #[serde(default = "default_editor_set_clip_transform_clear_box_height")]
     pub clear_box_height: bool,
     #[serde(default)]
+    pub scaling: Option<String>,
+    #[serde(default)]
     pub rotation: Option<f64>,
     #[serde(default)]
     pub crop_left: Option<f64>,
@@ -1112,6 +1114,8 @@ pub struct EditorSetTimelineOutputArgs {
     pub clear: bool,
     #[serde(default)]
     pub fps: Option<f64>,
+    #[serde(default)]
+    pub default_scaling: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -2194,7 +2198,8 @@ impl ApellesMcp {
 
     #[tool(
         name = "editor_set_timeline_output",
-        description = r#"Set a timeline's OWN output size and/or its FRAME RATE — the tab menu's Size
+        description = r#"Set a timeline's OWN output size, its FRAME RATE and/or how NEW clips are
+    sized into its frame — the tab menu's Size
     and the Project Settings panel's "This timeline" section (Resolve's
     per-timeline "Use Project Settings", plus its timeline frame rate).
 
@@ -2215,8 +2220,19 @@ impl ApellesMcp {
     timeline's `fps`. `set_project_settings(fps=…)` only carries to EMPTY
     timelines and refuses otherwise; this is the tool that retimes one with clips.
 
-    `width`/`height`/`clear` and `fps` may be combined. `id` omitted means the
-    active timeline. Changing the active timeline is an undoable edit."#
+    **Default scaling (D-425, B-325).** Pass `default_scaling` (`"fit"`,
+    `"fill"` or `"native"`) to choose how a clip PLACED from now on is sized
+    into this timeline's frame (Resolve's project-level Input Scaling): `fit`
+    (the default) shows the whole picture and fills the frame exactly when the
+    source has the frame's aspect — a 2160x3840 Motion render on a 1080x1920
+    timeline lands full-frame. It is stamped onto each clip as it is placed, so
+    changing it never moves a clip already on the timeline; change one clip
+    with `editor_set_clip_transform(scaling=…)`. `editor_list_timelines` and
+    `get_timeline` report `defaultScaling`.
+
+    `width`/`height`/`clear`, `fps` and `default_scaling` may be combined. `id`
+    omitted means the active timeline. Changing the active timeline is an
+    undoable edit."#
     )]
     pub async fn editor_set_timeline_output(
         &self,
@@ -2227,6 +2243,7 @@ impl ApellesMcp {
             .put("width", p.width)
             .put("height", p.height)
             .put("fps", p.fps)
+            .put("default_scaling", p.default_scaling)
             .put_if("clear", p.clear);
         let env = self.op("editor_set_timeline_output", args).await?;
         Ok(render::json_text(&env))
@@ -4368,6 +4385,19 @@ impl ApellesMcp {
     keyframe for it with `editor_set_clip_keyframes` instead — the same thing
     the GUI's on-canvas drag does (B-093/D-209).
 
+    `scaling` (D-425, fixes B-325) — `"fit"`, `"fill"` or `"native"` — is how
+    the clip's SOURCE is sized into the timeline frame, i.e. what `scale = 1`
+    means (Resolve's per-clip Input Scaling, Premiere's Set to Frame Size).
+    `fit`: the whole picture, letterboxed; a source with the frame's aspect
+    (a Motion scene render on a timeline of its manifest's size) fills the
+    frame exactly, so it needs NO `scale = 0.5` workaround. `fill`: covers the
+    frame, overflow cropped. `native`: one source pixel per frame pixel. A
+    newly placed clip is stamped with its timeline's default (`fit`, see
+    `editor_set_timeline_output(default_scaling=…)`); a clip saved before
+    D-425 is `native` until you set this. Omit to leave the mode alone.
+    `get_timeline` reports each clip's `scaling`. `box_width`/`box_height`
+    override it; it does not apply to titles or adjustment clips (refused).
+
     `scale` is a stacking/picture-in-picture primitive: it ties the
     overlay's width to the canvas, but its HEIGHT follows the CLIP'S OWN
     aspect ratio in the live preview (there is no 'stretch' option here —
@@ -4426,7 +4456,8 @@ impl ApellesMcp {
             .put("crop_top", p.crop_top)
             .put("crop_right", p.crop_right)
             .put("crop_bottom", p.crop_bottom)
-            .put("corner_radius", p.corner_radius);
+            .put("corner_radius", p.corner_radius)
+            .put("scaling", p.scaling);
         // The box size is the one pair with a CLEAR that outranks the value: the flag
         // sends an explicit null ("no box"), which an omitted argument cannot express,
         // and it wins over a value given in the same call.

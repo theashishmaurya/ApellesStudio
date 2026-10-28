@@ -876,6 +876,8 @@ pub struct TimelineSummary {
     /// B-323 — how many clips the timeline holds across all tracks: what tells
     /// an empty timeline (whose rate follows the project's) from an edited one.
     pub clip_count: usize,
+    /// D-425 — the scaling mode new clips are placed with (`None` = `fit`).
+    pub default_scaling: Option<apelles_timeline::ScalingMode>,
 }
 
 /// All of the open project's timelines (D-045). Lazily builds the first one
@@ -898,6 +900,7 @@ pub fn chroma_timeline_list() -> Result<Vec<TimelineSummary>, String> {
             origin: tl.origin.clone(),
             fps: tl.fps(),
             clip_count: tl.tracks.iter().map(|t| t.clips.len()).sum(),
+            default_scaling: tl.default_scaling,
         })
         .collect())
 }
@@ -967,6 +970,20 @@ pub fn chroma_timeline_set_output(id: String, output: Option<OutputSpec>) -> Res
         .transpose()?;
     let (dir, mut manifest) = load_and_ensure_timeline(false)?;
     apelles_project::timeline::set_timeline_output(&mut manifest, &id, output)?;
+    project::save_manifest(&dir, &manifest)
+}
+
+/// D-425 — set (`Some`) or clear (`None`: back to `fit`) the scaling mode new
+/// clips on a timeline are placed with, by id. Same active-timeline caveat as
+/// [`chroma_timeline_rename`]: the store routes the active one through its
+/// `set_timeline_scaling` op.
+#[tauri::command]
+pub fn chroma_timeline_set_default_scaling(
+    id: String,
+    scaling: Option<apelles_timeline::ScalingMode>,
+) -> Result<(), String> {
+    let (dir, mut manifest) = load_and_ensure_timeline(false)?;
+    apelles_project::timeline::set_timeline_default_scaling(&mut manifest, &id, scaling)?;
     project::save_manifest(&dir, &manifest)
 }
 
@@ -2160,11 +2177,20 @@ pub(crate) fn clip_geometry(track: usize, clip: usize) -> Result<ClipGeometry, S
     // D-292 — a still has a real footprint on the canvas exactly like footage
     // does, so the on-canvas transform overlay must be able to box one.
     let (sw, sh) = clip_source_size(&c.source_path)?;
+    // D-425 / B-325 — the footprint at `scale == 1` is the source SIZED INTO the
+    // frame by the clip's input scaling, not the raw source size: a `fit` clip
+    // of the frame's aspect reports exactly 1.0 x 1.0, so the Inspector's Width
+    // / Height and the on-canvas handles read the box the compositor paints.
+    let (fw, fh) = apelles_timeline::fitted_footprint(
+        c.scaling.unwrap_or(apelles_timeline::ScalingMode::LEGACY),
+        (sw as f64, sh as f64),
+        (comp_w as f64, comp_h as f64),
+    );
     Ok(ClipGeometry {
         comp_width: comp_w,
         comp_height: comp_h,
-        natural_width: sw as f64 / comp_w as f64,
-        natural_height: sh as f64 / comp_h as f64,
+        natural_width: fw / comp_w as f64,
+        natural_height: fh / comp_h as f64,
     })
 }
 
@@ -2801,9 +2827,20 @@ fn composite_video_frame(
             // The layer's **source** size, not its decoded size — that is the
             // whole point: the decoded size follows the preview quality, the
             // source size does not.
-            natural: (
-                source_size.0 as f64 * render_scale,
-                source_size.1 as f64 * render_scale,
+            //
+            // D-425 / B-325 — then sized into the frame by the clip's input
+            // scaling: `fit` maps a source of the frame's aspect to exactly the
+            // frame, `native` (a clip with no `scaling`, i.e. every pre-D-425
+            // clip) leaves it at one source pixel per frame pixel. The frame is
+            // the canvas itself, so the binding axis lands on its edge exactly.
+            natural: apelles_timeline::fitted_footprint(
+                clip.scaling
+                    .unwrap_or(apelles_timeline::ScalingMode::LEGACY),
+                (
+                    source_size.0 as f64 * render_scale,
+                    source_size.1 as f64 * render_scale,
+                ),
+                (canvas_w as f64, canvas_h as f64),
             ),
         });
     }
@@ -3963,6 +4000,45 @@ mod composite_tests {
 
     /// `scale` actually changes the painted footprint size, not just a
     /// cosmetic field nobody reads.
+    /// D-425 / B-325 — a source twice the frame's size (a 2x Motion render on a
+    /// timeline of its manifest's size) under `fit` paints EVERY pixel of the
+    /// frame at `scale == 1`; under `native` (the pre-D-425 reading) it is
+    /// 2x the frame and only the centre... of its top-left quarter shows.
+    #[test]
+    fn a_double_size_source_fills_the_frame_under_fit_and_overflows_under_native() {
+        use apelles_timeline::{ScalingMode, fitted_footprint};
+        let layer = flat(40, 80, [255, 0, 0, 255]); // the "2x" source
+        let frame = (20.0, 40.0);
+        let size = (40.0, 80.0);
+        let t = identity_transform();
+
+        let mut fit = flat(20, 40, [0, 0, 255, 255]);
+        let natural = fitted_footprint(ScalingMode::Fit, size, frame);
+        assert_eq!(natural, frame);
+        composite_layer_onto(&mut fit, &layer, &t, natural);
+        assert!(fit.pixels().all(|p| *p == Rgba([255, 0, 0, 255])));
+
+        // Native: the layer is 40x80 on a 20x40 canvas, so it still covers the
+        // canvas from the top-left, but at twice the size (a quarter of the
+        // picture) -- the geometry the Inspector showed as Width 2160.
+        let natural = fitted_footprint(ScalingMode::Native, size, frame);
+        assert_eq!(natural, size);
+    }
+
+    /// D-425 — `fit` letterboxes a wider source: the unpainted rows stay as the
+    /// canvas was, the painted rows are the layer's, at the frame's full width.
+    #[test]
+    fn fit_letterboxes_a_wide_source_inside_the_frame() {
+        use apelles_timeline::{ScalingMode, fitted_footprint};
+        let layer = flat(40, 20, [255, 0, 0, 255]); // 2:1 into a 1:1 frame
+        let natural = fitted_footprint(ScalingMode::Fit, (40.0, 20.0), (20.0, 20.0));
+        assert_eq!(natural, (20.0, 10.0));
+        let mut canvas = flat(20, 20, [0, 0, 255, 255]);
+        composite_layer_onto(&mut canvas, &layer, &identity_transform(), natural);
+        assert_eq!(*canvas.get_pixel(19, 9), Rgba([255, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(0, 10), Rgba([0, 0, 255, 255]));
+    }
+
     #[test]
     fn composite_layer_onto_respects_scale() {
         let mut canvas = flat(20, 20, [0, 0, 0, 255]);

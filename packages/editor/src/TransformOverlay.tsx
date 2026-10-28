@@ -239,6 +239,7 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
     isCaption || !onScreen ? null : (primary?.track ?? null),
     isCaption || !onScreen ? -1 : clipIndex,
     clip?.source_path,
+    clip?.scaling,
   );
 
   // D-218 — the picture's real on-screen rect, i.e. the `object-contain` fit

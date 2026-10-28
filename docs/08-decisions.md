@@ -6,6 +6,27 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-425 — Input scaling: a clip is sized into the timeline frame by a per-clip mode (`fit` / `fill` / `native`), defaulted per timeline at placement; existing clips stay `native`
+
+**decided (2026-10-28)** · fixes B-325 · builds on D-353 (`scale` multiplies the clip's footprint), D-193 (`box_width`/`box_height`), D-342 (Motion renders at 2x), D-411 Phase 0 (per-timeline settings)
+
+**Context.** A 2160x3840 Motion render on a 1080x1920 timeline showed at its native footprint (Inspector Width 2160, Scale 1): only the centre quarter was visible, and the export matched. Nothing in the model said how a source is sized into the frame.
+
+**What the established tools do** (researched; the vendor manuals are PDF/JS-heavy, so the specifics below are from their documented option names plus tutorial write-ups, linked in the changelog session): *DaVinci Resolve* has Input Scaling under Project Settings > Image Scaling, the default for every clip, with a per-clip override in the Inspector (Retime and Scaling): **Scale entire image to fit** (the default), **Scale full frame with crop**, **Center crop with no resizing**, **Stretch frame to all corners**. *Premiere Pro* has the Default Media Scaling preference, applied when a clip is placed: **None**, **Set to Frame Size** (fits, and writes the resulting Motion Scale into the clip) and **Scale to Frame Size** (fits, leaves Scale at 100). Both fit by default and let the user override per clip.
+
+**Options.** (1) Change what `scale = 1` means for everything: silently resizes every saved project. Rejected, the same reason D-353 gave. (2) Resolve-style: a mode on the clip, a default on the timeline. (3) Premiere "Set to Frame Size": bake the fit into `scale` at placement, losing the distinction between "fitted" and "scaled by 0.5". Rejected: a later size or source change (swap media, retime the timeline's frame) would leave a stale number, and `scale = 1` should keep meaning "unscaled".
+
+**Choice (2).**
+- `Clip.scaling` = `fit` | `fill` | `native`; the footprint at `scale = 1` is `fitted_footprint(mode, source, frame)` (`apelles_timeline::scaling`, mirrored by `clipScaling.ts`, same test vectors). `fit`: whole picture, up or down, letterboxed; `fill`: frame covered, overflow cropped; `native`: 1:1 pixels. The binding axis is exactly the frame, so a same-aspect source is exactly full-frame (and the exporter's exact-full-frame path is taken). `scale` stays a multiplier on top of the fitted size. Resolve's *Stretch* is not a mode: it is the existing `box_width = box_height = 1`.
+- `Timeline.default_scaling` (absent = `fit`). The add-clip / edit-in reducers **stamp** it onto a footage or still clip as it is placed, so changing the default never moves a placed clip and a clip's look never depends on a lookup at render time. Titles, captions, adjustment clips and audio-track clips are not stamped.
+- **Migration:** a clip with no `scaling` key is `native`, exactly what it rendered as. Old projects load and export byte-identically (the key is skipped when absent); the Inspector shows such a clip as Native, and `get_timeline` reports `native`. To fit one, set `scaling = fit`.
+- **One function, both renderers.** The preview compositor (`composite_video_frame`, also the compositor export path) and `clip_geometry` (Inspector sizes, on-canvas handles, click picking) apply `fitted_footprint`; the ffmpeg exporter gets the same footprints from `resolveSourceFootprints`. A clip's `box_width`/`box_height` still win over it; crop keeps the fitted width and takes the cropped picture's aspect.
+- **Human + AI.** Inspector > Video > Transform > Scaling; Project Settings > This timeline > New clips. MCP: `editor_set_clip_transform(scaling=…)`, `editor_set_timeline_output(default_scaling=…)`, `get_timeline` reports each clip's `scaling` and the timeline's `defaultScaling`, `editor_get_capabilities` no longer tells agents to use `scale = 0.5` (new `compositing.scaling` entry). No new tools: still 255 on both servers, parity corpus re-captured. Undo: set-clip-transform and `set_timeline_scaling` are ordinary ops.
+
+**Not done.** Clips built directly in Rust (the Automatic Clipper's builders) have no add-clip op and stay `native`; FCPXML export applies `fit`/`fill` only with `sourceInfo`.
+
+---
+
 ## D-424 — The project frame rate follows empty timelines and refuses to retime clips; a timeline's rate is set explicitly and converts by time
 
 **decided (2026-10-28)** · fixes B-323 · extends B-097/B-284 (new timelines take a real rate), D-038 (project output spec), D-411 Phase 0 (per-timeline settings)

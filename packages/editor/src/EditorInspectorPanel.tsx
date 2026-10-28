@@ -152,7 +152,7 @@ export function EditorInspectorPanel() {
   // tsx` uses for the on-canvas box, needed here for `ClipInspectorPanel`'s
   // Width/Height fields to convert composition-fraction sizes to real
   // pixels and back.
-  const geometry = useClipGeometry(primary?.track ?? null, selectedIdx, selectedClip?.source_path);
+  const geometry = useClipGeometry(primary?.track ?? null, selectedIdx, selectedClip?.source_path, selectedClip?.scaling);
 
   // D-132 — crop joins the transform patch rather than getting its own op:
   // one clip-geometry write, one history entry, one save. See the
@@ -174,6 +174,8 @@ export function EditorInspectorPanel() {
       scale: patch.scale ?? selectedClip.scale ?? 1,
       box_width: patch.box_width !== undefined ? patch.box_width : selectedClip.box_width ?? null,
       box_height: patch.box_height !== undefined ? patch.box_height : selectedClip.box_height ?? null,
+      // D-425 — only sent when the patch states it; absent leaves the mode.
+      ...(patch.scaling !== undefined ? { scaling: patch.scaling } : {}),
       rotation: patch.rotation ?? selectedClip.rotation ?? 0,
       crop_left: patch.crop_left ?? selectedClip.crop_left ?? 0,
       crop_top: patch.crop_top ?? selectedClip.crop_top ?? 0,

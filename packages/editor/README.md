@@ -18,6 +18,11 @@ dragging a pool item in from the shell's Sources panel.
   (also double-click), Duplicate (independent copy, grades copied), Size (project
   size or a delivery preset), Delete (confirmed, not undoable). A timeline with its
   own size shows it on its tab (`9:16`).
+- `clipScaling.ts` (D-425 / B-325) — a clip's input scaling (`fit` / `fill` / `native`) and
+  `fittedFootprint`, the pure function that sizes a source into the frame; the twin of
+  `apelles_timeline::scaling`. `add_clip` / `edit_in` stamp the timeline's `default_scaling`
+  onto a placed clip; a clip with no mode is `native`. UI: Inspector Transform > Scaling and
+  the timeline settings' "New clips".
 - `trackOps.ts` (B-318 / B-315) — the compact `editor_list_tracks` read, the `editor_get_timeline`
   filters (`track`, frame window, `fields`) and the sync-lock op's argument check; the track
   header labels ("Audio 1") come from here too.

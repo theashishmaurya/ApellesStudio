@@ -92,6 +92,7 @@ import { captionLines, type CaptionCue, type CaptionStyle } from './caption';
 import { dropEditTypeInfo, type DropEditType } from './editTypes';
 import { clampEqBand, eqBandsForDisplay, type EqBand } from './eq';
 import { sanitizeHighlight, type ClipHighlight } from './clipHighlights';
+import { TIMELINE_DEFAULT_SCALING, type ClipScaling } from './clipScaling';
 import { isValidTimelineRate, retimeTimeline } from './timelineRetime';
 // D-236 — the speed ramp's arithmetic lives in its own module, which imports
 // only the `Clip` TYPE back from here (erased at build), so the runtime
@@ -283,6 +284,15 @@ export interface Clip {
    *  and later cleared round-trips as a real `null`, not a missing key. */
   box_width?: number | null;
   box_height?: number | null;
+  /** D-425 / B-325 — how the source picture is sized into the frame, i.e. what
+   *  `scale == 1` means: `fit` (whole picture, letterboxed), `fill` (frame
+   *  covered, overflow cropped) or `native` (source pixels 1:1). Mirrors
+   *  `apelles_timeline::Clip::scaling`. **Absent is `native`** — every clip
+   *  saved before D-425, authored under the native footprint, so an old project
+   *  does not change look; a clip PLACED now is stamped with its timeline's
+   *  `default_scaling` (else `fit`) by the `add_clip` / `edit_in` reducers. See
+   *  `clipScaling.ts`. */
+  scaling?: ClipScaling | null;
   rotation?: number;
   /** Crop (D-132) — mirrors `apelles_timeline::Clip::crop_left`/`crop_top`/
    *  `crop_right`/`crop_bottom`. Four **normalised (0–1) edge insets** into
@@ -1796,6 +1806,11 @@ export interface Timeline {
    *  reported, read by nothing that renders. Mirrors `apelles_timeline::
    *  TimelineOrigin`. */
   origin?: TimelineOrigin | null;
+  /** D-425 — the scaling mode new clips on this timeline are placed with
+   *  (Resolve's project-level Input Scaling). Absent is `fit`. Read only when a
+   *  clip is placed — it never changes how an existing clip renders. Mirrors
+   *  `apelles_timeline::Timeline::default_scaling`. */
+  default_scaling?: ClipScaling | null;
 }
 
 /** D-411 Phase 0 — a timeline's own composition size, in pixels. Mirrors
@@ -3987,6 +4002,11 @@ export type EditOp =
       scale: number;
       box_width: number | null;
       box_height: number | null;
+      /** D-425 — the clip's input scaling. The one OPTIONAL field on this op:
+       *  absent leaves the clip's mode untouched (an omitted `scaling` cannot
+       *  silently clear anything, unlike the nullable fields above, because
+       *  there is no "unset" — a clip with no mode is `native`). */
+      scaling?: ClipScaling;
       rotation: number;
       crop_left: number;
       crop_top: number;
@@ -4345,6 +4365,11 @@ export type EditOp =
    *  active timeline's one writer (D-051): a direct write would be overwritten
    *  by the store's next save, and as an op it is undoable and journalled. */
   | { kind: 'set_timeline_output'; output: OutputSpec | null }
+  /** D-425 — set the scaling mode NEW clips on this timeline are placed with
+   *  (`null`: back to the default, `fit`). Changes no existing clip: a clip's
+   *  mode is stamped at placement, so this is a no-op for how anything already
+   *  on the timeline renders. */
+  | { kind: 'set_timeline_scaling'; scaling: ClipScaling | null }
   /** B-323 — set this timeline's frame rate, converting every timeline-frame
    *  quantity by TIME (`retimeTimeline`: a 10 s clip stays 10 s; source-native
    *  fields of a clip with a `source_fps` are untouched). An invalid rate or the
@@ -4644,6 +4669,8 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return op.marker.name ? `Add marker "${op.marker.name}"` : `Add marker at ${op.marker.frame}`;
     case 'set_timeline_output':
       return op.output ? `Set timeline size to ${op.output.width}×${op.output.height}` : 'Use project size for timeline';
+    case 'set_timeline_scaling':
+      return op.scaling ? `Place new clips with "${op.scaling}" scaling` : 'Place new clips with the default scaling';
     case 'set_timeline_rate':
       return `Set timeline rate to ${+(op.rate.num / op.rate.den).toFixed(3)} fps`;
     case 'set_timeline_name':
@@ -4665,6 +4692,19 @@ export function labelForOp(op: EditOp, before: Timeline): string {
     default:
       return 'Edit timeline';
   }
+}
+
+/** D-425 / B-325 — a clip being PLACED gets its input scaling written onto it:
+ *  the caller's explicit `scaling` if it set one, else the timeline's
+ *  `default_scaling`, else `fit`. Stamped (a stored field) rather than resolved
+ *  at render time so that changing the timeline default later never moves a
+ *  clip that is already placed, and so a clip with NO `scaling` stays `native`
+ *  — the reading every pre-D-425 clip was authored under. Only picture that has
+ *  a source footprint: a title, caption or adjustment clip is generated at the
+ *  frame's own size, and an audio-track clip has no picture. */
+function stampPlacementScaling(clip: Clip, trackKind: Track['kind'], tl: Timeline): Clip {
+  if (clip.scaling != null || trackKind !== 'video' || isGeneratedClip(clip)) return clip;
+  return { ...clip, scaling: tl.default_scaling ?? TIMELINE_DEFAULT_SCALING };
 }
 
 /** Clamp `v` into `[lo, hi]` — used throughout to mirror Rust's `i64::clamp`. */
@@ -5692,7 +5732,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       startFrame = nextAppendFrame(track, fps);
     }
     const placed = resolveLinkedHalf(track, op.clip, op.linkedAudio);
-    const clip: Clip = { ...placed.clip, start_frame: startFrame };
+    const clip: Clip = stampPlacementScaling({ ...placed.clip, start_frame: startFrame }, track.kind, next);
     const defaultAt = track.clips.filter((c) => c.start_frame < startFrame).length;
     const at = Math.min(Math.max(op.atIndex ?? defaultAt, 0), track.clips.length);
     track.clips.splice(at, 0, clip);
@@ -5805,7 +5845,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
 
     const dest = next.tracks[placeTrack];
     const placed = resolveLinkedHalf(dest, fields, op.linkedAudio);
-    const clip: Clip = { ...placed.clip, start_frame: startFrame };
+    const clip: Clip = stampPlacementScaling({ ...placed.clip, start_frame: startFrame }, dest.kind, next);
     dest.clips.splice(dest.clips.filter((c) => c.start_frame < startFrame).length, 0, clip);
     // The dropped source's audio half, by exactly `add_clip`'s rule — see the
     // op's own doc for why it is deliberately not given its own overwrite/
@@ -5881,6 +5921,14 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     if (!op.output) delete body.output;
     if (!op.origin) delete body.origin;
     return body;
+  }
+  if (op.kind === 'set_timeline_scaling') {
+    const wanted = op.scaling ?? undefined;
+    if ((tl.default_scaling ?? undefined) === wanted) return tl;
+    const next = clone(tl);
+    if (wanted === undefined) delete next.default_scaling;
+    else next.default_scaling = wanted;
+    return next;
   }
   if (op.kind === 'set_timeline_output') {
     if (op.output === null) {
@@ -6128,6 +6176,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // already follows (unlike crop, which IS clamped here).
     nc.box_width = op.box_width;
     nc.box_height = op.box_height;
+    if (op.scaling !== undefined) nc.scaling = op.scaling;
     nc.rotation = op.rotation;
     // D-132 — clamped here, on the way in, so a value out of the 0–1 inset
     // range can never reach `project.json`. The Rust compositor clamps again
