@@ -58,6 +58,27 @@ status: **open** · severity: **major** (each hit blocks the agent for the full 
   reported failed), never silently dropped.
 - **workaround used:** read the result from disk (`meta.json` / `previews/<scene>.png`) after
   the timeout, then continue.
+- **update (same day, v2 pass): now the common case, and it blocks certification.** Both
+  v2 checks (`glass-shatter@2`, `domino-wave@4`) wrote a passing proof in ~1.5-2 min and timed
+  out at 300 s; then `motion_certify_component` refused with "has not been checked", because
+  `runProof` (`customComponentActions.ts`) only calls `access.reload()` after
+  `await access.prove(...)` resolves, and that promise had not. The library caught up minutes
+  later (certify then succeeded). 7 of 13 `motion_preview_frame` calls in the pass timed out at
+  180 s while the PNG landed on disk 5 s-3 min after the call, including one that finished in
+  7 s, so it is not only queueing behind proxy renders. Suspect the backend → frontend
+  completion of long `invoke`s (the check, still and proxy commands) rather than the MCP
+  bridge.
+
+## B-324 — the `counter` primitive cannot zero-pad, so a timer cannot read `0:09.00`
+
+status: **open** · severity: **minor** · area: Motion primitives (`Counter.tsx`) · found 2026-10-28
+
+`counter` formats `decimals` and an optional thousands separator but has no minimum-integer-digits
+option, so a running timer shows `0:9.00`, not `0:09.00`. Expected: a `pad` (minimum integer
+digits) field, formatted in `formatCount` with the same locale-independent arithmetic.
+Workaround used in "The Domino": the static `prefix` `"0:0"` for the scenes under ten seconds,
+and in the scene that crosses ten seconds two counters (`0:0` + 9→10, `0:` + 10→12) switched
+by opacity keys at the crossing.
 
 ## B-320 — a `text` layer whose `dur` rounds to 0 frames passes `motion_validate` but crashes the render
 
