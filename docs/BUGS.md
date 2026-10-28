@@ -27,6 +27,54 @@ Still real:
 
 ## Open
 
+## B-300 — Motion render of a 1920×1080 manifest is right, but a 3840×2160 manifest renders at 7680×4320 (2× scale applied on top of a 4K manifest)
+
+status: **open** · severity: **major** · area: `crates/apelles-motion` render scale (D-342 `setScale(2)`)
+
+- **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Five Levels edit: setting the Motion manifest to the project's 4K size produced 8K scene renders; the workaround was a 1920×1080 manifest. Expected: render at the manifest's own size (or a documented output-scale option).
+
+## B-299 — `editor_trim_clip edge=end`: a negative delta shortens the clip, the opposite of the documented sign
+
+status: **open** · severity: **minor** · area: `editor_trim_clip` op / its docstring
+
+- **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Found in the Five Levels edit. Make the op and both MCP docstrings agree (and test the sign).
+
+## B-298 — an .mp3 with embedded cover art imports as VIDEO at 90000 fps
+
+status: **open** · severity: **major** · area: media probe (`editor_import_media`)
+
+- **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Openverse music with cover art: `editor_add_clip` without `track` created a new video track, and durations/source_start had to be given in 90000-per-second units. Expected: audio files probe as audio (cover art ignored or exposed as an image).
+
+## B-297 — Motion scene renders come out one frame short; a layer's `dur` does not hide the layer; rendered scenes bring a silent linked-audio clip onto the timeline
+
+status: **open** · severity: **minor** · area: `apelles-motion` render length, engine layer lifetime, Edit placement of Motion renders
+
+- **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Workarounds in the Five Levels edit: pad scenes by 0.05 s, opacity keyframes instead of `dur`, remove the silent audio partners.
+
+## B-296 — `get_timeline`, `motion_get_state` and `save_project` answers can reach ~675K characters (save_project returns the whole grade + histogram)
+
+status: **open** · severity: **minor** · area: MCP answer shapes
+
+- **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Huge answers overflow agent context and slow every edit step. Expected: compact answers by default (counts/ids), with detail on request.
+
+## B-295 — title/text clip `position_x/y` are offsets from the centre while image/video use a different convention, undocumented
+
+status: **open** · severity: **minor** · area: `editor_set_clip_transform` docs / `editor_get_capabilities`
+
+- **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Document (or unify) the convention.
+
+## B-294 — Openverse calls fail often: cold `editor_search_audio` 35-55 s then 504; record endpoint intermittent 500; an `editor_import_audio` timed out at 120 s but finished later (file + credit written, clip not placed)
+
+status: **open** · severity: **minor** · area: `apelles-audio-library` client (D-400, B-275)
+
+- **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Expected: a timeout that later completes still places the clip or reports how to finish; clearer retry/backoff for the upstream 5xx.
+
+## B-293 — a voiceover track's gain was found at 0 mid-edit with no recorded cause
+
+status: **open** · severity: **unknown** · area: Edit track gain
+
+- **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Seen once in the Five Levels edit; set back to 1 before export. Needs a repro (check the edit journal / undo history next time).
+
 ## B-292 — one component crash blanked the whole app and every control-bridge op timed out until a full reload
 
 status: **fixed** (2026-10-28) · severity: **critical** (any render throw anywhere took down every tab, the owner's unsaved view state and the agent's control at once) · area: the React tree (no error boundary anywhere), the op registries' placement (`useEditorControl`, `useMotionControl`, `useChromaControl` / `useBrandControl` / `useDebugControl`)
