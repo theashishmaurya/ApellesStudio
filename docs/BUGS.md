@@ -27,6 +27,65 @@ Still real:
 
 ## Open
 
+## B-323 — a new project's Edit timeline is 24 fps and no MCP tool can change it; `set_project_settings(fps=30)` does not reach it
+
+status: **open** · severity: **major** (a 30 fps deliverable silently becomes a 24 fps timeline) · area: Edit MCP / project settings (human+AI parity) · found 2026-10-28
+
+- **repro:** `new_project("The Domino")` (no media) → `set_project_settings(width=1080,
+  height=1920, fps=30)` → place 30 fps Motion renders with `editor_add_clip` at 30 fps frame
+  positions. `editor_list_timelines` answers `durationFrames: 798` for clips ending at frame
+  810: the timeline has no `rate`, so `timelineFps` falls back to `DEFAULT_FPS = 24`, and
+  every `start_frame` was read as a 24 fps frame (gaps between the clips).
+- **expected:** the project's fps (D-038) sets the timeline rate (or the first placed clip's
+  rate does, for a timeline with no rate yet), and an `editor_*` tool exposes the timeline
+  rate the way `editor_set_timeline_output` exposes its size.
+- **workaround used:** placed the clips at 24 fps positions (`seconds × 24`), so the 27 s plays
+  end to end, but the timeline (and any export from it) is 24 fps until the rate can be set.
+
+## B-322 — `motion_set_layer_field(key="props")` on a custom-component layer warns "not a known field"
+
+status: **open** · severity: **minor** · area: Motion MCP (D-409) · found 2026-10-28 (building "The Domino" reel)
+
+`props` is the one correct key for a custom layer's declared props (D-409), and the write
+works, but the reply carries `"props" is not a known field for use="custom" ... set anyway`.
+An agent reading the warning would assume the write did nothing. Expected: `props` (and
+`props.<id>`) recognised for `use: "custom"` and checked against the embedded definition, like
+`motion_insert_layers` already does. Workaround used: ignore the warning, confirm with
+`motion_validate` (clean).
+
+## B-321 — a slow `motion_check_component` / `motion_preview_frame` finishes on disk but its reply never reaches the MCP caller
+
+status: **open** · severity: **major** (each hit blocks the agent for the full 300 s / 180 s budget) · area: Motion MCP bridge · found 2026-10-28 (building "The Domino" reel)
+
+- **repro (seen twice, both early in a session):** `motion_check_component("domino-wave")` on a
+  freshly written 3D draft — `meta.json` recorded a passing proof and `contact.png` 1 min after
+  the call, yet the call timed out at 300 s (`app.log`: "op 'motion_check_component' timed out
+  waiting for the frontend"). Then `motion_preview_frame(scene 0, 3 frames, scale 0.4)` right
+  after `new_project` + the first custom-layer insert: `motion/previews/s01-cold-open.png` was
+  written ~50 s in (same second as the custom layer's live-player proxy finished), the call
+  timed out at 180 s.
+- **not reproducible on demand:** later identical checks and previews (contact sheets of the
+  same ~1 MB size, 0.5-scale stills) returned normally in ~60 s / ~3 s, so it is not the
+  payload size. Both failures overlapped a first bundle of the engine and a custom-layer proxy
+  render (D-409 `customProxyStore`), which suggests the frontend loses the pending reply when
+  those overlap.
+- **expected:** the reply is delivered as soon as the backend work finishes (or the op is
+  reported failed), never silently dropped.
+- **workaround used:** read the result from disk (`meta.json` / `previews/<scene>.png`) after
+  the timeout, then continue.
+
+## B-320 — a `text` layer whose `dur` rounds to 0 frames passes `motion_validate` but crashes the render
+
+status: **open** · severity: **medium** · area: Motion engine (`primitives/Text.tsx` `inAt`) · found 2026-10-28
+
+- **repro:** a `text` layer with `"preset": "fade-up", "at": 0, "dur": 0.01` (meant as "already
+  visible") — `motion_insert_layers` and `motion_validate` accept it; `motion_preview_frame`
+  fails with `inputRange must be strictly monotonically increasing but got [0,0]` from
+  `inAt` → `interpolate`, so the whole scene cannot be previewed or rendered.
+- **expected:** either the schema refuses a reveal shorter than one frame, or `inAt` clamps the
+  range to at least one frame (a zero-length reveal = visible from `at`).
+- **workaround used:** `"at": -0.2, "dur": 0.1` (fully revealed before the scene starts).
+
 ## B-319 — `new_project` (and `open_project`) still answer with the whole grade document
 
 status: **open** · severity: **minor** · found 2026-10-28 (live check of B-296's fix)
