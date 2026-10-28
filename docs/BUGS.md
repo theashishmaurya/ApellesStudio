@@ -113,10 +113,13 @@ status: **open** · severity: **major** (a straight "cut the silences" pass sile
 
 ## B-288 — `editor_ripple_delete_ranges` refused one valid range in a 30-range batch ("describes no real material")
 
-status: **open** · severity: **minor** (it reports the skip honestly; the same range applied alone a moment later) · area: `editor_ripple_delete_ranges` / `applyRippleDeleteRanges`
+status: **fixed** (2026-10-28, D-420) · severity: **minor** (it reports the skip honestly; the same range applied alone a moment later) · area: `editor_ripple_delete_ranges` / `applyRippleDeleteRanges`
 
 - **found:** 2026-10-28. In a batch of 30 retake cuts on one audio track (two clips, 0..17219 frames), the range 11092..11462 (wholly inside clip 1) was skipped: "nothing on track 0 lies wholly inside frames 11092..11462"; the other 29 applied. Re-sent alone at its shifted position (9193..9563, wholly inside one clip) it applied fine. Suspect: back-to-front application with neighbouring ranges in the same clip (10950..11003 and 11715..11734) validates a range against clips already split by a later range.
 - **expected:** every range wholly inside material is cut in one batch.
+- **cause (reproduced):** `rippleDeleteOneRange` splits at the range's end, then its start, and then removed the clips "wholly inside" by testing `endFrame(c) <= end`. `split` gives each half a whole number of SOURCE frames, and when the clip's source rate differs from the timeline's the right half's timeline end is rounded on its own: a 25 fps clip on the owner's 493480/20563 (~23.998 fps) timeline, split at 9470 and then 9100, leaves a middle piece ending at 9471, so the test found nothing. Whether it happens depends on the exact frames, which is why the same range applied alone at its shifted position. On that fixture 453 of 1029 three-range batches skipped a range.
+- **fix:** a range's pieces are the clips that START inside it (`start_frame` in `[start, end)`): step 1 already cut at `end`, so the only clip reaching past `end` is one that starts at or after it. The rounding seam itself is the mixed-rate representation's and is unchanged.
+- **verification:** `rippleDeleteRanges.test.ts` "cuts a range whose middle piece rounds one frame past its end (B-288)": the three neighbouring ranges all apply and the track shortens by their total (±1 frame), and the 1029-batch sweep skips none; with the old predicate restored it fails (`[true, false, true]`). Through the op: `editByText.e2e.dom.test.tsx` (`editor_ripple_delete_ranges` answers `applied: 3`). Not verified live.
 
 ## B-287 — whole-file transcription silently dropped ~1.5 minutes of speech in 8 places
 

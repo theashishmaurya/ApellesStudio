@@ -2452,7 +2452,16 @@ function rippleDeleteOneRange(
       liveTrack = -1;
       break;
     }
-    const idx = tr.clips.findIndex((c) => c.start_frame >= start && endFrame(c, fps) <= end);
+    // B-288 — "inside the range" is "STARTS inside it", not "ends by `end`".
+    // Step 1 cut at `end`, so the only clip that can reach past `end` is one
+    // that starts at or after it. A piece's end, though, is not exact: `split`
+    // gives each half its own whole number of SOURCE frames, and when the
+    // source rate differs from the timeline's the right half's end is rounded
+    // on its own — measured, a 25 fps clip on a 23.998 fps timeline cut at
+    // 9470 and then 9100 leaves a middle piece ending at 9471. Testing
+    // `endFrame(c) <= end` refused that piece ("nothing lies wholly inside"),
+    // which is how one valid range of a 30-range batch was skipped.
+    const idx = tr.clips.findIndex((c) => c.start_frame >= start && c.start_frame < end);
     if (idx < 0) break;
     const check = checkRemove(next, liveTrack, idx);
     if (!check.ok) return refuse(`"${tr.clips[idx].name}" inside the range could not be removed — ${check.reason}`);

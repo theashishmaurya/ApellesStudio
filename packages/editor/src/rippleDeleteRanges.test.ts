@@ -393,4 +393,58 @@ describe('ripple_delete_ranges — per-range outcome (B-197)', () => {
       applyRippleDeleteRanges(tl, 0, ranges, FPS).timeline,
     );
   });
+
+  // B-288 — a range wholly inside material was refused ("nothing lies wholly
+  // inside") when the clip's source rate differs from the timeline's. The
+  // shape measured: a 25 fps source on the owner's 493480/20563 (~23.998 fps)
+  // timeline, a later range in the same clip applied first (back to front),
+  // then 9100..9470: the middle piece of that range is the right half of the
+  // second split, its own rounding put its end at 9471, and `endFrame <= end`
+  // missed it.
+  it('cuts a range whose middle piece rounds one frame past its end (B-288)', () => {
+    const rate = { num: 493480, den: 20563 };
+    const timelineRate = rate.num / rate.den;
+    const src = (timelineFrames: number) => Math.round((timelineFrames * 25) / timelineRate);
+    const voClip = (id: string, startFrame: number, sourceStart: number, frames: number) =>
+      ({ ...clip(id, startFrame, sourceStart, src(frames)), source_fps: 25, source_len: 10 ** 9 }) as Clip;
+    const tl = {
+      id: 'tl',
+      name: 'b288',
+      rate,
+      tracks: [
+        {
+          kind: 'audio',
+          clips: [voClip('a', 0, 0, 9000), voClip('b', 9000, src(9000), 8219)],
+          gain: 1,
+          sync_locked: false,
+        },
+      ],
+      markers: [],
+    } as unknown as Timeline;
+    const fps = timelineFps(tl);
+    const ranges = [
+      { start: 8958, end: 9011 },
+      { start: 9100, end: 9470 },
+      { start: 9723, end: 9742 },
+    ];
+    const { timeline: out, results } = applyRippleDeleteRanges(tl, 0, ranges, fps);
+    expect(results.map((r) => r.applied)).toEqual([true, true, true]);
+    // Every frame asked for came out: the track is 53 + 370 + 19 frames
+    // shorter, within the mixed-rate representation's own one-frame seams.
+    const end = (t: Timeline) => Math.max(...t.tracks[0].clips.map((c) => endFrame(c, fps)));
+    expect(Math.abs(end(tl) - end(out) - (53 + 370 + 19))).toBeLessThanOrEqual(1);
+
+    // A sweep over the second clip, three neighbouring ranges at a time: before
+    // the fix 453 of 1029 batches skipped a range on this fixture, after it none.
+    let skipped = 0;
+    for (let s = 9100; s < 16300; s += 7) {
+      const batch = [
+        { start: s - 142, end: s - 89 },
+        { start: s, end: s + 370 },
+        { start: s + 623, end: s + 642 },
+      ];
+      if (applyRippleDeleteRanges(tl, 0, batch, fps).results.some((r) => !r.applied)) skipped += 1;
+    }
+    expect(skipped).toBe(0);
+  });
 });
