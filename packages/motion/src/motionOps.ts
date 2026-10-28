@@ -269,6 +269,17 @@ export interface MotionOpsApi {
   renderStatus: MotionRenderStatus;
 }
 
+/**
+ * B-301 — the render status as `motion_get_state` answers it. `unreconciled`
+ * is a strict subset of `outputs`, so listing both repeated every finished
+ * scene's absolute path (the answer was 40-68 KB on a real project). The
+ * subset is reported as scene ids; the paths live once, in `outputs`.
+ */
+export function renderStatusDto(status: MotionRenderStatus) {
+  const { unreconciled, ...rest } = status;
+  return { ...rest, unreconciledSceneIds: unreconciled.map((o) => o.sceneId) };
+}
+
 /** The bit of `@remotion/player`'s `PlayerRef` these ops touch — structural,
  *  so this module imports nothing from that package. */
 export interface MotionPlayer {
@@ -915,7 +926,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         // B-202 — the render's own progress, verbatim from `renderLoop.ts`'s
         // `MotionRenderStatus`. The GUI's Render button reads the identical
         // value, so a human and an agent are told the same thing.
-        render: cur.renderStatus,
+        render: renderStatusDto(cur.renderStatus),
         scenes: manifest
           ? manifest.scenes.map((scene, i) => ({
               index: i,

@@ -73,3 +73,11 @@ describe('timelineDto highlights (B-270)', () => {
     expect(c.highlights).toEqual([]);
   });
 });
+
+describe('CLIP_FIELDS (B-318)', () => {
+  it('lists exactly the keys a clip row of editor_get_timeline carries', async () => {
+    const { CLIP_FIELDS } = await import('./trackOps');
+    const row = timelineDto(tl([clip('a', 'A')])).tracks[0].clips[0];
+    expect([...CLIP_FIELDS].sort()).toEqual(Object.keys(row).sort());
+  });
+});

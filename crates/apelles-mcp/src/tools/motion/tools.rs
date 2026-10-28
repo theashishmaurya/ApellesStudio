@@ -702,6 +702,9 @@ impl ApellesMcp {
         disk, which cannot tell "still rendering" from "stopped on a failure".
         A failed render stops at the failing scene, so `doneSceneIds` is
         exactly what is on disk and `failedSceneId` is what to fix.
+        `outputs` lists each finished scene's file once (`{sceneId,
+        outputPath}`); `unreconciledSceneIds` names the ones the app has not
+        yet taken into Sources (B-301 — the paths used to be listed twice).
       * `scenes` — one row per scene: `index`, `id`, `dur` (SECONDS), its
         absolute `startFrame` in the combined timeline, `layerCount`,
         `scene3dChildCount`, `camera2dKeys`, `camera3dKeys`.

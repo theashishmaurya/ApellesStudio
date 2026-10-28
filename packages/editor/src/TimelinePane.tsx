@@ -484,6 +484,7 @@ import {
   type MarqueeViewport,
 } from './marquee';
 import { useViewportWidth } from './useViewportWidth';
+import { trackLabels } from './trackOps';
 
 const EFFECT_ID = 'clip';
 /** how many pixels a labeled ruler tick should target, at any zoom (D-058
@@ -659,21 +660,6 @@ const CLIP_BODY_BACKGROUND: Record<'video' | 'audio' | 'subtitle', string> = {
   // blocks, and distinct from both the blue video and green audio bodies.
   subtitle: 'rgba(190,165,110,0.55)',
 };
-
-/** "Video 1" / "Audio 1" / "Subtitle 1" … — numbered per kind, matching the
- *  label this file always showed for the single video track before D-080.
- *  D-229 added the subtitle lane, named the way the reference names it
- *  (`scratch/resolve-reference/captioning.jpg` shows "Subtitle 1"). */
-function trackLabels(tl: Timeline): string[] {
-  let videoN = 0;
-  let audioN = 0;
-  let subN = 0;
-  return tl.tracks.map((t) => {
-    if (t.kind === 'audio') return `Audio ${++audioN}`;
-    if (t.kind === 'subtitle') return `Subtitle ${++subN}`;
-    return `Video ${++videoN}`;
-  });
-}
 
 /** id -> timeline start frame for every clip on every track — the snapshot
  *  the ripple-highlight effect diffs against the previous one (D-080:

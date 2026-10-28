@@ -18,6 +18,9 @@ dragging a pool item in from the shell's Sources panel.
   (also double-click), Duplicate (independent copy, grades copied), Size (project
   size or a delivery preset), Delete (confirmed, not undoable). A timeline with its
   own size shows it on its tab (`9:16`).
+- `trackOps.ts` (B-318 / B-315) — the compact `editor_list_tracks` read, the `editor_get_timeline`
+  filters (`track`, frame window, `fields`) and the sync-lock op's argument check; the track
+  header labels ("Audio 1") come from here too.
 - `beatGrid.ts` / `beatOps.ts` / `useTimelineBeats.ts` / `TimelineBeats.tsx` (D-413) — the
   timeline's beat grid: the track with `beat_grid` set, its clips' beats placed on timeline
   frames (through trim, position, native rate and speed ramp), the `set_beat_grid` / `rolls`

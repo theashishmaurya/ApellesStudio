@@ -238,6 +238,7 @@ import {
 // D-413 — the beat grid: the same functions the track header's metronome and
 // the toolbar's "Snap cuts to beats" call.
 import { detectTrackBeats, setBeatGridOp, snapCutsToBeatsOp } from './beatOps';
+import { listTracks, sliceTimelineDto, syncLockArgs } from './trackOps';
 import { detectedForGate, gateDetectorGroups, type DetectorGateResult } from './detectorGate';
 
 /** What a retake answer says about the gate behind its `status` (D-382). */
@@ -2172,10 +2173,20 @@ export function useEditorControl(): void {
         };
       },
 
-      editor_get_timeline: () => {
+      // B-318 — optional `track` / `startFrame` / `endFrame` / `fields` slice the
+      // answer (a real edit's whole timeline is ~675K characters); with none the
+      // full timeline comes back exactly as before.
+      editor_get_timeline: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
-        return timelineDto(tl);
+        return sliceTimelineDto(timelineDto(tl), tl, a);
+      },
+
+      // B-318 — the compact track read: one row per track, no clips.
+      editor_list_tracks: () => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        return listTracks(tl);
       },
 
       // ---- D-411 Phase 0: timeline management -----------------------------
@@ -5830,6 +5841,16 @@ export function useEditorControl(): void {
         const track = Math.round(Number(a?.track));
         useEditorTimelineStore.getState().applyOp({ kind: 'set_track_locked', track, locked: !!a?.locked });
         return { ok: true, track, locked: !!a?.locked };
+      },
+      // B-315 — the track header's sync-lock button, as an op: the SAME
+      // `set_track_sync_locked` the button applies (`TimelinePane`'s toggle).
+      editor_set_track_sync_locked: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const args = syncLockArgs(tl, a);
+        if ('error' in args) return args;
+        useEditorTimelineStore.getState().applyOp({ kind: 'set_track_sync_locked', ...args });
+        return { ok: true, ...args };
       },
       editor_set_track_hidden: (a) => {
         const track = Math.round(Number(a?.track));

@@ -49,7 +49,11 @@ use crate::video::{self, VideoInfo};
 static PROBE_CACHE: Lazy<Mutex<HashMap<PathBuf, (String, VideoInfo)>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-const NS_PROBE: &str = "probe";
+/// The disk namespace. Bumped to `probe-v2` by B-298: v1 held a cover-art audio
+/// file's probe as a 90000-fps video, and an entry is only ever invalidated by
+/// the file changing — so the corrected probe needs a namespace the old answers
+/// are not in.
+const NS_PROBE: &str = "probe-v2";
 
 /// `path`'s [`VideoInfo`], from memory, then disk, then a real `ffprobe` pass.
 ///

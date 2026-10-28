@@ -38,6 +38,9 @@ type OpArgs = Record<string, unknown> | undefined;
 /** At most this many beats come back in one answer; filter by window or kind for more. */
 export const MAX_BEATS_RETURNED = 1000;
 
+/** B-301 — how many leading beats the default (summary) answer carries. */
+export const SUMMARY_BEATS = 8;
+
 const KINDS: readonly BeatKind[] = ['beat', 'downbeat', 'strong'];
 
 function kindArg(raw: unknown, fallback: BeatKind): BeatKind | { error: string } {
@@ -114,6 +117,33 @@ function beatDto(b: TimelineBeat) {
   };
 }
 
+/**
+ * B-301 — the beats part of an `editor_detect_beats` answer. A real track has
+ * hundreds of beats (the full list was 40-68 KB per call), so the default is a
+ * summary: the first [`SUMMARY_BEATS`] and `truncated: true`. `full: true`
+ * returns the list, paged by `offset` / `limit` (at most [`MAX_BEATS_RETURNED`]
+ * per page); `nextOffset` is set when more remain.
+ */
+function beatListing(chosen: readonly TimelineBeat[], a: OpArgs) {
+  if (a?.full !== true) {
+    return {
+      truncated: chosen.length > SUMMARY_BEATS,
+      beats: chosen.slice(0, SUMMARY_BEATS).map(beatDto),
+    };
+  }
+  const offset = typeof a.offset === 'number' && a.offset > 0 ? Math.floor(a.offset) : 0;
+  const asked = typeof a.limit === 'number' && a.limit > 0 ? Math.floor(a.limit) : MAX_BEATS_RETURNED;
+  const limit = Math.min(asked, MAX_BEATS_RETURNED);
+  const page = chosen.slice(offset, offset + limit);
+  const end = offset + page.length;
+  return {
+    offset,
+    truncated: end < chosen.length,
+    nextOffset: end < chosen.length ? end : null,
+    beats: page.map(beatDto),
+  };
+}
+
 /** `editor_detect_beats`. */
 export async function detectTrackBeats(tl: Timeline, a: OpArgs) {
   const track = trackArg(tl, a?.track);
@@ -162,8 +192,9 @@ export async function detectTrackBeats(tl: Timeline, a: OpArgs) {
     totalBeatsOnTimeline: placed.beats.length,
     kind,
     beatCount: chosen.length,
-    truncated: chosen.length > MAX_BEATS_RETURNED,
-    beats: chosen.slice(0, MAX_BEATS_RETURNED).map(beatDto),
+    downbeatCount: chosen.filter((b) => b.downbeat).length,
+    strongCount: chosen.filter((b) => b.strong).length,
+    ...beatListing(chosen, a),
   };
 }
 
