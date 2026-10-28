@@ -63,6 +63,10 @@ fn default_editor_detect_beats_force() -> bool {
     false
 }
 
+fn default_editor_detect_beats_full() -> bool {
+    false
+}
+
 fn default_editor_snap_cuts_to_beats_dry_run() -> bool {
     false
 }
@@ -762,6 +766,25 @@ pub struct EditorSetTrackGainArgs {
 pub struct EditorSetTrackLockedArgs {
     pub track: i64,
     pub locked: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorSetTrackSyncLockedArgs {
+    pub track: i64,
+    pub sync_locked: bool,
+}
+
+/// B-318 — optional filters that slice `get_timeline`'s answer.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetTimelineArgs {
+    #[serde(default)]
+    pub track: Option<i64>,
+    #[serde(default)]
+    pub start_frame: Option<i64>,
+    #[serde(default)]
+    pub end_frame: Option<i64>,
+    #[serde(default)]
+    pub fields: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1500,6 +1523,12 @@ pub struct EditorDetectBeatsArgs {
     pub end_frame: Option<i64>,
     #[serde(default = "default_editor_detect_beats_force")]
     pub force: bool,
+    #[serde(default = "default_editor_detect_beats_full")]
+    pub full: bool,
+    #[serde(default)]
+    pub offset: Option<i64>,
+    #[serde(default)]
+    pub limit: Option<i64>,
 }
 
 /// D-413 — show a track's beat grid, or hide it (`track` null).
@@ -1552,6 +1581,17 @@ impl ApellesMcp {
         description = r#"The active edit timeline: every track and every clip on it, with the
     indices the mutating Edit-tab tools address clips by.
 
+    A real edit is huge (hundreds of clips can run to ~675K characters), so
+    read a SLICE (B-318): `editor_list_tracks` first for the compact picture,
+    then this with filters. `track` — only that track's clips. `start_frame` /
+    `end_frame` — only clips (and markers) overlapping that TIMELINE-frame
+    window (`end_frame` exclusive). `fields` — only these clip fields, plus
+    `index` and `id` (for example `["name", "startFrame", "duration"]`; an
+    unknown name is refused with the valid list). A filtered answer keeps each
+    track's full `clipCount`, keeps every clip's real `index`, and reports what
+    it was filtered by in `filtered`. With no argument the whole timeline comes
+    back, exactly as before.
+
     Returns {id, name, output, origin, durationFrames, tracks: [{index, kind: "video"|"audio",
     gain, locked, hidden, duckFrom, duckDb, duckAttackMs, duckReleaseMs,
     clips: [{index, id, name, sourcePath, startFrame, duration, sourceStart,
@@ -1589,9 +1629,17 @@ impl ApellesMcp {
 
     Read-only, cheap, no side effects."#
     )]
-    pub async fn get_timeline(&self) -> Result<CallToolResult, ErrorData> {
+    pub async fn get_timeline(
+        &self,
+        Parameters(p): Parameters<GetTimelineArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .put("track", p.track)
+            .put("startFrame", p.start_frame)
+            .put("endFrame", p.end_frame)
+            .put("fields", p.fields);
         // Tool name and op name deliberately differ — see this module's header.
-        let env = self.op("editor_get_timeline", WireArgs::new()).await?;
+        let env = self.op("editor_get_timeline", args).await?;
         Ok(render::json_text(&env))
     }
 
@@ -3930,6 +3978,54 @@ impl ApellesMcp {
     }
 
     #[tool(
+        name = "editor_set_track_sync_locked",
+        description = r#"Turn a track's SYNC LOCK on or off — the track header's chain button
+    (B-315). A sync-locked track RECEIVES the ripple shift an edit on another
+    track causes (a ripple delete, a ripple trim), so it stays in step with the
+    track being edited; unlocked, it is left where it is. New tracks are
+    sync-locked. This is a different thing from `editor_set_track_locked`,
+    which blocks edits to the track's own clips. One undo step.
+
+    Returns {ok, track, syncLocked}; `track` is the 0-based index from
+    `editor_list_tracks`."#
+    )]
+    pub async fn editor_set_track_sync_locked(
+        &self,
+        Parameters(p): Parameters<EditorSetTrackSyncLockedArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("track", p.track)
+            .set("syncLocked", p.sync_locked);
+        let env = self.op("editor_set_track_sync_locked", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_list_tracks",
+        description = r#"The active timeline's tracks, compactly and WITHOUT their clips (B-318)
+    — read this first to find which track holds the voice-over, the music, the
+    captions, instead of pulling every clip through `get_timeline`.
+
+    Returns {ok, timelineId, durationFrames, trackCount, tracks: [{index,
+    kind: "video"|"audio"|"subtitle", name ("Video 1", "Audio 2", ...: numbered
+    per kind, the label the track header shows), gain, muted (gain is 0),
+    hidden, locked, syncLocked, duckFrom (the track whose clips duck this one,
+    or null) and, when ducked, duckDb / duckAttackMs / duckReleaseMs, beatGrid
+    (only on the track whose beats are shown), clipCount, sourceCount, sources
+    (the distinct source file NAMES on the track, at most 12), firstFrame and
+    endFrame (the track's extent in TIMELINE frames; null when empty)}]}.
+
+    `index` is what every track-addressed tool takes. Then slice the clips with
+    `get_timeline(track=..., start_frame=..., end_frame=..., fields=[...])`.
+    The same facts are in the GUI's track headers. Read-only."#
+    )]
+    pub async fn editor_list_tracks(&self) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new();
+        let env = self.op("editor_list_tracks", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
         name = "editor_set_track_hidden",
         description = r#"Show or hide a video track. A hidden track is skipped by both the
     live preview compositor and `editor_export`."#
@@ -6038,11 +6134,15 @@ impl ApellesMcp {
       (a downbeat or a beat that hits hard).
     - `start_frame` / `end_frame` — only beats in this timeline window.
     - `force` — re-analyse even if this exact file was analysed before.
+    - `full` — return the beat list itself (B-301). By default the answer is a
+      SUMMARY: counts and only the first 8 beats, since a real track has
+      hundreds. With `full`, `offset` / `limit` page the list (at most 1000 a
+      page; `nextOffset` is set while more remain).
 
-    Answers `tempoBpm`, `meter`, `beatSpacingFrames`, per-file facts and
-    `beats`: `[{frame, bar, beat, downbeat, strong, strength, clip}]` in
-    TIMELINE frames (at most 1000; narrow the window or the kind for more).
-    Downbeats are a heuristic (low-end onsets + harmonic change): right on
+    Answers `tempoBpm`, `meter`, `beatSpacingFrames`, per-file facts, the
+    counts (`beatCount`, `downbeatCount`, `strongCount`, `totalBeatsOnTimeline`)
+    and `beats`: `[{frame, bar, beat, downbeat, strong, strength, clip}]` in
+    TIMELINE frames (the first 8, or the page asked for). Downbeats are a heuristic (low-end onsets + harmonic change): right on
     music that marks its bars, possibly a beat off on music that does not.
     Nothing is cut."#
     )]
@@ -6058,7 +6158,10 @@ impl ApellesMcp {
             .put("kind", p.kind)
             .put("startFrame", p.start_frame)
             .put("endFrame", p.end_frame)
-            .put_if("force", p.force);
+            .put_if("force", p.force)
+            .put_if("full", p.full)
+            .put("offset", p.offset)
+            .put("limit", p.limit);
         let env = self
             .op_with("editor_detect_beats", crate::BEAT_ANALYSIS_TIMEOUT_MS, args)
             .await?;

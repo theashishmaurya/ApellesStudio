@@ -812,7 +812,11 @@ impl ApellesMcp {
     persist the active shot's grade.json, and regenerate the launcher thumb.
     Autosave already does this on a debounce while editing — call this to force
     an immediate write. Errors if no project is loaded or the session is an
-    unsaved "Untitled" (save it as a project in the app first)."#
+    unsaved "Untitled" (save it as a project in the app first).
+
+    Returns {ok, error, result: {saved, path, thumbRegenerated}} -- nothing
+    else (B-296: it used to attach the whole grade and histogram). Read the
+    grade with `get_state` / `get_grade`."#
     )]
     pub async fn save_project(&self) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new();

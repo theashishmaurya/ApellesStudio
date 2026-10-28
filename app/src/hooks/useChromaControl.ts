@@ -41,6 +41,7 @@ import {
   isKeyframeableMaskType,
 } from '../utils/maskKeyframes';
 import { Mask, SubMask, SubMaskMode } from '../components/panel/right/Masks';
+import { isResultOnlyOp } from './bridgeOpClasses';
 import {
   computeScopes,
   computeGap,
@@ -478,7 +479,9 @@ export function useChromaControl() {
         if (!ss.projectPath) return { error: 'no project loaded — new_project first' };
         if (ss.projectName === 'Untitled') return { error: 'this is an Untitled session — save it as a project in the app first' };
         const res = await ss.saveProject({ force: true });
-        return res.ok ? { saved: true, thumbRegenerated: res.thumbRegenerated } : { error: res.error };
+        return res.ok
+          ? { saved: true, path: ss.projectPath, thumbRegenerated: res.thumbRegenerated }
+          : { error: res.error };
       },
 
       // ---- project output spec (D-038) -----------------------------------
@@ -1568,7 +1571,7 @@ export function useChromaControl() {
         'get_state', 'list_masks', 'inspect_color', 'sample', 'sample_region',
         'export', 'export_progress', 'get_grade', 'save_grade', 'request_human',
         'list_shots', 'list_mask_keyframes',
-        'list_projects', 'save_project', 'set_project_settings',
+        'list_projects', 'set_project_settings',
       ]);
       // B-248 — cross-tab ops (D-383's undo/redo). They are not Colorist ops:
       // they do not touch the grade unless the history entry they step happens
@@ -1577,13 +1580,15 @@ export function useChromaControl() {
       // `READ_ONLY` instead attached the whole grade + histogram (~30 KB) to an
       // Edit-tab undo. An agent that undoes a grade change reads the result with
       // `get_state` / `inspect_color`, the same as after any other op.
-      const CROSS_TAB = new Set(['undo', 'redo']);
+      // B-296 — `save_project` joins them (`bridgeOpClasses.ts`): it writes the
+      // project to disk and touches no grade, so the grade + histogram the
+      // READ_ONLY path attached (~30 KB) was noise on a `{saved, path, ...}` answer.
       // pure navigation — changes the playhead / open clip / active shot, not
       // the grade of the current shot. Not logged to the activity feed (a shot
       // switch restores that shot's own feed — D-033). `settleAndCapture` still
       // runs so the agent gets the new shot's frame back.
       const NAV = new Set(['seek', 'open', 'set_active_shot', 'add_shots', 'open_project', 'new_project']);
-      const shouldLog = !READ_ONLY.has(op) && !NAV.has(op) && !CROSS_TAB.has(op);
+      const shouldLog = !READ_ONLY.has(op) && !NAV.has(op) && !isResultOnlyOp(op);
 
       try {
         // B-217/D-358 — before anything else: refuse to run while this app's
@@ -1607,7 +1612,7 @@ export function useChromaControl() {
 
         const result = await fn(args || {});
 
-        if (CROSS_TAB.has(op)) {
+        if (isResultOnlyOp(op)) {
           respond({ ok: !result?.error, error: result?.error ?? null, result });
           return;
         }

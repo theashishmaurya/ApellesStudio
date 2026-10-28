@@ -2488,7 +2488,7 @@
     },
     {
       "name": "editor_detect_beats",
-      "description": "Find the beats of the music on a track \u2014 tempo, every beat, the\n    downbeats (bar starts) and how hard each beat hits \u2014 and, by default, show\n    them as the timeline's beat grid (one undo step), so drags, trims and the\n    playhead snap to them in the GUI (D-413).\n\n    - `track` \u2014 required: the track holding the music (usually an audio\n      track). Every clip on it is analysed from its file, and its beats are\n      placed through the clip's trim, position and speed, so a bed cut by\n      music edits keeps its beats where they are heard.\n    - `meter` \u2014 beats per bar, 2..7 (default 4; 3 for a waltz).\n    - `tempo_hint_bpm` \u2014 30..300: where the tempo estimate looks first. Pass\n      it when the answer came back at half or double the real tempo.\n    - `show` \u2014 set this track as the timeline's beat grid (default true).\n    - `kind` \u2014 which beats to return: `beat` (default), `downbeat` or `strong`\n      (a downbeat or a beat that hits hard).\n    - `start_frame` / `end_frame` \u2014 only beats in this timeline window.\n    - `force` \u2014 re-analyse even if this exact file was analysed before.\n\n    Answers `tempoBpm`, `meter`, `beatSpacingFrames`, per-file facts and\n    `beats`: `[{frame, bar, beat, downbeat, strong, strength, clip}]` in\n    TIMELINE frames (at most 1000; narrow the window or the kind for more).\n    Downbeats are a heuristic (low-end onsets + harmonic change): right on\n    music that marks its bars, possibly a beat off on music that does not.\n    Nothing is cut.",
+      "description": "Find the beats of the music on a track \u2014 tempo, every beat, the\n    downbeats (bar starts) and how hard each beat hits \u2014 and, by default, show\n    them as the timeline's beat grid (one undo step), so drags, trims and the\n    playhead snap to them in the GUI (D-413).\n\n    - `track` \u2014 required: the track holding the music (usually an audio\n      track). Every clip on it is analysed from its file, and its beats are\n      placed through the clip's trim, position and speed, so a bed cut by\n      music edits keeps its beats where they are heard.\n    - `meter` \u2014 beats per bar, 2..7 (default 4; 3 for a waltz).\n    - `tempo_hint_bpm` \u2014 30..300: where the tempo estimate looks first. Pass\n      it when the answer came back at half or double the real tempo.\n    - `show` \u2014 set this track as the timeline's beat grid (default true).\n    - `kind` \u2014 which beats to return: `beat` (default), `downbeat` or `strong`\n      (a downbeat or a beat that hits hard).\n    - `start_frame` / `end_frame` \u2014 only beats in this timeline window.\n    - `force` \u2014 re-analyse even if this exact file was analysed before.\n    - `full` \u2014 return the beat list itself (B-301). By default the answer is a\n      SUMMARY: counts and only the first 8 beats, since a real track has\n      hundreds. With `full`, `offset` / `limit` page the list (at most 1000 a\n      page; `nextOffset` is set while more remain).\n\n    Answers `tempoBpm`, `meter`, `beatSpacingFrames`, per-file facts, the\n    counts (`beatCount`, `downbeatCount`, `strongCount`, `totalBeatsOnTimeline`)\n    and `beats`: `[{frame, bar, beat, downbeat, strong, strength, clip}]` in\n    TIMELINE frames (the first 8, or the page asked for). Downbeats are a heuristic (low-end onsets + harmonic change): right on\n    music that marks its bars, possibly a beat off on music that does not.\n    Nothing is cut.",
       "inputSchema": {
         "properties": {
           "track": {
@@ -2564,6 +2564,35 @@
             "default": false,
             "title": "Force",
             "type": "boolean"
+          },
+          "full": {
+            "default": false,
+            "title": "Full",
+            "type": "boolean"
+          },
+          "offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Offset"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
           }
         },
         "required": [
@@ -4382,6 +4411,15 @@
         "properties": {},
         "type": "object",
         "title": "editor_list_timelinesArguments"
+      }
+    },
+    {
+      "name": "editor_list_tracks",
+      "description": "The active timeline's tracks, compactly and WITHOUT their clips (B-318)\n    \u2014 read this first to find which track holds the voice-over, the music, the\n    captions, instead of pulling every clip through `get_timeline`.\n\n    Returns {ok, timelineId, durationFrames, trackCount, tracks: [{index,\n    kind: \"video\"|\"audio\"|\"subtitle\", name (\"Video 1\", \"Audio 2\", ...: numbered\n    per kind, the label the track header shows), gain, muted (gain is 0),\n    hidden, locked, syncLocked, duckFrom (the track whose clips duck this one,\n    or null) and, when ducked, duckDb / duckAttackMs / duckReleaseMs, beatGrid\n    (only on the track whose beats are shown), clipCount, sourceCount, sources\n    (the distinct source file NAMES on the track, at most 12), firstFrame and\n    endFrame (the track's extent in TIMELINE frames; null when empty)}]}.\n\n    `index` is what every track-addressed tool takes. Then slice the clips with\n    `get_timeline(track=..., start_frame=..., end_frame=..., fields=[...])`.\n    The same facts are in the GUI's track headers. Read-only.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+        "title": "editor_list_tracksArguments"
       }
     },
     {
@@ -7011,6 +7049,28 @@
       }
     },
     {
+      "name": "editor_set_track_sync_locked",
+      "description": "Turn a track's SYNC LOCK on or off \u2014 the track header's chain button\n    (B-315). A sync-locked track RECEIVES the ripple shift an edit on another\n    track causes (a ripple delete, a ripple trim), so it stays in step with the\n    track being edited; unlocked, it is left where it is. New tracks are\n    sync-locked. This is a different thing from `editor_set_track_locked`,\n    which blocks edits to the track's own clips. One undo step.\n\n    Returns {ok, track, syncLocked}; `track` is the 0-based index from\n    `editor_list_tracks`.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "sync_locked": {
+            "title": "Sync Locked",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "track",
+          "sync_locked"
+        ],
+        "type": "object",
+        "title": "editor_set_track_sync_lockedArguments"
+      }
+    },
+    {
       "name": "editor_set_transition",
       "description": "Change a placed transition's type, length, alignment or dip colour.\n    `id` comes from `editor_list_transitions` (or from\n    `editor_add_transition`'s own response).\n\n    A PATCH: every argument you omit keeps its current value. `at_frame` is\n    deliberately NOT changeable \u2014 moving a transition to a different cut is\n    removing it from one and adding it to another, and a patch that silently\n    re-homed it would skip the placement checks the add path runs.\n\n    The MERGED result must still be legal, so shortening a dissolve always\n    works and lengthening one past its handle media is refused with the same\n    message `editor_add_transition` would have given. Pass `color=\"\"` to clear\n    a dip back to black. Returns the transition as it now stands.",
       "inputSchema": {
@@ -7436,9 +7496,61 @@
     },
     {
       "name": "get_timeline",
-      "description": "The active edit timeline: every track and every clip on it, with the\n    indices the mutating Edit-tab tools address clips by.\n\n    Returns {id, name, output, origin, durationFrames, tracks: [{index, kind: \"video\"|\"audio\",\n    gain, locked, hidden, duckFrom, duckDb, duckAttackMs, duckReleaseMs,\n    clips: [{index, id, name, sourcePath, startFrame, duration, sourceStart,\n    sourceLen, sourceFps, linkGroup, fadeInFrames, fadeOutFrames, fadeInCurve,\n    fadeOutCurve, fadeInCurveName, fadeOutCurveName, volume, pan, eqBands,\n    eqActive, highlights}]}]}.\n\n    `volume`/`pan` (D-223) are the CLIP's own level and stereo position, which\n    MULTIPLY with the track's own `gain` rather than replacing it \u2014 see\n    editor_set_clip_audio.\n\n    `eqBands` (D-224) is that clip's own parametric EQ, `[]` when it has none;\n    `eqActive` says whether ANY of those bands actually changes the sound. Read\n    it: a four-band strip whose gains are all 0 dB is completely inert, and\n    `eqBands` being non-empty is NOT the same as the clip being filtered. See\n    editor_set_clip_eq.\n\n    `highlights` (D-396, B-270) is that clip's phrase highlights, `[]` when it\n    has none, each `{box: [x0, y0, x1, y1], at, dur, color?, opacity?}` -- the\n    same shape editor_set_clip_highlights takes and returns.\n\n    All positions and durations are in FRAMES, not seconds \u2014 the unit every\n    Edit-tab number is in. `index` is what set_clip_fade and set_track_duck\n    address; `id` is the stable identity that survives a reorder, for re-finding\n    a clip after an edit. `duckFrom` is null on a track that is not ducked.\n\n    B-077 \u2014 `startFrame` (and `durationFrames`) are TIMELINE frames (this\n    timeline's own rate); `duration`/`sourceStart`/`sourceLen` are a CLIP'S\n    OWN native frames, which only match the timeline's rate when `sourceFps`\n    equals it. A clip's real length in seconds is `duration / (sourceFps or\n    the timeline's own rate)`, NOT `duration / durationFrames`'s implied rate\n    \u2014 dividing a clip's native frame count by the wrong rate is exactly the\n    bug that once showed a 47.86s clip as 88s. `sourceFps` is null for a clip\n    probed before this field existed, or genuinely same-rate as the timeline.\n\n    Read-only, cheap, no side effects.",
+      "description": "The active edit timeline: every track and every clip on it, with the\n    indices the mutating Edit-tab tools address clips by.\n\n    A real edit is huge (hundreds of clips can run to ~675K characters), so\n    read a SLICE (B-318): `editor_list_tracks` first for the compact picture,\n    then this with filters. `track` \u2014 only that track's clips. `start_frame` /\n    `end_frame` \u2014 only clips (and markers) overlapping that TIMELINE-frame\n    window (`end_frame` exclusive). `fields` \u2014 only these clip fields, plus\n    `index` and `id` (for example `[\"name\", \"startFrame\", \"duration\"]`; an\n    unknown name is refused with the valid list). A filtered answer keeps each\n    track's full `clipCount`, keeps every clip's real `index`, and reports what\n    it was filtered by in `filtered`. With no argument the whole timeline comes\n    back, exactly as before.\n\n    Returns {id, name, output, origin, durationFrames, tracks: [{index, kind: \"video\"|\"audio\",\n    gain, locked, hidden, duckFrom, duckDb, duckAttackMs, duckReleaseMs,\n    clips: [{index, id, name, sourcePath, startFrame, duration, sourceStart,\n    sourceLen, sourceFps, linkGroup, fadeInFrames, fadeOutFrames, fadeInCurve,\n    fadeOutCurve, fadeInCurveName, fadeOutCurveName, volume, pan, eqBands,\n    eqActive, highlights}]}]}.\n\n    `volume`/`pan` (D-223) are the CLIP's own level and stereo position, which\n    MULTIPLY with the track's own `gain` rather than replacing it \u2014 see\n    editor_set_clip_audio.\n\n    `eqBands` (D-224) is that clip's own parametric EQ, `[]` when it has none;\n    `eqActive` says whether ANY of those bands actually changes the sound. Read\n    it: a four-band strip whose gains are all 0 dB is completely inert, and\n    `eqBands` being non-empty is NOT the same as the clip being filtered. See\n    editor_set_clip_eq.\n\n    `highlights` (D-396, B-270) is that clip's phrase highlights, `[]` when it\n    has none, each `{box: [x0, y0, x1, y1], at, dur, color?, opacity?}` -- the\n    same shape editor_set_clip_highlights takes and returns.\n\n    All positions and durations are in FRAMES, not seconds \u2014 the unit every\n    Edit-tab number is in. `index` is what set_clip_fade and set_track_duck\n    address; `id` is the stable identity that survives a reorder, for re-finding\n    a clip after an edit. `duckFrom` is null on a track that is not ducked.\n\n    B-077 \u2014 `startFrame` (and `durationFrames`) are TIMELINE frames (this\n    timeline's own rate); `duration`/`sourceStart`/`sourceLen` are a CLIP'S\n    OWN native frames, which only match the timeline's rate when `sourceFps`\n    equals it. A clip's real length in seconds is `duration / (sourceFps or\n    the timeline's own rate)`, NOT `duration / durationFrames`'s implied rate\n    \u2014 dividing a clip's native frame count by the wrong rate is exactly the\n    bug that once showed a 47.86s clip as 88s. `sourceFps` is null for a clip\n    probed before this field existed, or genuinely same-rate as the timeline.\n\n    Read-only, cheap, no side effects.",
       "inputSchema": {
-        "properties": {},
+        "properties": {
+          "track": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Track"
+          },
+          "start_frame": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start Frame"
+          },
+          "end_frame": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Frame"
+          },
+          "fields": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fields"
+          }
+        },
         "type": "object",
         "title": "get_timelineArguments"
       }
@@ -9034,7 +9146,7 @@
     },
     {
       "name": "motion_get_state",
-      "description": "Orientation for the Motion tab \u2014 call this FIRST. The Motion analogue of\n    `editor_get_state`, and the read half of `motion_select`/\n    `motion_set_selection`.\n\n    Returns:\n      * `loadState` / `dirty` / `parseError` / `saveError` \u2014 is this tab usable\n        at all. A Motion manifest lives inside a project, so `\"no-project\"`\n        means open one in the Colorist tab first. This tool ANSWERS in that\n        case rather than erroring, which is how you find it out.\n      * `recovered` \u2014 `null`, or `{stale}` when a page reload put the previous\n        page's UNSAVED edits back from the project's recovery copy (they are\n        still unsaved: `motion_save_manifest` keeps them, `motion_reload_manifest`\n        with `force=true` discards them). `stale: true` means the saved manifest\n        changed after those edits were made, so saving replaces it.\n      * `selection` \u2014 what is selected right now, as `[{sceneIndex, target}]`,\n        the exact shape `motion_set_selection` takes back.\n      * `playheadFrame` / `playerMounted` \u2014 where the preview is parked.\n      * `fps`, `totalFrames`, `width`, `height`, `title` \u2014 the document's own\n        output spec, all four of them written by\n        `motion_set_project_settings`.\n      * `render` \u2014 where a `motion_render` is: `state` (`idle`/`running`/\n        `error`/`interrupted`), `scenesTotal` / `scenesDone` / `doneSceneIds`\n        (real progress), `remainingSceneIds` (what is left), `sceneId` (the one\n        rendering right now), and `failedSceneId` + `error` when one failed.\n        `interrupted` is a render the app lost (a restart); `motion_render` with\n        `resume=true` continues it. **This is how you find out\n        a render failed.** A multi-scene render always outlives the 20s\n        control-bridge timeout, so `motion_render`'s own reply is gone before\n        a mid-loop failure happens; poll here instead of counting files on\n        disk, which cannot tell \"still rendering\" from \"stopped on a failure\".\n        A failed render stops at the failing scene, so `doneSceneIds` is\n        exactly what is on disk and `failedSceneId` is what to fix.\n      * `scenes` \u2014 one row per scene: `index`, `id`, `dur` (SECONDS), its\n        absolute `startFrame` in the combined timeline, `layerCount`,\n        `scene3dChildCount`, `camera2dKeys`, `camera3dKeys`.\n\n    **Times in this tab are SECONDS, per scene, not absolute frames.** A\n    keyframe's `at` is seconds from its own scene's start; `startFrame` here is\n    what converts between the two (`frame = startFrame + at * fps`), and\n    `motion_seek` accepts either form so you rarely have to do it yourself.",
+      "description": "Orientation for the Motion tab \u2014 call this FIRST. The Motion analogue of\n    `editor_get_state`, and the read half of `motion_select`/\n    `motion_set_selection`.\n\n    Returns:\n      * `loadState` / `dirty` / `parseError` / `saveError` \u2014 is this tab usable\n        at all. A Motion manifest lives inside a project, so `\"no-project\"`\n        means open one in the Colorist tab first. This tool ANSWERS in that\n        case rather than erroring, which is how you find it out.\n      * `recovered` \u2014 `null`, or `{stale}` when a page reload put the previous\n        page's UNSAVED edits back from the project's recovery copy (they are\n        still unsaved: `motion_save_manifest` keeps them, `motion_reload_manifest`\n        with `force=true` discards them). `stale: true` means the saved manifest\n        changed after those edits were made, so saving replaces it.\n      * `selection` \u2014 what is selected right now, as `[{sceneIndex, target}]`,\n        the exact shape `motion_set_selection` takes back.\n      * `playheadFrame` / `playerMounted` \u2014 where the preview is parked.\n      * `fps`, `totalFrames`, `width`, `height`, `title` \u2014 the document's own\n        output spec, all four of them written by\n        `motion_set_project_settings`.\n      * `render` \u2014 where a `motion_render` is: `state` (`idle`/`running`/\n        `error`/`interrupted`), `scenesTotal` / `scenesDone` / `doneSceneIds`\n        (real progress), `remainingSceneIds` (what is left), `sceneId` (the one\n        rendering right now), and `failedSceneId` + `error` when one failed.\n        `interrupted` is a render the app lost (a restart); `motion_render` with\n        `resume=true` continues it. **This is how you find out\n        a render failed.** A multi-scene render always outlives the 20s\n        control-bridge timeout, so `motion_render`'s own reply is gone before\n        a mid-loop failure happens; poll here instead of counting files on\n        disk, which cannot tell \"still rendering\" from \"stopped on a failure\".\n        A failed render stops at the failing scene, so `doneSceneIds` is\n        exactly what is on disk and `failedSceneId` is what to fix.\n        `outputs` lists each finished scene's file once (`{sceneId,\n        outputPath}`); `unreconciledSceneIds` names the ones the app has not\n        yet taken into Sources (B-301 \u2014 the paths used to be listed twice).\n      * `scenes` \u2014 one row per scene: `index`, `id`, `dur` (SECONDS), its\n        absolute `startFrame` in the combined timeline, `layerCount`,\n        `scene3dChildCount`, `camera2dKeys`, `camera3dKeys`.\n\n    **Times in this tab are SECONDS, per scene, not absolute frames.** A\n    keyframe's `at` is seconds from its own scene's start; `startFrame` here is\n    what converts between the two (`frame = startFrame + at * fps`), and\n    `motion_seek` accepts either form so you rarely have to do it yourself.",
       "inputSchema": {
         "properties": {},
         "type": "object",
@@ -12589,7 +12701,7 @@
     },
     {
       "name": "save_project",
-      "description": "Save the open project: rewrite project.json (shots + active shot),\n    persist the active shot's grade.json, and regenerate the launcher thumb.\n    Autosave already does this on a debounce while editing \u2014 call this to force\n    an immediate write. Errors if no project is loaded or the session is an\n    unsaved \"Untitled\" (save it as a project in the app first).",
+      "description": "Save the open project: rewrite project.json (shots + active shot),\n    persist the active shot's grade.json, and regenerate the launcher thumb.\n    Autosave already does this on a debounce while editing \u2014 call this to force\n    an immediate write. Errors if no project is loaded or the session is an\n    unsaved \"Untitled\" (save it as a project in the app first).\n\n    Returns {ok, error, result: {saved, path, thumbRegenerated}} -- nothing\n    else (B-296: it used to attach the whole grade and histogram). Read the\n    grade with `get_state` / `get_grade`.",
       "inputSchema": {
         "properties": {},
         "type": "object",
@@ -16078,7 +16190,10 @@
         "kind": "v_editor_detect_beats.kind",
         "start_frame": 9,
         "end_frame": 37,
-        "force": true
+        "force": true,
+        "full": true,
+        "offset": 70,
+        "limit": 18
       },
       "requests": [
         {
@@ -16091,7 +16206,10 @@
             "kind": "v_editor_detect_beats.kind",
             "startFrame": 9,
             "endFrame": 37,
-            "force": true
+            "force": true,
+            "full": true,
+            "offset": 70,
+            "limit": 18
           },
           "timeout_ms": 120000
         }
@@ -17548,6 +17666,25 @@
       "requests": [
         {
           "op": "editor_list_timelines",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_list_tracks",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "editor_list_tracks",
           "args": {},
           "timeout_ms": 20000
         }
@@ -19620,6 +19757,31 @@
       ]
     },
     {
+      "tool": "editor_set_track_sync_locked",
+      "case": "minimal",
+      "arguments": {
+        "track": 9,
+        "sync_locked": false
+      },
+      "requests": [
+        {
+          "op": "editor_set_track_sync_locked",
+          "args": {
+            "track": 9,
+            "syncLocked": false
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "editor_set_transition",
       "case": "minimal",
       "arguments": {
@@ -20107,6 +20269,39 @@
         {
           "op": "editor_get_timeline",
           "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "get_timeline",
+      "case": "full",
+      "arguments": {
+        "track": 80,
+        "start_frame": 75,
+        "end_frame": 97,
+        "fields": [
+          "v_get_timeline.fields[0]"
+        ]
+      },
+      "requests": [
+        {
+          "op": "editor_get_timeline",
+          "args": {
+            "track": 80,
+            "startFrame": 75,
+            "endFrame": 97,
+            "fields": [
+              "v_get_timeline.fields[0]"
+            ]
+          },
           "timeout_ms": 20000
         }
       ],

@@ -197,6 +197,27 @@ describe('editor_detect_beats', () => {
     expect(undoDepth()).toBe(before + 1);
   });
 
+  it('B-301: answers a summary by default (counts + first beats) and pages the full list on request', async () => {
+    const summary = await callOp('editor_detect_beats', { track: 1 });
+    expect(summary.result).toMatchObject({
+      totalBeatsOnTimeline: 16,
+      beatCount: 16,
+      downbeatCount: 4,
+      tempoBpm: 120,
+      truncated: true,
+    });
+    expect(summary.result.beats).toHaveLength(8);
+
+    const page1 = await callOp('editor_detect_beats', { track: 1, full: true, limit: 10 });
+    expect(page1.result.beats).toHaveLength(10);
+    expect(page1.result).toMatchObject({ offset: 0, truncated: true, nextOffset: 10 });
+    const page2 = await callOp('editor_detect_beats', { track: 1, full: true, limit: 10, offset: 10 });
+    expect(page2.result.beats).toHaveLength(6);
+    expect(page2.result).toMatchObject({ truncated: false, nextOffset: null });
+    const all = await callOp('editor_detect_beats', { track: 1, full: true });
+    expect(all.result.beats).toHaveLength(16);
+  });
+
   it('passes the meter and tempo hint through, and refuses bad ones', async () => {
     await callOp('editor_detect_beats', { track: 1, meter: 3, tempoHintBpm: 90, show: false });
     expect(calls.detect[0]).toMatchObject({ meter: 3, tempoHintBpm: 90 });
