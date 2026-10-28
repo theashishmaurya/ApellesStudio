@@ -3816,7 +3816,18 @@ impl ApellesMcp {
         name = "editor_move_clip",
         description = r#"Move a clip to `start_frame`, optionally onto a different track
     (`to_track`; default: stays on `from_track`). `ripple=True` shifts later
-    clips out of the way rather than overlapping them."#
+    clips out of the way rather than overlapping them.
+
+    An A/V-linked partner moves by the same amount on its own track. The
+    answer says where the clip really landed (`clip` is its NEW index — clips
+    stay in start order — plus `id`, `startFrame`, `rippled`, `linkedMoved`).
+    A move that cannot be made is refused with the reason, never answered
+    `ok` (B-306/B-314): a landing that overlaps a clip without `ripple`, a
+    ripple landing INSIDE a clip (a ripple inserts at a clip edge and never
+    splits one; the error names the edges), a sync-locked track whose clip
+    straddles the landing frame, a linked partner on a locked track or with
+    no room. A call that times out at the bridge is dropped if it had not
+    started, so it can never apply late to a clip that has since moved."#
     )]
     pub async fn editor_move_clip(
         &self,

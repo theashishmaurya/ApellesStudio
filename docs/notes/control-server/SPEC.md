@@ -45,6 +45,10 @@ user-facing answer. The debug pair keeps its gate, in `debug_native_op()`. See
     Register a `app.once(format!("chroma://response/{id}"), move |ev| { tx.send(ev.payload) })`
     with a `std::sync::mpsc` channel; `rx.recv_timeout(<the request's budget>)`.
     Respond 200 with the payload JSON, or 504 on timeout, 400 on bad op.
+    The emitted payload also carries `target` (B-272: the one registry instance
+    that runs it) and `deadline_ms` (B-314/D-423: the Unix-ms moment the server
+    stops waiting; a registry that reaches the request later drops it with
+    `@apelles/bridge`'s `assertRequestLive` instead of starting it).
   - **One generic endpoint:** `POST /op` with body `{op: "<name>", args: {...},
     timeout_ms?: <number>}`. (Plus `GET /health` for a liveness check that doesn't need
     the bridge.) The control server doesn't know the op list — it just forwards. The op

@@ -99,7 +99,7 @@
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { listen, emit } from '@tauri-apps/api/event';
-import { newBridgeClaim } from '@apelles/bridge';
+import { assertRequestLive, newBridgeClaim } from '@apelles/bridge';
 import { runAsAgent } from '@apelles/history';
 // B-217/D-358 — the cross-store project-identity guard; see the dispatcher below.
 import { assertProjectIdentity } from '@apelles/store';
@@ -295,6 +295,8 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
         // a confident wrong answer, and stops a `motion_save_manifest` from
         // writing into the wrong project's sidecar.
         await assertProjectIdentity(op);
+        // B-314 — never start an op the caller already gave up on.
+        assertRequestLive(payload);
 
         // D-298 — every `@apelles/history` push inside this window is stamped
         // `source: 'agent'`, which is the whole of this tab's agent-activity

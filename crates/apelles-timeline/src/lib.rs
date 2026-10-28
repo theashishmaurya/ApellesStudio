@@ -2263,14 +2263,24 @@ pub fn ripple_markers(markers: &mut [Marker], ripple: MarkerRipple) {
 /// straddling clip on a sync-locked track REJECTS the whole op, never
 /// splits. Auto-split may come back as a real, separately-scoped,
 /// separately-verified follow-up — see B-033.
-fn has_straddling_sync_locked_clip(tracks: &[Track], edited_track: usize, threshold: i64) -> bool {
+///
+/// `ignore` names clips that do not count (B-306: a ripple move's own A/V
+/// partners, which move by the same delta rather than being shifted).
+fn has_straddling_sync_locked_clip(
+    tracks: &[Track],
+    edited_track: usize,
+    threshold: i64,
+    ignore: &[&str],
+) -> bool {
     tracks.iter().enumerate().any(|(i, t)| {
         if i == edited_track || !t.sync_locked || t.locked {
             return false;
         }
-        t.clips
-            .iter()
-            .any(|c| c.start_frame < threshold && c.end_frame() > threshold)
+        t.clips.iter().any(|c| {
+            !ignore.contains(&c.id.as_str())
+                && c.start_frame < threshold
+                && c.end_frame() > threshold
+        })
     })
 }
 
@@ -3007,9 +3017,18 @@ impl Timeline {
         // B-033 — same reject-on-straddle now also covers every OTHER
         // sync-locked track this move's ripple would touch, checked before
         // any mutation.
+        // B-306 — the moving clip and its own link partners are left out: they
+        // move by the same delta, so they cannot block their own ripple.
+        let moving: Vec<&str> = match self.link_targets(from_track, from_idx) {
+            Some((_, members)) => members
+                .iter()
+                .map(|&(ti, ci)| self.tracks[ti].clips[ci].id.as_str())
+                .collect(),
+            None => vec![self.tracks[from_track].clips[from_idx].id.as_str()],
+        };
         let sync_straddles = overlaps
             && ripple
-            && has_straddling_sync_locked_clip(&self.tracks, to_track, to_start_frame);
+            && has_straddling_sync_locked_clip(&self.tracks, to_track, to_start_frame, &moving);
         if overlaps && (!ripple || straddles || sync_straddles) {
             return Err(TimelineError::Overlap(to_track, to_start_frame));
         }
@@ -3420,7 +3439,7 @@ impl Timeline {
         let shift = gap_end - gap_start;
         // B-033 — reject upfront if a sync-locked track has a straddling
         // clip, checked before any mutation.
-        if has_straddling_sync_locked_clip(&self.tracks, track, gap_end) {
+        if has_straddling_sync_locked_clip(&self.tracks, track, gap_end, &[]) {
             return Err(TimelineError::SyncLockedStraddle(gap_end));
         }
         shift_clips_at_or_after(&mut self.tracks[track], gap_end, -shift);
@@ -6234,6 +6253,45 @@ mod tests {
             .iter()
             .find(|c| c.id == id)
             .map(|c| c.start_frame)
+    }
+
+    /// B-306 — a ripple move is not blocked by its own A/V partner straddling
+    /// the landing frame on a sync-locked track: the partner moves with it.
+    /// Mirrors `timeline.test.ts`'s "the B-306 shape".
+    #[test]
+    fn move_clip_ripple_is_not_blocked_by_its_own_linked_partner() {
+        let linked = |id: &str, start: i64| {
+            let mut x = c(id, start, 100);
+            x.link_group = Some("g".into());
+            x
+        };
+        let mk = |kind, clips| Track {
+            kind,
+            clips,
+            sync_locked: true,
+            ..Default::default()
+        };
+        let mut t = Timeline {
+            id: "t".into(),
+            name: "t".into(),
+            rate: None,
+            tracks: vec![
+                mk(
+                    TrackKind::Video,
+                    vec![c("x", 0, 50), linked("v", 50), c("w", 150, 100)],
+                ),
+                mk(TrackKind::Audio, vec![linked("a", 50), c("a2", 150, 100)]),
+                mk(TrackKind::Video, vec![c("y", 80, 100)]),
+            ],
+            markers: Vec::new(),
+            ..Default::default()
+        };
+        t.move_clip(0, 1, 2, 80, true).unwrap();
+        assert_eq!(start_of(&t, 2, "v"), Some(80));
+        assert_eq!(start_of(&t, 2, "y"), Some(180));
+        assert_eq!(start_of(&t, 1, "a"), Some(80));
+        assert_eq!(start_of(&t, 1, "a2"), Some(250));
+        assert_eq!(start_of(&t, 0, "w"), Some(250));
     }
 
     /// Real backward-compat evidence, not just a hand-written fixture: parse

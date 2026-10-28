@@ -26,7 +26,7 @@
 
 import { useEffect } from 'react';
 import { listen, emit } from '@tauri-apps/api/event';
-import { newBridgeClaim } from '@apelles/bridge';
+import { assertRequestLive, newBridgeClaim } from '@apelles/bridge';
 
 const DEBUG_OP_PREFIX = 'debug_';
 
@@ -98,6 +98,7 @@ export function useDebugControl(): void {
           return;
         }
         try {
+          assertRequestLive(payload); // B-314
           const result = await fn(payload.args ?? {});
           const error = (result as { error?: string } | null)?.error ?? null;
           void respond({ ok: !error, error, result });

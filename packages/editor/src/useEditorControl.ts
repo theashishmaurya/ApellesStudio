@@ -106,7 +106,7 @@ import {
 } from './recutRuns';
 import { listen, emit } from '@tauri-apps/api/event';
 
-import { newBridgeClaim, useMediaPoolStore, type MediaItem } from '@apelles/bridge';
+import { assertRequestLive, newBridgeClaim, useMediaPoolStore, type MediaItem } from '@apelles/bridge';
 import { runAsAgent } from '@apelles/history';
 // B-217/D-358 — the cross-store project-identity guard; see the dispatcher below.
 import { assertProjectIdentity } from '@apelles/store';
@@ -182,6 +182,8 @@ import {
   timelineFps,
   applyRippleDeleteRanges,
   checkRemoveGap,
+  checkMove,
+  findClip,
   checkTrim,
   linkGroupMembers,
   trackIndexAfterMove,
@@ -4009,15 +4011,39 @@ export function useEditorControl(): void {
         const toTrack = a?.toTrack !== undefined ? Math.round(Number(a.toTrack)) : found.track;
         const startFrame = Math.round(Number(a?.startFrame));
         if (!Number.isFinite(startFrame)) return { error: 'startFrame must be a finite number' };
-        useEditorTimelineStore.getState().applyOp({
-          kind: 'move',
+        if (!Number.isFinite(toTrack)) return { error: 'toTrack must be a track index' };
+        const op = {
+          kind: 'move' as const,
           fromTrack: found.track,
           toTrack,
           clip: found.clip,
           startFrame,
           ripple: !!a?.ripple,
-        });
-        return { ok: true, fromTrack: found.track, toTrack };
+        };
+        // B-306/B-314 — the reducer's refusals are silent, and this used to
+        // answer `ok: true` over them ("ok, nothing moved"). `checkMove` is the
+        // reducer's own precondition, so a refusal comes back with its reason.
+        const check = checkMove(tl, op, timelineFps(tl));
+        if (!check.ok) return { error: check.reason, fromTrack: found.track, toTrack, clip: found.clip };
+        useEditorTimelineStore.getState().applyOp(op);
+        // Report where the clip really is, by its stable id: clip indices on
+        // both tracks may have changed (the moved clip lands at its start-order
+        // index, B-304).
+        const after = useEditorTimelineStore.getState().timeline;
+        const landed = after ? findClip(after, toTrack, found.c.id) : null;
+        if (!after || !landed || landed.clip.start_frame !== startFrame) {
+          return { error: `the move did not apply (clip "${found.c.name}" is not at frame ${startFrame} on track ${toTrack})` };
+        }
+        return {
+          ok: true,
+          fromTrack: found.track,
+          toTrack,
+          clip: landed.index,
+          id: found.c.id,
+          startFrame,
+          rippled: check.rippleFires,
+          linkedMoved: check.siblingTargets.length,
+        };
       },
 
       // D-195 — Task 2 (docs/notes/timeline-editing-feature-gap-analysis.md
@@ -5907,6 +5933,8 @@ export function useEditorControl(): void {
         // file, with no error anywhere. Reads are guarded too — `editor_get_state`
         // reporting the wrong project confidently is how B-217 stayed invisible.
         await assertProjectIdentity(op);
+        // B-314 — never start an op the caller already gave up on.
+        assertRequestLive(payload);
 
         // D-298 — every `@apelles/history` push inside this window is stamped
         // `source: 'agent'`, which is the whole of this tab's agent-activity

@@ -6,7 +6,16 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
-## D-422 — Timeline markers follow ripple edits, in the same op
+## D-423 — A bridge request carries its deadline; a registry never starts an op past it
+
+**decided (2026-10-28)** · fixes B-314 (c)
+
+- **Context.** `control.rs` waits a bounded time for each reply (20 s by default, `timeout_ms` per tool) and then answers the MCP client 504. The request stayed live in the webview: a busy JS thread delivers the Tauri event late, and every registry awaits (`assertProjectIdentity`) before running the op. A timed-out `editor_move_clip` then ran after the agent had moved on, against a clip index its follow-up calls had since changed, and moved a different clip.
+- **Options.** (a) Cancel on timeout: emit `chroma://cancel/<id>` and have registries track cancelled ids — a second event that can itself arrive after the request it cancels. (b) Make every op idempotent and keyed by stable ids — right for some tools, but ~250 tools address by index today, and it does not stop a late op from running. (c) **Stamp the request with the moment the server stops waiting (`deadline_ms`, Unix ms) and refuse to start past it** — one field, one check, no second message to race.
+- **Choice: (c).** `dispatch` adds `deadline_ms` (now + the request's budget) to every `chroma://request`; `@apelles/bridge`'s `assertRequestLive(payload)` throws past it, and all five registries (Colorist, Edit, Motion, Brand, Debug) call it immediately before running the handler, after their own awaits, so the refusal is the op's error. Same machine, same wall clock on both sides. A request without a deadline never expires (a unit test driving a handler).
+- **Limits, stated plainly.** An op already RUNNING when the deadline passes still completes (a long AI matte; the 504 message says so). Ops that edit by index remain index-addressed; `editor_move_clip` now reports where the clip landed by id and index.
+
+Timeline markers follow ripple edits, in the same op
 
 **decided (2026-10-28)** · fixes B-307 · amends D-222 ("nothing about [markers] ripples")
 

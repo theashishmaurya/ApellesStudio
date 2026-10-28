@@ -26,7 +26,7 @@ export { safeUnlisten } from './tauriListeners';
 export { classifyPageStart, pageStart, takeWebviewTermination, watchPageUnload } from './pageLifecycle';
 export type { MarkerStorage, PageStart, WebviewTermination } from './pageLifecycle';
 
-export { newBridgeClaim } from './controlBridge';
+export { assertRequestLive, newBridgeClaim } from './controlBridge';
 export type { BridgeClaim, BridgeClaimWire } from './controlBridge';
 
 export {

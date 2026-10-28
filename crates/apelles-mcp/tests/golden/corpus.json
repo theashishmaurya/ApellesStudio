@@ -4408,7 +4408,7 @@
     },
     {
       "name": "editor_move_clip",
-      "description": "Move a clip to `start_frame`, optionally onto a different track\n    (`to_track`; default: stays on `from_track`). `ripple=True` shifts later\n    clips out of the way rather than overlapping them.",
+      "description": "Move a clip to `start_frame`, optionally onto a different track\n    (`to_track`; default: stays on `from_track`). `ripple=True` shifts later\n    clips out of the way rather than overlapping them.\n\n    An A/V-linked partner moves by the same amount on its own track. The\n    answer says where the clip really landed (`clip` is its NEW index \u2014 clips\n    stay in start order \u2014 plus `id`, `startFrame`, `rippled`, `linkedMoved`).\n    A move that cannot be made is refused with the reason, never answered\n    `ok` (B-306/B-314): a landing that overlaps a clip without `ripple`, a\n    ripple landing INSIDE a clip (a ripple inserts at a clip edge and never\n    splits one; the error names the edges), a sync-locked track whose clip\n    straddles the landing frame, a linked partner on a locked track or with\n    no room. A call that times out at the bridge is dropped if it had not\n    started, so it can never apply late to a clip that has since moved.",
       "inputSchema": {
         "properties": {
           "from_track": {

@@ -3015,11 +3015,12 @@ function findStraddlingSyncLockedTrack(
   editedTrack: number,
   threshold: number,
   fps: number,
+  ignore?: ReadonlySet<string>,
 ): number | null {
   for (let i = 0; i < tracks.length; i++) {
     const t = tracks[i];
     if (i === editedTrack || !(t.sync_locked ?? DEFAULT_SYNC_LOCKED) || t.locked) continue;
-    if (t.clips.some((c) => c.start_frame < threshold && endFrame(c, fps) > threshold)) return i;
+    if (t.clips.some((c) => !ignore?.has(c.id) && c.start_frame < threshold && endFrame(c, fps) > threshold)) return i;
   }
   return null;
 }
@@ -5051,6 +5052,137 @@ export function checkEditIn(
   return { ok: true };
 }
 
+/** What a `move` would do, or why it would do nothing — [`checkMove`]'s result.
+ *  `siblingTargets` are the A/V link partners' `[track, clip id, new start]`,
+ *  captured by stable id before anything moves. */
+export type MoveCheck =
+  | { ok: true; movingDurTimeline: number; rippleFires: boolean; siblingTargets: Array<[number, string, number]> }
+  | { ok: false; reason: string };
+
+/** Pre-flight check for `move` (B-306/B-314) — every precondition `applyOp`'s
+ *  `case 'move'` enforces, in one place, the `checkTrim`/`checkRemove`
+ *  pattern: the reducer can only answer a refusal with a silent `return tl`,
+ *  and `editor_move_clip` used to report `ok: true` over exactly that (a move
+ *  refused because a linked partner sat on a locked track, or because a
+ *  sync-locked straddle blocked its ripple, "returned ok, nothing moved").
+ *
+ *  Mirrors `Timeline::move_clip(from_track, from_idx, to_track,
+ *  to_start_frame)`, including its error order (negative position checked
+ *  first), plus D-104's overlap rule, B-033's straddle rule and D-129's
+ *  link-group rule.
+ *
+ *  **B-306 — the moving group does not block its own ripple.** The B-033
+ *  straddle test used to count the moving clip's own A/V partner: moving a
+ *  linked clip later by less than its length, with ripple, found the partner
+ *  (still at its old place on a sync-locked audio track) straddling the
+ *  landing frame and refused. The partner is moving by the same delta, so it
+ *  is left out of that test, as is the moving clip itself. */
+export function checkMove(tl: Timeline, op: Extract<EditOp, { kind: 'move' }>, fps: number): MoveCheck {
+  if (op.startFrame < 0) return { ok: false, reason: `startFrame ${op.startFrame} is before the start of the timeline` };
+  const src = tl.tracks[op.fromTrack];
+  if (!src) return { ok: false, reason: `no track ${op.fromTrack} (0..${tl.tracks.length - 1})` };
+  const c = src.clips[op.clip];
+  if (!c) return { ok: false, reason: `no clip ${op.clip} on track ${op.fromTrack} (0..${src.clips.length - 1})` };
+  const dest = tl.tracks[op.toTrack];
+  if (!dest) return { ok: false, reason: `no track ${op.toTrack} (0..${tl.tracks.length - 1})` };
+  // D-089 — both the source track (losing a clip) and the destination
+  // (gaining one) must be unlocked.
+  if (src.locked) return { ok: false, reason: `track ${op.fromTrack} is locked` };
+  if (dest.locked) return { ok: false, reason: `track ${op.toTrack} is locked` };
+  if (op.fromTrack === op.toTrack && op.startFrame === c.start_frame) {
+    return { ok: false, reason: `${trimClipLabel(c, op.fromTrack, op.clip)} already starts at frame ${op.startFrame}` };
+  }
+  // B-077 — `c.duration` is source frames; its footprint here is timeline frames.
+  const movingDurTimeline = sourceFramesToTimeline(c, c.duration, fps);
+  const newEnd = op.startFrame + movingDurTimeline;
+  const others = dest.clips.filter((_, i) => !(op.fromTrack === op.toTrack && i === op.clip));
+  // D-104 — overlap is refused for every move unless `ripple` makes room.
+  const blocker = others.find((o) => op.startFrame < endFrame(o, fps) && newEnd > o.start_frame);
+  // A clip starting BEFORE the landing point and running past it cannot be
+  // cleared by a ripple, which shifts only what starts at/after that point.
+  const straddler = others.find((o) => o.start_frame < op.startFrame && endFrame(o, fps) > op.startFrame);
+  const link = linkTargets(tl, op.fromTrack, op.clip);
+  if (blocker && !op.ripple) {
+    return {
+      ok: false,
+      reason:
+        `frames ${op.startFrame}..${newEnd} on track ${op.toTrack} overlap ${trimClipLabel(blocker, op.toTrack, dest.clips.indexOf(blocker))} ` +
+        `(${blocker.start_frame}..${endFrame(blocker, fps)}) — pass ripple=true to push it later, or pick a free spot`,
+    };
+  }
+  if (blocker && straddler) {
+    return {
+      ok: false,
+      reason:
+        `frame ${op.startFrame} is inside ${trimClipLabel(straddler, op.toTrack, dest.clips.indexOf(straddler))} ` +
+        `(${straddler.start_frame}..${endFrame(straddler, fps)}); a ripple move inserts at a clip edge and never splits ` +
+        `a clip — land at ${straddler.start_frame} or ${endFrame(straddler, fps)}, or split it there first`,
+    };
+  }
+  const rippleFires = !!blocker && !!op.ripple;
+  if (rippleFires) {
+    const moving = new Set<string>([c.id, ...(link?.members ?? []).map(([ti, ci]) => tl.tracks[ti].clips[ci].id)]);
+    const blocked = findStraddlingSyncLockedTrack(tl.tracks, op.toTrack, op.startFrame, fps, moving);
+    if (blocked !== null) {
+      return {
+        ok: false,
+        reason:
+          `the ripple would shift sync-locked track ${blocked}, where a clip straddles frame ${op.startFrame} and a ` +
+          `ripple never splits a clip (B-033) — move or trim it clear of frame ${op.startFrame}, or turn sync-lock ` +
+          `off on track ${blocked}`,
+      };
+    }
+  }
+
+  // D-129 — every other member of this clip's A/V link group moves by the
+  // SAME delta, staying on its own track. Validated in full here, before any
+  // mutation, so a move that can't be applied to every member is refused
+  // whole rather than desyncing the halves.
+  const delta = op.startFrame - c.start_frame;
+  const siblingTargets: Array<[number, string, number]> = [];
+  if (link) {
+    for (const [ti, ci] of link.members) {
+      if (ti === op.fromTrack && ci === op.clip) continue;
+      const ot = tl.tracks[ti];
+      const sib = ot.clips[ci];
+      if (ot.locked) {
+        return {
+          ok: false,
+          reason:
+            `track ${ti} is locked and holds ${trimClipLabel(sib, ti, ci)}, A/V-linked to this clip (D-129) — a ` +
+            `linked pair moves together, so the move is refused rather than desyncing it. Unlock track ${ti} or ` +
+            `unlink the pair first.`,
+        };
+      }
+      const target = sib.start_frame + delta;
+      if (target < 0) {
+        return { ok: false, reason: `its linked partner ${trimClipLabel(sib, ti, ci)} would start before frame 0` };
+      }
+      siblingTargets.push([ti, sib.id, target]);
+      // Whether THIS member's track receives the pending ripple — the same
+      // predicate `propagateSyncLockRipple` uses.
+      const rippled = rippleFires && (ti === op.toTrack || ((ot.sync_locked ?? DEFAULT_SYNC_LOCKED) && !ot.locked));
+      const sibEnd = target + sourceFramesToTimeline(sib, sib.duration, fps);
+      const clash = ot.clips.find((o, i) => {
+        // Other members of the same group shift by the same delta from a
+        // non-overlapping start, so they can never collide with each other.
+        if (i === ci || link.members.some(([mt, mc]) => mt === ti && mc === i)) return false;
+        const os = startAfterRipple(o.start_frame, rippled, op.startFrame, movingDurTimeline);
+        return target < os + sourceFramesToTimeline(o, o.duration, fps) && sibEnd > os;
+      });
+      if (clash) {
+        return {
+          ok: false,
+          reason:
+            `its linked partner ${trimClipLabel(sib, ti, ci)} would land on ${trimClipLabel(clash, ti, ot.clips.indexOf(clash))} ` +
+            `at frames ${target}..${sibEnd} on track ${ti} — a linked pair moves together, so the move is refused whole`,
+        };
+      }
+    }
+  }
+  return { ok: true, movingDurTimeline, rippleFires, siblingTargets };
+}
+
 /** Pre-flight check for `remove_gap` (B-227) — the same three preconditions
  *  `applyOp`'s own `case 'remove_gap'` enforces (a real gap at `frame`, the
  *  track not locked, no clip straddling the gap's end on a sync-locked OTHER
@@ -6313,101 +6445,15 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     return next;
   }
   if (op.kind === 'move') {
-    // Mirrors `Timeline::move_clip(from_track, from_idx, to_track,
-    // to_start_frame)` field-for-field, including its error order (negative
-    // position checked first, before either track/clip is even looked up).
-    if (op.startFrame < 0) return tl;
-    const src = tl.tracks[op.fromTrack];
-    const c = src?.clips[op.clip];
-    if (!c) return tl;
-    const dest = tl.tracks[op.toTrack];
-    if (!dest) return tl;
-    // D-089 — mirrors Rust `move_clip`'s explicit lock check on BOTH the
-    // source track (losing a clip to elsewhere) and the destination track
-    // (gaining one dropped onto it).
-    if (src.locked || dest.locked) return tl;
-    if (op.fromTrack === op.toTrack && op.startFrame === c.start_frame) return tl; // genuine no-op
-    // B-077 — `c.duration` is `c`'s own SOURCE frames; its real footprint on
-    // THIS timeline (what `newEnd` needs to compare against other clips'
-    // `start_frame`-space positions) is the converted, timeline-frame value.
-    const movingDurTimeline = sourceFramesToTimeline(c, c.duration, fps);
-    const newEnd = op.startFrame + movingDurTimeline;
-    // D-104 — overlap is rejected for EVERY move now, same-track or
-    // cross-track alike (reverses D-096's cross-track allowance, see this
-    // op's own doc comment for why). `i === op.clip` excludes the clip's own
-    // current slot from the check — only meaningful for a same-track move,
-    // a no-op filter for cross-track since the clip isn't in `dest.clips` yet.
-    const overlaps = dest.clips.some((other, i) => {
-      if (op.fromTrack === op.toTrack && i === op.clip) return false;
-      return op.startFrame < endFrame(other, fps) && newEnd > other.start_frame;
-    });
-    // D-104 — ripple only ever shifts clips starting AT/AFTER the landing
-    // point (the real, edge-aligned case `resolveClipLanding` always
-    // produces — computeInsertion's ripple positions are always an existing
-    // clip's own start_frame or endFrame). A clip that starts BEFORE the
-    // landing point but extends past it (straddling — not a real
-    // ripple-insert scenario any NLE supports without splitting the clip
-    // first) can't be cleared by this shift, so ripple can't rescue that
-    // case either; reject the same as a non-ripple overlap rather than
-    // leave a silently still-overlapping result.
-    const straddles = dest.clips.some((other, i) => {
-      if (op.fromTrack === op.toTrack && i === op.clip) return false;
-      return other.start_frame < op.startFrame && endFrame(other, fps) > op.startFrame;
-    });
-    // B-033 — same reject-on-straddle now also covers every OTHER
-    // sync-locked track this move's ripple would touch, checked against
-    // the ORIGINAL tracks before any mutation.
-    const syncLockBlocked =
-      overlaps && op.ripple && findStraddlingSyncLockedTrack(tl.tracks, op.toTrack, op.startFrame, fps) !== null;
-    if (overlaps && (!op.ripple || straddles || syncLockBlocked)) return tl;
-
-    // D-129 — every other member of this clip's A/V link group moves by the
-    // SAME delta, staying on its own track (Resolve's own "any change made to
-    // one … automatically applies to the other"; a linked pair keeps sync, it
-    // does not follow the video half onto the video half's new track).
-    // Validated in full here, BEFORE any mutation, so a move that can't be
-    // applied to every member is rejected whole rather than desyncing the
-    // halves — the reject-rather-than-corrupt discipline B-033 established.
-    // Mirrors `apelles-timeline::Timeline::move_clip`'s own link block.
-    const rippleFires = overlaps && !!op.ripple;
-    const delta = op.startFrame - c.start_frame;
-    // `[track, clip id, where it must end up]` captured by STABLE id before
-    // anything moves — the mutation below invalidates every clip index.
-    const siblingTargets: Array<[number, string, number]> = [];
-    const link = linkTargets(tl, op.fromTrack, op.clip);
-    if (link) {
-      for (const [ti, ci] of link.members) {
-        if (ti === op.fromTrack && ci === op.clip) continue;
-        const ot = tl.tracks[ti];
-        if (ot.locked) return tl;
-        const sib = ot.clips[ci];
-        const target = sib.start_frame + delta;
-        if (target < 0) return tl;
-        siblingTargets.push([ti, sib.id, target]);
-        // Whether THIS member's track receives the pending ripple — the same
-        // predicate `propagateSyncLockRipple` uses, so the prediction here
-        // and the real shift below can never disagree.
-        const rippled =
-          rippleFires && (ti === op.toTrack || ((ot.sync_locked ?? DEFAULT_SYNC_LOCKED) && !ot.locked));
-        // B-077 — `sib`/`o` are each converted through THEIR OWN `source_fps`:
-        // a link group's two members (e.g. an A/V pair) share a source file
-        // in the overwhelmingly common case, but nothing here assumes it.
-        const sibEnd = target + sourceFramesToTimeline(sib, sib.duration, fps);
-        const clash = ot.clips.some((o, i) => {
-          // Other members of the same group shift by the same delta from a
-          // non-overlapping start, so they can never collide with each other.
-          if (i === ci || link.members.some(([mt, mc]) => mt === ti && mc === i)) return false;
-          const os = startAfterRipple(o.start_frame, rippled, op.startFrame, movingDurTimeline);
-          return target < os + sourceFramesToTimeline(o, o.duration, fps) && sibEnd > os;
-        });
-        if (clash) return tl;
-      }
-    }
-
+    // B-306/B-314 — every refusal lives in `checkMove`, so the MCP handler can
+    // say WHY instead of reporting a silent no-op as success.
+    const check = checkMove(tl, op, fps);
+    if (!check.ok) return tl;
+    const { movingDurTimeline, rippleFires, siblingTargets } = check;
     const next = clone(tl);
     const [moved] = next.tracks[op.fromTrack].clips.splice(op.clip, 1);
     const destClips = next.tracks[op.toTrack].clips;
-    if (overlaps && op.ripple) {
+    if (rippleFires) {
       // D-104 — mirrors `add_clip`'s own ripple contract: everything on the
       // destination track at/after the landing point shifts later by this
       // clip's own TIMELINE-frame footprint (B-077 — not its raw `.duration`)
@@ -6424,7 +6470,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     );
     // D-106 — propagate to every OTHER sync-locked track, same shift, only
     // when this move's own ripple actually fired.
-    if (overlaps && op.ripple) {
+    if (rippleFires) {
       propagateSyncLockRipple(next.tracks, op.toTrack, op.startFrame, movingDurTimeline);
       // B-307 — the insert half of a ripple move carries the markers after it.
       rippleTimelineMarkers(next, { kind: 'insert', at: op.startFrame, frames: movingDurTimeline });

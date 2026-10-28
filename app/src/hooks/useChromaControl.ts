@@ -7,7 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { assertProjectIdentity } from '@apelles/store';
 import { stepHistory } from '@apelles/shell';
 import { safeUnlisten } from '../utils/tauriListeners';
-import { newBridgeClaim } from '@apelles/bridge';
+import { assertRequestLive, newBridgeClaim } from '@apelles/bridge';
 
 // D-183 — the three Edit-tab ops that used to live here (`get_timeline`,
 // `set_clip_fade`, `set_track_duck`) moved to `@apelles/editor`'s own
@@ -1595,6 +1595,8 @@ export function useChromaControl() {
         // survived the settle window; in the healthy case it is a synchronous
         // comparison of three strings and costs nothing.
         await assertProjectIdentity(op);
+        // B-314 — never start an op the caller already gave up on.
+        assertRequestLive(payload);
 
         // snapshot the grade + history position BEFORE the op — the feed's diff
         // base and undo target (D-032).

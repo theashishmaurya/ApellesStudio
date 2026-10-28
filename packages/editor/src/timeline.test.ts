@@ -19,6 +19,7 @@ import {
   isEqBandActive,
   checkAddClip,
   checkLink,
+  checkMove,
   checkRemove,
   checkRemoveGap,
   checkSplit,
@@ -3604,5 +3605,80 @@ describe('D-226 transitions — model', () => {
     const legacy = cutTimeline();
     expect(legacy.tracks[0].transitions).toBeUndefined();
     expect(transitionsOf(legacy.tracks[0])).toEqual([]);
+  });
+});
+
+// B-306 / B-314 — `checkMove` is the move's whole precondition, with reasons,
+// and a ripple move is no longer blocked by its own linked partner.
+describe('checkMove (B-306/B-314)', () => {
+  it('refuses, with the reason, a move whose linked partner is on a locked track', () => {
+    const t = linkedPair();
+    t.tracks[1].locked = true;
+    const op = { kind: 'move' as const, fromTrack: 0, toTrack: 0, clip: 0, startFrame: 300 };
+    const check = checkMove(t, op, 24);
+    expect(check.ok).toBe(false);
+    if (!check.ok) expect(check.reason).toMatch(/track 1 is locked and holds "Shot" \(track 1, clip 0\), A\/V-linked/);
+    expect(applyOp(t, op)).toBe(t);
+  });
+
+  it('names the clip a ripple landing falls inside, and the edges to use instead', () => {
+    const t = tl([clip('a', 'A', { start_frame: 0 }), clip('b', 'B', { start_frame: 100 }), clip('c', 'C', { start_frame: 300 })]);
+    const check = checkMove(t, { kind: 'move', fromTrack: 0, toTrack: 0, clip: 2, startFrame: 150, ripple: true }, 24);
+    expect(check.ok).toBe(false);
+    if (!check.ok) expect(check.reason).toMatch(/frame 150 is inside "B".*land at 100 or 200/);
+  });
+
+  it('a ripple move is not blocked by its own A/V partner straddling the landing frame (the B-306 shape)', () => {
+    // v/a are a linked pair at 50..150; moving v onto track 2 at y's start
+    // (80) ripples the sync-locked audio track at 80, where `a` itself sits.
+    // `a` moves with v, so it must not count as a straddler.
+    const t: Timeline = {
+      id: 't',
+      name: 't',
+      tracks: [
+        {
+          kind: 'video',
+          clips: [
+            clip('x', 'X', { start_frame: 0, duration: 50 }),
+            clip('v', 'V', { start_frame: 50, link_group: 'g' }),
+            clip('w', 'W', { start_frame: 150 }),
+          ],
+        },
+        { kind: 'audio', clips: [clip('a', 'V', { start_frame: 50, link_group: 'g' }), clip('a2', 'A2', { start_frame: 150 })] },
+        { kind: 'video', clips: [clip('y', 'Y', { start_frame: 80 })] },
+      ],
+    };
+    const op = { kind: 'move' as const, fromTrack: 0, toTrack: 2, clip: 1, startFrame: 80, ripple: true };
+    const check = checkMove(t, op, 24);
+    expect(check).toMatchObject({ ok: true, rippleFires: true });
+    const after = applyOp(t, op);
+    const at = (ti: number) => after.tracks[ti].clips.map((c) => [c.id, c.start_frame]);
+    expect(at(2)).toEqual([
+      ['v', 80],
+      ['y', 180],
+    ]);
+    expect(at(1)).toEqual([
+      ['a', 80],
+      ['a2', 250],
+    ]);
+    expect(at(0)).toEqual([
+      ['x', 0],
+      ['w', 250],
+    ]);
+  });
+
+  it('agrees with the reducer: every ok moves the clip, every refusal leaves the timeline untouched', () => {
+    const t = tl([clip('a', 'A', { start_frame: 0 }), clip('b', 'B', { start_frame: 100 }), clip('c', 'C', { start_frame: 300 })]);
+    for (let clipIdx = 0; clipIdx < 3; clipIdx++) {
+      for (let at = -10; at <= 420; at += 10) {
+        for (const ripple of [false, true]) {
+          const op = { kind: 'move' as const, fromTrack: 0, toTrack: 0, clip: clipIdx, startFrame: at, ripple };
+          const after = applyOp(t, op);
+          const check = checkMove(t, op, 24);
+          if (check.ok) expect(findClip(after, 0, t.tracks[0].clips[clipIdx].id)?.clip.start_frame).toBe(at);
+          else expect(after).toBe(t);
+        }
+      }
+    }
   });
 });

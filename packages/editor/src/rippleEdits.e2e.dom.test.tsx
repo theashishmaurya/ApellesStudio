@@ -6,6 +6,8 @@
  *
  * - B-310 — `editor_ripple_delete_ranges` cuts exactly the ranges it reports;
  * - B-307 / D-422 — markers follow the ripple ops, in the same undo step;
+ * - B-306 / B-314 / D-423 — `editor_move_clip` moves or says why; a request past
+ *   its bridge deadline never runs;
  * - B-304 / D-421 — emptying a track keeps it; `editor_remove_track` is the
  *   explicit removal; a move keeps clip indices in start order.
  *
@@ -300,5 +302,60 @@ describe('B-307 — markers follow ripple edits, in the same undo step', () => {
       ['m-inside', 130, 0],
       ['m-after', 230, 24],
     ]);
+  });
+});
+
+describe('B-306 / B-314 — editor_move_clip moves, or says why not; a timed-out call never applies late', () => {
+  // A linked pair v/a at 50..150 on sync-locked tracks, and a free spot on
+  // track 2 at y's start (80): the ripple at 80 meets `a` itself.
+  function linkedTimeline(lockAudio = false) {
+    return {
+      id: 'tl',
+      name: 'move',
+      rate: { num: 24, den: 1 },
+      tracks: [
+        { kind: 'video', clips: [clipOf('x', 0, 50), clipOf('v', 50, 100, { link_group: 'g' }), clipOf('w', 150, 100)], gain: 1, sync_locked: true },
+        { kind: 'audio', clips: [clipOf('a', 50, 100, { link_group: 'g' }), clipOf('a2', 150, 100)], gain: 1, sync_locked: true, locked: lockAudio },
+        { kind: 'video', clips: [clipOf('y', 80, 100)], gain: 1, sync_locked: true },
+      ],
+      markers: [],
+    };
+  }
+  const at = (track: number) => tl().tracks[track].clips.map((c) => [c.id, c.start_frame]);
+
+  it('ripple=true really moves, the linked partner with it, and reports where the clip landed', async () => {
+    await mountWith(linkedTimeline());
+    const r = await op('editor_move_clip', { fromTrack: 0, clip: 1, toTrack: 2, startFrame: 80, ripple: true });
+    expect(r.ok).toBe(true);
+    expect(r.result).toMatchObject({ toTrack: 2, clip: 0, id: 'v', startFrame: 80, rippled: true, linkedMoved: 1 });
+    expect(at(2)).toEqual([
+      ['v', 80],
+      ['y', 180],
+    ]);
+    expect(at(1)).toEqual([
+      ['a', 80],
+      ['a2', 250],
+    ]);
+  });
+
+  it('refuses — not ok — when the linked partner is on a locked track, and changes nothing', async () => {
+    await mountWith(linkedTimeline(true));
+    const before = JSON.stringify(tl());
+    const r = await op('editor_move_clip', { fromTrack: 0, clip: 1, startFrame: 300 });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/track 1 is locked .*A\/V-linked/);
+    expect(JSON.stringify(tl())).toBe(before);
+  });
+
+  it('a request that arrives after the bridge stopped waiting is dropped, not applied late to whatever clip now has that index', async () => {
+    await mountWith(linkedTimeline());
+    const before = JSON.stringify(tl());
+    const r = await callOp('editor_move_clip', { fromTrack: 0, clip: 0, startFrame: 400 }, { deadline_ms: Date.now() - 5_000 });
+    expect(r?.ok).toBe(false);
+    expect(r?.error).toMatch(/not run: the caller stopped waiting/);
+    expect(JSON.stringify(tl())).toBe(before);
+    // Within its deadline the same call runs.
+    const live = await callOp('editor_move_clip', { fromTrack: 0, clip: 0, startFrame: 400 }, { deadline_ms: Date.now() + 20_000 });
+    expect(live?.ok).toBe(true);
   });
 });

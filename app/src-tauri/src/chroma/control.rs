@@ -67,6 +67,11 @@
 //! see [`BridgeClaim`]. The op-registry boundary is unchanged: this still knows
 //! no op names, only the prefixes the frontend tells it about at runtime.
 //!
+//! **A late op never starts (B-314).** Every request also carries
+//! `deadline_ms`, when [`dispatch`] stops waiting for its reply; a frontend
+//! registry that only reaches the request after that drops it rather than
+//! applying it against a timeline the caller has since changed.
+//!
 //! **One op runs once (B-272).** `chroma://request` is a broadcast: every live
 //! frontend listener hears it. A registration whose `unlisten` never ran (the
 //! dev-mode HMR teardown race) therefore executed every op beside its
@@ -260,9 +265,11 @@ pub fn serve(app: tauri::AppHandle) {
                     504,
                     err_body(&format!(
                         "op '{op}' got no reply from the frontend within {}s. The Apelles window \
-                         may be closed or busy — but a slow op can also still be running and \
-                         COMPLETE after this, so re-read the state (get_state / list_masks) \
-                         before assuming nothing happened or retrying.",
+                         may be closed or busy. If the op had not started yet it will not start \
+                         now (B-314: it is dropped past this deadline), but a slow op that was \
+                         already running can still COMPLETE after this, so re-read the state \
+                         (get_state / editor_get_state / list_masks) before assuming nothing \
+                         happened or retrying.",
                         timeout.as_secs()
                     )),
                 ));
@@ -630,9 +637,19 @@ fn dispatch(
 
     // B-272 — the request names the ONE frontend subscription that runs it, so
     // a leaked listener from before a reload hears the event and does nothing.
+    // B-314 — and carries the moment this server stops waiting for it, so a
+    // registry that only gets to it later (a busy webview, its own awaits)
+    // drops it instead of applying it after the caller has moved on
+    // (`@apelles/bridge`'s `assertRequestLive`).
     let _ = app.emit(
         "chroma://request",
-        serde_json::json!({ "id": id, "op": op, "args": args, "target": registry.target_for(op) }),
+        serde_json::json!({
+            "id": id,
+            "op": op,
+            "args": args,
+            "target": registry.target_for(op),
+            "deadline_ms": request_deadline_ms(timeout),
+        }),
     );
 
     match rx.recv_timeout(timeout) {
@@ -655,6 +672,17 @@ fn dispatch(
     }
 }
 
+/// B-314 — the wall-clock moment (Unix ms) a request's reply budget runs out:
+/// what the frontend compares `Date.now()` with before starting the op. `None`
+/// (sent as `null`, which never expires) only if the system clock is before
+/// 1970, which would make any deadline meaningless anyway.
+fn request_deadline_ms(timeout: Duration) -> Option<u64> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    u64::try_from((now + timeout).as_millis()).ok()
+}
+
 fn json_response(status: u16, body: String) -> HttpResponse {
     let header =
         Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).expect("static header");
@@ -673,6 +701,21 @@ mod tests {
 
     fn ms(v: u64) -> serde_json::Value {
         serde_json::json!(v)
+    }
+
+    #[test]
+    fn a_request_deadline_is_its_budget_from_now() {
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default();
+        let deadline = request_deadline_ms(Duration::from_secs(20)).map(u128::from);
+        let after = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default();
+        let deadline = deadline.unwrap_or_default();
+        assert!(deadline >= before + 20_000 && deadline <= after + 20_000);
     }
 
     #[test]

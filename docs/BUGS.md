@@ -56,9 +56,12 @@ status: **open** · severity: **minor** · area: Edit track tools (human+AI pari
 
 ## B-314 — `editor_move_clip`: ok without moving when the linked partner is on a locked track; moves the clip to the end of the clip list (indices shift); a 20 s timeout still executes later
 
-status: **open** · severity: **major** · area: `editor_move_clip`
+status: **fixed** (2026-10-28, D-423; list order via D-421) · severity: **major** · area: `editor_move_clip`
 
 - **found:** 2026-10-28 by the agent doing the Five Levels pacing pass in the live app. Queued follow-up ops then hit the wrong clip. Related: B-306, B-304.
+- **cause:** (a) the handler dispatched the `move` op and answered `{ok: true}` whatever happened; the reducer's refusals (a linked partner on a locked track, among others) are silent `return tl`. (b) `move` re-inserted the clip with `push` (fixed under B-304). (c) the control server answers 504 after its budget, but the request stays live in the webview and ran whenever the registry got to it, against indices the caller's follow-up calls had changed.
+- **fix:** (a) `checkMove` holds every precondition of `case 'move'` with a reason (the `checkTrim`/`checkRemove` pattern); the reducer and `editor_move_clip` both use it, and a successful answer reports where the clip landed (new index, id, `rippled`, `linkedMoved`), verified by id after the op. (b) see B-304. (c) D-423: every request carries `deadline_ms`; all five registries refuse to start an op past it (`assertRequestLive`).
+- **verification:** `timeline.test.ts` "checkMove (B-306/B-314)" (locked partner refused with its reason; check and reducer agree over 264 moves); `controlBridge.test.ts` "assertRequestLive"; `control.rs` `a_request_deadline_is_its_budget_from_now`; `rippleEdits.e2e.dom.test.tsx`: locked partner → `ok: false` with the reason and an unchanged timeline; a request past its deadline is not run and the same call within its deadline is. Not verified live.
 
 ## B-310 — `editor_ripple_delete_ranges` deleted material for ranges it reported as SKIPPED, leaving an open silent hole
 
@@ -93,9 +96,12 @@ status: **fixed** (2026-10-28, D-422) · severity: **major** · area: Edit marke
 
 ## B-306 — `editor_move_clip(ripple=true)` returned ok but moved nothing
 
-status: **open** · severity: **major** · area: `editor_move_clip`
+status: **fixed** (2026-10-28) · severity: **major** · area: `editor_move_clip`
 
 - **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. track 6, clip 33, 5748 → 5977: ok, no change. `editor_add_clip(ripple=true)` worked as an alternative.
+- **cause:** two things together. The handler answered `ok` over every silent refusal of the reducer (B-314 (a)). And the most likely refusal for a 229-frame move of a longer linked clip: B-033's sync-lock straddle test counted the moving clip's OWN A/V partner — still at its old place on a sync-locked audio track, so it straddled the landing frame — and refused the ripple. (The live timeline is not available to confirm which refusal fired; the other candidates — a landing inside another clip, another sync-locked straddler — now come back as named errors.)
+- **fix:** the moving clip and its link partners are left out of the straddle test (they move by the same delta), in `checkMove` and the `apelles-timeline` mirror; every remaining refusal is reported with its reason, including a ripple landing inside a clip (the error names the clip's edges to land on instead).
+- **verification:** `timeline.test.ts` "a ripple move is not blocked by its own A/V partner straddling the landing frame (the B-306 shape)"; `apelles-timeline` `move_clip_ripple_is_not_blocked_by_its_own_linked_partner`; `rippleEdits.e2e.dom.test.tsx` "ripple=true really moves, the linked partner with it". Not verified live.
 
 ## B-305 — adding a camera clip to a video track put its linked audio on an audible SFX track instead of the muted partner track
 
