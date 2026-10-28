@@ -27,6 +27,30 @@ Still real:
 
 ## Open
 
+## B-316 — placed Motion clips keep their old `sourceLen` after the scene is re-rendered shorter
+
+status: **open** · severity: **minor** · area: Edit ↔ Motion render placement
+
+- **found:** 2026-10-28 by the agent doing the Five Levels pacing pass in the live app. The app then allows trimming past the end of the new render.
+
+## B-315 — no MCP tool to toggle a track's sync-lock (GUI only)
+
+status: **open** · severity: **minor** · area: Edit track tools (human+AI parity)
+
+- **found:** 2026-10-28 by the agent doing the Five Levels pacing pass in the live app. The agent used `editor_set_track_locked` instead, which also blocks edits.
+
+## B-314 — `editor_move_clip`: ok without moving when the linked partner is on a locked track; moves the clip to the end of the clip list (indices shift); a 20 s timeout still executes later
+
+status: **open** · severity: **major** · area: `editor_move_clip`
+
+- **found:** 2026-10-28 by the agent doing the Five Levels pacing pass in the live app. Queued follow-up ops then hit the wrong clip. Related: B-306, B-304.
+
+## B-310 — `editor_ripple_delete_ranges` deleted material for ranges it reported as SKIPPED, leaving an open silent hole
+
+status: **open** · severity: **critical** · area: `editor_ripple_delete_ranges` / `applyRippleDeleteRanges` (cf. B-288)
+
+- **found:** 2026-10-28 by the agent doing the Five Levels pacing pass in the live app. Data loss: on the VO track, ranges 568-571 and 580-586 were reported 'nothing wholly inside', yet 31 frames of voice (Intro.m4a source 760-791) were removed and the gap left open, no error. Repro: one voice clip at 561-766 (source 760) with ranges [544,558), [568,571), [580,586) in one batch. The edit-by-text branch (D-420) changed the piece-selection rule for B-288 — re-test this repro against it before merging.
+
 ## B-309 — `motion_validate` does not flag text overflowing its container
 
 status: **open** · severity: **major** · area: `packages/motion-engine` validation (D-403)
