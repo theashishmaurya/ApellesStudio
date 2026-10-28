@@ -4434,14 +4434,18 @@ mod tests {
         assert_eq!(manifest.active_clip_id.as_deref(), Some(clip.id.as_str()));
 
         remove_clip_by_id(&mut manifest, 0, &clip.id).unwrap();
-        // B-038 — the clip was the track's only one, so D-123 prunes the track
-        // itself rather than leaving it behind empty. The old assertion indexed
-        // `tracks[0]` unconditionally and panicked outright ("len is 0 but the
-        // index is 0") once that shipped; what it was really checking is that
-        // the clip is gone, which is now true by the track being gone.
+        // D-421 (B-304) — removing a track's last clip leaves the track in
+        // place, empty, so later track indices stay stable; only an explicit
+        // remove-track takes it away. (D-123's pruning, which B-038 pinned
+        // here, is what D-421 reversed.)
+        assert_eq!(
+            manifest.timelines[0].tracks.len(),
+            1,
+            "the emptied track stays"
+        );
         assert!(
-            manifest.timelines[0].tracks.is_empty(),
-            "the track the last clip was lifted from is pruned"
+            manifest.timelines[0].tracks[0].clips.is_empty(),
+            "the clip is gone from it"
         );
         assert_eq!(
             manifest.active_clip_id, None,
