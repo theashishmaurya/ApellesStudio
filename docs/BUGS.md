@@ -27,6 +27,21 @@ Still real:
 
 ## Open
 
+## B-323 — a new project's Edit timeline is 24 fps and no MCP tool can change it; `set_project_settings(fps=30)` does not reach it
+
+status: **open** · severity: **major** (a 30 fps deliverable silently becomes a 24 fps timeline) · area: Edit MCP / project settings (human+AI parity) · found 2026-10-28
+
+- **repro:** `new_project("The Domino")` (no media) → `set_project_settings(width=1080,
+  height=1920, fps=30)` → place 30 fps Motion renders with `editor_add_clip` at 30 fps frame
+  positions. `editor_list_timelines` answers `durationFrames: 798` for clips ending at frame
+  810: the timeline has no `rate`, so `timelineFps` falls back to `DEFAULT_FPS = 24`, and
+  every `start_frame` was read as a 24 fps frame (gaps between the clips).
+- **expected:** the project's fps (D-038) sets the timeline rate (or the first placed clip's
+  rate does, for a timeline with no rate yet), and an `editor_*` tool exposes the timeline
+  rate the way `editor_set_timeline_output` exposes its size.
+- **workaround used:** placed the clips at 24 fps positions (`seconds × 24`), so the 27 s plays
+  end to end, but the timeline (and any export from it) is 24 fps until the rate can be set.
+
 ## B-322 — `motion_set_layer_field(key="props")` on a custom-component layer warns "not a known field"
 
 status: **open** · severity: **minor** · area: Motion MCP (D-409) · found 2026-10-28 (building "The Domino" reel)
