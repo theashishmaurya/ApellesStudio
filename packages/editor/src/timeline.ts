@@ -2386,43 +2386,49 @@ export interface RippleDeleteRangeResult {
 }
 
 /** D-318 — cut ONE `[start, end)` timeline-frame range out of `track` and close
- *  the gap, by composing `split` + `remove` + `remove_gap`. Returns the track's
- *  index in the timeline it hands back (a `remove` can prune an emptied track,
- *  which renumbers the ones after it) and a per-range verdict.
+ *  the hole, by composing `split` + `remove` and then rippling by exactly the
+ *  range's length. Returns a per-range verdict.
  *
- *  **B-197 — a range is all-or-nothing, and it says which it was.** The three
- *  ops this composes each encode a real rule (D-106/D-129/B-033) and can refuse;
- *  this helper still never reaches past their guards — second-guessing them
- *  would be a weaker second implementation of rules that are already right. What
- *  changed is what happens on a refusal. It used to `return next`: whatever had
- *  been done so far stayed, the rest of that range was abandoned, and the batch
- *  above had no idea. That is exactly B-197 — an 87-range recut reported
- *  `{ok: true, ranges: 87}` with two of the ranges' material still on the
- *  timeline (a refused `split`) or cut but with the hole left open (a refused
- *  `remove_gap` — a sync-locked track straddling the gap's end, B-033's own
- *  contract working as designed), which reads as "the timeline is longer than
- *  the arithmetic says" and nothing else.
+ *  **B-197 — a range is all-or-nothing, and it says which it was.** The ops
+ *  this composes each encode a real rule (D-106/D-129/B-033) and can refuse;
+ *  this helper never reaches past their guards. A range that cannot complete
+ *  rolls back to the timeline it was handed — no orphan split boundaries, no
+ *  half-cut hole — and comes back with a `reason`. `checkSplit`/`checkRemove`
+ *  supply those reasons, so this file states each rule exactly once.
  *
- *  So a range that cannot complete now rolls back to the timeline it was handed
- *  — no orphan split boundaries, no half-cut hole — and comes back with a
- *  `reason` its caller can report. `checkSplit`/`checkRemove`/`checkRemoveGap`
- *  supply those reasons, so this file states each rule exactly once. */
+ *  **B-310 — the ripple is the range, not the gap the cut leaves.** This used
+ *  to close the hole with `remove_gap`, which closes the WHOLE gap around a
+ *  frame. When the range began or ended in a gap that was already there (the
+ *  cut ran up to a clip's edge and past it), the ripple pulled that gap shut
+ *  too: the track shortened by more than the range, every later clip landed
+ *  early, and the reported cuts no longer matched the timeline. On a mixed-rate
+ *  clip it was worse: a piece's end can round a frame past the cut (the split
+ *  keeps whole SOURCE frames), so `remove_gap` found no gap at all and refused,
+ *  and the range was reported skipped. Now the hole is closed by shifting
+ *  everything at or after `end` earlier by exactly `end - start`, on this
+ *  track, on every track that held a removed clip's A/V partner (so a linked
+ *  pair downstream stays in sync even on a track that is not sync-locked), and
+ *  on every other sync-locked track (D-106). A range that runs over gap and
+ *  material removes the whole span, gap frames included; a range with no
+ *  material at all is refused. */
 function rippleDeleteOneRange(
   tl: Timeline,
   track: number,
   start: number,
   end: number,
   fps: number,
-): { timeline: Timeline; track: number; result: RippleDeleteRangeResult } {
-  const refuse = (reason: string) => ({
-    timeline: tl,
-    track,
-    result: { start, end, applied: false, reason },
-  });
+): { timeline: Timeline; result: RippleDeleteRangeResult } {
+  const refuse = (reason: string) => ({ timeline: tl, result: { start, end, applied: false, reason } });
 
   const tr0 = tl.tracks[track];
   if (!tr0) return refuse(`no track ${track} (0..${tl.tracks.length - 1})`);
   if (tr0.locked) return refuse(`track ${track} is locked`);
+  const noMaterial = () =>
+    refuse(
+      `nothing on track ${track} lies inside frames ${start}..${end} — the range describes no real ` +
+        `material (already cut, a gap, or past the end of the track)`,
+    );
+  if (!tr0.clips.some((c) => c.start_frame < end && endFrame(c, fps) > start)) return noMaterial();
 
   let next = tl;
 
@@ -2438,95 +2444,68 @@ function rippleDeleteOneRange(
     next = applyOp(next, { kind: 'split', track, clip: hit.index, atFrame: at });
   }
 
-  // 2. Remove every clip now sitting wholly inside the range. Re-resolved each
-  //    time, because `remove` can delete a whole A/V link group and can prune
-  //    an emptied track — both of which renumber what is left.
-  let liveTrack = track;
+  // 2. Remove every piece now inside the range. Re-resolved each time, because
+  //    `remove` deletes a whole A/V link group, which renumbers what is left.
+  //    B-288 — a piece is a clip that STARTS inside the range: step 1 cut at
+  //    `end`, so the only clip reaching past `end` is one that starts at or
+  //    after it. A piece's end is not exact, though (`split` keeps whole SOURCE
+  //    frames, so on a mixed-rate clip a piece can end a frame past the cut),
+  //    which is why the end is not the test. It is still checked: a piece
+  //    reaching more than that one frame past `end` was not isolated (two
+  //    clips overlapping at `end`), and removing it would delete material the
+  //    range never asked for.
+  const partnerTracks = new Set<number>();
   let removed = 0;
   for (;;) {
-    const tr = next.tracks[liveTrack];
-    // The track's own last clip was just removed, so the track itself pruned:
-    // everything this range asked for is gone. `liveTrack` is stale from here,
-    // which is what the caller needs the returned index for.
-    if (!tr) {
-      liveTrack = -1;
-      break;
-    }
-    // B-288 — "inside the range" is "STARTS inside it", not "ends by `end`".
-    // Step 1 cut at `end`, so the only clip that can reach past `end` is one
-    // that starts at or after it. A piece's end, though, is not exact: `split`
-    // gives each half its own whole number of SOURCE frames, and when the
-    // source rate differs from the timeline's the right half's end is rounded
-    // on its own — measured, a 25 fps clip on a 23.998 fps timeline cut at
-    // 9470 and then 9100 leaves a middle piece ending at 9471. Testing
-    // `endFrame(c) <= end` refused that piece ("nothing lies wholly inside"),
-    // which is how one valid range of a 30-range batch was skipped.
+    const tr = next.tracks[track];
     const idx = tr.clips.findIndex((c) => c.start_frame >= start && c.start_frame < end);
     if (idx < 0) break;
-    const check = checkRemove(next, liveTrack, idx);
-    if (!check.ok) return refuse(`"${tr.clips[idx].name}" inside the range could not be removed — ${check.reason}`);
+    const piece = tr.clips[idx];
+    if (endFrame(piece, fps) > end + 1) {
+      return refuse(`"${piece.name}" starts inside the range but runs past its end, so it could not be cut cleanly`);
+    }
+    const check = checkRemove(next, track, idx);
+    if (!check.ok) return refuse(`"${piece.name}" inside the range could not be removed — ${check.reason}`);
+    for (const [ti] of linkTargets(next, track, idx)?.members ?? []) if (ti !== track) partnerTracks.add(ti);
     const before = next;
-    // Which of THIS track's clips will still be here afterwards — the anchor
-    // that re-finds the track if the removal prunes a lower-indexed one. A
-    // link group can reach back onto this track, so the doomed members are
-    // subtracted rather than assuming only `idx` goes.
-    const doomed = new Set<string>(
-      (linkTargets(next, liveTrack, idx)?.members ?? [[liveTrack, idx]]).map(
-        ([ti, ci]) => next.tracks[ti].clips[ci].id,
-      ),
-    );
-    const survivors = tr.clips.filter((c) => !doomed.has(c.id)).map((c) => c.id);
-    next = applyOp(next, { kind: 'remove', track: liveTrack, clip: idx });
+    next = applyOp(next, { kind: 'remove', track, clip: idx });
     // Belt and braces: `checkRemove` mirrors every refusal `case 'remove'`
     // makes, so this cannot fire today — but a silent no-op here used to spin
     // the loop forever on the same clip, and a future guard added to the
     // reducer alone must surface as an honest refusal, not a hang.
-    if (next === before) return refuse(`"${tr.clips[idx].name}" inside the range could not be removed`);
+    if (next === before) return refuse(`"${piece.name}" inside the range could not be removed`);
     removed++;
-    // D-129 — removing a link group can empty (and so prune) a track at a
-    // LOWER index than this one, which shifts this one. Follow the track by a
-    // clip it still owns rather than trusting the index, so the rest of the
-    // batch cannot silently cut a different track.
-    if (next.tracks.length !== before.tracks.length) {
-      liveTrack = survivors.length
-        ? next.tracks.findIndex((t) => t.clips.some((c) => survivors.includes(c.id)))
-        : -1;
+  }
+  if (removed === 0) return noMaterial();
+
+  // 3. Close the hole by exactly the range's length. Nothing after the range
+  //    on this track means the cut ran to the end of the track: nothing to pull
+  //    earlier, and that is a complete cut, not a refusal (B-227).
+  if (!next.tracks[track].clips.some((c) => c.start_frame >= end)) {
+    return { timeline: next, result: { start, end, applied: true } };
+  }
+  const rippled = new Set<number>([track, ...partnerTracks]);
+  next.tracks.forEach((t, i) => {
+    if ((t.sync_locked ?? DEFAULT_SYNC_LOCKED) && !t.locked) rippled.add(i);
+  });
+  // B-033 — a clip straddling `end` on another rippled track cannot be shifted
+  // clear of the cut without being split, which a ripple never does. The range
+  // is refused whole; the reason names the track.
+  for (const ti of rippled) {
+    if (ti === track) continue;
+    const straddler = next.tracks[ti].clips.find((c) => c.start_frame < end && endFrame(c, fps) > end);
+    if (straddler) {
+      return refuse(
+        `the material would come out but the ${end - start}-frame hole could not be closed: closing it ripples ` +
+          `track ${ti}${partnerTracks.has(ti) ? ' (it holds the cut clips\' A/V partners)' : ' (sync-locked)'}, and ` +
+          `"${straddler.name}" there straddles frame ${end} — a ripple never splits a clip (B-033). Move or trim it ` +
+          `clear of frame ${end}${partnerTracks.has(ti) ? '' : `, or turn sync-lock off on track ${ti}`}, then retry.`,
+      );
     }
   }
-
-  if (removed === 0) {
-    return refuse(
-      `nothing on track ${track} lies wholly inside frames ${start}..${end} — the range describes no real ` +
-        `material (already cut, a gap, or past the end of the track)`,
-    );
-  }
-  if (liveTrack < 0) {
-    // The material is gone and the track went with it; there is no hole left
-    // to close, so the range is fully applied.
-    return { timeline: next, track: liveTrack, result: { start, end, applied: true } };
-  }
-
-  // 3. Close the hole. `checkRemoveGap` (B-227) tells the two apart: "there is
-  //    nothing after this to pull earlier" — the cut ran to the end of the
-  //    track — is the one legitimate way a ripple delete ends without a
-  //    ripple, and is a real success. Anything else (B-033's straddling
-  //    sync-locked clip, above all) would leave the material cut and the hole
-  //    open, which is the half-applied state B-197 was filed for: roll back.
-  const gap = checkRemoveGap(next, liveTrack, start, fps);
-  if (!gap.ok) {
-    if (trackDuration(next.tracks[liveTrack], fps) <= start) {
-      return { timeline: next, track: liveTrack, result: { start, end, applied: true } };
-    }
-    return refuse(
-      `the material came out but the ${end - start}-frame hole at frame ${start} could not be closed, so the ` +
-        `cut would have left a gap instead of rippling — ${gap.reason}`,
-    );
-  }
-  return {
-    timeline: applyOp(next, { kind: 'remove_gap', track: liveTrack, frame: start }),
-    track: liveTrack,
-    result: { start, end, applied: true },
-  };
+  const out = next === tl ? clone(tl) : next;
+  for (const ti of rippled) shiftClipsAtOrAfter(out.tracks[ti], end, start - end);
+  return { timeline: out, result: { start, end, applied: true } };
 }
 
 /** D-318 — the whole batched ripple delete, as one pure function: normalise the
@@ -2544,7 +2523,13 @@ function rippleDeleteOneRange(
  *
  *  `results` is in ascending range order (the order `mergeFrameRanges` returns,
  *  not the back-to-front order they are applied in), one entry per MERGED
- *  range — overlapping input is one cut and therefore one result. */
+ *  range — overlapping input is one cut and therefore one result.
+ *
+ *  B-310 — each range ripples by exactly its own length, and only frames at or
+ *  after its END move, so applying back to front leaves every earlier range's
+ *  frame numbers valid whichever of the later ones applied. That is what makes
+ *  "the report says skipped" and "nothing in that range changed" the same
+ *  statement (`rippleDeleteRanges.property.test.ts`). */
 export function applyRippleDeleteRanges(
   tl: Timeline,
   track: number,
@@ -2554,21 +2539,11 @@ export function applyRippleDeleteRanges(
   const merged = mergeFrameRanges(ranges);
   const results: RippleDeleteRangeResult[] = new Array(merged.length);
   let next = tl;
-  let liveTrack = track;
   // Back to front: cutting an earlier range ripples every later one earlier,
   // which would invalidate the frame numbers we were handed.
   for (let i = merged.length - 1; i >= 0; i--) {
-    if (liveTrack < 0) {
-      results[i] = {
-        ...merged[i],
-        applied: false,
-        reason: `an earlier range in this batch removed the last clip on track ${track}, and the emptied track went with it`,
-      };
-      continue;
-    }
-    const step = rippleDeleteOneRange(next, liveTrack, merged[i].start, merged[i].end, fps);
+    const step = rippleDeleteOneRange(next, track, merged[i].start, merged[i].end, fps);
     next = step.timeline;
-    liveTrack = step.track;
     results[i] = step.result;
   }
   return { timeline: next, results };

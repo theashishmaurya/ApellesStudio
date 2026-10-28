@@ -448,3 +448,64 @@ describe('ripple_delete_ranges — per-range outcome (B-197)', () => {
     expect(skipped).toBe(0);
   });
 });
+
+// B-310 — the live report: on the VO track, a voice clip at 561..766 (source
+// 760) after a clip that ends before 558, cut with [544,558), [568,571) and
+// [580,586) in one batch. The first range ran from material into the gap
+// before the voice; closing it with `remove_gap` shut the WHOLE gap (3 frames
+// more than the range), and on a mixed-rate voice clip the other two were
+// refused ("nothing wholly inside") because a piece's rounded end hid the gap.
+describe('ripple_delete_ranges — B-310 repro', () => {
+  function voTimeline(rate: { num: number; den: number }, voiceFps: number): Timeline {
+    const fps = rate.num / rate.den;
+    const src = (frames: number) => Math.round((frames * voiceFps) / fps);
+    return {
+      id: 'tl',
+      name: 'b310',
+      rate,
+      tracks: [
+        {
+          kind: 'audio',
+          clips: [
+            { ...clip('p', 450, 0, src(100)), source_path: '/vo/p.m4a', source_fps: voiceFps },
+            { ...clip('voice', 561, 760, src(205)), source_path: '/vo/Intro.m4a', source_fps: voiceFps },
+          ],
+          gain: 1,
+          sync_locked: false,
+        },
+      ],
+      markers: [],
+    } as unknown as Timeline;
+  }
+  const RANGES = [
+    { start: 544, end: 558 },
+    { start: 568, end: 571 },
+    { start: 580, end: 586 },
+  ];
+
+  it('cuts exactly the three ranges and nothing else (same rate, frame-exact)', () => {
+    const tl = voTimeline({ num: 24, den: 1 }, 24);
+    const { timeline: out, results } = applyRippleDeleteRanges(tl, 0, RANGES, 24);
+    expect(results.map((r) => r.applied)).toEqual([true, true, true]);
+    expect(layout(out)).toEqual([
+      { start: 450, end: 544, sourceStart: 0, duration: 94 }, // p, its last 6 frames cut
+      // 3 of the 11 gap frames before the voice were outside the range: kept.
+      { start: 547, end: 554, sourceStart: 760, duration: 7 }, // voice 760..766, untouched
+      { start: 554, end: 563, sourceStart: 770, duration: 9 }, // 767..769 cut
+      { start: 563, end: 743, sourceStart: 785, duration: 180 }, // 779..784 cut
+    ]);
+  });
+
+  it('applies all three on a mixed-rate voice clip too, shrinking the track by their 23 frames', () => {
+    const tl = voTimeline({ num: 60, den: 1 }, 24);
+    const { timeline: out, results } = applyRippleDeleteRanges(tl, 0, RANGES, 60);
+    expect(results.map((r) => r.applied)).toEqual([true, true, true]);
+    const end = (t: Timeline) => Math.max(...t.tracks[0].clips.map((c) => endFrame(c, 60)));
+    // Within the mixed-rate representation's one-frame seam per cut.
+    expect(Math.abs(end(tl) - end(out) - 23)).toBeLessThanOrEqual(3);
+    // The voice still starts with source 760, right after the 3 kept gap frames.
+    const voice = out.tracks[0].clips.filter((c) => c.source_path === '/vo/Intro.m4a');
+    expect(voice[0].source_start).toBe(760);
+    expect(voice[0].start_frame).toBe(547);
+  });
+});

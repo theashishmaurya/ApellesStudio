@@ -6066,6 +6066,12 @@ def editor_ripple_delete_ranges(track: int, ranges: list) -> str:
     or out-of-order input is safe and you never have to compensate for an
     earlier cut having moved a later one.
 
+    Each applied range shortens the track by **exactly its own length** (B-310):
+    everything at or after its end moves earlier by `endFrame - startFrame`, on
+    this track, on any track holding a cut clip's A/V partner, and on every
+    sync-locked track. Gap frames inside a range go with it; a gap outside a
+    range is never closed. A range with no material in it at all is skipped.
+
     One call is **one undo entry**, however many ranges it removes — which is
     the reason this exists rather than looping `editor_split_clip` +
     `editor_remove_clip` + `editor_remove_gap` yourself. The `undo` tool

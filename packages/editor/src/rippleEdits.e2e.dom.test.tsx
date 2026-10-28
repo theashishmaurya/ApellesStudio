@@ -4,6 +4,7 @@
  * each `editor_*` op driven through the real `chroma://request` dispatch
  * `control.rs` uses, the real timeline store and the shared undo stack.
  *
+ * - B-310 — `editor_ripple_delete_ranges` cuts exactly the ranges it reports;
  * - B-304 / D-421 — emptying a track keeps it; `editor_remove_track` is the
  *   explicit removal; a move keeps clip indices in start order.
  *
@@ -179,5 +180,76 @@ describe('B-304 / D-421 — tracks keep their index; removing one is explicit', 
     });
     expect((await op('editor_move_clip', { fromTrack: 0, clip: 0, startFrame: 200 })).ok).toBe(true);
     expect(ids(0)).toEqual(['b', 'c', 'a']);
+  });
+});
+
+describe('B-310 — editor_ripple_delete_ranges reports exactly what it did', () => {
+  function voTimeline(overlay = false) {
+    return {
+      id: 'tl',
+      name: 'vo',
+      rate: { num: 24, den: 1 },
+      tracks: [
+        {
+          kind: 'audio',
+          clips: [clipOf('p', 450, 100), { ...clipOf('voice', 561, 205), source_start: 760 }],
+          gain: 1,
+          sync_locked: false,
+        },
+        // A sync-locked title whose clip straddles frame 571 refuses that one range (B-033).
+        ...(overlay
+          ? [{ kind: 'video', clips: [clipOf('title', 565, 10)], gain: 1, sync_locked: true }]
+          : []),
+      ],
+      markers: [],
+    };
+  }
+  const spans = () => tl().tracks[0].clips.map((c) => [c.start_frame, c.source_start, c.duration]);
+
+  it('cuts the live repro\'s three ranges as one undo step, the track shorter by exactly 23 frames', async () => {
+    await mountWith(voTimeline());
+    const depth = undoDepth();
+    const r = await op('editor_ripple_delete_ranges', {
+      track: 0,
+      ranges: [
+        { startFrame: 544, endFrame: 558 },
+        { startFrame: 568, endFrame: 571 },
+        { startFrame: 580, endFrame: 586 },
+      ],
+    });
+    expect(r.ok).toBe(true);
+    expect(r.result).toMatchObject({ applied: 3, ranges: 3 });
+    expect(spans()).toEqual([
+      [450, 0, 94],
+      [547, 760, 7],
+      [554, 770, 9],
+      [563, 785, 180],
+    ]);
+    expect(undoDepth()).toBe(depth + 1);
+    act(() => useHistoryStore.getState().undo());
+    expect(spans()).toEqual([
+      [450, 0, 100],
+      [561, 760, 205],
+    ]);
+  });
+
+  it('a range it reports skipped is left exactly as it was; the others still apply', async () => {
+    await mountWith(voTimeline(true));
+    const r = await op('editor_ripple_delete_ranges', {
+      track: 0,
+      ranges: [
+        { startFrame: 568, endFrame: 571 },
+        { startFrame: 580, endFrame: 586 },
+      ],
+    });
+    expect(r.ok).toBe(false);
+    expect(r.result.applied).toBe(1);
+    expect(r.result.skipped).toEqual([{ startFrame: 568, endFrame: 571, reason: expect.stringMatching(/straddles frame 571/) }]);
+    // Voice frames 568..570 (source 767..769) are all still there, unmoved.
+    expect(spans()).toEqual([
+      [450, 0, 100],
+      [561, 760, 19], // 760..778, 580..585 cut
+      [580, 785, 180],
+    ]);
   });
 });
