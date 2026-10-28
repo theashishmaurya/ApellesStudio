@@ -306,6 +306,11 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    - GUI: select words in the Index panel transcript and delete (Descript-style), fillers ("uh", "um", "like", "okay", stutters) highlighted for one-click removal with review.
    - Tests including the fragment case (a deleted word adjacent to kept words with padding).
 
+0n. **Faster re-edits of a built video** (found editing "Five Levels", 2026-10-28; not built, needs a D-NNN):
+   - **Live-linked Motion clips:** an Edit clip that references a Motion scene instead of a baked render — previewed live, rendered only at export, re-rendered incrementally (only changed scenes, several at once). Today a theme change meant re-rendering and re-placing 68 scenes by hand (~30 min); owner: "we are just changing a color theme so it should be a couple of mins".
+   - **Ripple that keeps chosen tracks whole:** a ripple/pacing cut that shifts but never splits marked tracks (background, level tracker, music beds), instead of locking them and moving every later clip by hand (B-310 follow-up).
+   - **Pacing pass as a tool:** measure every pause with refined word edges + audio level and tighten to targets (inside sentence / between sentences / kept beats) across all tracks in one undoable step, with the music re-laid continuously. Builds on 0l (`editor_cut_words`).
+
 0m. **Export an audio-only FILE (`.m4a` / `.wav`) from a timeline** (scoped and deferred by D-419, 2026-10-28, while fixing B-290). An audio-only timeline now previews, plays and exports as a video (black picture + the mix); a file with no picture at all is still made outside the app (`ffmpeg -i out.mp4 -vn -c:a copy out.m4a`). Not built; needs, in one pass: an `editor_export` option (or the output extension) in both MCP servers with the parity corpus re-captured, an Export-dialog format choice, the filter compiler dropping its video map/base, the compositor path skipping the render entirely (just the audio argv), the D-401 loudness pass on the result, and a real-ffmpeg test of each.
 
 0j. ~~**Music-driven motion: "use your own music; tell Claude which beats the big move should hit"**~~ **built (D-413, 2026-10-27)** (owner, from tip 2 of `scratch/reference-reels/ian-tang-claude-motion-tips.md`). Design and measurements: `docs/notes/music-driven-motion.md`.
