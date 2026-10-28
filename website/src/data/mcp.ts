@@ -93,6 +93,9 @@ export interface ToolGroup {
  * `motion_refill_template` and `motion_delete_template` (Motion 52 → 59).
  * Re-counted against the real file.
  *
+ * 251 → 252 on 2026-10-28 (D-420): edit by text, `editor_cut_words`
+ * (Edit 107 → 108). Re-counted against the real file.
+ *
  * 244 → 251 on 2026-10-28 (D-411 Phases 1-2): the Automatic Clipper,
  * `editor_auto_clip`, `editor_auto_clip_status`, `editor_get_moment_view`,
  * `editor_propose_clips`, `editor_list_clip_proposals`,
@@ -146,15 +149,15 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 251,
-  shipped: 239,
+  all: 252,
+  shipped: 240,
   debugOnly: 12,
 } as const;
 
 export const TOOL_GROUPS: readonly ToolGroup[] = [
   {
     name: 'Edit',
-    count: 107,
+    count: 108,
     blurb:
       'The whole multi-track NLE. Browse and organise the media pool, place and trim clips, perform any of the seven edit types at the playhead, roll/slip/slide, manage tracks, key transforms, set transitions, markers, captions and per-clip EQ, then render the timeline to a real file.',
     sample: [

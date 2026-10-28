@@ -124,8 +124,8 @@ export const MAX_RECOVERY_HOLE_SECS = 20;
  * context either side.
  *
  * D-349 sized it at 30 s against Whisper's 30 s decoding window ("a longer
- * extract would simply be chunked again"). Parakeet chunks at 120 s
- * (`ai-media/asr/parakeet_mlx.py`'s `CHUNK_DURATION_S`), so 40 s is still one
+ * extract would simply be chunked again"). Parakeet chunks at 40 s since D-420
+ * (120 s before; `ai-media/asr/parakeet_mlx.py`'s `CHUNK_DURATION_S`), so 40 s is still one
  * chunk — the whole-file chunking this recovery exists to escape is not
  * reintroduced. 40 = [`MAX_RECOVERY_HOLE_SECS`] + 2 × [`RECOVERY_CONTEXT_SECS`].
  */

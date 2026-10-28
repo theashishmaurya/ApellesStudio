@@ -118,6 +118,19 @@ export interface Transcript {
   /** Every segment's words, flattened. Absent when the model returned no word
    *  timings at all (`word_timestamps: false`). */
   words?: TranscriptWord[];
+  /** B-287 / D-420 — the transcription job's coverage check
+   *  (`ai-media/asr_coverage.py`): the speech-like stretches it re-read and
+   *  spliced in (`recovered`), and the ones still without a word (`unread`),
+   *  source seconds. Absent on a transcript made before D-420, or a window. */
+  coverage?: TranscriptCoverage;
+}
+
+/** `Transcript.coverage`, verbatim from the sidecar. */
+export interface TranscriptCoverage {
+  checked: boolean;
+  error?: string;
+  recovered?: Array<{ start: number; end: number; words: number }>;
+  unread?: Array<{ start: number; end: number }>;
 }
 
 /** One detected visual moment. `timeS` comes from ffmpeg's scene detection,

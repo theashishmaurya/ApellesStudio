@@ -13,6 +13,20 @@ A transcript is **deterministic**: Parakeet decodes greedily, so the same file
 gives byte-identical output with no seed (D-349's Whisper seed went with
 Whisper, D-381).
 
+**A whole-file transcript is checked for speech it left unread** (B-287,
+D-420). Parakeet is chunked at 40 s with 8 s of overlap (120/15 s until D-420,
+which silently dropped ~1.5 min of a 9:28 voiceover); after every whole-file
+pass `asr_coverage.py` finds each gap between words of 2 s or more whose audio
+sounds like speech (100 ms RMS frames against the file's own loud reference),
+`transcribe.check_coverage` re-reads it in isolation with 10 s of context and
+splices what it hears into the transcript (segments marked `recovered`), and
+the result records `coverage: {checked, recovered, unread}` — `unread` being
+stretches still without a word, which the Edit tab's word view flags. A
+window of 60 s or less is a re-read and is not checked; a longer one (the
+Clipper's 5-minute windows) is checked over its own range. Tests: `test_asr_coverage.py` (pure + a scripted backend over real
+ffmpeg audio), `test_transcribe_coverage_live.py` (opt-in, a real source and
+the real model).
+
 Nothing here touches the network (models are local; the VLM subprocess runs
 with `HF_HUB_OFFLINE=1`, always — D-354), `grade.json`, or the timeline. It
 returns facts about a file on disk; deciding what to *do* with a moment is the

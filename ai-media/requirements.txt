@@ -38,6 +38,11 @@ mlx-vlm==0.6.17       # Qwen3-VL-4B-Instruct-4bit — "what changed on screen"
 # until the venv is next rebuilt (harmless; D-381 says why nothing deletes it).
 parakeet-mlx==0.5.3   # parakeet-tdt-0.6b-v3 — "what was said, and when"
 
+# The coverage check's audio levels (B-287 / D-420, `asr_coverage.py`). Already in the
+# lock through `ai/` at this exact version; pinned here because this sidecar now
+# imports it directly.
+numpy==2.4.6
+
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
 pydantic==2.13.5

@@ -118,6 +118,8 @@ import { clipTranscriptView, runTranscriptView } from './darkRecovery';
 // `editor_propose_retakes` writes. Reviewed in this same list, cut by the
 // same Cut button.
 import { buildWordViewInput, viewBasisKey } from './retakeWordView';
+// B-289 / D-420 — silence rows stop short of every transcribed word.
+import { transcriptWordSpans, wordAwareSilences } from './silenceWords';
 // D-382 — the detector's own groups through the same gate.
 import { detectedForGate, gateDetectorGroups, type DetectorGateResult } from './detectorGate';
 import type { ProposalStatus, ProposalWord, RetakeProposalSet } from './retakeProposals';
@@ -623,6 +625,7 @@ export function RecutPanel() {
       const { fps } = pending;
       const rows: Candidate[] = [];
       const failures: string[] = [];
+      let wordAwareRuns = 0;
 
       for (const c of pending.clips) {
         if (c.failure) {
@@ -638,7 +641,18 @@ export function RecutPanel() {
 
         if (pending.kind === 'silence') {
           const found = silences[key];
-          found.silences.forEach((s, i) => {
+          // B-289 / D-420 — the same word-aware rule `editor_detect_silences`
+          // applies, so a row offered for cutting never clips a word when the
+          // source has a transcript (the panel and the tool cannot disagree).
+          const words = transcriptWordSpans(
+            transcripts[c.source],
+            recoveriesIn({ recoveries, appliedRereads }, c.source),
+          );
+          if (words) wordAwareRuns += 1;
+          const ranges = words
+            ? wordAwareSilences(found.silences, words, pending.minSilenceMs / 1000).silences
+            : found.silences;
+          ranges.forEach((s, i) => {
             const span = spanToFrames(c.clip, s.start_secs, s.end_secs, fps);
             if (span.endFrame <= span.startFrame) return;
             rows.push({
@@ -742,7 +756,14 @@ export function RecutPanel() {
               .map((r) => `${stamp(r.start)}–${stamp(r.end)}`)
               .join(', ')}${unread.length > 3 ? ', …' : ''}) — listen there before cutting.`
           : '';
-      const darkNote = recoveredNote + unreadNote;
+      // B-289 / D-420 — a silence list built without words can clip a soft word
+      // ending; say so rather than let it read as safe to cut.
+      const analysed = pending.clips.filter((c) => !c.failure && !errors[c.key as string]).length;
+      const vadOnlyNote =
+        pending.kind === 'silence' && wordAwareRuns < analysed
+          ? ` ${analysed - wordAwareRuns === analysed ? 'These ranges are' : `${analysed - wordAwareRuns} clip(s) are`} from the voice detector alone — transcribe the source (Index › Transcript) so silences stop short of every word.`
+          : '';
+      const darkNote = recoveredNote + unreadNote + vadOnlyNote;
       if (rows.length === 0) {
         setNotice(
           (pending.kind === 'silence'
@@ -780,7 +801,7 @@ export function RecutPanel() {
     return () => {
       cancelled = true;
     };
-  }, [pending, silences, silenceErrors, retakes, retakeErrors]);
+  }, [pending, silences, silenceErrors, retakes, retakeErrors, transcripts, recoveries, appliedRereads]);
 
   /** Tick every take a group suggests dropping, leaving its keeper alone.
    *

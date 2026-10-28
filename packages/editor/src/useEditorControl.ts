@@ -79,6 +79,7 @@ import { invoke } from '@tauri-apps/api/core';
 // cut and the agent's land on the same frame.
 import {
   DEFAULT_MIN_SILENCE_MS,
+  cuttableSpans,
   clipSourceRangeSecs,
   groupTakes,
   spanToFrames,
@@ -221,6 +222,7 @@ import {
 import { scrubSourceAt, waveformWindowAt, WAVEFORM_WINDOW_SECS } from './scrubSource';
 import { DETECT_GRACE_MS, settleWithin } from './settle';
 import { getWordTranscript, proposeRetakes, retranscribeWords } from './retakeProposalOps';
+import { cutWordsOp } from './cutWordsOps';
 // D-408 — music edits by story beat; the panel calls the same functions.
 import { applyMusicEditsOp, listMusicEdits, musicEditNow, proposeMusicEdits } from './musicEditOps';
 // D-411 — the Automatic Clipper's ops, shared with the Clipper panel.
@@ -276,6 +278,8 @@ import { warmCompositionSize } from './compositionSize';
 // D-329 — the whole timeline's transcript, the same stitch the Index panel
 // renders, so `editor_get_timeline_transcript` and the GUI cannot disagree.
 import { stitchTimelineTranscript, transcriptSources } from './timelineTranscript';
+// B-289 / D-420 — a VAD silence never overlaps a transcribed word.
+import { SILENCE_WORD_GUARD_SECS, transcriptWordSpans, wordAwareSilences } from './silenceWords';
 // D-256 — the baked Colorist grade for each clip, behind `editor_get_grade_status`.
 import { warmGradeLuts } from './gradeLuts';
 import {
@@ -1104,15 +1108,23 @@ function silenceEnvelope(
           : 'nothing has been started for this clip — call editor_detect_silences',
     };
   }
-  const silences = silenceSpansDto(status, c, fps);
+  const { spans: silences, basis } = silenceSpansDto(status, c, fps, minSilenceMs);
   return {
     ...head,
     state: 'done',
+    ...basis,
     silences,
     note:
       silences.length === 0
         ? 'no silence found in this clip at that threshold'
         : 'nothing was cut — pass these ranges to editor_ripple_delete_ranges to apply them',
+    ...(basis.wordAware
+      ? {}
+      : {
+          wordAwareNote:
+            'VAD-only: this source has no transcript yet, so a range may start inside a soft word ending (B-289) — ' +
+            'transcribe it (editor_get_word_transcript with start: true) and ask again for word-aware ranges',
+        }),
   };
 }
 
@@ -1454,9 +1466,32 @@ function groupHomeClip(g: { takes: Array<{ clips: number[] }> }): number | null 
 
 /** Every silence in one detection, in the three frame spaces a caller needs.
  *  Shared by the single-clip envelope and the sweep, for the same reason
- *  [`retakeGroupsDto`] is. */
-function silenceSpansDto(status: AnalysisStatus<SilenceDetection>, c: Clip, fps: number) {
-  return (status.result?.silences ?? []).map((s) => spanToFrames(c, s.start_secs, s.end_secs, fps));
+ *  [`retakeGroupsDto`] is.
+ *
+ *  B-289 / D-420 — word-aware whenever the clip's source has a transcript:
+ *  every range is the VAD's minus each word and its guard
+ *  (`wordAwareSilences`), so cutting the answer can never clip a word. The
+ *  `basis` says which it was; a VAD-only answer is never passed off as safe. */
+function silenceSpansDto(status: AnalysisStatus<SilenceDetection>, c: Clip, fps: number, minSilenceMs: number) {
+  const raw = status.result?.silences ?? [];
+  const store = useMediaUnderstandingStore.getState();
+  const path = c.source_path ?? '';
+  const words = transcriptWordSpans(store.transcripts[path], store.recoveriesFor(path));
+  const aware = words ? wordAwareSilences(raw, words, minSilenceMs / 1000) : null;
+  const spans = cuttableSpans(
+    (aware ? aware.silences : raw).map((s) => spanToFrames(c, s.start_secs, s.end_secs, fps)),
+  );
+  const basis = aware
+    ? {
+        wordAware: true as const,
+        basis: 'vad+words' as const,
+        wordGuardSecs: SILENCE_WORD_GUARD_SECS,
+        vadSilences: raw.length,
+        trimmedForWords: aware.trimmed,
+        droppedForWords: aware.dropped,
+      }
+    : { wordAware: false as const, basis: 'vad' as const };
+  return { spans, basis };
 }
 
 /** [`silenceEnvelope`]'s retake twin. */
@@ -1777,21 +1812,43 @@ async function silenceSweep(a: OpArgs, start: boolean) {
     useMediaUnderstandingStore.getState().silenceDetectionStatus(key);
   if (start) await settleSweep(() => jobs.some((j) => read(j.key).phase === 'running'));
 
+  const minSilenceMs = requested ?? DEFAULT_MIN_SILENCE_MS;
+  // B-289 / D-420 — which done clips were answered word-aware, so the sweep
+  // says it as plainly as the single-clip answer does.
+  const vadOnlyClips: number[] = [];
+  let wordAwareClips = 0;
   const results: SweepClipResult[] = jobs.map(({ target, key }) => {
     const status = read(key);
+    let findings: ReturnType<typeof silenceSpansDto>['spans'] = [];
+    if (status.phase === 'done') {
+      const dto = silenceSpansDto(status, target.c, fps, minSilenceMs);
+      findings = dto.spans;
+      if (dto.basis.wordAware) wordAwareClips += 1;
+      else vadOnlyClips.push(target.clip);
+    }
     return {
       clip: target.clip,
       clipId: target.c.id,
       source: target.source,
       state: status.phase,
-      findings: status.phase === 'done' ? silenceSpansDto(status, target.c, fps) : [],
+      findings,
       ...(status.phase === 'error' ? { error: status.error ?? 'silence detection failed' } : {}),
     };
   });
 
   return {
     ...sweepReport(SILENCE_SWEEP, track, results, skipped),
-    minSilenceMs: requested ?? DEFAULT_MIN_SILENCE_MS,
+    minSilenceMs,
+    wordAware: vadOnlyClips.length === 0 && wordAwareClips > 0,
+    wordAwareClips,
+    ...(vadOnlyClips.length > 0
+      ? {
+          vadOnlyClips,
+          wordAwareNote:
+            `${vadOnlyClips.length} clip(s) have no transcript yet, so their ranges are VAD-only and may start inside a ` +
+            'soft word ending (B-289) — transcribe their source and sweep again for word-aware ranges',
+        }
+      : {}),
   };
 }
 
@@ -1975,7 +2032,7 @@ function captionsFromTimelineTranscript(tl: Timeline, a: Record<string, unknown>
   }
   const sources = transcriptSources(tl);
   if (sources.length === 0) {
-    return { error: 'no dialogue-bearing video clips on this timeline to caption' };
+    return { error: 'no dialogue-bearing clips on this timeline to caption (video clips, or unlinked audio such as a voice-over)' };
   }
   const store = useMediaUnderstandingStore.getState();
   for (const s of sources) {
@@ -5388,7 +5445,7 @@ export function useEditorControl(): void {
             sources: [],
             rows: [],
             pending: 0,
-            note: 'no dialogue-bearing video clips on this timeline',
+            note: 'no dialogue-bearing clips on this timeline (video clips, or unlinked audio such as a voice-over)',
           };
         }
 
@@ -5613,6 +5670,16 @@ export function useEditorControl(): void {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
         return await retranscribeWords(tl, a);
+      },
+
+      // **Edit by text (D-420, roadmap 0l).** Delete word ranges of the same
+      // view as ONE undo step — padded so no deleted word leaves a fragment
+      // and no kept word is clipped, optional pause tightening — through the
+      // `ripple_delete_ranges` op the Index panel's Delete key also runs.
+      editor_cut_words: async (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        return await cutWordsOp(tl, a);
       },
 
       // **Music edits by story beat (D-408).** A dropout / stop-time breath /

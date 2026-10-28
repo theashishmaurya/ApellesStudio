@@ -2413,6 +2413,63 @@
       }
     },
     {
+      "name": "editor_cut_words",
+      "description": "Edit by text: cut words out of one timeline track by their word index\n    in `editor_get_word_transcript`'s view, as ONE undo step (D-420). Use it\n    for fillers (\"uh\", \"um\"), stutters, repeated words, a fluff phrase, or a\n    sentence the person wants gone \u2014 and to tighten long pauses.\n\n    - `track` \u2014 required; the track the view was read for.\n    - `view_id` \u2014 required: the `viewId` your indices were read under. A stale\n      one is refused and nothing is cut.\n    - `ranges` \u2014 `[{\"first\": int, \"last\": int}, ...]`, inclusive word indices\n      to delete. May be `[]` when only tightening.\n    - `tighten_gaps_ms` \u2014 optional: every pause between two words that STAY\n      that is still longer than this after the cuts is cut down to\n      `keep_breath_ms` (half kept after the earlier word, half before the\n      next). A pause across a clip boundary is tightened in both clips.\n    - `keep_breath_ms` \u2014 the pause a tightened gap keeps (default 300; not more\n      than `tighten_gaps_ms`).\n    - `dry_run` \u2014 plan only: the same answer, nothing cut.\n\n    **How the cut edges are placed** (so you never pad by hand): every deleted\n    word lies wholly inside a cut \u2014 each edge reaches up to 0.32 s past it \u2014\n    and no kept word is ever touched: toward a kept neighbour the edge stops at\n    the middle of the gap. Neighbouring deleted words are one cut, the pauses\n    between them included, so no fragment of a deleted word is left. A range\n    that crosses a clip boundary is cut to the boundary in both clips. The cut\n    ripples, and carries A/V-linked and sync-locked partner tracks with it\n    exactly as `editor_ripple_delete_ranges` does.\n\n    The answer says exactly what was cut: `cuts` (each with `startFrame` /\n    `endFrame` \u2014 timeline frames as they were BEFORE the edit \u2014 `kind`\n    `words` / `gap` / `words+gap`, and the `words` it removed), `deletedWords`,\n    `tightenedGaps`, `cutFrames` / `cutSecs`, and the new `viewId`. `tight`\n    lists any deleted word less than a frame from a kept one (the edge there is\n    the middle of the gap \u2014 listen). **Every index after the first cut has\n    moved**: re-read the view before cutting again.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "view_id": {
+            "title": "View Id",
+            "type": "string"
+          },
+          "ranges": {
+            "items": {},
+            "title": "Ranges",
+            "type": "array"
+          },
+          "tighten_gaps_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tighten Gaps Ms"
+          },
+          "keep_breath_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Keep Breath Ms"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "track",
+          "view_id",
+          "ranges"
+        ],
+        "type": "object",
+        "title": "editor_cut_wordsArguments"
+      }
+    },
+    {
       "name": "editor_delete_timeline",
       "description": "Delete the timeline with `id` \u2014 the tab menu's \"Delete\u2026\". **Not\n    undoable** (a project-level action, like removing a media-pool item; the\n    GUI asks for confirmation first), so `id` is required: there is no\n    default to the active timeline. The project's only timeline cannot be\n    deleted. Deleting the active timeline activates the one that takes its\n    place. The media and every other timeline are untouched. Returns the new\n    `activeId` and how many timelines remain.",
       "inputSchema": {
@@ -2832,7 +2889,7 @@
     },
     {
       "name": "editor_detect_silences",
-      "description": "Find the stretches of a timeline clip \u2014 or of a WHOLE TRACK \u2014 where\n    **nobody is speaking**: \"where is the dead air.\" Uses a real on-device\n    voice-activity model (Silero VAD, D-319) over the audio, so it needs no\n    transcript.\n\n    - `track` \u2014 required.\n    - `clip` \u2014 **optional**. Name a clip index (`editor_get_timeline` lists\n      them) to ask about that one clip. **Omit it to sweep every analysable\n      clip on the track in a single call** (D-342, fixes B-216) \u2014 do this for\n      any cleanup pass, because asking one clip at a time is how whole stretches\n      of a long timeline get skipped. A sweep is one request no matter how many\n      clips it covers; calling this per clip is one request each.\n    - `min_silence_ms` \u2014 the shortest gap worth reporting (default 600). Below\n      about 400 you start getting the pauses *inside* sentences, which are not\n      cut points.\n    - `force` \u2014 re-run even though this exact clip range and threshold has\n      already been analysed (the answer is cached per range+threshold).\n\n    Either way only each clip's OWN trimmed range is analysed, so a source\n    trimmed to its second half never reports silence from material nobody sees.\n\n    **Reading the answer: check `state` first** (D-321). A normal clip finishes\n    inside this call and comes back `state: \"done\"` with `silences`. A long one\n    comes back `state: \"running\"` \u2014 the detection is still going, so poll\n    `editor_detect_silences_status` with the same arguments until it says\n    `done`. The answer is held for you either way; it is never computed and\n    thrown away.\n\n    Each entry of `silences` carries `startSecs`/`endSecs` (source seconds, what\n    was measured), `sourceStartFrame`/`sourceEndFrame` (the clip's own source\n    frames) and `startFrame`/`endFrame` \u2014 **timeline** frames, which is what\n    `editor_ripple_delete_ranges` takes. An empty list is a normal answer, not\n    an error: that clip has no gap that long.\n\n    **A SWEEP (no `clip`) answers in a different, aggregate shape**, built so\n    the clips that need a decision are readable without scanning the rest:\n    `flagged` is the clips that found something, in full, each with its own\n    `clip` index and `silences`; `clean` is a bare list of clip indices that\n    came back with nothing; `running` / `notStarted` / `failed` / `skipped` say\n    what has not answered and why; `totals` counts all of it. Act on `flagged`.\n\n    **Nothing is cut**, by either form. This proposes; you decide. Pass the\n    ranges you accept to `editor_ripple_delete_ranges`.",
+      "description": "Find the stretches of a timeline clip \u2014 or of a WHOLE TRACK \u2014 where\n    **nobody is speaking**: \"where is the dead air.\" Uses a real on-device\n    voice-activity model (Silero VAD, D-319) over the audio. **Word-aware when\n    the clip's source has a transcript** (B-289, D-420): every range then stops\n    0.125 s short of each transcribed word, because the VAD alone calls a soft\n    sentence ending or a quiet first word silence, and cutting its raw ranges\n    clipped real words. The answer says which it was: `wordAware: true`\n    (`basis: \"vad+words\"`, with `vadSilences` / `trimmedForWords` /\n    `droppedForWords`) or `wordAware: false` (`basis: \"vad\"` \u2014 no transcript\n    yet; transcribe the source first if you are going to cut these).\n\n    - `track` \u2014 required.\n    - `clip` \u2014 **optional**. Name a clip index (`editor_get_timeline` lists\n      them) to ask about that one clip. **Omit it to sweep every analysable\n      clip on the track in a single call** (D-342, fixes B-216) \u2014 do this for\n      any cleanup pass, because asking one clip at a time is how whole stretches\n      of a long timeline get skipped. A sweep is one request no matter how many\n      clips it covers; calling this per clip is one request each.\n    - `min_silence_ms` \u2014 the shortest gap worth reporting (default 600). Below\n      about 400 you start getting the pauses *inside* sentences, which are not\n      cut points.\n    - `force` \u2014 re-run even though this exact clip range and threshold has\n      already been analysed (the answer is cached per range+threshold).\n\n    Either way only each clip's OWN trimmed range is analysed, so a source\n    trimmed to its second half never reports silence from material nobody sees.\n\n    **Reading the answer: check `state` first** (D-321). A normal clip finishes\n    inside this call and comes back `state: \"done\"` with `silences`. A long one\n    comes back `state: \"running\"` \u2014 the detection is still going, so poll\n    `editor_detect_silences_status` with the same arguments until it says\n    `done`. The answer is held for you either way; it is never computed and\n    thrown away.\n\n    Each entry of `silences` carries `startSecs`/`endSecs` (source seconds, what\n    was measured), `sourceStartFrame`/`sourceEndFrame` (the clip's own source\n    frames) and `startFrame`/`endFrame` \u2014 **timeline** frames, which is what\n    `editor_ripple_delete_ranges` takes. An empty list is a normal answer, not\n    an error: that clip has no gap that long.\n\n    **A SWEEP (no `clip`) answers in a different, aggregate shape**, built so\n    the clips that need a decision are readable without scanning the rest:\n    `flagged` is the clips that found something, in full, each with its own\n    `clip` index and `silences`; `clean` is a bare list of clip indices that\n    came back with nothing; `running` / `notStarted` / `failed` / `skipped` say\n    what has not answered and why; `totals` counts all of it. Act on `flagged`.\n    It also says `wordAware` (true only when every clip was), `wordAwareClips`,\n    and `vadOnlyClips` for any clip whose source has no transcript yet.\n\n    **Nothing is cut**, by either form. This proposes; you decide. Pass the\n    ranges you accept to `editor_ripple_delete_ranges`.",
       "inputSchema": {
         "properties": {
           "track": {
@@ -3648,7 +3705,7 @@
     },
     {
       "name": "editor_get_timeline_transcript",
-      "description": "Read what the WHOLE TIMELINE says, in timeline order and in TIMELINE\n    frames \u2014 \"what does this sequence say?\" (D-329).\n\n    **Use this, not `editor_get_transcript`, for any question about the\n    sequence.** `editor_get_transcript` answers per FILE, in that file's own\n    source seconds. A timeline is a set of trimmed, reordered windows onto one\n    or more files, so a file's transcript contains speech you CUT OUT and gives\n    times that are not where the words land in the edit. This tool does that\n    mapping for you: it walks the clips in timeline order, keeps only the\n    speech each clip actually shows, and converts every row to the timeline\n    frame it plays at \u2014 at the clip's own `source_fps`, which is the step that\n    is easy to get wrong by hand (a clip's `duration`/`source_start` are its\n    OWN native frames while `start_frame` is a timeline frame; see B-077).\n\n    It is the same stitch the Edit tab's Index panel renders, so what you read\n    here is exactly what the user is looking at.\n\n    Returns `rows`, in timeline order, each `{clipId, track, sourcePath,\n    startFrame, endFrame, sourceStart, sourceEnd, text}`. `startFrame` is what\n    to pass to `editor_set_playhead` to jump to that line. Also `fps`, and\n    `sources`: one entry per distinct source FILE with `{path, clipCount,\n    state}` \u2014 `clipCount` is how many clips play from it, and `state` is\n    `\"done\"` / `\"running\"` / `\"idle\"` / `\"error\"`.\n\n    **Transcription is per FILE, and a timeline usually reuses one file many\n    times** (a silence cut makes dozens of clips from one `.MOV`), so a\n    sequence of 40 clips typically needs one or two jobs, not 40. Pass\n    `start=True` to kick off the missing ones \u2014 one per file, cached files\n    skipped, and a previous failure retried. Then poll this same tool until\n    `pending` is `0`. Each job is a full Parakeet run: seconds to\n    tens of seconds per file.\n\n    **`rows` is always usable, even while `pending > 0`** \u2014 it covers every\n    file that IS transcribed, so a partly-transcribed timeline gives you real\n    rows now rather than nothing. Finds nothing in silent or music-only\n    footage, which is normal and not an error.\n\n    Reads video tracks only (hidden tracks, title/adjustment clips and still\n    images are skipped, and a still has no audio to transcribe).",
+      "description": "Read what the WHOLE TIMELINE says, in timeline order and in TIMELINE\n    frames \u2014 \"what does this sequence say?\" (D-329).\n\n    **Use this, not `editor_get_transcript`, for any question about the\n    sequence.** `editor_get_transcript` answers per FILE, in that file's own\n    source seconds. A timeline is a set of trimmed, reordered windows onto one\n    or more files, so a file's transcript contains speech you CUT OUT and gives\n    times that are not where the words land in the edit. This tool does that\n    mapping for you: it walks the clips in timeline order, keeps only the\n    speech each clip actually shows, and converts every row to the timeline\n    frame it plays at \u2014 at the clip's own `source_fps`, which is the step that\n    is easy to get wrong by hand (a clip's `duration`/`source_start` are its\n    OWN native frames while `start_frame` is a timeline frame; see B-077).\n\n    It is the same stitch the Edit tab's Index panel renders, so what you read\n    here is exactly what the user is looking at.\n\n    Returns `rows`, in timeline order, each `{clipId, track, sourcePath,\n    startFrame, endFrame, sourceStart, sourceEnd, text}`. `startFrame` is what\n    to pass to `editor_set_playhead` to jump to that line. Also `fps`, and\n    `sources`: one entry per distinct source FILE with `{path, clipCount,\n    state}` \u2014 `clipCount` is how many clips play from it, and `state` is\n    `\"done\"` / `\"running\"` / `\"idle\"` / `\"error\"`.\n\n    **Transcription is per FILE, and a timeline usually reuses one file many\n    times** (a silence cut makes dozens of clips from one `.MOV`), so a\n    sequence of 40 clips typically needs one or two jobs, not 40. Pass\n    `start=True` to kick off the missing ones \u2014 one per file, cached files\n    skipped, and a previous failure retried. Then poll this same tool until\n    `pending` is `0`. Each job is a full Parakeet run: seconds to\n    tens of seconds per file.\n\n    **`rows` is always usable, even while `pending > 0`** \u2014 it covers every\n    file that IS transcribed, so a partly-transcribed timeline gives you real\n    rows now rather than nothing. Finds nothing in silent or music-only\n    footage, which is normal and not an error.\n\n    Reads video tracks and, since D-420, audio tracks that carry a voice \u2014 a\n    voice-over or podcast timeline with no picture has rows too. Skipped: an\n    audio clip A/V-linked to a video clip (that picture's own sound, read once\n    from the video clip; a muted voice is still read), a track that ducks under\n    another (a music bed), hidden tracks, title/adjustment clips and still\n    images (a still has no audio to transcribe).",
       "inputSchema": {
         "properties": {
           "start": {
@@ -3823,7 +3880,7 @@
     },
     {
       "name": "editor_get_word_transcript",
-      "description": "Read one timeline track as numbered words, to find its RETAKES yourself\n    (D-380). The app runs no model for this: you judge, it checks.\n\n    Returns `text` \u2014 one word per line, `index<TAB>start-end<TAB>word`, times in\n    the source file's seconds, with `--- segment` hint lines (a new segment also\n    starts at every clip boundary) \u2014 plus `viewId`, `totalWords`, `offset`,\n    `returned` and `nextOffset`. **The first page (offset 0) also carries\n    `instructions`: the rules to judge by and how to answer. Read them before\n    proposing anything.** They are the rules a blind evaluation measured at\n    0.00 s of unique speech lost across nine runs.\n\n    - `track` \u2014 required. The view is every clip on it that has audio, in play\n      order, showing only the words those clips still show (a word belongs to\n      the clip holding its midpoint).\n    - `offset` / `max_words` \u2014 paging (default 2500 words a page, at most 4000).\n      Indices are GLOBAL: page two starts at `nextOffset`, not at 0. Keep\n      calling until `nextOffset` is null.\n    - `start` \u2014 transcribe any source on the track that has no transcript yet\n      (once per file). Until every source has one this answers\n      `state: \"transcribing\"` and serves no words, because the indices would\n      shift when the rest lands.\n\n    **`viewId` is what your indices mean.** It changes whenever the track's\n    words change \u2014 an edit, a newly finished transcript, an applied re-read \u2014\n    and `editor_propose_retakes` / `editor_retranscribe_words` refuse a stale\n    one. Re-read and re-derive when that happens.\n\n    `editor_detect_retakes` is the deterministic fallback detector; it does not\n    read this view's judgement and is gated the same way (D-382). Nothing is\n    cut by this tool.",
+      "description": "Read one timeline track as numbered words, to find its RETAKES yourself\n    (D-380). The app runs no model for this: you judge, it checks.\n\n    Returns `text` \u2014 one word per line, `index<TAB>start-end<TAB>word`, times in\n    the source file's seconds, with `--- segment` hint lines (a new segment also\n    starts at every clip boundary) \u2014 plus `viewId`, `totalWords`, `offset`,\n    `returned` and `nextOffset`. **The first page (offset 0) also carries\n    `instructions`: the rules to judge by and how to answer. Read them before\n    proposing anything.** They are the rules a blind evaluation measured at\n    0.00 s of unique speech lost across nine runs.\n\n    - `track` \u2014 required. The view is every clip on it that has audio, in play\n      order, showing only the words those clips still show (a word belongs to\n      the clip holding its midpoint).\n    - `offset` / `max_words` \u2014 paging (default 2500 words a page, at most 4000).\n      Indices are GLOBAL: page two starts at `nextOffset`, not at 0. Keep\n      calling until `nextOffset` is null.\n    - `start` \u2014 transcribe any source on the track that has no transcript yet\n      (once per file). Until every source has one this answers\n      `state: \"transcribing\"` and serves no words, because the indices would\n      shift when the rest lands.\n    - `include_timeline` \u2014 also return `words`: one row per word of this page,\n      `{index, word, startSecs, endSecs, clip, clipId, startFrame, endFrame}` \u2014\n      the clip it plays in and its **timeline** frames there (D-420), so you\n      never convert source seconds to timeline frames yourself.\n\n    Every page also carries `fillers` \u2014 `[{index, word, kind}]` for its words:\n    `filler` (uh, um\u2026), `stutter` (a cut-off start before the word it begins),\n    `repeat` (the first of an immediate repeat) and `maybe` (\"like\", \"okay\":\n    only sometimes filler). They are suggestions, the same ones the Index\n    panel highlights; judge them, then cut with `editor_cut_words`. When the\n    transcription could not read some speech-like stretch even after its own\n    re-read (B-287), `unreadSpeech` lists where it plays \u2014 listen there before\n    cutting nearby.\n\n    **`viewId` is what your indices mean.** It changes whenever the track's\n    words change \u2014 an edit, a newly finished transcript, an applied re-read \u2014\n    and `editor_propose_retakes` / `editor_retranscribe_words` refuse a stale\n    one. Re-read and re-derive when that happens.\n\n    `editor_detect_retakes` is the deterministic fallback detector; it does not\n    read this view's judgement and is gated the same way (D-382). Nothing is\n    cut by this tool.",
       "inputSchema": {
         "properties": {
           "track": {
@@ -3857,6 +3914,11 @@
           "start": {
             "default": false,
             "title": "Start",
+            "type": "boolean"
+          },
+          "include_timeline": {
+            "default": false,
+            "title": "Include Timeline",
             "type": "boolean"
           }
         },
@@ -15892,6 +15954,73 @@
       ]
     },
     {
+      "tool": "editor_cut_words",
+      "case": "minimal",
+      "arguments": {
+        "track": 43,
+        "view_id": "v_editor_cut_words.view_id",
+        "ranges": [
+          "any_editor_cut_words.ranges[0]"
+        ]
+      },
+      "requests": [
+        {
+          "op": "editor_cut_words",
+          "args": {
+            "track": 43,
+            "viewId": "v_editor_cut_words.view_id",
+            "ranges": [
+              "any_editor_cut_words.ranges[0]"
+            ]
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_cut_words",
+      "case": "full",
+      "arguments": {
+        "track": 43,
+        "view_id": "v_editor_cut_words.view_id",
+        "ranges": [
+          "any_editor_cut_words.ranges[0]"
+        ],
+        "tighten_gaps_ms": 1.85,
+        "keep_breath_ms": 47.42,
+        "dry_run": false
+      },
+      "requests": [
+        {
+          "op": "editor_cut_words",
+          "args": {
+            "track": 43,
+            "viewId": "v_editor_cut_words.view_id",
+            "ranges": [
+              "any_editor_cut_words.ranges[0]"
+            ],
+            "tightenGapsMs": 1.85,
+            "keepBreathMs": 47.42
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "editor_delete_timeline",
       "case": "minimal",
       "arguments": {
@@ -17030,7 +17159,8 @@
         "track": 97,
         "offset": 42,
         "max_words": 23,
-        "start": true
+        "start": true,
+        "include_timeline": true
       },
       "requests": [
         {
@@ -17039,7 +17169,8 @@
             "track": 97,
             "offset": 42,
             "maxWords": 23,
-            "start": true
+            "start": true,
+            "includeTimeline": true
           },
           "timeout_ms": 20000
         }

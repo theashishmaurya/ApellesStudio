@@ -178,20 +178,44 @@ DESCRIPTOR = BackendDescriptor(
 
 # `parakeet-mlx` splits a long file itself and merges the chunks' token streams
 # by longest-contiguous (falling back to longest-common-subsequence) match
-# across the overlap. These are the values D-374's measurement used, so they are
-# what reproduces 56.3 s / 1296 words / 2480 tokens on the C038 source; changing
-# them changes the numbers this file's own docstring cites.
+# across the overlap.
 #
-# D-374 §3.1 VARIES the chunk offset as the multi-pass harness's one knob,
-# precisely because the measured failures (run-on segments, dropped words)
-# cluster at chunk seams. The harness (D-375) does that today through
-# `transcribe()`'s `start_secs` — the chunker starts from the audio it is
-# handed, so a pass started 10 s earlier has every seam 10 s elsewhere — which
-# needs nothing threaded through here. These stay module constants until a
-# caller wants them as parameters directly (`CLAUDE.md` does not allow a
-# parameter nothing passes); `docs/notes/asr-backends-and-harness.md` §5.
-CHUNK_DURATION_S = 120.0
-OVERLAP_DURATION_S = 15.0
+# **40 s chunks with 8 s of overlap, since D-420 (B-287).** D-374 measured with
+# 120/15 s, and those were the constants until a whole-file pass of a 9:28
+# voiceover silently dropped ~1.5 min of speech in 8 places (6.5-37 s each).
+# Measured chunk by chunk on that file, every hole was inside ONE chunk's own
+# output — the decoder, on a 120 s chunk, stops emitting tokens for a stretch
+# and later resumes (388.1 -> 425.2 s sat inside the 315-435 s chunk) — and the
+# merge caused none of them. Shorter chunks are the fix; local attention over
+# the whole file (NVIDIA's long-audio mode) was tried and still dropped 19.9 s.
+# Words read per configuration, each source transcribed whole, same machine:
+#
+# | source               | 120/15 | 30/5 | 20/4 | 40/8 (chosen) |
+# |----------------------|--------|------|------|---------------|
+# | voiceover intro 2:30 |    282 |  344 |  346 |           344 |
+# | voiceover 9:28       |   1129 | 1335 | 1342 |          1343 |
+# | C019 (8:37 camera)   |    977 | 1091 | 1094 |          1090 |
+# | C038 (16:29 camera)  |   1296 | 1382 | 1360 |          1379 |
+# | C040 (11:26 camera)  |    903 |  936 |  927 |           935 |
+# | total                |   4587 | 5088 | 5069 |          5091 |
+#
+# 40/8 reads the most words in total (+11 % over 120/15) at the same speed
+# (C038: 23.3 s -> 22.8 s), leaves no speech-like hole of >= 4 s on any of the
+# five (`asr_coverage.py`'s energy test; 120/15 left 8 on the 9:28 file, 3 on the
+# intro, 4 on C019, 1 on C038), and keeps D-387's recovery windows — at most 40
+# s — inside ONE chunk, so a re-read is still decoded whole. The seams were
+# checked at 30/5 on the 9:28 file: all 22 merges joined the two chunks' text
+# with nothing dropped or doubled. The numbers and the scripts are in
+# `docs/notes/asr-backends-and-harness.md` §4.4.
+#
+# D-374 §3.1 VARIES the chunk offset as the multi-pass harness's one knob. The
+# harness (D-375) does that through `transcribe()`'s `start_secs` — the chunker
+# starts from the audio it is handed, so a pass started 10 s earlier has every
+# seam 10 s elsewhere — which needs nothing threaded through here. These stay
+# module constants until a caller wants them as parameters directly
+# (`CLAUDE.md` does not allow a parameter nothing passes).
+CHUNK_DURATION_S = 40.0
+OVERLAP_DURATION_S = 8.0
 
 # --------------------------------------------------------------------------- #
 # segmentation — the fix for the measured 98.2 s run-on
