@@ -27,6 +27,16 @@ Still real:
 
 ## Open
 
+## B-319 — `new_project` (and `open_project`) still answer with the whole grade document
+
+status: **open** · severity: **minor** · found 2026-10-28 (live check of B-296's fix)
+
+`new_project` returned the full Colorist `adjustments` object (every curve, HSL band and lens
+field, ~10 KB) plus null image/histogram/scopes keys, when the caller only needs
+`{created: {name, path}}`. Same shape of problem B-296 fixed for `save_project`; these two go
+through the grading reply wrapper instead of the bridge op class B-296 changed. Fix: answer
+`{created}` / `{opened}` only, with the grade behind an explicit flag if anything needs it.
+
 ## B-318 — no compact MCP way to read a timeline's tracks; `get_timeline` returns every clip (~675K characters on a real edit)
 
 status: **fixed** (2026-10-28) · severity: **major** (agents fall back to scripts against the bridge — the owner asked twice "why python? why not MCP?") · area: MCP Edit tools (human+AI parity), related B-296/B-301
