@@ -241,6 +241,21 @@ export function cutSegments(input: WordViewInput, cuts: readonly CutRangeWire[])
   });
 }
 
+/** D-420 — where one view word plays on the TIMELINE, in the clip it belongs
+ *  to: its source span clamped into that clip, through `spanToFrames` (a word
+ *  stamped at zero length comes back with `startFrame === endFrame`). `null`
+ *  only for a word whose piece is unknown. What `editor_get_word_transcript`'s
+ *  `include_timeline` rows carry. */
+export function viewWordFrames(
+  input: WordViewInput,
+  w: ViewWord,
+): { clip: number; clipId: string; startFrame: number; endFrame: number } | null {
+  const p = input.pieces[w.piece];
+  if (!p) return null;
+  const span = spanToFrames(p.c, Math.max(w.start, p.startSecs), Math.min(w.end, p.endSecs), input.fps);
+  return { clip: p.clip, clipId: p.clipId, startFrame: span.startFrame, endFrame: span.endFrame };
+}
+
 function segmentIn(
   input: WordViewInput,
   piece: number,

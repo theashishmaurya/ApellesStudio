@@ -12,7 +12,8 @@
  *
  * **What it does.**
  * - `transcriptSources` — every distinct source file the timeline's dialogue-
- *   bearing video clips reference, in first-use timeline order, with how many
+ *   bearing clips (video tracks, and since D-420 unlinked voice on audio
+ *   tracks) reference, in first-use timeline order, with how many
  *   clips use each. This is the fetch list, already deduped: a silence cut
  *   produces dozens of clips against one `.MOV` and that must cost one
  *   transcription, not dozens.
@@ -41,8 +42,8 @@
  *   rows, every time. Fetching, polling and progress live in the panel and in
  *   `useEditorControl`'s op, both of which call `transcriptSources` to know
  *   WHAT to ask for.
- * - It does not read audio tracks. See `dialogueClips` for why, and for the
- *   limit that leaves.
+ * - It does not read an audio clip that is a picture's own sound (A/V-linked,
+ *   D-129) or a ducked music bed. See `dialogueClips`.
  * - It does not merge, re-punctuate or re-flow speech across a cut. A cut
  *   mid-sentence produces two rows, which is the truth about the edit rather
  *   than a defect: the second half genuinely starts at a different timeline
@@ -127,14 +128,15 @@ interface PlacedClip {
  * Every clip that could carry dialogue, in TIMELINE order.
  *
  * **The filter, and why each part of it is here.**
- * - **Video tracks only.** `editor_get_transcript`'s own framing is
- *   talking-head content, and on this timeline model the speech of a normal
- *   edit lives on the video clips (a clip carries its own embedded audio —
- *   see `Clip.volume`/D-129's A/V link). Walking audio tracks as well would
- *   double-count every A/V-linked pair: the same source, the same timeline
- *   span, twice. **Disclosed limit:** a voice-over placed on its own audio
- *   track with no video therefore does not appear. That is a real gap, named
- *   in D-329 rather than implied away.
+ * - **Video tracks, and audio tracks that carry a voice** (D-420; D-329 read
+ *   video tracks only, so a voice-over timeline had no transcript and no
+ *   captions). The speech of a camera edit lives on the video clips (a clip
+ *   carries its own embedded audio — `Clip.volume`/D-129's A/V link), so an
+ *   audio clip LINKED to a video clip is that picture's own sound and is
+ *   skipped: reading both would double-count every A/V pair. An unlinked
+ *   audio clip — a voice-over, a podcast take — is read, muted or not (muting
+ *   is a mixing state). A track that ducks under another (`duck_from`,
+ *   D-149) is a music bed and is skipped.
  * - **Hidden tracks are skipped.** A hidden track does not composite (see
  *   `Track.hidden`), so its speech is not in the edit the reader is reading.
  * - **A clip with no `source_path` is skipped** — a title or adjustment clip
@@ -152,13 +154,32 @@ interface PlacedClip {
  */
 export function dialogueClips(tl: Timeline | null): PlacedClip[] {
   if (!tl) return [];
+  // D-420 — the link groups that have a member on a VIDEO track: an audio clip
+  // in one of them is that picture's own sound, already read from the video
+  // clip, and reading it again would double every A/V-linked pair.
+  const videoGroups = new Set<string>();
+  for (const tr of tl.tracks) {
+    if (tr.kind !== 'video') continue;
+    for (const c of tr.clips) if (c.link_group) videoGroups.add(c.link_group);
+  }
   const placed: PlacedClip[] = [];
   tl.tracks.forEach((tr, track) => {
-    if (tr.kind !== 'video') return;
-    if (tr.hidden) return;
+    if (tr.kind === 'video') {
+      if (tr.hidden) return;
+    } else if (tr.kind === 'audio') {
+      // A track that ducks under another (`duck_from`, D-149) is a bed, not a
+      // voice — music, which would only queue a job that reads nothing. A
+      // MUTED track is still read: muting is a mixing state, often temporary,
+      // and B-293 found a voiceover's gain at 0 mid-edit — hiding its words
+      // then would look like a lost transcript.
+      if (tr.duck_from !== null && tr.duck_from !== undefined) return;
+    } else {
+      return;
+    }
     for (const clip of tr.clips) {
       if (!clip.source_path) continue;
       if (isStillSource(clip.source_path)) continue;
+      if (tr.kind === 'audio' && clip.link_group && videoGroups.has(clip.link_group)) continue;
       placed.push({ clip, track });
     }
   });

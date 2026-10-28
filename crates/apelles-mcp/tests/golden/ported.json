@@ -220,6 +220,7 @@
     "editor_get_word_transcript",
     "editor_propose_retakes",
     "editor_retranscribe_words",
+    "editor_cut_words",
     "editor_music_edit",
     "editor_propose_music_edits",
     "editor_list_music_edits",

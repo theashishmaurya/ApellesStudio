@@ -172,7 +172,12 @@ def check_contract_shape(audio: Path) -> None:
         lambda: transcribe_mod.transcribe(str(audio), backend="scripted"),
     )
 
-    assert list(got) == CONTRACT_KEYS + ["words"], list(got)
+    # D-420 — a whole-file pass carries the coverage check's record last. This
+    # fixture is not decodable audio, so the record says the check could not
+    # run rather than pretending it found nothing (`test_asr_coverage.py` covers a
+    # check that does run).
+    assert list(got) == CONTRACT_KEYS + ["words", "coverage"], list(got)
+    assert got["coverage"]["checked"] is False and got["coverage"]["error"], got["coverage"]
     assert got["text"] == "In December of last year.", got["text"]
     assert got["language"] == "en", got["language"]
     assert got["model"] == "scripted-1", got["model"]
@@ -213,7 +218,7 @@ def check_contract_shape(audio: Path) -> None:
         lambda: transcribe_mod.transcribe(str(audio), backend="scripted"),
     )
     assert "words" not in got, got
-    assert list(got) == CONTRACT_KEYS, list(got)
+    assert list(got) == CONTRACT_KEYS + ["coverage"], list(got)
     print("ok: no word timings → no `words` key at all, not an empty one")
 
 
@@ -563,7 +568,12 @@ def check_parakeet_glue(audio: Path) -> None:
             {"word": " Next", "start": 10.0, "end": 10.24},
             {"word": " year", "start": 10.24, "end": 10.56},
         ],
+        "coverage": got["coverage"],
     }, json.dumps(got, indent=1)
+    # D-420 — the stubbed audio is not decodable, so the check reports it did
+    # not run; with no word timings asked for it does not run at all.
+    assert got["coverage"]["checked"] is False, got["coverage"]
+    assert "coverage" not in bare, bare
 
     # Auto-detect reports "unknown"; no word timings → segments kept, `words` absent.
     assert bare["language"] == "unknown", bare["language"]

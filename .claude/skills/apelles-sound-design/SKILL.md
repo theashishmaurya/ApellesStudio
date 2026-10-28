@@ -43,8 +43,13 @@ From the teardown of a 105k-view explainer and our own Black October feedback:
    - **calls to action are dry:** no bed under a CTA or sponsor read;
    - **section closers:** out after a verdict line, back in on the next question.
    Make dropouts with the music-edit tools (D-408), never by hand-razoring the bed:
+   - **cut the voice first, then score it:** fillers, retakes and pause tightening
+     (`editor_cut_words`, `apelles-retake-review` §5) ripple the voice, so every word
+     index and frame a music edit was anchored to moves. Finish the word edit, then read
+     the view and place the music;
    - read the VOICE track with `editor_get_word_transcript {track: <voice>}` and keep its
-     `viewId`; anchor each beat to word indices so it lands on the words, not on a guess;
+     `viewId`; anchor each beat to word indices so it lands on the words, not on a guess
+     (`include_timeline: true` adds each word's timeline frames);
    - **propose the set for review:** `editor_propose_music_edits {track: <bed>, word_track:
      <voice>, view_id, edits: [...]}`, each edit `{kind, reason, <one anchor>}` with `kind`
      `dropout` | `breath` | `dry_open` | `dry_cta` | `section_out` and the anchor

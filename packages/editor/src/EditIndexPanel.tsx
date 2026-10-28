@@ -68,7 +68,10 @@
  * B-077 got wrong in shipped code. `editor_get_timeline_transcript` therefore
  * exists on both MCP surfaces and is served by the same
  * `stitchTimelineTranscript` this panel renders, so the human and the agent
- * cannot be told different things. The one genuinely new piece of state here is
+ * cannot be told different things. **D-420's edit by text** (⇧/⌘-click words,
+ * Delete; the Fillers highlight, `transcriptWordEdit.tsx`) is `editor_cut_words`
+ * through the same `cutWords` path, and the highlighted fillers are the word
+ * view's own `fillers` (`fillers.ts`). The one genuinely new piece of state here is
  * WHICH sub-view is showing, which is panel chrome rather than a capability,
  * and is already visible to the debug-only surface through `debug_ui_state`'s
  * `libraryMode` plus this component's `data-chroma-index-view` attribute.
@@ -93,6 +96,9 @@ import {
   type TranscriptSourceRef,
 } from './timelineTranscript';
 import type { RecoveredWindow } from './darkRegions';
+// D-420 — edit by text: select words, Delete; fillers highlighted for review.
+import { FILLER_LABEL, WordEditBar, useWordEditing } from './transcriptWordEdit';
+import type { FillerKind } from './fillers';
 import { thumbAtSourceSecs } from './clipThumbs';
 
 /** The two sub-views, in the order the tabs render them. Markers first: it is
@@ -473,6 +479,9 @@ function TranscriptView() {
   // D-408 — the line the music context menu acts on (the last one right-clicked).
   const [menuTarget, setMenuTarget] = useState<MusicEditTarget | null>(null);
 
+  // D-420 — edit by text: words picked for deletion, and the filler highlight.
+  const edit = useWordEditing(rows);
+
   // The single-selection LOCATOR (not a filter and not a gate): when exactly
   // one clip is selected, the rows that play from it get an accent edge, so a
   // reader can see where the clip they picked sits in the sequence. Anything
@@ -483,7 +492,7 @@ function TranscriptView() {
   if (sources.length === 0) {
     return (
       <EmptyNote>
-        Nothing to transcribe yet — add some footage to a video track and this will read back what is
+        Nothing to transcribe yet — add footage or a voice-over to the timeline and this will read back what is
         said across the whole timeline.
       </EmptyNote>
     );
@@ -508,9 +517,27 @@ function TranscriptView() {
         </EmptyNote>
       ) : null}
 
+      {edit.wordCount > 0 ? <WordEditBar edit={edit} /> : null}
+
       {rows.length > 0 ? (
         <MusicEditMenu target={menuTarget}>
-          <ul className="flex flex-col gap-0.5">
+          {/* D-420 — Delete / Backspace cuts the selected words while focus is
+              in the transcript. `preventDefault` keeps the Edit tab's own
+              Delete (remove the selected clip) from also firing: the keymap
+              skips an event that is already handled. */}
+          <ul
+            className="flex flex-col gap-0.5"
+            data-chroma-transcript-words-list
+            onKeyDown={(e) => {
+              if ((e.key === 'Delete' || e.key === 'Backspace') && edit.selectedCount > 0) {
+                e.preventDefault();
+                void edit.cutSelected();
+              } else if (e.key === 'Escape' && edit.selectedCount > 0) {
+                e.preventDefault();
+                edit.clear();
+              }
+            }}
+          >
             {rows.map((row, i) => (
               <TranscriptRow
                 key={`${row.clipId}-${row.sourceStart}-${i}`}
@@ -525,6 +552,10 @@ function TranscriptView() {
                 focused={row.clipId === focusedClipId}
                 onSeek={() => setPlayhead(row.startFrame)}
                 onSeekFrame={setPlayhead}
+                firstWord={edit.firstWordOfRow[i]}
+                selected={edit.selected}
+                fillerKinds={edit.showFillers ? edit.fillerKinds : null}
+                onPickWord={edit.pick}
               />
             ))}
           </ul>
@@ -642,6 +673,17 @@ interface TranscriptRowProps {
   onContextMenu: () => void;
   onSeek: () => void;
   onSeekFrame: (frame: number) => void;
+  /** D-420 — the index of this row's first word in the whole transcript's
+   *  word list (what selection and filler marks are keyed by). */
+  firstWord: number;
+  /** D-420 — words picked for deletion, by whole-transcript word index. */
+  selected: ReadonlySet<number>;
+  /** D-420 — filler suggestions to highlight, by whole-transcript word index;
+   *  `null` while the highlight is off. */
+  fillerKinds: ReadonlyMap<number, FillerKind> | null;
+  /** D-420 — a word was clicked with a modifier: shift extends the selection
+   *  from the last word clicked, ⌘/Ctrl toggles one word. */
+  onPickWord: (word: number, mode: 'seek' | 'extend' | 'toggle') => void;
 }
 
 /**
@@ -667,6 +709,10 @@ function TranscriptRow({
   onContextMenu,
   onSeek,
   onSeekFrame,
+  firstWord,
+  selected,
+  fillerKinds,
+  onPickWord,
 }: TranscriptRowProps) {
   return (
     // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions -- see the component note: every action here also has a real focusable button; this handler only makes the row's padding clickable.
@@ -735,6 +781,9 @@ function TranscriptRow({
               // highlight hug the word.
               const lead = w.text.slice(0, w.text.length - w.text.trimStart().length);
               const core = w.text.slice(lead.length);
+              const at = firstWord + j;
+              const isSelected = selected.has(at);
+              const filler = fillerKinds?.get(at);
               return (
                 <span key={`${w.startFrame}-${j}`}>
                   {lead}
@@ -742,12 +791,22 @@ function TranscriptRow({
                     type="button"
                     data-chroma-transcript-word={j}
                     data-chroma-transcript-word-active={j === activeWord ? '' : undefined}
-                    title={`Jump to ${fmtTimecode(w.startFrame, fps)}`}
+                    data-chroma-transcript-word-selected={isSelected ? '' : undefined}
+                    data-chroma-transcript-word-filler={filler}
+                    title={
+                      filler
+                        ? `${FILLER_LABEL[filler]} — ⇧/⌘-click to select, Delete to cut`
+                        : `Jump to ${fmtTimecode(w.startFrame, fps)} (⇧-click or ⌘-click to select)`
+                    }
                     onClick={(e) => {
                       // Without this the `<li>`'s handler would also fire and
                       // seek to the row's start, overwriting the word seek.
                       e.stopPropagation();
-                      onSeekFrame(w.startFrame);
+                      // D-420 — a plain click still seeks (and marks where a
+                      // shift-click extends from); a modifier selects instead.
+                      const mode = e.shiftKey ? 'extend' : e.metaKey || e.ctrlKey ? 'toggle' : 'seek';
+                      onPickWord(at, mode);
+                      if (mode === 'seek') onSeekFrame(w.startFrame);
                     }}
                     // No horizontal padding, deliberately: 1px per side is
                     // added to EVERY inter-word gap, which visibly loosened
@@ -755,8 +814,12 @@ function TranscriptRow({
                     // one. Also caught on the harness, in the same pass that
                     // introduced it.
                     className={`rounded-[2px] text-left outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-                      j === activeWord ? 'bg-accent text-button-text' : 'hover:bg-bg-secondary'
-                    }`}
+                      isSelected
+                        ? 'bg-destructive/30 text-text-primary line-through'
+                        : j === activeWord
+                          ? 'bg-accent text-button-text'
+                          : 'hover:bg-bg-secondary'
+                    } ${filler && !isSelected ? (filler === 'maybe' ? 'underline decoration-dotted decoration-accent' : 'bg-accent/20 underline decoration-accent') : ''}`}
                   >
                     {core}
                   </button>

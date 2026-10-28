@@ -31,11 +31,14 @@ import {
   buildWordViewInput,
   rereadWindow,
   viewBasisKey,
+  viewWordFrames,
   viewWordsInWindow,
   wireViewArgs,
   type ViewWord,
   type WordViewInput,
 } from './retakeWordView';
+import { findFillers } from './fillers';
+import { spanToFrames } from './recut';
 import {
   groupDto,
   parseClientGroups,
@@ -153,7 +156,13 @@ export async function getWordTranscript(tl: Timeline, a: OpArgs) {
   if (maxWords !== null && (!Number.isFinite(maxWords) || maxWords < 1)) {
     return { error: 'maxWords must be a positive number of words' };
   }
-  const v = await viewOf(input, offset, maxWords, false);
+  // D-420 — every word is fetched (not just the page) because the filler rule
+  // looks one word ahead and the timeline rows need each word's piece.
+  const v = await viewOf(input, offset, maxWords, true);
+  const all = v.words ?? [];
+  const pageEnd = v.offset + v.returned;
+  const fillers = findFillers(all).filter((f) => f.index >= v.offset && f.index < pageEnd);
+  const unread = unreadSpeechOnTrack(input);
   return {
     ok: true,
     track: input.track,
@@ -167,11 +176,67 @@ export async function getWordTranscript(tl: Timeline, a: OpArgs) {
     sources: input.sources.map((s) => s.path),
     ...(v.rules ? { instructions: retakeInstructions(v.rules) } : {}),
     text: v.text,
+    // D-420 — each word of this page on the TIMELINE: the clip it plays in and
+    // its frames there, so a client never re-derives source→timeline maths.
+    ...(a?.includeTimeline
+      ? {
+          words: all.slice(v.offset, pageEnd).map((w, k) => ({
+            index: v.offset + k,
+            word: w.text,
+            startSecs: w.start,
+            endSecs: w.end,
+            ...(viewWordFrames(input, w) ?? {}),
+          })),
+        }
+      : {}),
+    // D-420 — the same filler suggestions the Index panel highlights.
+    fillers,
+    // B-287 — speech the transcription could not put a word on, where it plays.
+    ...(unread.length > 0
+      ? {
+          unreadSpeech: unread,
+          unreadNote:
+            `${unread.length} stretch(es) of this track sound like speech but no transcription pass could read ` +
+            'them — listen there before cutting nearby; editor_retranscribe_words over the words either side re-reads it',
+        }
+      : {}),
     note:
       v.nextOffset === null
         ? 'that is the whole view — propose with editor_propose_retakes and this viewId'
         : `more words follow — call again with offset: ${v.nextOffset} (same viewId while the track is unchanged)`,
   };
+}
+
+/**
+ * B-287 / D-420 — the transcription job's own unread stretches
+ * (`Transcript.coverage.unread`: speech-like audio no pass, re-reads included,
+ * could put a word on), mapped onto this track's clips. A stretch outside every
+ * clip's window is not on the track and is left out.
+ */
+function unreadSpeechOnTrack(input: WordViewInput) {
+  const transcripts = useMediaUnderstandingStore.getState().transcripts;
+  const out: Array<{
+    source: string;
+    startSecs: number;
+    endSecs: number;
+    clip: number;
+    clipId: string;
+    startFrame: number;
+    endFrame: number;
+  }> = [];
+  for (const p of input.pieces) {
+    const path = input.sources[p.source]?.path;
+    const unread = path ? transcripts[path]?.coverage?.unread ?? [] : [];
+    for (const u of unread) {
+      const start = Math.max(u.start, p.startSecs);
+      const end = Math.min(u.end, p.endSecs);
+      if (end <= start) continue;
+      const span = spanToFrames(p.c, start, end, input.fps);
+      if (span.endFrame <= span.startFrame) continue;
+      out.push({ source: path as string, startSecs: start, endSecs: end, clip: p.clip, clipId: p.clipId, startFrame: span.startFrame, endFrame: span.endFrame });
+    }
+  }
+  return out;
 }
 
 /** `editor_propose_retakes`. */

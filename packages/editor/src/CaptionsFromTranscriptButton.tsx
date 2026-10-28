@@ -88,7 +88,7 @@ export function CaptionsFromTranscriptButton() {
     if (!timeline) return;
     const sources = transcriptSources(timeline);
     if (sources.length === 0) {
-      setError('no dialogue-bearing video clips on this timeline to caption');
+      setError('no dialogue-bearing clips on this timeline to caption (video clips, or unlinked audio such as a voice-over)');
       return;
     }
     setBusy(true);

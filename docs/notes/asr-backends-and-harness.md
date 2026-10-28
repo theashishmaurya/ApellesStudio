@@ -550,8 +550,8 @@ peak in the 75-400 Hz pitch range; voiced speech in this file measures
 
 **What was ruled out.** *The language pin*: `parakeet_mlx` 0.5.3 takes no
 language argument, so there is no pin to get wrong. *Parakeet's chunking*: a
-recovery window is at most 40 s and Parakeet chunks at 120 s, so a window is
-always one chunk and `chunk_duration` / `overlap_duration` never apply to it.
+recovery window is at most 40 s and Parakeet chunked at 120 s (40 s since D-420,
+§4.4), so a window is always one chunk and `chunk_duration` / `overlap_duration` never apply to it.
 (The whole-file drops are a separate question; only C038 836-852 sits in a
 120/15 s chunk overlap, 840-855 s.)
 
@@ -641,6 +641,70 @@ unchanged).
 Reproduction scripts (`pk.py`, `sweep4.py`, `vadprobe.py`, `voicing.py`,
 `driver.ts`, `readall.py`) stayed in the session scratchpad; the tables above
 are the record.
+
+### 4.4 The whole-file pass dropped 1.5 min — 40 s chunks and a coverage check (B-287, D-420, 2026-10-28)
+
+**What was seen.** Two voiceover files of the owner's "Five Levels" edit (2:30
+and 9:28 m4a, 48 kHz mono): the word view had 8 gaps of 6.5-37 s where the
+audio is continuous speech; `editor_retranscribe_words` over each recovered it
+(+203 words). §4.3.1's 19 stretches on the camera sources were the same failure
+at a smaller scale, and D-349/D-387's dark-region recovery repaired them only
+for `editor_detect_retakes` — the word view never ran it.
+
+**Where it came from, measured.** The 9:28 file was re-run through
+`parakeet-mlx`'s own chunk loop by hand, saving every chunk's tokens before the
+merge. Every gap is inside ONE chunk's own output; the merge caused none:
+
+| merged gap (s) | in chunk | that chunk's own tokens |
+|---|---|---|
+| 42.64-49.12, 84.80-92.56 | 0-120 | same gaps |
+| 131.64-137.40, 162.36-167.40, 196.68-203.56 | 105-225 | same gaps |
+| **388.12-425.24** (37.1 s) | 315-435 | same gap — the decoder stops at 388 and resumes at 425 |
+| 468.16-476.40, 525.52-535.12 | 420-540 | same gaps |
+| 561.48-567.08 | 525-567 | same gap |
+
+(One merge detail: chunk 420-540's tokens for 420.2-425.2 s were discarded
+because the merge keeps `a` up to its first matched token, so the 37 s hole
+closed at 425.2, not 420.2.) Local attention over the whole file (NVIDIA's
+long-audio mode, `rel_pos_local_attn` 256/256) still dropped 131.6-151.5 s, and
+synthesized speech (macOS `say` over C038's text, 6:55) reproduced nothing at
+120/15 (1291 of 1296 words) — the drop is the model on long real-voice chunks.
+
+**Chunk size, measured** (words read, each source whole, same machine; the
+speech-like-gap test below, ≥ 4 s):
+
+| source | 120/15 | 30/5 | 20/4 | **40/8** | speech-like gaps ≥ 4 s at 120/15 → 40/8 |
+|---|---|---|---|---|---|
+| VO intro 2:30 | 282 | 344 | 346 | **344** | 3 → 0 |
+| VO 9:28 | 1129 | 1335 | 1342 | **1343** | 8 → 0 |
+| C019 8:37 | 977 | 1091 | 1094 | **1090** | 4 → 0 |
+| C038 16:29 | 1296 | 1382 | 1360 | **1379** | 1 → 0 |
+| C040 11:26 | 903 | 936 | 927 | **935** | 0 → 0 |
+| total | 4587 | 5088 | 5069 | **5091** | 16 → 0 |
+
+C038 took 23.3 s at 120/15 and 22.8 s at 40/8. 40/8 reads the most words and
+keeps D-387's recovery windows (≤ 40 s) inside one chunk. The 22 seams of a
+30/5 run on the 9:28 file were read one by one: every merge joined the two
+chunks' text with nothing dropped or doubled (40/8 has fewer seams).
+
+**The safety net** (`ai-media/asr_coverage.py`, run by `transcribe.check_coverage`
+after every whole-file pass and every window longer than 60 s — the Clipper's
+5-minute windows; a shorter window is a re-read and is not checked): a gap between words of ≥ 2 s whose 100 ms frames
+are ≥ 40 % within 25 dB of the file's 90th-percentile level is "speech-like";
+each is re-read through the D-349 window path with 10 s of context in holes of
+≤ 20 s (D-387's numbers), words whose midpoint is in the hole are spliced in as
+`recovered` segments, and what still has no word is `coverage.unread` (shown by
+`editor_get_word_transcript` as `unreadSpeech`). Thresholds measured on the same
+five files: at 40/8 it flags only C019 97.4-99.6 s (D-387's false start) and
+326.6-329.1 s (a timestamp collapse); at 120/15 it flags every hole above. Run
+on the 9:28 file with the OLD 120/15 chunking it re-read 11 stretches and
+brought 1129 words to 1335 (the owner's manual re-reads: +203) with nothing left
+unread; with 40/8 it re-reads nothing (1343 words, 35 s end to end).
+
+Scripts (`diag.py` per-chunk tokens, `diag2.py` local attention, `diag3.py` the
+chunk sweep, the energy prototype) stayed in the session scratchpad; the tables
+are the record, and `test_transcribe_coverage_live.py` re-runs the property on
+any real source.
 
 ---
 

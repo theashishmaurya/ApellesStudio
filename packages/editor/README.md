@@ -271,6 +271,25 @@ panel's transcript lines and markers (`MusicEditMenu.tsx`). Tests:
 through the real dispatch), `MusicEditsPanel.dom.test.tsx`,
 `MusicEditMenu.dom.test.tsx`.
 
+**Edit by text (D-420, roadmap 0l).** Cut words, fillers and pauses by their
+index in the D-380 word view, as one undo step. `cutWords.ts` (pure) is the
+planner: runs of deleted words cut as one, each edge padded up to 0.32 s past
+a deleted word but only to the middle of the gap toward a kept one, snapped to
+frames held between the two words (`tight` when no frame fits), a range across
+clips cut to the boundary in both, optional pause tightening to a breath;
+`viewIndicesOf` / `rangesOf` map words picked elsewhere onto the view.
+`cutWordsOps.ts` applies a plan as ONE `ripple_delete_ranges` op
+(`editor_cut_words`, and `cutPickedWords` for the GUI — one path for both).
+`fillers.ts` suggests fillers, stutters and repeats (served on every word-view
+page and highlighted in the panel). The GUI is the Index panel's transcript
+(`transcriptWordEdit.tsx`: ⇧/⌘-click selection, Delete, the Fillers bar).
+`retakeWordView.ts`'s `viewWordFrames` gives `include_timeline` its per-word
+timeline frames. `silenceWords.ts` makes VAD silences word-aware (B-289) for
+`editor_detect_silences` and the Recut panel; `timelineTranscript.ts` reads
+voice-over audio tracks. Tests: `cutWords.test.ts`, `fillers.test.ts`,
+`silenceWords.test.ts`, `editByText.e2e.dom.test.tsx`,
+`EditIndexPanel.wordEdit.dom.test.tsx`. Design: `docs/notes/edit-by-text.md`.
+
 **Automatic Clipper (D-411 Phases 1-2).** Shorts from a long media file or
 timeline, judged by the MCP client (the app picks nothing). `clipper/` holds the
 Edit-tab half: `clipperTypes.ts` (mirrors of `apelles_clipper`'s run schema and

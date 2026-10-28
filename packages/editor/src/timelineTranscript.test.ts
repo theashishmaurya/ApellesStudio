@@ -111,13 +111,13 @@ describe('dialogueClips — what counts as transcribable, and in what order', ()
     expect(dialogueClips(tl).map((p) => p.track)).toEqual([0, 1]);
   });
 
-  it('skips audio tracks, hidden tracks, source-less clips and stills', () => {
+  it('skips linked audio, ducked beds, hidden tracks, source-less clips and stills — not a muted voice', () => {
     const tl = timeline([], {
       tracks: [
         {
           kind: 'video',
           clips: [
-            clip({ id: 'real', start_frame: 0 }),
+            clip({ id: 'real', start_frame: 0, link_group: 'g1' }),
             // A title clip: no file to transcribe.
             clip({ id: 'title', start_frame: 300, source_path: undefined }),
             // D-292 still: a PNG has no audio at all.
@@ -126,12 +126,36 @@ describe('dialogueClips — what counts as transcribable, and in what order', ()
         },
         // Hidden: does not composite, so its speech is not in this edit.
         { kind: 'video', hidden: true, clips: [clip({ id: 'hidden', start_frame: 0 })] },
-        // Audio track: excluded on purpose — an A/V-linked pair would otherwise
-        // be counted twice. See `dialogueClips`' own note and D-329.
-        { kind: 'audio', clips: [clip({ id: 'audio', start_frame: 0 })] },
+        // The picture's own sound (A/V-linked to `real`, D-129): read once,
+        // from the video clip, never twice.
+        { kind: 'audio', clips: [clip({ id: 'linked-audio', start_frame: 0, link_group: 'g1' })] },
+        // Muted (`gain: 0`) but still a voice: read (muting is a mixing state;
+        // B-293 found a voiceover at gain 0 mid-edit).
+        { kind: 'audio', gain: 0, clips: [clip({ id: 'muted-voice', start_frame: 10, source_path: B })] },
+        // Ducks under track 0: a music bed, not a voice.
+        { kind: 'audio', duck_from: 0, clips: [clip({ id: 'bed', start_frame: 0, source_path: B })] },
       ],
     });
-    expect(dialogueClips(tl).map((p) => p.clip.id)).toEqual(['real']);
+    expect(dialogueClips(tl).map((p) => p.clip.id)).toEqual(['real', 'muted-voice']);
+  });
+
+  // D-420 — a voice-over timeline (one audio track, no video) had no transcript
+  // at all under D-329's video-only rule, so `editor_get_timeline_transcript`
+  // returned nothing and captions from it failed.
+  it('reads an unlinked voice on an audio track — a voice-over timeline has a transcript', () => {
+    const tl = timeline([], {
+      tracks: [
+        {
+          kind: 'audio',
+          clips: [
+            clip({ id: 'vo-1', start_frame: 0, source_path: B }),
+            clip({ id: 'vo-2', start_frame: 200, source_path: B }),
+          ],
+        },
+      ],
+    });
+    expect(dialogueClips(tl).map((p) => p.clip.id)).toEqual(['vo-1', 'vo-2']);
+    expect(transcriptSources(tl)).toEqual([{ path: B, clipCount: 2 }]);
   });
 
   it('is empty, not a throw, for a null timeline', () => {

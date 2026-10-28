@@ -50,6 +50,12 @@ WINDOW of a source with its timestamps shifted back to absolute source seconds �
 the recovery primitive `apelles-speech`'s dark-region detector feeds, and the
 way the harness's multi-pass reconciliation moves a backend's chunk seams.
 
+**The coverage check (B-287, D-420)**: after every whole-file pass (and every
+window longer than 60 s), [`check_coverage`] finds each gap between words that
+sounds like speech (`asr_coverage.py`), re-reads it as a window and splices
+what it hears in; the result carries `coverage: {checked, recovered, unread}`.
+A window of 60 s or less is itself a re-read and is never checked.
+
 **Why this runs as a SUBPROCESS of `server.py` and not in-process** (D-189):
 an MLX model's weights (~2.3 GB for Parakeet; ~3 GB for the `large-v3` this was
 written for) and the Metal buffers a run allocates are several times that
@@ -82,6 +88,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import asr_coverage
 from asr import (
     BACKENDS,
     DEFAULT_BACKEND,
@@ -316,7 +323,119 @@ def transcribe(
     output["segments"] = segments
     if flat_words:
         output["words"] = flat_words
+
+    # B-287 / D-420 — the coverage check, on every pass longer than a re-read:
+    # the whole file, and the long windows the app reads a file in (the
+    # Clipper's 5-minute progressive windows, D-411). A short window IS a
+    # re-read (the app's recoveries, `editor_retranscribe_words`, this check's
+    # own) and is not re-checked — which is also what stops the recursion.
+    long_pass = not windowed or not duration_secs or duration_secs > asr_coverage.REREAD_PASS_MAX_S
+    if long_pass and word_timestamps:
+        output["coverage"] = check_coverage(
+            output, str(src), model, language, backend, offset, duration_secs if windowed else None
+        )
     return output
+
+
+def _decode_mono(path: str, start_secs: float = 0.0, duration_secs: float | None = None) -> tuple[object, int]:
+    """The source (or one window of it) as 16 kHz mono float32 samples, for the
+    coverage check's levels. Through ffmpeg's stdout, so nothing touches disk;
+    `-ss` before `-i`, as `extract_audio` seeks."""
+    import numpy as np
+
+    rate = 16000
+    cmd = [ffmpeg_bin(), "-v", "error"]
+    if start_secs > 0:
+        cmd += ["-ss", f"{start_secs:.6f}"]
+    cmd += ["-i", path]
+    if duration_secs:
+        cmd += ["-t", f"{duration_secs:.6f}"]
+    cmd += ["-f", "f32le", "-ac", "1", "-ar", str(rate), "-"]
+    proc = subprocess.run(cmd, capture_output=True)
+    if proc.returncode != 0:
+        raise RuntimeError(_last_ffmpeg_error(proc.stderr.decode("utf-8", errors="replace")))
+    return np.frombuffer(proc.stdout, dtype=np.float32), rate
+
+
+def check_coverage(
+    output: dict,
+    path: str,
+    model: str,
+    language: str | None,
+    backend: str,
+    start_secs: float = 0.0,
+    duration_secs: float | None = None,
+) -> dict:
+    """Find the stretches of `output` that sound like speech but hold no word,
+    re-read each in isolation with context, and splice what the re-read heard
+    into `output` IN PLACE (`segments`, `words`, `text`). Returns the record
+    stored as `output["coverage"]`:
+
+    `{"checked": true, "recovered": [{start, end, words}], "unread": [{start,
+    end}]}` — `recovered` is each re-read hole that gained words, `unread` each
+    speech-like stretch still without a word after its re-read (said, never
+    silently dropped: the app's word view flags these). `{"checked": false,
+    "error": …}` when the audio could not be decoded for the check — the pass
+    itself stands, and the record says the net did not run.
+
+    `start_secs` / `duration_secs` are the pass's own window (a long one — the
+    Clipper's 5-minute windows); only that range is checked, and a re-read's
+    context may reach past its end (ffmpeg stops at the end of the file).
+
+    The arithmetic is `asr_coverage.py` (pure, tested); this is the I/O around it.
+    Each re-read is [`transcribe`] over one window — the D-349 path, timestamps
+    already absolute — so a new backend gets the check for free."""
+    try:
+        samples, rate = _decode_mono(path, start_secs, duration_secs)
+    # ImportError: numpy missing — never in the shared venv (ai-media's
+    # requirements pin it), possible on a bare interpreter running the CLI.
+    except (OSError, RuntimeError, ImportError) as e:
+        return {"checked": False, "error": f"could not decode the audio to check coverage: {e}"}
+    levels = asr_coverage.frame_levels_db(samples, rate)
+    decoded_end = start_secs + len(samples) / rate
+    # A whole file ends where its audio does; a window's re-read may read past
+    # the window's end for context.
+    source_end = decoded_end if duration_secs is None else decoded_end + asr_coverage.REREAD_CONTEXT_S
+    words: list[dict] = list(output.get("words", []))
+    stretches = asr_coverage.find_unread_stretches(words, levels, offset_s=start_secs)
+
+    recovered_segments: list[dict] = []
+    recovered: list[dict] = []
+    for stretch in stretches:
+        for win in asr_coverage.reread_windows(stretch, source_start=0.0, source_end=source_end):
+            reread = transcribe(
+                path,
+                model=model,
+                language=language,
+                word_timestamps=True,
+                start_secs=win.window_start,
+                duration_secs=win.window_end - win.window_start,
+                backend=backend,
+            )
+            got = asr_coverage.segments_in_hole(reread["segments"], win.hole_start, win.hole_end)
+            if got:
+                recovered_segments.extend(got)
+                recovered.append(
+                    {
+                        "start": win.hole_start,
+                        "end": win.hole_end,
+                        "words": sum(len(s["words"]) for s in got),
+                    }
+                )
+
+    if recovered_segments:
+        segments = asr_coverage.splice_segments(output["segments"], recovered_segments)
+        output["segments"] = segments
+        words = [w for seg in segments for w in seg["words"]]
+        output["words"] = words
+        output["text"] = " ".join(seg["text"] for seg in segments if seg["text"]).strip()
+
+    unread = asr_coverage.find_unread_stretches(words, levels, offset_s=start_secs)
+    return {
+        "checked": True,
+        "recovered": recovered,
+        "unread": [{"start": s.start, "end": s.end} for s in unread],
+    }
 
 
 def _subprocess_cmd(

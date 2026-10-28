@@ -117,6 +117,14 @@ fn default_editor_get_word_transcript_start() -> bool {
     false
 }
 
+fn default_editor_get_word_transcript_include_timeline() -> bool {
+    false
+}
+
+fn default_editor_cut_words_dry_run() -> bool {
+    false
+}
+
 fn default_editor_retranscribe_words_apply() -> bool {
     false
 }
@@ -1259,6 +1267,8 @@ pub struct EditorGetWordTranscriptArgs {
     pub max_words: Option<i64>,
     #[serde(default = "default_editor_get_word_transcript_start")]
     pub start: bool,
+    #[serde(default = "default_editor_get_word_transcript_include_timeline")]
+    pub include_timeline: bool,
 }
 
 /// D-380 step 2 — the client's retake groups for the coverage gate.
@@ -1282,6 +1292,21 @@ pub struct EditorRetranscribeWordsArgs {
     pub apply: bool,
     #[serde(default = "default_editor_retranscribe_words_force")]
     pub force: bool,
+}
+
+/// D-420 — edit by text: word ranges of the view cut as one undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorCutWordsArgs {
+    pub track: i64,
+    pub view_id: String,
+    #[schemars(schema_with = "untyped_array_schema")]
+    pub ranges: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub tighten_gaps_ms: Option<f64>,
+    #[serde(default)]
+    pub keep_breath_ms: Option<f64>,
+    #[serde(default = "default_editor_cut_words_dry_run")]
+    pub dry_run: bool,
 }
 
 /// D-408 — one music edit (dropout / breath / dry section), applied now.
@@ -5082,8 +5107,12 @@ impl ApellesMcp {
     rows now rather than nothing. Finds nothing in silent or music-only
     footage, which is normal and not an error.
 
-    Reads video tracks only (hidden tracks, title/adjustment clips and still
-    images are skipped, and a still has no audio to transcribe)."#
+    Reads video tracks and, since D-420, audio tracks that carry a voice — a
+    voice-over or podcast timeline with no picture has rows too. Skipped: an
+    audio clip A/V-linked to a video clip (that picture's own sound, read once
+    from the video clip; a muted voice is still read), a track that ducks under
+    another (a music bed), hidden tracks, title/adjustment clips and still
+    images (a still has no audio to transcribe)."#
     )]
     pub async fn editor_get_timeline_transcript(
         &self,
@@ -5098,8 +5127,14 @@ impl ApellesMcp {
         name = "editor_detect_silences",
         description = r#"Find the stretches of a timeline clip — or of a WHOLE TRACK — where
     **nobody is speaking**: "where is the dead air." Uses a real on-device
-    voice-activity model (Silero VAD, D-319) over the audio, so it needs no
-    transcript.
+    voice-activity model (Silero VAD, D-319) over the audio. **Word-aware when
+    the clip's source has a transcript** (B-289, D-420): every range then stops
+    0.125 s short of each transcribed word, because the VAD alone calls a soft
+    sentence ending or a quiet first word silence, and cutting its raw ranges
+    clipped real words. The answer says which it was: `wordAware: true`
+    (`basis: "vad+words"`, with `vadSilences` / `trimmedForWords` /
+    `droppedForWords`) or `wordAware: false` (`basis: "vad"` — no transcript
+    yet; transcribe the source first if you are going to cut these).
 
     - `track` — required.
     - `clip` — **optional**. Name a clip index (`editor_get_timeline` lists
@@ -5136,6 +5171,8 @@ impl ApellesMcp {
     `clip` index and `silences`; `clean` is a bare list of clip indices that
     came back with nothing; `running` / `notStarted` / `failed` / `skipped` say
     what has not answered and why; `totals` counts all of it. Act on `flagged`.
+    It also says `wordAware` (true only when every clip was), `wordAwareClips`,
+    and `vadOnlyClips` for any clip whose source has no transcript yet.
 
     **Nothing is cut**, by either form. This proposes; you decide. Pass the
     ranges you accept to `editor_ripple_delete_ranges`."#
@@ -5408,6 +5445,19 @@ impl ApellesMcp {
       (once per file). Until every source has one this answers
       `state: "transcribing"` and serves no words, because the indices would
       shift when the rest lands.
+    - `include_timeline` — also return `words`: one row per word of this page,
+      `{index, word, startSecs, endSecs, clip, clipId, startFrame, endFrame}` —
+      the clip it plays in and its **timeline** frames there (D-420), so you
+      never convert source seconds to timeline frames yourself.
+
+    Every page also carries `fillers` — `[{index, word, kind}]` for its words:
+    `filler` (uh, um…), `stutter` (a cut-off start before the word it begins),
+    `repeat` (the first of an immediate repeat) and `maybe` ("like", "okay":
+    only sometimes filler). They are suggestions, the same ones the Index
+    panel highlights; judge them, then cut with `editor_cut_words`. When the
+    transcription could not read some speech-like stretch even after its own
+    re-read (B-287), `unreadSpeech` lists where it plays — listen there before
+    cutting nearby.
 
     **`viewId` is what your indices mean.** It changes whenever the track's
     words change — an edit, a newly finished transcript, an applied re-read —
@@ -5426,7 +5476,8 @@ impl ApellesMcp {
             .set("track", p.track)
             .put("offset", p.offset)
             .put("maxWords", p.max_words)
-            .put_if("start", p.start);
+            .put_if("start", p.start)
+            .put_if("includeTimeline", p.include_timeline);
         let env = self.op("editor_get_word_transcript", args).await?;
         Ok(render::json_text(&env))
     }
@@ -5521,6 +5572,58 @@ impl ApellesMcp {
             .put_if("apply", p.apply)
             .put_if("force", p.force);
         let env = self.op("editor_retranscribe_words", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_cut_words",
+        description = r#"Edit by text: cut words out of one timeline track by their word index
+    in `editor_get_word_transcript`'s view, as ONE undo step (D-420). Use it
+    for fillers ("uh", "um"), stutters, repeated words, a fluff phrase, or a
+    sentence the person wants gone — and to tighten long pauses.
+
+    - `track` — required; the track the view was read for.
+    - `view_id` — required: the `viewId` your indices were read under. A stale
+      one is refused and nothing is cut.
+    - `ranges` — `[{"first": int, "last": int}, ...]`, inclusive word indices
+      to delete. May be `[]` when only tightening.
+    - `tighten_gaps_ms` — optional: every pause between two words that STAY
+      that is still longer than this after the cuts is cut down to
+      `keep_breath_ms` (half kept after the earlier word, half before the
+      next). A pause across a clip boundary is tightened in both clips.
+    - `keep_breath_ms` — the pause a tightened gap keeps (default 300; not more
+      than `tighten_gaps_ms`).
+    - `dry_run` — plan only: the same answer, nothing cut.
+
+    **How the cut edges are placed** (so you never pad by hand): every deleted
+    word lies wholly inside a cut — each edge reaches up to 0.32 s past it —
+    and no kept word is ever touched: toward a kept neighbour the edge stops at
+    the middle of the gap. Neighbouring deleted words are one cut, the pauses
+    between them included, so no fragment of a deleted word is left. A range
+    that crosses a clip boundary is cut to the boundary in both clips. The cut
+    ripples, and carries A/V-linked and sync-locked partner tracks with it
+    exactly as `editor_ripple_delete_ranges` does.
+
+    The answer says exactly what was cut: `cuts` (each with `startFrame` /
+    `endFrame` — timeline frames as they were BEFORE the edit — `kind`
+    `words` / `gap` / `words+gap`, and the `words` it removed), `deletedWords`,
+    `tightenedGaps`, `cutFrames` / `cutSecs`, and the new `viewId`. `tight`
+    lists any deleted word less than a frame from a kept one (the edge there is
+    the middle of the gap — listen). **Every index after the first cut has
+    moved**: re-read the view before cutting again."#
+    )]
+    pub async fn editor_cut_words(
+        &self,
+        Parameters(p): Parameters<EditorCutWordsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("track", p.track)
+            .set("viewId", p.view_id)
+            .set("ranges", p.ranges)
+            .put("tightenGapsMs", p.tighten_gaps_ms)
+            .put("keepBreathMs", p.keep_breath_ms)
+            .put_if("dryRun", p.dry_run);
+        let env = self.op("editor_cut_words", args).await?;
         Ok(render::json_text(&env))
     }
 

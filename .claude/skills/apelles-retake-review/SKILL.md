@@ -1,6 +1,6 @@
 ---
 name: apelles-retake-review
-description: Find the retakes (a flubbed delivery followed by a redo) in a talking-head track of the open Apelles project by reading its numbered word transcript yourself and proposing the groups through Apelles' MCP tools, so the person reviews them in the Recut panel. Use when asked to find, clean up, or review retakes / false starts / repeated takes on the Edit timeline. Not for silence removal (editor_detect_silences), not for grading, and it never cuts unless the user explicitly asks.
+description: Find the retakes (a flubbed delivery followed by a redo) in a talking-head track of the open Apelles project by reading its numbered word transcript yourself and proposing the groups through Apelles' MCP tools, so the person reviews them in the Recut panel. Use when asked to find, clean up, or review retakes / false starts / repeated takes on the Edit timeline, and for the word-level clean-up after it (fillers, stutters, fluff, long pauses) through editor_cut_words. Not for grading, and it never cuts unless the user explicitly asks.
 ---
 
 # Apelles retake review
@@ -20,7 +20,9 @@ What it does NOT do:
   work from memory of an earlier run, and do not paste them here.
 - It does not cut anything by default. Proposing stores groups for review.
 - It is not `editor_detect_retakes` (the deterministic fallback detector, same gate,
-  D-382), and not silence removal.
+  D-382). Fillers, fluff and pauses are §5 (`editor_cut_words`, D-420) — never
+  throwaway scripts that pad by hand: that is how a past edit left 16 fragments of
+  deleted words behind.
 
 ## 0. Prerequisites
 
@@ -97,7 +99,45 @@ what you proposed: counts per status, and each refusal you left open and why.
 entry of every non-kept take (from the `editor_propose_retakes` answer) to
 `editor_ripple_delete_ranges`. Never cut a `refused` group on your own authority.
 
-## 5. Changing the judging prompt: the eval loop
+## 5. Fillers, fluff and pauses: `editor_cut_words`
+
+After the retakes (or on their own, when asked to clean a voiceover by word):
+
+1. **Read the view with timeline rows.** `editor_get_word_transcript {track,
+   include_timeline: true}` adds `words` - each word's clip and **timeline**
+   frames - so you never convert source seconds yourself. Every page also carries
+   `fillers` (`filler` uh/um, `stutter`, `repeat` = the first copy of an immediate
+   repeat, `maybe` = "like"/"okay", only sometimes filler): suggestions, the same
+   ones the Index panel highlights. Judge each one in its sentence; a `maybe` is a
+   real word more often than not. `unreadSpeech`, when present, is speech no
+   transcription pass could read (B-287) - do not cut across it without saying so.
+2. **Cut with one call.** `editor_cut_words {track, view_id, ranges: [{first,
+   last}, ...]}` deletes the word ranges as ONE undo step. Do not pad: the tool puts
+   every deleted word wholly inside a cut and never touches a kept word (each edge
+   reaches up to 0.32 s past a deleted word, stopping at the middle of the gap to a
+   kept one), merges neighbouring deleted words into one cut, cuts a range across a
+   clip boundary in both clips, and carries A/V-linked and sync-locked partners.
+   Use `dry_run: true` first when the person wants to see the cuts.
+3. **Tighten pauses in the same call** when asked for a tighter read:
+   `tighten_gaps_ms` (e.g. 700) cuts every remaining pause between kept words longer
+   than that down to `keep_breath_ms` (default 300). `ranges: []` tightens only.
+4. **Silences, word-aware.** `editor_detect_silences` is word-aware when the source
+   has a transcript (B-289): its ranges stop 0.125 s short of every word, and the
+   answer says `wordAware: true`. If it says `wordAware: false`, transcribe first
+   (`editor_get_word_transcript {track, start: true}`) before cutting its ranges -
+   a VAD-only range can start inside a soft word ending. For "remove the pauses"
+   on a transcribed track, `editor_cut_words` with `tighten_gaps_ms` is the better
+   tool: it measures pauses between words, not voice activity.
+5. **Every index after the first cut moves.** The answer gives the new `viewId`;
+   re-read before cutting again. Report `cuts` (what was removed, with frames as
+   they were before the edit), and any `tight` words (a deleted word under a frame
+   from a kept one - ask the person to listen there).
+
+The person can do the same by hand: Index panel › Transcript, ⇧/⌘-click words,
+Delete; "Fillers" highlights the suggestions and "Select fillers" picks them for
+review.
+
+## 6. Changing the judging prompt: the eval loop
 
 The served rules are measured, so a change to them is only made with numbers
 (`eval/retake/README.md`, "Scoring proposals from outside the crate"):
