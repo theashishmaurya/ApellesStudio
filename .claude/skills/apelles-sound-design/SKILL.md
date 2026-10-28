@@ -84,6 +84,7 @@ From the teardown of a 105k-view explainer and our own Black October feedback:
   video description; say so in your report.
 - Openverse can be slow (34 s for one search was measured); the client waits up to 90 s of
   silence (B-275). Do not hammer it with retries.
+- **Content ID check before using music on a YouTube video** (2026-10-28: a Pixabay jazz track, "Blue Note Bounce" by AurecTheme, drew a Content ID claim on the owner's upload despite the Pixabay licence). Some Pixabay / royalty-free artists register tracks with Content ID through distributors. Before placing a non-CC0 music track for a YouTube upload: check the track page for a Content ID notice and prefer tracks that say they are not registered; prefer CC0 / CC BY beds from Openverse; and tell the person, if the track IS registered, that YouTube may claim it and how to clear it (dispute with the licence link, or the library's own claim-clearing / whitelist).
 - Prefer, in order: the project's existing `assets/audio/`, then Openverse, then other open
   libraries the person supplies (Freesound, Pixabay, Sonniss GDC bundles; check each licence).
   Never download from a source whose licence you cannot state.
