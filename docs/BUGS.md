@@ -27,6 +27,60 @@ Still real:
 
 ## Open
 
+## B-309 — `motion_validate` does not flag text overflowing its container
+
+status: **open** · severity: **major** · area: `packages/motion-engine` validation (D-403)
+
+- **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. A 30 px IBM Plex Mono text 'thumbnails' centred in a 170 px-wide shape overflowed visibly (the owner caught it); validate returned `issues: []`. Repro: shape `{w:170,h:270}` + centred text `{size:30, font:'IBM Plex Mono', text:'thumbnails'}` inside it.
+
+## B-308 — Motion has no time-varying stacking order (z-order is list order only)
+
+status: **open** · severity: **minor** · area: Motion engine layers
+
+- **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. A book pulled forward off a shelf needs to be on top only while raised; the workaround was moving it last for the whole scene.
+
+## B-307 — timeline markers don't follow ripple edits
+
+status: **open** · severity: **major** · area: Edit markers + ripple ops
+
+- **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. The owner's three markers stayed at their old frames after ripple cuts and an insert; they had to be moved by hand.
+
+## B-306 — `editor_move_clip(ripple=true)` returned ok but moved nothing
+
+status: **open** · severity: **major** · area: `editor_move_clip`
+
+- **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. track 6, clip 33, 5748 → 5977: ok, no change. `editor_add_clip(ripple=true)` worked as an alternative.
+
+## B-305 — adding a camera clip to a video track put its linked audio on an audible SFX track instead of the muted partner track
+
+status: **open** · severity: **major** · area: `editor_add_clip` linked-audio placement
+
+- **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. Video track 3 → linked audio landed on track 8 (SFX), not track 7; the clips had to be muted by hand.
+
+## B-304 — emptying a track deletes it, silently renumbering every later track; clip indices stop being start-sorted after a move
+
+status: **open** · severity: **major** · area: Edit track pruning / clip indexing
+
+- **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. Index-based follow-up calls then hit the wrong track/clip (hit while moving the marble background clip).
+
+## B-303 — title/text clips can't be lengthened (`editor_trim_clip`: 'no earlier material')
+
+status: **open** · severity: **minor** · area: text clip source length
+
+- **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. A text clip's source length equals its first duration, so it can't be extended; workaround: re-create.
+
+## B-302 — the Edit 'serif-bold' font has no '→' glyph (renders a box)
+
+status: **open** · severity: **minor** · area: Edit text fonts
+
+- **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. Found in the white-theme pass; the caption was reworded.
+
+## B-301 — `editor_detect_beats` / `motion_get_state` return 40-68 KB every call
+
+status: **open** · severity: **minor** · area: MCP answer shapes (see B-296)
+
+- **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. Compact answers by default.
+
 ## B-300 — Motion render of a 1920×1080 manifest is right, but a 3840×2160 manifest renders at 7680×4320 (2× scale applied on top of a 4K manifest)
 
 status: **open** · severity: **major** · area: `crates/apelles-motion` render scale (D-342 `setScale(2)`)
