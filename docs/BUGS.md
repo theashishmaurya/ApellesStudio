@@ -27,6 +27,14 @@ Still real:
 
 ## Open
 
+## B-318 — no compact MCP way to read a timeline's tracks; `get_timeline` returns every clip (~675K characters on a real edit)
+
+status: **open** · severity: **major** (agents fall back to scripts against the bridge — the owner asked twice "why python? why not MCP?") · area: MCP Edit tools (human+AI parity), related B-296/B-301
+
+- **found:** 2026-10-28 exporting the voice of "Five Levels": to find which audio tracks hold the VO vs music/SFX the only MCP read is `get_timeline` (13 tracks, hundreds of clips), far too large for an agent; the agent summarised it through the bridge instead.
+- **expected:** `editor_list_tracks` (index, kind, name, gain, muted/hidden/locked, duck source, clip count, distinct sources, total length) and a paged/filtered `get_timeline` (`track`, `range`, `fields`).
+- **also needed (roadmap 0m):** a real audio-only export (WAV, chosen tracks/stems, no picture). Today it means muting tracks, exporting a throwaway video (AAC 192k, lossy) and extracting the audio with ffmpeg.
+
 ## B-317 — the Markers panel lists markers by timeline position only; the owner needs newest-created first (or a sort choice)
 
 status: **open** (owner: "log the bug, will solve it later") · severity: **minor** · area: Edit Index panel › Markers list; marker model (no created-at timestamp today)
