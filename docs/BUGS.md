@@ -84,9 +84,12 @@ status: **open** · severity: **minor** · area: Motion engine layers
 
 ## B-307 — timeline markers don't follow ripple edits
 
-status: **open** · severity: **major** · area: Edit markers + ripple ops
+status: **fixed** (2026-10-28, D-422) · severity: **major** · area: Edit markers + ripple ops
 
 - **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. The owner's three markers stayed at their old frames after ripple cuts and an insert; they had to be moved by hand.
+- **cause:** by design (D-222): no edit op touched `Timeline.markers`.
+- **fix:** D-422 — `rippleMarkers` / `ripple_markers` moves markers inside every ripple op (ripple delete and so cut-words, remove gap, ripple add/move, ripple trims, insert and ripple-overwrite edits): after the edit point shift by the same amount, inside a deleted range to the cut point, ranged markers adjust their span; same op, so one undo step.
+- **verification:** `markersFollowRipple.test.ts` (the mapping incl. ranged markers; each ripple op; a skipped range and plain edits move nothing); `rippleEdits.e2e.dom.test.tsx` B-307 block (`editor_ripple_delete_ranges` then one undo restores clips and markers; `editor_remove_gap`); `apelles-timeline` `ripple_markers_delete_and_insert`, `remove_gap_carries_the_markers_after_it`. Not verified live.
 
 ## B-306 — `editor_move_clip(ripple=true)` returned ok but moved nothing
 

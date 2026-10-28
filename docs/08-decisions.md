@@ -6,7 +6,16 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
-## D-421 — An edit never deletes a track: emptied tracks stay, `editor_remove_track` removes one explicitly
+## D-422 — Timeline markers follow ripple edits, in the same op
+
+**decided (2026-10-28)** · fixes B-307 · amends D-222 ("nothing about [markers] ripples")
+
+- **Context.** D-222 put markers on the timeline, not on clips, so they survive a clip being trimmed, moved or deleted, and kept them out of every edit op. In the "Five Levels" v3 edit the owner's three markers stayed at their old frames through ripple cuts and an insert and had to be moved by hand: after a ripple, a marker at a fixed frame points at different material.
+- **Options.** (a) Leave them fixed (D-222 as was; Resolve's timeline markers behave this way). (b) Attach markers to clips: contradicts D-222's reason for timeline markers. (c) **Markers follow the ripple**, as Premiere Pro's "Ripple Sequence Markers" option does, applied inside each ripple op.
+- **Choice: (c), always on.** One mapping, `rippleMarkers` (TS) / `ripple_markers` (the `apelles-timeline` mirror): a delete of `[start, end)` moves a marker at/after `end` back by the length and a marker inside to `start` (kept, never dropped); an insert of `n` frames at `at` moves a marker at/after `at` on by `n`; a ranged marker (D-328) keeps its surviving frames, collapsing to a point if all went, growing when an insert lands strictly inside. Called by every op that ripples: `ripple_delete_ranges` (so `editor_ripple_delete_ranges`, `editor_cut_words`, the Recut and Index panels), `remove_gap`, `add_clip`/`move` with ripple, the ripple trims, and `edit_in`'s insert and ripple overwrite. A cut that ran to the end of the track ripples nothing and moves none; plain (non-ripple) edits move none. Because it runs inside the op on the op's own clone, one undo step reverts the clips and the markers together.
+- **Not done:** no per-timeline switch to turn it off (Premiere has one); markers follow a ripple on any track, sync-locked or not.
+
+An edit never deletes a track: emptied tracks stay, `editor_remove_track` removes one explicitly
 
 **decided (2026-10-28)** · fixes B-304 · supersedes the auto-decommission rule (the owner's earlier "if we have an empty track we auto decommission it and renumber the tracks")
 

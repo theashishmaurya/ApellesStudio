@@ -50,7 +50,8 @@
  * view state; the ops' own docs spell out why that split falls where it does.
  * `newMarker`/`resolveMarkerColor`/`MARKER_COLORS` are the shared
  * construction path the ruler's flag strip and the `editor_*_marker` MCP ops
- * both go through.
+ * both go through. D-422 (B-307): markers follow every ripple op
+ * (`rippleMarkers`), inside the op, so one undo step reverts both.
  *
  * D-328 (ranged markers): `Marker.duration_frames` — the optional span D-222
  * deliberately scoped out, now that a real edit surface (the marker popover's
@@ -2027,6 +2028,57 @@ function sortedMarkers(markers: readonly Marker[]): Marker[] {
   return [...markers].sort((a, b) => a.frame - b.frame);
 }
 
+/** B-307 — what a ripple does to timeline frames, for the markers that ride
+ *  on them. `delete` takes `[start, end)` out of the timeline (a ripple delete,
+ *  a closed gap, a ripple trim that shortens); `insert` opens `frames` at `at`
+ *  (a ripple insert, a ripple move, a ripple trim that lengthens). */
+export type MarkerRipple = { kind: 'delete'; start: number; end: number } | { kind: 'insert'; at: number; frames: number };
+
+/** B-307 — move `markers` with a ripple, as Premiere Pro's "Ripple Timeline
+ *  Markers" does: a marker at or after the edit point shifts by the ripple's
+ *  amount; a marker inside a deleted span moves to the cut point (kept, never
+ *  dropped — it was the owner's, and a cut is undoable); a ranged marker
+ *  (D-328) keeps the frames that survive — it shrinks by the part of it that
+ *  was deleted (collapsing to a point marker if all of it was) and grows when
+ *  the insert lands strictly inside it. The mapping never reorders markers,
+ *  so the frame order `sortedMarkers` keeps survives as is.
+ *
+ *  Pure: returns the input array unchanged when nothing moved, so a ripple
+ *  that touches no marker writes nothing new. The ripple ops call it on the
+ *  timeline they already cloned, so the markers move in the SAME op, which
+ *  is the same undo step. */
+export function rippleMarkers(markers: readonly Marker[], ripple: MarkerRipple): Marker[] {
+  const mapStart = (f: number): number => {
+    if (ripple.kind === 'insert') return f >= ripple.at ? f + ripple.frames : f;
+    if (f < ripple.start) return f;
+    return f < ripple.end ? ripple.start : f - (ripple.end - ripple.start);
+  };
+  // The LAST frame a ranged marker covers (inclusive, `markerEndFrame`).
+  const mapLast = (f: number): number => {
+    if (ripple.kind === 'insert') return f >= ripple.at ? f + ripple.frames : f;
+    if (f < ripple.start) return f;
+    return f < ripple.end ? ripple.start - 1 : f - (ripple.end - ripple.start);
+  };
+  let changed = false;
+  const out = markers.map((m) => {
+    const frame = mapStart(m.frame);
+    const last = m.duration_frames === undefined ? frame : Math.max(frame, mapLast(markerEndFrame(m)));
+    const duration = normaliseMarkerDuration(last - frame);
+    if (frame === m.frame && duration === m.duration_frames) return m;
+    changed = true;
+    const moved: Marker = { ...m, frame };
+    if (duration === undefined) delete moved.duration_frames;
+    else moved.duration_frames = duration;
+    return moved;
+  });
+  return changed ? out : (markers as Marker[]);
+}
+
+/** [`rippleMarkers`] applied in place to a timeline an op has already cloned. */
+function rippleTimelineMarkers(tl: Timeline, ripple: MarkerRipple): void {
+  if (tl.markers?.length) tl.markers = rippleMarkers(tl.markers, ripple);
+}
+
 export const DEFAULT_FPS = 24;
 
 /**
@@ -2410,7 +2462,10 @@ export interface RippleDeleteRangeResult {
  *  pair downstream stays in sync even on a track that is not sync-locked), and
  *  on every other sync-locked track (D-106). A range that runs over gap and
  *  material removes the whole span, gap frames included; a range with no
- *  material at all is refused. */
+ *  material at all is refused.
+ *
+ *  Timeline markers follow the ripple (B-307, `rippleMarkers`); a cut that
+ *  ran to the end of the track rippled nothing, so it moves none. */
 function rippleDeleteOneRange(
   tl: Timeline,
   track: number,
@@ -2505,6 +2560,7 @@ function rippleDeleteOneRange(
   }
   const out = next === tl ? clone(tl) : next;
   for (const ti of rippled) shiftClipsAtOrAfter(out.tracks[ti], end, start - end);
+  rippleTimelineMarkers(out, { kind: 'delete', start, end });
   return { timeline: out, result: { start, end, applied: true } };
 }
 
@@ -4714,6 +4770,13 @@ function applyRippleTrim(
     }
   }
   shiftClipsAtOrAfter(next.tracks[track], threshold, shift);
+  // B-307 — markers follow the material: a head trim takes (or gives) frames at
+  // the clip's START, a tail trim at its old end.
+  const at = edge === 'start' ? c.start_frame : threshold;
+  rippleTimelineMarkers(
+    next,
+    shift < 0 ? { kind: 'delete', start: edge === 'start' ? at : at + shift, end: edge === 'start' ? at - shift : at } : { kind: 'insert', at, frames: shift },
+  );
   // D-106 — cross-track ripple is sync-lock's job, exactly as it is for
   // `add_clip`/`move`/`remove_gap`; a linked member on a NON-sync-locked track
   // has its own trim applied above but does not drag that track's downstream
@@ -5478,6 +5541,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
         shiftClipsAtOrAfter(track, startFrame, dur);
         // D-106 — sync-locked tracks ripple too, same shift.
         propagateSyncLockRipple(next.tracks, trackIdx, startFrame, dur);
+        rippleTimelineMarkers(next, { kind: 'insert', at: startFrame, frames: dur }); // B-307
       }
     } else {
       // D-058 — always an append: the position a dragged clip lands at is
@@ -5540,6 +5604,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
         splitStraddlingClip(tr, at, fps);
         shiftClipsAtOrAfter(tr, at, incomingDur);
         propagateSyncLockRipple(next.tracks, trackIdx, at, incomingDur);
+        rippleTimelineMarkers(next, { kind: 'insert', at, frames: incomingDur }); // B-307
         break;
       }
       case 'overwrite':
@@ -5587,6 +5652,11 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
         if (delta !== 0) {
           shiftClipsAtOrAfter(tr, oldEnd, delta);
           propagateSyncLockRipple(next.tracks, trackIdx, oldEnd, delta);
+          // B-307 — markers after the replaced clip follow the difference.
+          rippleTimelineMarkers(
+            next,
+            delta > 0 ? { kind: 'insert', at: oldEnd, frames: delta } : { kind: 'delete', start: oldEnd + delta, end: oldEnd },
+          );
         }
         break;
       }
@@ -5652,8 +5722,9 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
 
   // D-222 — marker ops. Handled first, and entirely outside the track/clip
   // machinery below, because a marker belongs to no track and no clip: there
-  // is no `op.track` to bounds-check, no lock to respect, and nothing about
-  // them ripples. See `Timeline.markers` and the ops' own docs.
+  // is no `op.track` to bounds-check and no lock to respect. (Markers DO follow
+  // the ripple ops below — B-307, `rippleMarkers` — but these three ops only
+  // add, remove or edit one.) See `Timeline.markers` and the ops' own docs.
   if (op.kind === 'add_marker') {
     const next = clone(tl);
     next.markers = sortedMarkers([...(next.markers ?? []), op.marker]);
@@ -6355,6 +6426,8 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // when this move's own ripple actually fired.
     if (overlaps && op.ripple) {
       propagateSyncLockRipple(next.tracks, op.toTrack, op.startFrame, movingDurTimeline);
+      // B-307 — the insert half of a ripple move carries the markers after it.
+      rippleTimelineMarkers(next, { kind: 'insert', at: op.startFrame, frames: movingDurTimeline });
     }
     // D-129 — place each linked sibling at the target computed (and fully
     // validated) above, resolved by its stable id rather than the index it
@@ -6426,6 +6499,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // behavior; see `propagateSyncLockRipple`'s own doc). The gap-*finding*
       // requirement above (`gapAt`) stays exactly as-is for `op.track` only.
       propagateSyncLockRipple(next.tracks, op.track, gap.gapEnd, -shift);
+      rippleTimelineMarkers(next, { kind: 'delete', start: gap.gapStart, end: gap.gapEnd }); // B-307
       return next;
     }
     case 'ripple_delete_ranges':

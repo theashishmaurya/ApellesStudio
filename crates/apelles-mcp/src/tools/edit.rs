@@ -6270,6 +6270,9 @@ impl ApellesMcp {
     this track, on any track holding a cut clip's A/V partner, and on every
     sync-locked track. Gap frames inside a range go with it; a gap outside a
     range is never closed. A range with no material in it at all is skipped.
+    Timeline markers follow every ripple edit (B-307): one after a cut moves
+    earlier with it, one inside a cut moves to the cut point (kept), and a
+    ranged marker keeps the frames that survive — in the same undo step.
 
     One call is **one undo entry**, however many ranges it removes — which is
     the reason this exists rather than looping `editor_split_clip` +

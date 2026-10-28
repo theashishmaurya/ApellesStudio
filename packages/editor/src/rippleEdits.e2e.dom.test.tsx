@@ -5,6 +5,7 @@
  * `control.rs` uses, the real timeline store and the shared undo stack.
  *
  * - B-310 — `editor_ripple_delete_ranges` cuts exactly the ranges it reports;
+ * - B-307 / D-422 — markers follow the ripple ops, in the same undo step;
  * - B-304 / D-421 — emptying a track keeps it; `editor_remove_track` is the
  *   explicit removal; a move keeps clip indices in start order.
  *
@@ -250,6 +251,54 @@ describe('B-310 — editor_ripple_delete_ranges reports exactly what it did', ()
       [450, 0, 100],
       [561, 760, 19], // 760..778, 580..585 cut
       [580, 785, 180],
+    ]);
+  });
+});
+
+describe('B-307 — markers follow ripple edits, in the same undo step', () => {
+  function marked() {
+    return {
+      id: 'tl',
+      name: 'markers',
+      rate: { num: 24, den: 1 },
+      tracks: [
+        { kind: 'video', clips: [clipOf('a', 0, 100), clipOf('b', 100, 100), clipOf('c', 220, 100)], gain: 1, sync_locked: false },
+      ],
+      markers: [
+        { id: 'm-before', frame: 20, color: '#3B8FE3' },
+        { id: 'm-inside', frame: 130, color: '#D9434E' },
+        { id: 'm-after', frame: 250, color: '#4CAF50', duration_frames: 24 },
+      ],
+    };
+  }
+  const markerFrames = () => (tl().markers ?? []).map((m) => [m.id, m.frame, m.duration_frames ?? 0]);
+
+  it('editor_ripple_delete_ranges moves later markers back, a marker inside the cut to the cut point; one undo restores both', async () => {
+    await mountWith(marked());
+    const depth = undoDepth();
+    expect((await op('editor_ripple_delete_ranges', { track: 0, ranges: [{ startFrame: 120, endFrame: 150 }] })).ok).toBe(true);
+    expect(markerFrames()).toEqual([
+      ['m-before', 20, 0],
+      ['m-inside', 120, 0],
+      ['m-after', 220, 24],
+    ]);
+    expect(undoDepth()).toBe(depth + 1);
+    act(() => useHistoryStore.getState().undo());
+    expect(markerFrames()).toEqual([
+      ['m-before', 20, 0],
+      ['m-inside', 130, 0],
+      ['m-after', 250, 24],
+    ]);
+    expect(tl().tracks[0].clips.map((c) => c.start_frame)).toEqual([0, 100, 220]);
+  });
+
+  it('editor_remove_gap closes the gap and the markers after it follow', async () => {
+    await mountWith(marked());
+    expect((await op('editor_remove_gap', { track: 0, frame: 210 })).ok).toBe(true);
+    expect(markerFrames()).toEqual([
+      ['m-before', 20, 0],
+      ['m-inside', 130, 0],
+      ['m-after', 230, 24],
     ]);
   });
 });

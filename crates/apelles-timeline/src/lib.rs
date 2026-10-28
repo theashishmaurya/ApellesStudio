@@ -299,9 +299,10 @@ pub struct Timeline {
     /// the empty vec, and "a project saved before markers existed has no
     /// markers" is exactly right — no silent behaviour change, no migration.
     ///
-    /// This crate never reads it: a marker is an annotation, not a render
+    /// No render path reads it: a marker is an annotation, not a render
     /// input, so nothing in the compositor, the mixer or the exporter consults
-    /// it. It is stored, round-tripped and shown.
+    /// it. It is stored, round-tripped and shown, and the ripple edits move it
+    /// (B-307, [`ripple_markers`]).
     #[serde(default)]
     pub markers: Vec<Marker>,
     /// **D-411 Phase 0 — this timeline's own output size**, overriding the
@@ -339,9 +340,9 @@ pub struct Timeline {
 /// D-328 added [`Marker::duration_frames`], which D-222 had deliberately scoped
 /// out. See that entry for why the objection it raised ("a second time-extent
 /// concept in a model where `Clip` already owns one") does not survive contact:
-/// an ANNOTATION's extent participates in nothing — no compositing, no ripple,
-/// no export — so it shares only the word "duration" with a clip's, not the
-/// behaviour.
+/// an ANNOTATION's extent participates in no compositing and no export, so it
+/// shares only the word "duration" with a clip's, not the behaviour. (It does
+/// follow a ripple edit, B-307: see [`ripple_markers`].)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Marker {
     /// Stable id — how the `remove_marker`/`set_marker` edit ops name one.
@@ -2191,6 +2192,63 @@ fn shift_clips_at_or_after(track: &mut Track, threshold: i64, delta: i64) {
     }
 }
 
+/// What a ripple does to timeline frames, for the markers that ride on them
+/// (B-307). Mirrors `timeline.ts`'s `MarkerRipple`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkerRipple {
+    /// `[start, end)` came out of the timeline.
+    Delete { start: i64, end: i64 },
+    /// `frames` were opened at `at`.
+    Insert { at: i64, frames: i64 },
+}
+
+/// B-307 — move `markers` with a ripple, field-for-field the same mapping as
+/// `timeline.ts`'s `rippleMarkers`: a marker at/after the edit point shifts by
+/// the ripple's amount; one inside a deleted span moves to the cut point (kept,
+/// never dropped); a ranged marker keeps its surviving frames, collapsing to a
+/// point marker when all of them went and growing when an insert lands
+/// strictly inside it. Order-preserving, so the markers stay frame-sorted.
+pub fn ripple_markers(markers: &mut [Marker], ripple: MarkerRipple) {
+    let map_start = |f: i64| match ripple {
+        MarkerRipple::Insert { at, frames } => {
+            if f >= at {
+                f + frames
+            } else {
+                f
+            }
+        }
+        MarkerRipple::Delete { start, end } => {
+            if f < start {
+                f
+            } else if f < end {
+                start
+            } else {
+                f - (end - start)
+            }
+        }
+    };
+    let map_last = |f: i64| match ripple {
+        MarkerRipple::Insert { .. } => map_start(f),
+        MarkerRipple::Delete { start, end } => {
+            if f < start {
+                f
+            } else if f < end {
+                start - 1
+            } else {
+                f - (end - start)
+            }
+        }
+    };
+    for m in markers.iter_mut() {
+        let frame = map_start(m.frame);
+        m.duration_frames = m.duration_frames.and_then(|d| {
+            let last = map_last(m.frame + d.max(0)).max(frame);
+            Some(last - frame).filter(|n| *n > 0)
+        });
+        m.frame = frame;
+    }
+}
+
 /// B-033 — REVERTED from auto-split to reject-on-straddle, a deliberate
 /// safety rollback, not a redesign. The auto-split version (D-106/D-107)
 /// let a REPEATED ripple (several real remove_gap/move/add_clip ops in the
@@ -3028,6 +3086,14 @@ impl Timeline {
         // keep in sync elsewhere either).
         if ripple_fires {
             propagate_sync_lock_ripple(&mut self.tracks, to_track, to_start_frame, duration);
+            // B-307 — the insert half of a ripple move carries the markers after it.
+            ripple_markers(
+                &mut self.markers,
+                MarkerRipple::Insert {
+                    at: to_start_frame,
+                    frames: duration,
+                },
+            );
         }
         // D-129 — now place each linked sibling at the target computed (and
         // fully validated) above. Resolved by its stable `Clip::id`, never by
@@ -3367,6 +3433,13 @@ impl Timeline {
         // requiring a matching gap to exist there too). The gap-*finding*
         // requirement above stays exactly as-is for `track` itself only.
         propagate_sync_lock_ripple(&mut self.tracks, track, gap_end, -shift);
+        ripple_markers(
+            &mut self.markers,
+            MarkerRipple::Delete {
+                start: gap_start,
+                end: gap_end,
+            },
+        ); // B-307
         Ok(())
     }
 }
@@ -4696,6 +4769,59 @@ mod tests {
             t.move_clip(0, 0, 0, -1, false),
             Err(TimelineError::NegativePosition(-1))
         );
+    }
+
+    // --- markers follow ripple edits (B-307) ----------------------------------
+    // Mirrors `markersFollowRipple.test.ts`.
+
+    fn marker(id: &str, frame: i64, duration: Option<i64>) -> Marker {
+        Marker {
+            id: id.into(),
+            frame,
+            color: "#3B8FE3".into(),
+            duration_frames: duration,
+            name: None,
+            note: None,
+        }
+    }
+
+    #[test]
+    fn ripple_markers_delete_and_insert() {
+        let mut ms = vec![
+            marker("before", 10, None),
+            marker("inside", 55, None),
+            marker("after", 90, None),
+            marker("straddles", 40, Some(20)),
+            marker("covered", 52, Some(4)),
+        ];
+        ripple_markers(&mut ms, MarkerRipple::Delete { start: 50, end: 60 });
+        let got: Vec<(i64, Option<i64>)> =
+            ms.iter().map(|m| (m.frame, m.duration_frames)).collect();
+        assert_eq!(
+            got,
+            [
+                (10, None),
+                (50, None),
+                (80, None),
+                (40, Some(10)),
+                (50, None)
+            ]
+        );
+        let mut ms = vec![marker("at", 50, None), marker("spans", 40, Some(20))];
+        ripple_markers(&mut ms, MarkerRipple::Insert { at: 50, frames: 24 });
+        let got: Vec<(i64, Option<i64>)> =
+            ms.iter().map(|m| (m.frame, m.duration_frames)).collect();
+        assert_eq!(got, [(74, None), (40, Some(44))]);
+    }
+
+    #[test]
+    fn remove_gap_carries_the_markers_after_it() {
+        let mut t = Timeline::from_shots(&shots()); // A[0,100) B[100,150) C[150,350)
+        t.remove(0, 1).unwrap(); // gap [100,150)
+        t.markers = vec![marker("in-gap", 120, None), marker("after", 200, None)];
+        t.remove_gap(0, 120).unwrap();
+        let got: Vec<i64> = t.markers.iter().map(|m| m.frame).collect();
+        assert_eq!(got, [100, 150]);
     }
 
     // --- emptied tracks stay (D-421, B-304) ----------------------------------
