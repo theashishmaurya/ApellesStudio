@@ -213,6 +213,7 @@ import {
   type TransitionAlignment,
   type TransitionKind,
 } from './timeline';
+import { fpsToRational, MAX_TIMELINE_FPS } from './timelineRetime';
 import {
   applyDynamicZoom,
   defaultDynamicZoomEnd,
@@ -632,6 +633,8 @@ export function timelineSummaryDto(t: TimelineSummary, active: Timeline | null) 
     durationFrames: live ? timelineDuration(live) : t.duration,
     output: (live ? live.output : t.output) ?? null,
     origin: (live ? live.origin : t.origin) ?? null,
+    // B-323 — the frame rate the timeline's frame numbers are counted in.
+    fps: live ? timelineFps(live) : (t.fps ?? null),
   };
 }
 
@@ -673,6 +676,7 @@ export function timelineDto(tl: Timeline) {
     // build provenance (null for a hand-made timeline).
     output: tl.output ?? null,
     origin: tl.origin ?? null,
+    fps: timelineFps(tl),
     durationFrames: timelineDuration(tl),
     tracks: tl.tracks.map((t, ti) => ({
       index: ti,
@@ -2122,7 +2126,7 @@ export function useEditorControl(): void {
           // acting on, and how many the project has: with several timelines
           // (a long-form and its shorts) "the timeline" is ambiguous without it.
           activeTimeline: s.timeline
-            ? { id: s.timeline.id, name: s.timeline.name, output: s.timeline.output ?? null }
+            ? { id: s.timeline.id, name: s.timeline.name, output: s.timeline.output ?? null, fps: timelineFps(s.timeline) }
             : null,
           timelineCount: s.timelines.length,
           // What is selected right now — the same `selection`/`selectedGap`
@@ -2276,18 +2280,43 @@ export function useEditorControl(): void {
       editor_set_timeline_output: async (a) => {
         const id = timelineIdArg(a);
         if (typeof id !== 'string') return id;
-        let output: OutputSpec | null;
+        // Size (`width`+`height`, or `clear`) and/or frame rate (`fps`, B-323):
+        // everything is validated before anything is applied, so a bad rate
+        // does not leave the size half-changed.
+        let output: OutputSpec | null | undefined;
         if (a?.clear) {
           if (a?.width != null || a?.height != null) return { error: 'pass clear=true OR width and height, not both' };
           output = null;
         } else {
           const parsed = outputFromArgs(a);
-          if (!parsed) return { error: 'pass width and height (the timeline’s own size), or clear=true to use the project’s size' };
-          if ('error' in parsed) return parsed;
-          output = parsed;
+          if (parsed && 'error' in parsed) return parsed;
+          output = parsed ?? undefined;
         }
-        const res = await useEditorTimelineStore.getState().setTimelineOutput(id, output);
-        if (!res.ok) return { error: res.error ?? 'the size change failed' };
+        let fps: number | undefined;
+        if (a?.fps !== undefined && a?.fps !== null) {
+          fps = Number(a.fps);
+          if (fpsToRational(fps) === null) {
+            return { error: `fps must be a positive number up to ${MAX_TIMELINE_FPS} (got ${String(a.fps)})` };
+          }
+        }
+        if (output === undefined && fps === undefined) {
+          return {
+            error:
+              'pass width and height (the timeline’s own size), clear=true to use the project’s size, and/or fps (the timeline’s frame rate)',
+          };
+        }
+        const store = useEditorTimelineStore.getState();
+        if (output !== undefined) {
+          const res = await store.setTimelineOutput(id, output);
+          if (!res.ok) return { error: res.error ?? 'the size change failed' };
+        }
+        if (fps !== undefined) {
+          const res = await useEditorTimelineStore.getState().setTimelineRate(id, fps);
+          if (!res.ok) return { error: res.error ?? 'the frame rate change failed' };
+        }
+        // The OPEN timeline's size and rate are read live (the op has landed in
+        // the store; the saved list is a save behind), the rest from the list.
+        await useEditorTimelineStore.getState().loadList();
         return { ok: true, timeline: timelineSummaryDtoFor(id) };
       },
 

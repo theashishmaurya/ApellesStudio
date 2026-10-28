@@ -6,6 +6,22 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-424 — The project frame rate follows empty timelines and refuses to retime clips; a timeline's rate is set explicitly and converts by time
+
+**decided (2026-10-28)** · fixes B-323 · extends B-097/B-284 (new timelines take a real rate), D-038 (project output spec), D-411 Phase 0 (per-timeline settings)
+
+- **Context.** B-323: `new_project` with no media recorded no rate, the first timeline was built with `rate: None` (read everywhere as `DEFAULT_FPS`, 24), and `set_project_settings(fps=30)` only edited `project.json`'s `settings`. Nothing could change a timeline's rate, so a 30 fps deliverable silently became 24 fps. The timeline's `rate` is what every frame number, the playhead and the export default are counted in.
+- **Options for `set_project_settings(fps)` on a timeline that has clips.**
+  1. **Retime the clips silently.** Moves a person's edit as a side effect of a settings field; rounding changes cut points with no warning. Rejected.
+  2. **Store the setting and leave the timeline** (the old behaviour). The two rates disagree and the timeline wins everywhere, so the call lies. Rejected.
+  3. **Refuse, nothing stored, naming the explicit tool.** The caller then retimes on purpose.
+- **Choice: (3), with empty timelines following the project.** One front-end writer, `writeProjectSettings` (`packages/editor/src/projectSettingsWrite.ts`), used by the Edit tab's settings panel, the Colorist modal and the `set_project_settings` MCP op: when `fps` changes, a timeline with no clips is set to it, and a timeline with clips at a different rate makes the whole call fail up front with the reason. Retiming a timeline with clips is its own, explicit action: `editor_set_timeline_output(fps=…)` and the Frame rate control in the Project Settings panel's "This timeline" section, one undoable `set_timeline_rate` op (any other timeline: `chroma_timeline_set_rate`).
+- **Retiming rule.** By time, seconds preserved, rounded to the nearest new frame, a non-empty span never collapsing to zero frames: `start_frame`, fades, markers and transitions always; for a clip with no `source_fps` (its source axis is the timeline axis) also its source-axis fields. A clip with a `source_fps` keeps every source-native field untouched, because `source_frames_to_timeline` already re-expresses its footprint at the new rate. Rust (`apelles-timeline` `retime.rs`) and TS (`timelineRetime.ts`) mirror each other with the same test numbers. Rates are held exactly (29.97 is 30000/1001) and capped at 240.
+- **Defaults.** A project created without media records `settings.fps = 24` instead of leaving the timebase implicit, and a lazily-built first timeline takes the project's recorded rate when its media gave none.
+- **Cost, stated.** A GUI or MCP change of the project rate on a project with edited timelines now fails until each is retimed; before, it "succeeded" and changed nothing that mattered (export reads the timeline's rate).
+
+---
+
 ## D-423 — A bridge request carries its deadline; a registry never starts an op past it
 
 **decided (2026-10-28)** · fixes B-314 (c)

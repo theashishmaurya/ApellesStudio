@@ -1110,6 +1110,8 @@ pub struct EditorSetTimelineOutputArgs {
     pub height: Option<i64>,
     #[serde(default = "default_editor_set_timeline_output_clear")]
     pub clear: bool,
+    #[serde(default)]
+    pub fps: Option<f64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -2192,18 +2194,29 @@ impl ApellesMcp {
 
     #[tool(
         name = "editor_set_timeline_output",
-        description = r#"Give a timeline its OWN output size, or put it back on the project's —
-    the tab menu's Size and the Project Settings panel's "This timeline"
-    section (Resolve's per-timeline "Use Project Settings").
+        description = r#"Set a timeline's OWN output size and/or its FRAME RATE — the tab menu's Size
+    and the Project Settings panel's "This timeline" section (Resolve's
+    per-timeline "Use Project Settings", plus its timeline frame rate).
 
-    Pass `width` and `height` (even, 16 to 8192; e.g. 1080x1920 for 9:16,
-    1080x1080 for 1:1, 1080x1350 for 4:5), or `clear=true` to follow the
-    project's size again. `id` omitted means the active timeline. The preview
-    canvas, the on-canvas transform handles, `editor_export` (which then
-    defaults to this size) and FCPXML all use it. Clip transforms are
-    fractions of the frame, so nothing on the timeline is moved — a 16:9
-    layout is simply measured against the new frame. Resizing the active
-    timeline is an undoable edit."#
+    **Size.** Pass `width` and `height` (even, 16 to 8192; e.g. 1080x1920 for
+    9:16, 1080x1080 for 1:1, 1080x1350 for 4:5), or `clear=true` to follow the
+    project's size again. The preview canvas, the on-canvas transform handles,
+    `editor_export` (which then defaults to this size) and FCPXML all use it.
+    Clip transforms are fractions of the frame, so nothing on the timeline is
+    moved — a 16:9 layout is simply measured against the new frame.
+
+    **Frame rate.** Pass `fps` (e.g. 24, 25, 30, 29.97, 60; up to 240) to set the
+    rate the timeline's frame numbers are counted in — every `start_frame`,
+    `editor_set_playhead`, marker and `durationFrames` from then on is at this
+    rate, and `editor_export` defaults to it. A timeline with clips is retimed
+    BY TIME: each clip start, fade, marker and transition moves to the same
+    second (rounded to a frame), and a clip's source-native fields are not
+    touched, so a 10 s clip stays 10 s. `editor_list_timelines` reports each
+    timeline's `fps`. `set_project_settings(fps=…)` only carries to EMPTY
+    timelines and refuses otherwise; this is the tool that retimes one with clips.
+
+    `width`/`height`/`clear` and `fps` may be combined. `id` omitted means the
+    active timeline. Changing the active timeline is an undoable edit."#
     )]
     pub async fn editor_set_timeline_output(
         &self,
@@ -2213,6 +2226,7 @@ impl ApellesMcp {
             .put("id", p.id)
             .put("width", p.width)
             .put("height", p.height)
+            .put("fps", p.fps)
             .put_if("clear", p.clear);
         let env = self.op("editor_set_timeline_output", args).await?;
         Ok(render::json_text(&env))

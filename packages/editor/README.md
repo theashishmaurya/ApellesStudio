@@ -29,7 +29,11 @@ dragging a pool item in from the shell's Sources panel.
   (toolbar magnet; the track header's metronome toggles the grid).
 - `TimelineOutputForm` (D-411 Phase 0) — "This timeline" in the Project Settings
   panel: the open timeline's own output size (project size / preset / custom),
-  through the store's `setTimelineOutput`.
+  through the store's `setTimelineOutput`, and (B-323/D-424) its frame rate,
+  through `setTimelineRate` (the `set_timeline_rate` op; `timelineRetime.ts`
+  converts clips, markers and transitions by time). `writeProjectSettings`
+  is the one writer of the project's output spec: a changed `fps` follows
+  empty timelines and is refused when a timeline with clips disagrees.
 - `useEditorTimelineStore` — zustand store: `timeline`, `playhead`, `playing`,
   `timelines` (D-046), `openProjectKey` + `setOpenProject()` (B-034/D-112's
   readiness signal, made the open project's *identity* rather than a boolean by

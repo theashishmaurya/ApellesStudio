@@ -58,6 +58,8 @@ vi.mock('@tauri-apps/api/core', () => ({
         active: i === fake.active,
         output: t.output ?? null,
         origin: null,
+        fps: t.rate ? t.rate.num / t.rate.den : 24,
+        clipCount: (t.tracks as { clips?: unknown[] }[]).reduce((n, tr) => n + (tr.clips?.length ?? 0), 0),
       })),
     chroma_timeline_create: (a) => {
       const { name, output, activate } = a as { name: string; output: Tl['output'] | null; activate: boolean };
@@ -83,6 +85,15 @@ vi.mock('@tauri-apps/api/core', () => ({
       const t = byId(id);
       if (output) t.output = output;
       else delete t.output;
+    },
+    chroma_timeline_set_rate: (a) => {
+      const { id, fps } = a as { id: string; fps: number };
+      fake.calls.push(`set_rate:${id}:${fps}`);
+      byId(id).rate = { num: fps, den: 1 };
+    },
+    chroma_project_set_settings: (a) => {
+      fake.calls.push('project_settings');
+      return (a as { partial: Record<string, unknown> }).partial;
     },
     chroma_timeline_duplicate: (a) => {
       const { id, name, activate } = a as { id: string; name: string | null; activate: boolean };
@@ -138,6 +149,7 @@ import { useHistoryStore } from '@apelles/history';
 import { useEditorTimelineStore } from './timelineStore';
 import { useMediaUnderstandingStore, type Transcript } from './mediaUnderstandingStore';
 import { useEditorControl } from './useEditorControl';
+import { writeProjectSettings } from './projectSettingsWrite';
 
 interface OpEnvelope {
   ok: boolean;
@@ -266,7 +278,7 @@ describe('timeline management ops (D-411 Phase 0)', () => {
     const switched = await callOp('editor_set_active_timeline', { id: shortId });
     expect(switched.result).toMatchObject({ ok: true, activeId: shortId, name: 'Short 1' });
     const state = await callOp('editor_get_state');
-    expect(state.result.activeTimeline).toEqual({ id: shortId, name: 'Short 1', output: { width: 1080, height: 1920 } });
+    expect(state.result.activeTimeline).toEqual({ id: shortId, name: 'Short 1', output: { width: 1080, height: 1920 }, fps: 24 });
     expect(state.result.timelineCount).toBe(2);
     expect((await callOp('editor_set_active_timeline', { id: 'nope' })).result.error).toMatch(/no timeline with id nope/);
   });
@@ -301,6 +313,59 @@ describe('timeline management ops (D-411 Phase 0)', () => {
     expect((await callOp('editor_set_timeline_output', {})).result.error).toMatch(/pass width and height/);
     expect((await callOp('editor_set_timeline_output', { clear: true, width: 1080 })).result.error).toMatch(/not both/);
     expect((await callOp('editor_rename_timeline', { name: '   ' })).result.error).toMatch(/must not be empty/);
+  });
+
+  it('B-323: sets a timeline frame rate, converting the open timeline by time and undoably', async () => {
+    const depth = useHistoryStore.getState().undoStack.length;
+    const done = await callOp('editor_set_timeline_output', { fps: 30 });
+    expect(done.error).toBeNull();
+    expect(done.result.timeline).toMatchObject({ id: 'long', fps: 30 });
+    const tl = useEditorTimelineStore.getState().timeline;
+    expect(tl?.rate).toEqual({ num: 30, den: 1 });
+    // The clips are 24 fps recordings: source-native fields untouched, the
+    // timeline start moves with the seconds (36 f at 24 = 1.5 s = 45 f at 30).
+    const clips = (tl?.tracks[0].clips ?? []).map((c) => [c.start_frame, c.duration, c.source_start]);
+    expect(clips).toEqual([
+      [0, 36, 0],
+      [45, 48, 96],
+    ]);
+    expect(useHistoryStore.getState().undoStack.length - depth).toBe(1);
+    act(() => useHistoryStore.getState().undo());
+    expect(useEditorTimelineStore.getState().timeline?.rate).toEqual({ num: 24, den: 1 });
+    expect(useEditorTimelineStore.getState().timeline?.tracks[0].clips[1].start_frame).toBe(36);
+
+    // Another timeline goes through the backend command; size and rate combine.
+    await callOp('editor_create_timeline', { name: 'Short', activate: false });
+    const other = await callOp('editor_set_timeline_output', { id: 'tl-2', width: 1080, height: 1920, fps: 25 });
+    expect(other.result.timeline).toMatchObject({ id: 'tl-2', fps: 25, output: { width: 1080, height: 1920 } });
+    expect(fake.calls).toContain('set_rate:tl-2:25');
+
+    // Refused in words, and a bad rate leaves the size unchanged.
+    for (const fps of [0, -5, 1000, 'fast']) {
+      const bad = await callOp('editor_set_timeline_output', { id: 'tl-2', width: 640, height: 360, fps });
+      expect(bad.result.error).toMatch(/fps must be a positive number/);
+    }
+    expect(byId('tl-2').output).toEqual({ width: 1080, height: 1920 });
+  });
+
+  it('B-323: the project frame rate follows empty timelines and is refused for ones holding clips', async () => {
+    await callOp('editor_create_timeline', { name: 'Empty', activate: false });
+    // "Long-form" holds clips at 24; the empty one is at the default.
+    await expect(writeProjectSettings({ fps: 30 })).rejects.toThrow(/Long-form.*24 fps, 2 clips.*editor_set_timeline_output/);
+    expect(fake.calls).not.toContain('project_settings'); // nothing was stored
+
+    // Retimed explicitly first, the project rate goes through and the empty timeline follows.
+    await callOp('editor_set_timeline_output', { fps: 30 });
+    const merged = await writeProjectSettings({ fps: 30, width: 1080 });
+    expect(merged).toEqual({ fps: 30, width: 1080 });
+    expect(fake.calls).toContain('project_settings');
+    expect(fake.calls).toContain('set_rate:tl-2:30');
+    expect(useEditorTimelineStore.getState().timeline?.rate).toEqual({ num: 30, den: 1 });
+
+    // A write that does not touch fps never looks at timelines.
+    fake.calls = [];
+    await writeProjectSettings({ width: 1280 });
+    expect(fake.calls).toEqual(['project_settings']);
   });
 
   it('duplicates (flushing the open edit first) and deletes only by explicit id', async () => {

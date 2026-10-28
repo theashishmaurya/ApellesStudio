@@ -2257,6 +2257,13 @@ pub fn infer_timeline_rate(clip: Option<&str>) -> Option<apelles_types::Rational
         .then(|| apelles_types::Rational::new(info.fps_num as i64, info.fps_den as i64))
 }
 
+/// B-323 — the project's recorded frame rate (`settings.fps`, D-038) as the exact
+/// rational a [`Timeline`] stores: what a timeline created while its media gave
+/// no rate of its own takes. `None` when the project records none.
+pub fn project_default_rate(settings: &ProjectSettings) -> Option<apelles_types::Rational> {
+    settings.fps.and_then(apelles_timeline::fps_to_rational)
+}
+
 /// Create `<dir>/<name>.chroma/` + `grades/` + `project.json` with one shot per
 /// media path. Errors if a project of that name already exists.
 pub fn new_project_in(
@@ -2315,6 +2322,21 @@ pub fn new_project_in(
     // clip that won't probe (offline / not a video) just leaves settings unset —
     // the project then behaves clip-derived, exactly as a no-settings project.
     manifest.settings = infer_settings_from_clip(media_paths.first().map(String::as_str));
+    // B-323 — a project that could not infer a rate (no media, or media that
+    // would not probe) records the default explicitly instead of leaving the
+    // timebase to an implicit `Timeline::fps()` fallback nobody chose. The
+    // first timeline takes it, and `set_project_settings(fps)` later moves it.
+    if manifest.settings.fps.is_none() {
+        manifest.settings.fps = Some(apelles_timeline::DEFAULT_FPS);
+    }
+    let default_rate = project_default_rate(&manifest.settings);
+    if let Some(tl) = manifest
+        .timelines
+        .first_mut()
+        .filter(|tl| tl.rate.is_none())
+    {
+        tl.rate = default_rate;
+    }
 
     save_manifest(&project_dir, &manifest)?;
     Ok((project_dir, manifest))

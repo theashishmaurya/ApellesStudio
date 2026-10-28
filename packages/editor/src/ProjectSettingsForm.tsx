@@ -58,7 +58,7 @@ const RES_PRESETS: { label: string; w: number; h: number }[] = [
   { label: '1080×1920 (vertical)', w: 1080, h: 1920 },
 ];
 
-const FPS_PRESETS = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60];
+export const FPS_PRESETS = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60];
 
 const COLOR_SPACES: { value: string; label: string }[] = [
   { value: 'rec709', label: 'Rec.709' },

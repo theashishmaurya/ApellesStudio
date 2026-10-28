@@ -188,6 +188,8 @@ pub mod caption_anim;
 pub mod highlight;
 /// D-411 Phase 0 — a timeline's own output size and its build provenance.
 pub mod output;
+/// B-323 — changing a timeline's frame rate without changing what it plays.
+pub mod retime;
 /// D-236 — the speed ramp's arithmetic (see the module's own doc). Kept in its
 /// own file rather than inlined here because it is an exact, line-for-line
 /// mirror of `@apelles/editor`'s `speedRamp.ts`, and a reader checking the two
@@ -212,6 +214,7 @@ pub use output::{
     OUTPUT_MAX_EDGE, OUTPUT_MIN_EDGE, OriginSegment, OriginSegmentRole, OutputSpec, TimelineOrigin,
     TimelineOriginKind, TimelineOriginSource,
 };
+pub use retime::{MAX_TIMELINE_FPS, fps_to_rational};
 pub use speed_ramp::{SpeedPoint, SpeedSegment};
 
 // D-224 — same shape, same reason, one layer further: a clip's EQ band type

@@ -113,6 +113,7 @@ import { clampPlaybackRate, DEFAULT_PLAYBACK_RATE } from '@apelles/player';
 import { DEFAULT_CLIP_INSPECTOR_TAB, type ClipInspectorTab } from './clipInspectorTabs';
 import { DEFAULT_EDIT_LIBRARY_MODE, type EditLibraryMode } from './editLibrary';
 import { isJournalEntry, replayJournal, type EditJournalEntry, type EditJournalState } from './editJournal';
+import { fpsToRational, MAX_TIMELINE_FPS } from './timelineRetime';
 
 const SAVE_DEBOUNCE_MS = 400;
 
@@ -143,6 +144,10 @@ export interface TimelineSummary {
   output?: OutputSpec | null;
   /** D-411 Phase 0 — build provenance; `null`/absent for a hand-made timeline. */
   origin?: TimelineOrigin | null;
+  /** B-323 — the timeline's effective frame rate (as last saved). */
+  fps?: number;
+  /** B-323 — clips across all tracks (as last saved); 0 = empty. */
+  clipCount?: number;
 }
 
 /** What every timeline-management action resolves to: never a rejection (the
@@ -569,6 +574,12 @@ interface EditorTimelineState {
   /** D-411 Phase 0 — set (`output`) or clear (`null`) any timeline's own
    *  output size; routed exactly like `renameTimeline`. */
   setTimelineOutput: (id: string, output: OutputSpec | null) => Promise<TimelineActionResult>;
+  /** B-323 — set any timeline's frame rate, converting its clips, markers and
+   *  transitions by TIME (`retimeTimeline`; source-native fields untouched).
+   *  Routed like `setTimelineOutput`: the open timeline through its
+   *  `set_timeline_rate` op (undoable), any other through
+   *  `chroma_timeline_set_rate`. */
+  setTimelineRate: (id: string, fps: number) => Promise<TimelineActionResult>;
   /** D-411 Phase 0 — duplicate any timeline (an independent copy, grades
    *  copied; see `apelles_project::timeline::duplicate_timeline`). Flushes
    *  first when `id` is the active timeline, so the copy holds the edit on
@@ -1244,6 +1255,25 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
     }
     try {
       await invoke('chroma_timeline_set_output', { id, output: checkedOutput });
+      await get().loadList();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  },
+
+  setTimelineRate: async (id, fps) => {
+    const rate = fpsToRational(fps);
+    if (!rate) {
+      return { ok: false, error: `a frame rate must be positive and at most ${MAX_TIMELINE_FPS} fps (got ${fps})` };
+    }
+    const active = get().timeline;
+    if (active && active.id === id) {
+      get().applyOp({ kind: 'set_timeline_rate', rate });
+      return { ok: true };
+    }
+    try {
+      await invoke('chroma_timeline_set_rate', { id, fps });
       await get().loadList();
       return { ok: true };
     } catch (e) {

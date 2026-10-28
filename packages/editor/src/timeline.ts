@@ -92,6 +92,7 @@ import { captionLines, type CaptionCue, type CaptionStyle } from './caption';
 import { dropEditTypeInfo, type DropEditType } from './editTypes';
 import { clampEqBand, eqBandsForDisplay, type EqBand } from './eq';
 import { sanitizeHighlight, type ClipHighlight } from './clipHighlights';
+import { isValidTimelineRate, retimeTimeline } from './timelineRetime';
 // D-236 — the speed ramp's arithmetic lives in its own module, which imports
 // only the `Clip` TYPE back from here (erased at build), so the runtime
 // dependency stays one-way: `timeline.ts` -> `speedRamp.ts`, never a cycle.
@@ -4344,6 +4345,12 @@ export type EditOp =
    *  active timeline's one writer (D-051): a direct write would be overwritten
    *  by the store's next save, and as an op it is undoable and journalled. */
   | { kind: 'set_timeline_output'; output: OutputSpec | null }
+  /** B-323 — set this timeline's frame rate, converting every timeline-frame
+   *  quantity by TIME (`retimeTimeline`: a 10 s clip stays 10 s; source-native
+   *  fields of a clip with a `source_fps` are untouched). An invalid rate or the
+   *  current one is a no-op. An op for the same reason as `set_timeline_output`:
+   *  the store is the open timeline's one writer, and this way it is undoable. */
+  | { kind: 'set_timeline_rate'; rate: Rational }
   /** D-411 Phase 0 — rename this timeline. Trimmed; an empty or unchanged name
    *  is a no-op. Same reasoning as `set_timeline_output` for being an op. */
   | { kind: 'set_timeline_name'; name: string }
@@ -4637,6 +4644,8 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return op.marker.name ? `Add marker "${op.marker.name}"` : `Add marker at ${op.marker.frame}`;
     case 'set_timeline_output':
       return op.output ? `Set timeline size to ${op.output.width}×${op.output.height}` : 'Use project size for timeline';
+    case 'set_timeline_rate':
+      return `Set timeline rate to ${+(op.rate.num / op.rate.den).toFixed(3)} fps`;
     case 'set_timeline_name':
       return `Rename timeline to "${op.name.trim()}"`;
     case 'replace_timeline_body':
@@ -5888,6 +5897,10 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     const next = clone(tl);
     next.output = checked.output;
     return next;
+  }
+  if (op.kind === 'set_timeline_rate') {
+    if (!isValidTimelineRate(op.rate)) return tl;
+    return retimeTimeline(tl, op.rate, DEFAULT_FPS);
   }
   if (op.kind === 'set_timeline_name') {
     const name = op.name.trim();

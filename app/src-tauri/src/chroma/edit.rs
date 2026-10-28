@@ -13,7 +13,7 @@
 //!   persisting it) or `chroma_timeline_set` replaces it; `chroma_timeline_list`
 //!   /`chroma_timeline_create`/`chroma_timeline_set_active` manage the
 //!   `timelines` list itself, and (D-411 Phase 0) `chroma_timeline_get_by_id`
-//!   / `_rename` / `_set_output` / `_duplicate` / `_delete` address any
+//!   / `_rename` / `_set_output` / `_set_rate` / `_duplicate` / `_delete` address any
 //!   timeline by id (thin wrappers over `apelles_project::timeline`); `chroma_timeline_frame` resolves a timeline
 //!   position on the active timeline to `(clip, source frame)` via
 //!   [`apelles_timeline::Track::clip_at`] and decodes that source frame with the
@@ -869,6 +869,13 @@ pub struct TimelineSummary {
     pub active: bool,
     pub output: Option<OutputSpec>,
     pub origin: Option<TimelineOrigin>,
+    /// B-323 — the timeline's effective frame rate (`Timeline::fps`), so the
+    /// switcher, the Settings panel and an agent can read it without loading
+    /// the timeline.
+    pub fps: f64,
+    /// B-323 — how many clips the timeline holds across all tracks: what tells
+    /// an empty timeline (whose rate follows the project's) from an edited one.
+    pub clip_count: usize,
 }
 
 /// All of the open project's timelines (D-045). Lazily builds the first one
@@ -889,6 +896,8 @@ pub fn chroma_timeline_list() -> Result<Vec<TimelineSummary>, String> {
             active: i == manifest.active_timeline,
             output: tl.output,
             origin: tl.origin.clone(),
+            fps: tl.fps(),
+            clip_count: tl.tracks.iter().map(|t| t.clips.len()).sum(),
         })
         .collect())
 }
@@ -958,6 +967,17 @@ pub fn chroma_timeline_set_output(id: String, output: Option<OutputSpec>) -> Res
         .transpose()?;
     let (dir, mut manifest) = load_and_ensure_timeline(false)?;
     apelles_project::timeline::set_timeline_output(&mut manifest, &id, output)?;
+    project::save_manifest(&dir, &manifest)
+}
+
+/// B-323 — set a timeline's frame rate by id, converting its clips, markers
+/// and transitions by time (`apelles_timeline::Timeline::set_rate`). Same
+/// active-timeline caveat as [`chroma_timeline_rename`]: the store routes the
+/// active one through its `set_timeline_rate` op.
+#[tauri::command]
+pub fn chroma_timeline_set_rate(id: String, fps: f64) -> Result<(), String> {
+    let (dir, mut manifest) = load_and_ensure_timeline(false)?;
+    apelles_project::timeline::set_timeline_rate(&mut manifest, &id, fps)?;
     project::save_manifest(&dir, &manifest)
 }
 
