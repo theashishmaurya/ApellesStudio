@@ -164,6 +164,7 @@ import {
   videoTrackIndex,
   DROP_EDIT_TYPES,
   isAdjustmentClip,
+  isGeneratedPictureClip,
   isCaptionClip,
   isTextClip,
   ADJUSTMENT_PARAMS,
@@ -213,6 +214,13 @@ import {
   type TransitionAlignment,
   type TransitionKind,
 } from './timeline';
+import {
+  CLIP_SCALING_MODES,
+  effectiveClipScaling,
+  parseClipScaling,
+  TIMELINE_DEFAULT_SCALING,
+  type ClipScaling,
+} from './clipScaling';
 import { fpsToRational, MAX_TIMELINE_FPS } from './timelineRetime';
 import {
   applyDynamicZoom,
@@ -635,6 +643,8 @@ export function timelineSummaryDto(t: TimelineSummary, active: Timeline | null) 
     origin: (live ? live.origin : t.origin) ?? null,
     // B-323 — the frame rate the timeline's frame numbers are counted in.
     fps: live ? timelineFps(live) : (t.fps ?? null),
+    // D-425 — the scaling mode new clips are placed with (never null: absent is `fit`).
+    defaultScaling: (live ? live.default_scaling : t.defaultScaling) ?? TIMELINE_DEFAULT_SCALING,
   };
 }
 
@@ -676,6 +686,8 @@ export function timelineDto(tl: Timeline) {
     // build provenance (null for a hand-made timeline).
     output: tl.output ?? null,
     origin: tl.origin ?? null,
+    // D-425 — the scaling mode new clips are placed with (absent = `fit`).
+    defaultScaling: tl.default_scaling ?? TIMELINE_DEFAULT_SCALING,
     fps: timelineFps(tl),
     durationFrames: timelineDuration(tl),
     tracks: tl.tracks.map((t, ti) => ({
@@ -727,6 +739,9 @@ export function timelineDto(tl: Timeline) {
         // must round-trip as `null`, not vanish.
         boxWidth: c.box_width ?? null,
         boxHeight: c.box_height ?? null,
+        // D-425 / B-325 — what `scale == 1` means for this clip. A clip with no
+        // stored mode reports `native`, the reading it renders under.
+        scaling: effectiveClipScaling(c),
         rotation: c.rotation ?? 0,
         cropLeft: c.crop_left ?? 0,
         cropTop: c.crop_top ?? 0,
@@ -2292,6 +2307,13 @@ export function useEditorControl(): void {
           if (parsed && 'error' in parsed) return parsed;
           output = parsed ?? undefined;
         }
+        // D-425 — the scaling mode new clips on this timeline are placed with.
+        let scaling: ClipScaling | undefined;
+        if (a?.default_scaling !== undefined && a?.default_scaling !== null) {
+          const parsed = parseClipScaling(a.default_scaling);
+          if (!parsed) return { error: `default_scaling must be one of ${CLIP_SCALING_MODES.join(', ')}` };
+          scaling = parsed;
+        }
         let fps: number | undefined;
         if (a?.fps !== undefined && a?.fps !== null) {
           fps = Number(a.fps);
@@ -2299,10 +2321,10 @@ export function useEditorControl(): void {
             return { error: `fps must be a positive number up to ${MAX_TIMELINE_FPS} (got ${String(a.fps)})` };
           }
         }
-        if (output === undefined && fps === undefined) {
+        if (output === undefined && fps === undefined && scaling === undefined) {
           return {
             error:
-              'pass width and height (the timeline’s own size), clear=true to use the project’s size, and/or fps (the timeline’s frame rate)',
+              'pass width and height (the timeline’s own size), clear=true to use the project’s size, fps (the timeline’s frame rate), and/or default_scaling (how new clips are sized into the frame)',
           };
         }
         const store = useEditorTimelineStore.getState();
@@ -2313,6 +2335,10 @@ export function useEditorControl(): void {
         if (fps !== undefined) {
           const res = await useEditorTimelineStore.getState().setTimelineRate(id, fps);
           if (!res.ok) return { error: res.error ?? 'the frame rate change failed' };
+        }
+        if (scaling !== undefined) {
+          const res = await useEditorTimelineStore.getState().setTimelineScaling(id, scaling);
+          if (!res.ok) return { error: res.error ?? 'the default scaling change failed' };
         }
         // The OPEN timeline's size and rate are read live (the op has landed in
         // the store; the saved list is a save behind), the rest from the list.
@@ -4267,6 +4293,21 @@ export function useEditorControl(): void {
           return Number.isFinite(n) ? n : fallback;
         };
         const c = found.c;
+        // D-425 / B-325 — the clip's input scaling: how its source is sized
+        // into the frame (`scale` multiplies that). Omitted keeps the clip's
+        // mode. A title / adjustment clip has no source picture to size, so a
+        // mode on it is refused like the other ignored fields below.
+        let scaling: ClipScaling | undefined;
+        if (a?.scaling !== undefined && a?.scaling !== null) {
+          const parsed = parseClipScaling(a.scaling);
+          if (!parsed) return { error: `scaling must be one of ${CLIP_SCALING_MODES.join(', ')}` };
+          if (isGeneratedPictureClip(c)) {
+            return {
+              error: 'a title or adjustment clip is generated at the frame’s own size — scaling only applies to footage and stills',
+            };
+          }
+          scaling = parsed;
+        }
         // D-211 — a TEXT clip only honours opacity and position, in BOTH
         // renderers (`chroma::edit::resolve_text_clip_transform`, and the
         // export's `drawtext`, which has no scale/rotate/crop at all). Refuse
@@ -4347,6 +4388,7 @@ export function useEditorControl(): void {
           scale: num(a?.scale, c.scale ?? 1),
           box_width: numOrNull(a?.box_width, c.box_width ?? null),
           box_height: numOrNull(a?.box_height, c.box_height ?? null),
+          ...(scaling !== undefined ? { scaling } : {}),
           rotation: num(a?.rotation, c.rotation ?? 0),
           crop_left: num(a?.crop_left, c.crop_left ?? 0),
           crop_top: num(a?.crop_top, c.crop_top ?? 0),

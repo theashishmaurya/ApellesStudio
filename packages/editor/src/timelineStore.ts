@@ -114,6 +114,7 @@ import { DEFAULT_CLIP_INSPECTOR_TAB, type ClipInspectorTab } from './clipInspect
 import { DEFAULT_EDIT_LIBRARY_MODE, type EditLibraryMode } from './editLibrary';
 import { isJournalEntry, replayJournal, type EditJournalEntry, type EditJournalState } from './editJournal';
 import { fpsToRational, MAX_TIMELINE_FPS } from './timelineRetime';
+import type { ClipScaling } from './clipScaling';
 
 const SAVE_DEBOUNCE_MS = 400;
 
@@ -148,6 +149,9 @@ export interface TimelineSummary {
   fps?: number;
   /** B-323 — clips across all tracks (as last saved); 0 = empty. */
   clipCount?: number;
+  /** D-425 — the scaling mode new clips are placed with (as last saved);
+   *  `null`/absent = `fit`. */
+  defaultScaling?: ClipScaling | null;
 }
 
 /** What every timeline-management action resolves to: never a rejection (the
@@ -580,6 +584,11 @@ interface EditorTimelineState {
    *  `set_timeline_rate` op (undoable), any other through
    *  `chroma_timeline_set_rate`. */
   setTimelineRate: (id: string, fps: number) => Promise<TimelineActionResult>;
+  /** D-425 — set (`scaling`) or clear (`null`: back to `fit`) the scaling mode
+   *  NEW clips on any timeline are placed with. Routed like `setTimelineOutput`:
+   *  the open timeline through its `set_timeline_scaling` op (undoable), any
+   *  other through `chroma_timeline_set_default_scaling`. Moves no existing clip. */
+  setTimelineScaling: (id: string, scaling: ClipScaling | null) => Promise<TimelineActionResult>;
   /** D-411 Phase 0 — duplicate any timeline (an independent copy, grades
    *  copied; see `apelles_project::timeline::duplicate_timeline`). Flushes
    *  first when `id` is the active timeline, so the copy holds the edit on
@@ -1274,6 +1283,21 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
     }
     try {
       await invoke('chroma_timeline_set_rate', { id, fps });
+      await get().loadList();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  },
+
+  setTimelineScaling: async (id, scaling) => {
+    const active = get().timeline;
+    if (active && active.id === id) {
+      get().applyOp({ kind: 'set_timeline_scaling', scaling });
+      return { ok: true };
+    }
+    try {
+      await invoke('chroma_timeline_set_default_scaling', { id, scaling });
       await get().loadList();
       return { ok: true };
     } catch (e) {

@@ -2362,6 +2362,7 @@ pub fn run() {
             chroma::edit::chroma_timeline_rename,
             chroma::edit::chroma_timeline_set_output,
             chroma::edit::chroma_timeline_set_rate,
+            chroma::edit::chroma_timeline_set_default_scaling,
             chroma::edit::chroma_timeline_duplicate,
             chroma::edit::chroma_timeline_delete,
             chroma::edit::chroma_timeline_add_track,

@@ -246,6 +246,7 @@ import {
   type EaseCurve,
 } from './timeline';
 import type { ClipKeyframe } from './clipKeyframes';
+import { CLIP_SCALING_LABELS, CLIP_SCALING_MODES, effectiveClipScaling, type ClipScaling } from './clipScaling';
 import type { ClipGeometry } from './useClipGeometry';
 import { PropertyRow, staticPropertyState, type PropertyState } from './PropertyRow';
 
@@ -256,6 +257,8 @@ export type TransformPatch = Partial<{
   scale: number;
   box_width: number | null;
   box_height: number | null;
+  /** D-425 — how the source is sized into the frame (what `scale == 1` means). */
+  scaling: ClipScaling;
   rotation: number;
   crop_left: number;
   crop_top: number;
@@ -737,6 +740,37 @@ export function ClipInspectorPanel({
                 rendered inert. */}
             {!clip.text && (
               <>
+                {/* D-425 / B-325 — Resolve's per-clip "Input Scaling" / Premiere's
+                    "Set to Frame Size": what `Scale` 1 means. A clip with no
+                    stored mode (saved before D-425) shows Native, the reading
+                    it renders under. A Width/Height override beats it. */}
+                <label className={row}>
+                  <span className="text-text-secondary">Scaling</span>
+                  <Select
+                    value={effectiveClipScaling(clip)}
+                    onValueChange={(v) => {
+                      const hit = CLIP_SCALING_MODES.find((m) => m === v);
+                      if (hit) onTransformChange({ scaling: hit });
+                    }}
+                    disabled={trackLocked}
+                  >
+                    <SelectTrigger className="h-7 w-36 text-xs" data-chroma-field="clip-scaling">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CLIP_SCALING_MODES.map((m) => (
+                        <SelectItem key={m} value={m}>
+                          {CLIP_SCALING_LABELS[m]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+                {(clip.box_width != null || clip.box_height != null) && (
+                  <p className="text-text-secondary/60 text-[10px] leading-snug">
+                    A Width/Height override is set, so Scaling has no effect until it is reset (change Scale).
+                  </p>
+                )}
                 <label className={row}>
                   <span className="text-text-secondary">Width</span>
                   <ScrubbableNumberInput

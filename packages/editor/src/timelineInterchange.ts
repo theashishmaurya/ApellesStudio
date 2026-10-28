@@ -53,6 +53,7 @@
 
 import type { Clip, Rational, Timeline, Track } from './timeline';
 import { timelineDuration, timelineFps } from './timeline';
+import { fittedFootprint } from './clipScaling';
 
 // --------------------------------------------------------------------------- //
 // Rational time — FCPXML's own `%time;` grammar: "<num>/<den>s" (or a bare
@@ -249,7 +250,15 @@ interface ResolvedBox {
 
 function resolveBox(clip: Clip, opts: FcpxmlExportOptions, nativeAspect: number): ResolvedBox {
   const scale = clip.scale ?? 1;
-  const widthPx = clip.box_width != null ? opts.width * clip.box_width : opts.width * scale;
+  // D-425 / B-325 — a clip with an input scaling (fit / fill) is sized from its
+  // SOURCE fitted into the frame, when the source size is known; `native` (or
+  // no mode) keeps the canvas-fraction reading this module has always used.
+  const info = opts.sourceInfo?.[clip.id];
+  const sized = clip.scaling != null && clip.scaling !== 'native' && (info?.width ?? 0) > 0 && (info?.height ?? 0) > 0;
+  const fittedWidth = sized
+    ? fittedFootprint(clip.scaling ?? 'native', { width: info?.width ?? 0, height: info?.height ?? 0 }, opts).width
+    : opts.width;
+  const widthPx = clip.box_width != null ? opts.width * clip.box_width : fittedWidth * scale;
   const heightPx =
     clip.box_height != null
       ? opts.height * clip.box_height

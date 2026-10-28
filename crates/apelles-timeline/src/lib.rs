@@ -190,6 +190,8 @@ pub mod highlight;
 pub mod output;
 /// B-323 — changing a timeline's frame rate without changing what it plays.
 pub mod retime;
+/// D-425 — how a clip's source picture is sized into the frame (fit / fill / native).
+pub mod scaling;
 /// D-236 — the speed ramp's arithmetic (see the module's own doc). Kept in its
 /// own file rather than inlined here because it is an exact, line-for-line
 /// mirror of `@apelles/editor`'s `speedRamp.ts`, and a reader checking the two
@@ -215,6 +217,7 @@ pub use output::{
     TimelineOriginKind, TimelineOriginSource,
 };
 pub use retime::{MAX_TIMELINE_FPS, fps_to_rational};
+pub use scaling::{ScalingMode, fitted_footprint};
 pub use speed_ramp::{SpeedPoint, SpeedSegment};
 
 // D-224 — same shape, same reason, one layer further: a clip's EQ band type
@@ -327,6 +330,13 @@ pub struct Timeline {
     /// timeline. See [`output::TimelineOrigin`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<TimelineOrigin>,
+    /// **D-425 — the scaling mode new clips on this timeline are placed with**
+    /// (Resolve's project-level *Input Scaling*). `None` means
+    /// [`ScalingMode::TIMELINE_DEFAULT`] (`fit`). Read only when a clip is
+    /// placed (the add-clip op stamps it onto the clip); it never changes how
+    /// an existing clip renders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_scaling: Option<ScalingMode>,
 }
 
 /// One timeline marker (D-222) — see [`Timeline::markers`] for why these hang
@@ -1251,6 +1261,15 @@ pub struct Clip {
     /// doc for the full reasoning, identical per-axis.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub box_height: Option<f64>,
+    /// **D-425 / B-325 — how the source picture is sized into the frame**, i.e.
+    /// what `scale == 1` means: `fit` (whole picture, letterboxed), `fill`
+    /// (frame covered, overflow cropped) or `native` (source pixels 1:1). See
+    /// [`scaling`]. `None` — every clip saved before D-425 — is `native`, the
+    /// behaviour those clips were authored under, so an old project does not
+    /// change look; a clip PLACED now is stamped with its timeline's default
+    /// (`Timeline::default_scaling`, else `fit`) by the add-clip op.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scaling: Option<ScalingMode>,
     /// Degrees, clockwise. `#[serde(default)]` is correct (`0.0` = upright).
     #[serde(default)]
     pub rotation: f64,
@@ -1670,6 +1689,7 @@ impl Default for Clip {
             scale: default_scale(),
             box_width: None,
             box_height: None,
+            scaling: None,
             rotation: 0.0,
             crop_left: 0.0,
             crop_top: 0.0,
@@ -3995,6 +4015,37 @@ mod tests {
         };
         assert_eq!(c.output_source_frames(), 83.5);
         assert_eq!(c.end_frame_at(24.0), 81);
+    }
+
+    /// D-425 — the migration rule on disk: a clip or timeline saved before
+    /// input scaling has no key, loads as "no mode" (which renders `native`),
+    /// and is written back without one; a mode survives a round trip.
+    #[test]
+    fn scaling_is_absent_for_old_projects_and_round_trips_when_set() {
+        let legacy: Clip = serde_json::from_str(
+            r#"{"id":"a","name":"A","source_path":"/a.mov","source_start":0,
+                "duration":10,"source_len":10,"start_frame":0}"#,
+        )
+        .unwrap();
+        assert_eq!(legacy.scaling, None);
+        assert!(!serde_json::to_string(&legacy).unwrap().contains("scaling"));
+
+        let mut fitted = legacy.clone();
+        fitted.scaling = Some(ScalingMode::Fit);
+        let j = serde_json::to_string(&fitted).unwrap();
+        assert!(j.contains(r#""scaling":"fit""#), "{j}");
+        let back: Clip = serde_json::from_str(&j).unwrap();
+        assert_eq!(back.scaling, Some(ScalingMode::Fit));
+
+        let mut tl = Timeline::default();
+        assert!(
+            !serde_json::to_string(&tl)
+                .unwrap()
+                .contains("default_scaling")
+        );
+        tl.default_scaling = Some(ScalingMode::Fill);
+        let back: Timeline = serde_json::from_str(&serde_json::to_string(&tl).unwrap()).unwrap();
+        assert_eq!(back.default_scaling, Some(ScalingMode::Fill));
     }
 
     #[test]

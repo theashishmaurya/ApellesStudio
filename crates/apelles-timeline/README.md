@@ -57,6 +57,12 @@ op that actually runs. The fade is the one with an evaluator attached
 (`Clip::fade_multiplier_at`, over `apelles-types`' curve math — see above); the
 *result* is still applied up there, and for audio in `apelles-media`.
 
+**`Clip::scaling` / `Timeline::default_scaling` (D-425, `src/scaling.rs`)** — how a
+clip's source is sized into the frame (`ScalingMode`: `fit`, `fill`, `native`) and
+`fitted_footprint`, the one pure function both renderers use. No `scaling` key means
+`native`, the pre-D-425 behaviour; the timeline default is stamped onto a clip when it
+is placed. TypeScript twin: `packages/editor/src/clipScaling.ts`.
+
 **`Timeline::output` / `Timeline::origin` (D-411 Phase 0, `src/output.rs`)** — a
 timeline's own output size (`OutputSpec`, even, 16..8192, checked by
 `OutputSpec::new`) overriding the project's D-038 size, and the build provenance a

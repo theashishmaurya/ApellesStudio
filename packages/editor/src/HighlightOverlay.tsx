@@ -64,6 +64,7 @@ export function HighlightOverlay({ container }: { container: HTMLElement | null 
     armed && onScreen ? (primary?.track ?? null) : null,
     armed && onScreen ? (found?.index ?? -1) : -1,
     clip?.source_path,
+    clip?.scaling,
   );
   const contentBox = usePreviewContentBox(
     container,

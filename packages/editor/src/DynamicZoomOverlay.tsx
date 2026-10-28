@@ -86,7 +86,7 @@ export function DynamicZoomOverlay({ container }: { container: HTMLElement | nul
   const armed = !!dynamicZoom && !!clip && clip.id === dynamicZoom.clipId;
   const trackLocked = primary ? !!timeline?.tracks[primary.track]?.locked : false;
 
-  const geometry = useClipGeometry(primary?.track ?? null, clipIndex, clip?.source_path);
+  const geometry = useClipGeometry(primary?.track ?? null, clipIndex, clip?.source_path, clip?.scaling);
   const contentBox = usePreviewContentBox(
     container,
     geometry ? { width: geometry.compWidth, height: geometry.compHeight } : null,

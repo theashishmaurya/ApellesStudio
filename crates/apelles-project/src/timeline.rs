@@ -221,6 +221,19 @@ pub fn set_timeline_output(
     Ok(())
 }
 
+/// D-425 — set (`Some`) or clear (`None` — back to `fit`) the scaling mode new
+/// clips on the timeline with `id` are placed with. Changes no existing clip.
+pub fn set_timeline_default_scaling(
+    manifest: &mut ProjectManifest,
+    id: &str,
+    scaling: Option<apelles_timeline::ScalingMode>,
+) -> Result<(), String> {
+    let idx = timeline_index(manifest, id)?;
+    manifest.timelines[idx].default_scaling = scaling;
+    manifest.modified = now_rfc3339();
+    Ok(())
+}
+
 /// Change the frame rate of the timeline with `id`, keeping every clip,
 /// marker and transition at the same time in seconds
 /// ([`apelles_timeline::Timeline::set_rate`]). `fps` is a float as the tools

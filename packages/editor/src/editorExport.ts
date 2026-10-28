@@ -60,6 +60,7 @@ import { gradeLutPathsSnapshot, gradeLutsAreWarm, warmGradeLuts } from './gradeL
 // B-208/D-353 — the composition size every clip's source footprint is
 // normalised against, warmed the same way the three caches above are.
 import { compositionSizeSnapshot, warmCompositionSize } from './compositionSize';
+import { effectiveClipScaling, fittedFootprint } from './clipScaling';
 
 /** Mirrors `app/src-tauri/src/chroma/ffmpeg_run.rs`'s `FfmpegRunOutcome` —
  *  copied by hand, same reason `useEditorControl.ts`'s own copy already
@@ -209,7 +210,7 @@ function resolveAudioChannelsOverrides(tl: Timeline): Record<string, number> {
  *
  * Video tracks only: an audio clip has no picture to size.
  */
-function resolveSourceFootprints(
+export function resolveSourceFootprints(
   tl: Timeline,
   comp: { width: number; height: number },
 ): Record<string, { width: number; height: number }> {
@@ -222,7 +223,12 @@ function resolveSourceFootprints(
       const media = items.find((m) => m.id === clip.media_id || m.sourcePath === clip.source_path);
       const probed = media?.video ?? media?.image ?? null;
       if (!probed || !(probed.width > 0) || !(probed.height > 0)) continue;
-      out[clip.id] = { width: probed.width / comp.width, height: probed.height / comp.height };
+      // D-425 / B-325 — the footprint at `scale == 1` is the source SIZED INTO
+      // the composition by the clip's input scaling (a clip with none is
+      // `native`: the raw source size, as before), the same
+      // `fitted_footprint` the preview compositor applies.
+      const fitted = fittedFootprint(effectiveClipScaling(clip), probed, comp);
+      out[clip.id] = { width: fitted.width / comp.width, height: fitted.height / comp.height };
     }
   }
   return out;

@@ -155,7 +155,8 @@ export function useCanvasClipPick(container: HTMLElement | null, size: Compositi
     // A clip's natural footprint is a fraction OF THE COMPOSITION, so a
     // canvas-size change invalidates every one of them without touching the
     // timeline — see `useClipGeometries`' own `extraDep` doc.
-    size ? `${size.width}x${size.height}` : null,
+    // D-425 — and each layer's input scaling, which sizes it into the frame.
+    size ? `${size.width}x${size.height}|${layers.map((l) => l.clip.scaling ?? '').join(',')}` : null,
   );
 
   // D-218 — the ZOOMED content box (the fit box with the preview viewport's

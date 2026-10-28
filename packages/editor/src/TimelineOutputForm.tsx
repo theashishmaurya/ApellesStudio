@@ -34,6 +34,12 @@ import { Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } 
 import { useEditorTimelineStore } from './timelineStore';
 import { checkTimelineOutput, timelineFps, TIMELINE_OUTPUT_PRESETS, type OutputSpec } from './timeline';
 import { FPS_PRESETS } from './ProjectSettingsForm';
+import {
+  CLIP_SCALING_LABELS,
+  CLIP_SCALING_MODES,
+  TIMELINE_DEFAULT_SCALING,
+  type ClipScaling,
+} from './clipScaling';
 
 type Mode = 'project' | 'preset' | 'custom';
 
@@ -72,6 +78,7 @@ export function TimelineOutputForm() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const setTimelineOutput = useEditorTimelineStore((s) => s.setTimelineOutput);
   const setTimelineRate = useEditorTimelineStore((s) => s.setTimelineRate);
+  const setTimelineScaling = useEditorTimelineStore((s) => s.setTimelineScaling);
   const output = timeline?.output ?? null;
   // Presentation state, like `ProjectSettingsForm`'s modes: seeded from the
   // document, kept while the person works. Re-seeded when the open timeline
@@ -97,6 +104,12 @@ export function TimelineOutputForm() {
     setError(null);
     const res = await setTimelineRate(timeline.id, fps);
     if (!res.ok) setError(res.error ?? 'the frame rate could not be set');
+  };
+
+  const applyScaling = async (scaling: ClipScaling) => {
+    setError(null);
+    const res = await setTimelineScaling(timeline.id, scaling);
+    if (!res.ok) setError(res.error ?? 'the scaling could not be set');
   };
 
   const commitCustom = () => {
@@ -201,12 +214,35 @@ export function TimelineOutputForm() {
           ))}
         </SelectContent>
       </Select>
+      {/* D-425 / B-325 — Resolve's project-level "Input Scaling": how a clip is
+          sized into this frame when it is PLACED. It never moves a clip that is
+          already on the timeline; each clip's own mode is in its Inspector. */}
+      <span className="text-text-secondary mt-1">New clips</span>
+      <Select
+        value={timeline.default_scaling ?? TIMELINE_DEFAULT_SCALING}
+        onValueChange={(v) => {
+          const hit = CLIP_SCALING_MODES.find((m) => m === v);
+          if (hit) void applyScaling(hit);
+        }}
+      >
+        <SelectTrigger className="h-7 w-full text-xs" data-chroma-field="timeline-default-scaling">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {CLIP_SCALING_MODES.map((m) => (
+            <SelectItem key={m} value={m}>
+              {CLIP_SCALING_LABELS[m]}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       {error && <p className="text-[11px] text-red-400">{error}</p>}
       <p className="text-text-secondary/60 text-[10px] leading-snug">
         {output
           ? `This timeline renders at ${output.width}×${output.height}, whatever the project size is.`
           : 'This timeline follows the project size above.'}{' '}
-        Changing the frame rate keeps every clip at the same time in seconds.
+        Changing the frame rate keeps every clip at the same time in seconds. New clips are sized
+        into the frame by the mode above; clips already placed keep theirs.
       </p>
     </div>
   );
