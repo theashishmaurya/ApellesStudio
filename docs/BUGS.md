@@ -4,6 +4,19 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-335 — a second `editor_export` while one runs reports the FIRST job's result as its own
+
+status: **open** · severity: **major** · area: `editor_export` / `editor_export_status` (D-362 polling)
+
+- **found:** 2026-10-29, Nemotron export.
+  - A 1080p `editor_export` call was rejected client-side (the owner stopped it) but still started in the app.
+  - A 4K `editor_export` (3840×2160, different `out_path`) made right after answered `ok`, with `outPath` = the 4K path but `output` = the 1080p path and `jobId: 2`. Only the 1080p file was written.
+  - The tool's poll followed the running job, not its own request.
+- **expected:**
+  - A new export while one is running is refused, or queued with its own job id, saying so.
+  - `editor_export_status` and the tool's own polling follow the job id that request created.
+  - The answer never names a different output than the one asked for.
+
 ## B-334 — Inspector shows different values for the two halves of a linked A/V clip
 
 status: **open** · severity: **major** · area: Edit Inspector (Video/Audio tabs) on an A/V-linked pair (D-129)
