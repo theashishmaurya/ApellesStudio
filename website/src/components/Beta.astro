@@ -1,34 +1,21 @@
 ---
 /**
  * Beta.astro — pre-launch signup (D-255's mechanism, D-264's presentation,
- * pointed at a real FormSubmit.co endpoint 2026-09-10).
+ * pointed at the site's own waitlist by D-426).
  *
  * What it is: a real form with real client-side validation and real
- * submitting/success/error states, posting to FormSubmit.co's JSON/AJAX
- * endpoint, which emails each submission straight to the owner's inbox. The
- * fuller ask on the page, further explained, with the role dropdown the
- * compact hero form (Hero.astro) leaves out.
- * What it does NOT do: use <Signature/> any more (D-283) — the signature
- * treatment moved up to Hero.astro's own copy of this same form, which is
- * now the page's one primary action, and a page carries only one (D-264's
- * own rule, ink now rather than a scarce colour since D-284, but the
- * one-per-page discipline itself unchanged). This section's button is
- * deliberately plain instead, not a second primary action.
- * It also does not post anywhere until a real endpoint is set in
- * `src/data/beta.ts` — one is now set, but the guard stays, since a fresh
- * clone or a different owner starts from the placeholder again.
- *
- * The submit logic below is deliberately unchanged from D-255/D-264: it
- * worked, and rewriting working infrastructure to swap providers is churn.
- * Only the endpoint URL shape and the honeypot field name changed, because
- * FormSubmit's own conventions differ from Formspree's — see beta.ts.
+ * submitting/success/error states, posting JSON to `/api/waitlist`
+ * (functions/_lib/waitlist.ts), which stores the address and emails a
+ * confirmation link. The fuller ask on the page, with the role dropdown the
+ * compact hero form (Hero.astro) leaves out. The submit script below is shared
+ * by both forms.
+ * What it does NOT do: use <Signature/> (D-283) — the page's one primary
+ * action is the hero's; this section's button is deliberately plain. It does
+ * not say "you are on the list" before the address is confirmed.
  *
  * Setup: website/BETA_SIGNUP_SETUP.md.
  */
-import { BETA_FORM_ENDPOINT, isPlaceholderEndpoint, ROLES } from '../data/beta.ts';
-
-const endpoint = BETA_FORM_ENDPOINT;
-const placeholder = isPlaceholderEndpoint(endpoint);
+import { BETA_FORM_ENDPOINT, ROLES } from '../data/beta.ts';
 ---
 
 <section class="beta section" id="beta">
@@ -46,9 +33,7 @@ const placeholder = isPlaceholderEndpoint(endpoint);
     <form
       class="form"
       data-beta-form
-      data-endpoint={endpoint}
-      data-placeholder={placeholder ? 'true' : 'false'}
-      action={endpoint}
+      action={BETA_FORM_ENDPOINT}
       method="POST"
       novalidate
     >
@@ -75,16 +60,13 @@ const placeholder = isPlaceholderEndpoint(endpoint);
         </select>
       </div>
 
-      <!-- A plain email subject, so a real signup doesn't land as an unlabelled
-           "New submission!" — FormSubmit's own _subject convention. -->
-      <input type="hidden" name="_subject" value="New Apelles beta signup" />
+      <input type="hidden" name="source" value="beta" />
 
       <!-- Honeypot: a real bot trap, visually and semantically hidden from people.
-           `_honey` is FormSubmit's own honeypot field name — a submission with
-           this filled in is silently discarded rather than emailed. -->
+           A submission with this filled in is dropped by the server. -->
       <div class="hp" aria-hidden="true">
         <label for="beta-company">Company</label>
-        <input id="beta-company" name="_honey" type="text" tabindex="-1" autocomplete="off" />
+        <input id="beta-company" name="company" type="text" tabindex="-1" autocomplete="off" />
       </div>
 
       <button class="submit" type="submit" data-submit>
@@ -240,17 +222,14 @@ const placeholder = isPlaceholderEndpoint(endpoint);
 <script>
   /**
    * Real submit handling, shared by every `[data-beta-form]` on the page —
-   * this is Hero.astro's compact inline form as well as this section's own
-   * full one (D-283). One handler, found generically per form rather than by
-   * a hardcoded input id, so a second instance needs no script of its own:
-   * `document.querySelectorAll` runs against the whole rendered page, not
-   * just this component's own markup, and the email input is found by its
-   * `name` rather than an id two instances could never both hold at once.
-   * Validates, disables while in flight, reports the outcome, and refuses to
-   * post at all while the endpoint is the placeholder shipped in
-   * src/data/beta.ts.
+   * Hero.astro's compact inline form as well as this section's own (D-283).
+   * One handler, found generically per form. Validates with the same rule the
+   * server applies (src/data/beta.ts), disables while in flight, posts the
+   * fields as JSON to the form's own `action`, and reports the outcome. The
+   * success message says to confirm by email, because the address is not on
+   * the list until the link is clicked (D-426).
    */
-  const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+  import { isValidEmail } from '../data/beta.ts';
 
   document.querySelectorAll<HTMLFormElement>('[data-beta-form]').forEach((form) => {
     const email = form.querySelector<HTMLInputElement>('[name="email"]');
@@ -259,6 +238,7 @@ const placeholder = isPlaceholderEndpoint(endpoint);
     const button = form.querySelector<HTMLButtonElement>('[data-submit]');
     const label = form.querySelector<HTMLElement>('[data-label]');
     if (!email || !err || !status || !button || !label) return;
+    const idleLabel = label.textContent ?? '';
 
     const setErr = (msg: string) => {
       err.textContent = msg;
@@ -286,44 +266,36 @@ const placeholder = isPlaceholderEndpoint(endpoint);
         email.focus();
         return;
       }
-      if (!EMAIL.test(value)) {
+      if (!isValidEmail(value)) {
         setErr('That does not look like an email address.');
         email.focus();
         return;
       }
       setErr('');
 
-      if (form.dataset.placeholder === 'true') {
-        setStatus(
-          'Signup is not wired up yet — this site is still pre-launch. Nothing was sent, so please try again once the form is live.',
-          'bad',
-        );
-        return;
-      }
-
       button.disabled = true;
       label.textContent = 'Sending…';
 
       try {
-        const res = await fetch(form.dataset.endpoint ?? form.action, {
+        const res = await fetch(form.action, {
           method: 'POST',
-          headers: { Accept: 'application/json' },
-          body: new FormData(form),
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify(Object.fromEntries(new FormData(form))),
         });
 
         if (res.ok) {
           form.reset();
-          setStatus('You are on the list. We will be in touch when there is a build.', 'ok');
-          label.textContent = 'Request beta access';
-          button.disabled = false;
-          return;
+          setStatus('Almost there. Check your inbox for an email from us and click the link to confirm your spot.', 'ok');
+        } else if (res.status === 400) {
+          setErr('That does not look like an email address.');
+        } else {
+          setStatus('That did not go through. Please try again in a moment.', 'bad');
         }
-        setStatus('That did not go through. Please try again in a moment.', 'bad');
       } catch {
         setStatus('Could not reach the server. Check your connection and try again.', 'bad');
       }
 
-      label.textContent = 'Request beta access';
+      label.textContent = idleLabel;
       button.disabled = false;
     });
   });

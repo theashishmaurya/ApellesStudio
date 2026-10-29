@@ -1,14 +1,9 @@
 /**
- * beta.test.ts — the signup's validation and its placeholder guard (D-255,
- * role ordering added by D-264, endpoint moved to FormSubmit.co 2026-09-10).
+ * beta.test.ts — the signup's validation, endpoint and roles (D-255,
+ * role ordering added by D-264, endpoint moved to the own waitlist by D-426).
  */
 import { describe, it, expect } from 'vitest';
-import {
-  BETA_FORM_ENDPOINT,
-  isPlaceholderEndpoint,
-  isValidEmail,
-  ROLES,
-} from '../src/data/beta.ts';
+import { BETA_FORM_ENDPOINT, isValidEmail, ROLES } from '../src/data/beta.ts';
 
 describe('email validation', () => {
   it.each([
@@ -32,21 +27,9 @@ describe('email validation', () => {
   });
 });
 
-describe('the shipped endpoint is real, and the placeholder guard still works', () => {
-  it('the shipped endpoint is not the placeholder', () => {
-    expect(isPlaceholderEndpoint()).toBe(false);
-  });
-
-  it('is a real FormSubmit.co AJAX endpoint', () => {
-    expect(BETA_FORM_ENDPOINT).toMatch(/^https:\/\/formsubmit\.co\/ajax\/[^\s]+@[^\s]+$/);
-  });
-
-  it('still recognises the literal placeholder, for a fresh clone or a different owner', () => {
-    expect(isPlaceholderEndpoint('https://formspree.io/f/YOUR_FORM_ID')).toBe(true);
-  });
-
-  it('recognises any other real endpoint too', () => {
-    expect(isPlaceholderEndpoint('https://formspree.io/f/abcdwxyz')).toBe(false);
+describe('the endpoint', () => {
+  it('is the same-origin waitlist function', () => {
+    expect(BETA_FORM_ENDPOINT).toBe('/api/waitlist');
   });
 });
 

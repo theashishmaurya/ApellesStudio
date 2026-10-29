@@ -26,7 +26,13 @@ const SITE = 'https://apelles.studio';
 export default defineConfig({
   site: SITE,
   output: 'static',
-  integrations: [sitemap({ serialize: (item) => serialize(item, SITE) })],
+  integrations: [
+    sitemap({
+      // The waitlist landing pages (D-426) are noindex and carry no content to find.
+      filter: (page) => !new URL(page).pathname.startsWith('/waitlist/'),
+      serialize: (item) => serialize(item, SITE),
+    }),
+  ],
   build: {
     // One stylesheet, inlined — the whole site's CSS is a few KB and a separate
     // request costs more than it saves.

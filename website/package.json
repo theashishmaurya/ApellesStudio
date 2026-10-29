@@ -11,6 +11,10 @@
     "check": "astro check",
     "test": "vitest run",
     "test:watch": "vitest",
+    "export:waitlist": "node scripts/export-waitlist.mjs",
+    "sync:resend": "node scripts/sync-resend.ts",
+    "db:migrate:local": "wrangler d1 migrations apply apelles-waitlist --local",
+    "dev:functions": "wrangler pages dev dist",
     "verify": "npm run check && npm run build && npm run test"
   },
   "dependencies": {
@@ -21,6 +25,7 @@
     "@astrojs/check": "0.9.4",
     "linkedom": "0.18.12",
     "typescript": "5.9.3",
-    "vitest": "3.2.4"
+    "vitest": "3.2.4",
+    "wrangler": "^4.155.0"
   }
 }

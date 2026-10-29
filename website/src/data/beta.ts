@@ -1,33 +1,16 @@
 /**
- * website/src/data/beta.ts — the beta-signup endpoint (D-255, moved from
- * Formspree to FormSubmit.co 2026-09-10 — see BETA_SIGNUP_SETUP.md).
+ * website/src/data/beta.ts — the beta waitlist's endpoint, validation and roles
+ * (D-255; moved from FormSubmit.co to the site's own D1 + Resend waitlist by
+ * D-426).
  *
- * The endpoint contract, the placeholder guard and the validation are
- * infrastructure that already worked under Formspree and needed no rebuild —
- * only the URL shape and the honeypot field name changed to match FormSubmit's
- * own conventions (its honeypot field is `_honey`, not Formspree's `_gotcha`;
- * its JSON/AJAX endpoint needs a `/ajax/` path segment the plain one does not).
- * Only ROLES otherwise changed by D-264, and only its order — see the note on
- * it below.
- *
- * ONE named constant, and it is the only thing that has to change to point
- * the signup form at a different inbox or a different provider. See
+ * Shared by the forms (Hero.astro, Beta.astro), the Pages Function that
+ * receives them (functions/_lib/waitlist.ts) and the tests, so the browser and
+ * the server cannot disagree about what a valid address or role is. See
  * website/BETA_SIGNUP_SETUP.md.
- *
- * The placeholder guard stays as infrastructure even though the endpoint below
- * is now real: `YOUR_FORM_ID` is a deliberate, obvious literal that never
- * matches a real endpoint of any provider, so `isPlaceholderEndpoint` keeps
- * working unchanged if this ever gets reset to a placeholder again (a fresh
- * clone of the repo, a different owner standing up their own instance).
  */
 
-/** FormSubmit.co's AJAX endpoint, emailing submissions to ashish.1999vns@gmail.com. */
-export const BETA_FORM_ENDPOINT = 'https://formsubmit.co/ajax/ashish.1999vns@gmail.com';
-
-/** True while the endpoint above is still the shipped placeholder. */
-export function isPlaceholderEndpoint(endpoint: string = BETA_FORM_ENDPOINT): boolean {
-  return endpoint.includes('YOUR_FORM_ID');
-}
+/** The same-origin Pages Function that stores the signup and sends the confirmation email. */
+export const BETA_FORM_ENDPOINT = '/api/waitlist';
 
 /**
  * The one email rule the form applies. Deliberately permissive — it rejects the

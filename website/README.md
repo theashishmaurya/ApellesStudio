@@ -2,13 +2,13 @@
 
 **What it is.** The public site for Apelles: who the product is for, what each of
 the three rooms really does, why it is built local-first, how to connect an MCP
-client to it, and a pre-launch beta signup. Static Astro, no server, no database,
-no analytics.
+client to it, and a pre-launch beta signup. Static Astro plus a small waitlist API
+(Pages Functions, a D1 database, Resend); no analytics of our own.
 
-**What it does NOT do.** It does not talk to the desktop app, ship any app code,
-or run anything at request time. `astro build` emits plain HTML and CSS plus two
-small client-side scripts (the demonstration's scrub interaction and the signup
-form).
+**What it does NOT do.** It does not talk to the desktop app or ship any app code.
+`astro build` emits plain HTML and CSS plus two small client-side scripts (the
+demonstration's scrub interaction and the signup form). The only request-time
+code is the waitlist API in `functions/` (Cloudflare Pages Functions, D-426).
 
 Created by **D-255** under the old brand. Rebuilt end to end by **D-264** — new
 identity, new information architecture, new copy — which records why the visual
@@ -30,6 +30,8 @@ npm run dev        # http://localhost:4321
 | `npm run preview` | serve the built `dist/` |
 | `npm run check` | `astro check` — types and template diagnostics |
 | `npm run test` | Vitest (needs a build first for the `dist/` checks) |
+| `npm run dev:functions` | serve `dist/` with the waitlist API and a local D1 (`npm run db:migrate:local` first) |
+| `npm run export:waitlist` / `sync:resend` | CSV export; Resend reconcile + backfill (`BETA_SIGNUP_SETUP.md`) |
 | `npm run verify` | **check → build → test**, in that order. Run this before committing. |
 
 ## Why it is not in the repo's npm workspace
@@ -118,11 +120,12 @@ currently imported on `index.astro`. There is also **no demo video** — see
 
 ## Beta signup
 
-The form is real, working and live: it posts to a real FormSubmit.co endpoint
-that emails every submission to the owner. See **`BETA_SIGNUP_SETUP.md`** for
-the provider's own conventions and how to change the destination or provider.
-D-264 left the mechanism alone and only restyled it; the endpoint itself moved
-from Formspree to FormSubmit.co on 2026-09-10.
+The form is real: it posts to the site's own waitlist (D-426) — a Cloudflare
+Pages Function over a D1 table, a double-opt-in confirmation email through
+Resend, confirmed addresses mirrored to a Resend segment for broadcasts. See
+**`BETA_SIGNUP_SETUP.md`** for how it works, the secret and migration steps,
+export and sending the launch email. It replaced FormSubmit.co; before that
+Formspree (D-255).
 
 ## Structure
 
@@ -134,7 +137,7 @@ website/
       palette.ts        the brand palette + its provenance and citation
       mcp.ts            tool counts, names and gaps, verified against mcp/server.py
       product.ts        per-room shipped features, the differentiation, the limits
-      beta.ts           the signup endpoint and its validation
+      beta.ts           the signup endpoint, its validation and the roles (shared with functions/)
     layouts/Base.astro  head, fonts, nav, footer
     components/         one file per section, plus Signature and PageHead
     pages/
@@ -146,6 +149,10 @@ website/
     styles/
       tokens.css        THE colour + type source
       global.css        reset, base type, shared primitives, .signature
+  functions/            the waitlist API (Pages Functions): api/ routes, _lib/ logic
+  migrations/           D1 schema (wrangler d1 migrations)
+  scripts/              waitlist CSV export, Resend reconcile + backfill
+  wrangler.toml         Pages config: D1 binding, non-secret vars
   public/shots/         real application screenshots
   tests/                Vitest — see below
 ```
@@ -156,7 +163,8 @@ website/
 |---|---|
 | `palette.test.ts` | the brand palette matches its source of record; the app tokens match the app; no stray colour literal; the signature is spent once; the banned typefaces appear nowhere |
 | `mcp-data.test.ts` | every MCP number, tool name, port variable, file path and error fragment is real |
-| `beta.test.ts` | email validation, the endpoint placeholder guard, and the role ordering |
+| `beta.test.ts` | email validation, the endpoint, and the role ordering |
+| `waitlist.test.ts` | the waitlist handlers over real SQLite (the real migration) and a mocked Resend: signup, honeypot, no-leak duplicates, throttle, confirm, unsubscribe, Resend contact sync and its failure handling |
 | `render.test.ts` | every section renders; the headline is benefit-led and under 30 words; the demonstration is genuinely interactive; the differentiation names the tools it names; the honest gaps survive; no fabricated social proof; no stray old-brand text |
 | `build-output.test.ts` | runs over `dist/`: every route built, no broken internal links or anchors, no missing images, one `h1` per page, at most one signature per page, no `TODO` or `console.*` in shipped output |
 

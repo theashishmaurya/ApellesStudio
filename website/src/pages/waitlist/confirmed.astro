@@ -1,0 +1,30 @@
+---
+/**
+ * waitlist/confirmed.astro — where /api/confirm lands after a valid link (D-426).
+ *
+ * What it is: a short, calm confirmation in the site's own page shell.
+ * What it does NOT do: ask for anything or carry the signup form; it is
+ * noindex and kept out of the sitemap (astro.config.mjs).
+ */
+import Base from '../../layouts/Base.astro';
+import PageHead from '../../components/PageHead.astro';
+---
+
+<Base
+  title="You are on the list — Apelles"
+  description="Your address is confirmed for the Apelles beta."
+  noindex
+>
+  <PageHead
+    eyebrow="Beta"
+    title="You are on the list."
+    lede="Your address is confirmed. We will write when there is a new build, and only then."
+  />
+  <section class="section">
+    <div class="shell">
+      <a class="onward" href="/install/">
+        How to install the beta <span class="arrow" aria-hidden="true">&rarr;</span>
+      </a>
+    </div>
+  </section>
+</Base>

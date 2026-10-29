@@ -209,9 +209,8 @@ staying the default — never a replacement for local sidecars once it exists.
 > What it added beyond this scope: a real MCP setup/docs page grounded in
 > `mcp/server.py`, and a pre-launch beta signup form. It shipped 2026-09-09
 > with a placeholder endpoint, but that's stale as of **2026-09-10**: the form
-> now posts to a real, live FormSubmit.co endpoint that emails every
-> submission to the owner — see `website/BETA_SIGNUP_SETUP.md` for the wiring
-> and how to change it.
+> posts to the site's own waitlist (Pages Function + D1 + Resend, D-426;
+> it was FormSubmit.co until 2026-10-29) — see `website/BETA_SIGNUP_SETUP.md`.
 >
 > Read **D-255** before changing it. Still open: a demo video, a domain and
 > deployment, download links, and Motion/Colorist screenshots.

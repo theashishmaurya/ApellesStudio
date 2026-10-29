@@ -217,17 +217,17 @@ describe('the beta form is real', () => {
     expect(status?.getAttribute('aria-live')).toBe('polite');
   });
 
-  it('carries a honeypot that is hidden from assistive tech, named for FormSubmit', () => {
-    const hp = doc('beta').querySelector('input[name="_honey"]');
+  it('carries a honeypot that is hidden from assistive tech', () => {
+    const hp = doc('beta').querySelector('input[name="company"]');
     expect(hp).not.toBeNull();
     expect(hp?.getAttribute('tabindex')).toBe('-1');
-    expect(doc('beta').querySelector('input[name="_gotcha"]'), 'a different provider’s honeypot name is still around').toBeNull();
+    expect(doc('beta').querySelector('input[name="_honey"]'), 'the old provider’s honeypot name is still around').toBeNull();
   });
 
-  it('is marked as using a real endpoint, not the placeholder', () => {
+  it('posts to the site’s own waitlist and says which form it came from', () => {
     const form = doc('beta').querySelector('[data-beta-form]');
-    expect(form?.getAttribute('data-placeholder')).toBe('false');
-    expect(form?.getAttribute('data-endpoint')).toMatch(/^https:\/\/formsubmit\.co\/ajax\//);
+    expect(form?.getAttribute('action')).toBe('/api/waitlist');
+    expect(form?.querySelector('input[name="source"]')?.getAttribute('value')).toBe('beta');
   });
 
   it('every field has a label', () => {
