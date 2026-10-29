@@ -10,7 +10,12 @@ jumps well above its running level (effects poking over the voice).
 What it does NOT do: change the project or the file.
 
 Needs Python 3 with numpy, and ffmpeg on PATH.
-Usage: sound_qa.py --project DIR.chroma [--export FILE] [--voice-track N] [--target-lufs -14]
+Usage: sound_qa.py --project DIR.chroma [--timeline ID|NAME|INDEX] [--export FILE] [--voice-track N]
+                   [--target-lufs -14]
+
+The timeline read is the project's active one unless `--timeline` names another (by id, by exact
+name, or by index), and every time in the report is counted at THAT timeline's own frame rate
+(B-331), not the project default. Check: python3 -m unittest test_sound_qa  (in this folder).
 """
 from __future__ import annotations
 
@@ -36,10 +41,47 @@ def mmss(t: float) -> str:
     return f"{int(t // 60)}:{t % 60:04.1f}"
 
 
-def load_audio_tracks(project: Path) -> tuple[float, list[dict]]:
+def timeline_fps(tl: dict, default: float) -> float:
+    """A timeline's own frame rate: its `rate` ({num, den}, exact), else a plain `fps`, else `default`."""
+    rate = tl.get("rate")
+    if isinstance(rate, dict) and rate.get("num") and rate.get("den"):
+        return float(rate["num"]) / float(rate["den"])
+    if tl.get("fps"):
+        return float(tl["fps"])
+    return default
+
+
+def select_timeline(doc: dict, selector: str | None = None) -> dict:
+    """The timeline to read: `selector` (an id, an exact name, or an index) when given, else the
+    project's `activeTimeline` (an index into `timelines`, or a timeline id). Never silently falls
+    back to the first timeline: an unknown selector is an error naming what exists."""
+    timelines = doc.get("timelines") or []
+    if not timelines:
+        raise SystemExit("the project has no timelines")
+    names = ", ".join(f"{i}: {t.get('name', '?')} [{t.get('id', '')}]" for i, t in enumerate(timelines))
+    if selector is None:
+        selector = doc.get("activeTimeline", 0)
+    if isinstance(selector, int) and not isinstance(selector, bool):
+        if 0 <= selector < len(timelines):
+            return timelines[selector]
+        raise SystemExit(f"no timeline at index {selector} ({names})")
+    for t in timelines:
+        if t.get("id") == selector:
+            return t
+    named = [t for t in timelines if t.get("name") == selector]
+    if len(named) == 1:
+        return named[0]
+    if len(named) > 1:
+        raise SystemExit(f"{len(named)} timelines are named {selector!r}; pass the id or index ({names})")
+    if isinstance(selector, str) and selector.isdigit() and int(selector) < len(timelines):
+        return timelines[int(selector)]
+    raise SystemExit(f"no timeline {selector!r} ({names})")
+
+
+def load_audio_tracks(project: Path, selector: str | None = None) -> tuple[float, str, list[dict]]:
     doc = json.loads((project / "project.json").read_text())
-    fps = float(doc.get("settings", {}).get("fps") or 24.0)
-    tl = doc["timelines"][doc.get("activeTimeline", 0) if isinstance(doc.get("activeTimeline"), int) else 0]
+    tl = select_timeline(doc, selector)
+    fps = timeline_fps(tl, float(doc.get("settings", {}).get("fps") or 24.0))
     tracks = []
     for i, tr in enumerate(tl["tracks"]):
         if tr.get("kind") != "audio":
@@ -53,7 +95,7 @@ def load_audio_tracks(project: Path) -> tuple[float, list[dict]]:
                           "audio_file": Path(c.get("source_path", "")).suffix.lower() in AUDIO_EXTS})
         tracks.append({"index": i, "clips": sorted(clips, key=lambda c: c["start"]),
                        "duck_from": tr.get("duck_from"), "duck_db": tr.get("duck_db", 0), "gain": tr.get("gain", 1)})
-    return fps, tracks
+    return fps, str(tl.get("name", "")), tracks
 
 
 def classify(tracks: list[dict], voice_track: int | None) -> dict[int, str]:
@@ -96,15 +138,16 @@ def measure_export(path: str) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--project", required=True, type=Path)
+    ap.add_argument("--timeline", help="timeline id, exact name or index (default: the project's active timeline)")
     ap.add_argument("--export")
     ap.add_argument("--voice-track", type=int)
     ap.add_argument("--target-lufs", type=float, default=-14.0)
     args = ap.parse_args()
 
-    fps, tracks = load_audio_tracks(args.project)
+    fps, tl_name, tracks = load_audio_tracks(args.project, args.timeline)
     roles = classify(tracks, args.voice_track)
     end = max((c["end"] for t in tracks for c in t["clips"]), default=0.0)
-    print(f"# Sound QA: {args.project.name}   ({mmss(end)} of audio, {fps:g} fps)\n")
+    print(f"# Sound QA: {args.project.name} / {tl_name}   ({mmss(end)} of audio, {fps:g} fps)\n")
 
     print("## Tracks")
     for t in tracks:
