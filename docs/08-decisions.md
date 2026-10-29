@@ -6,6 +6,22 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-429 — A `fit` / `fill` footprint starts centred: `position` stays the top-left corner, plus a derived origin
+
+**decided (2026-10-29)** · fixes B-328 · refines D-425 (input scaling) on D-338 (`position` is the top-left corner)
+
+**Context.** D-425 sized a `fit`/`fill` clip's footprint into the frame but left `position` at its default 0,0 = the top-left corner, so a footprint that is not the frame's own size sat flush top-left (a 1480x1080 clip `fit` on 1920x1080 had a 440 px band on the right only; `fill` cropped the bottom, not both sides). Resolve (*Scale entire image to fit*) and Premiere (*Set to Frame Size*) centre the sized picture.
+
+**Options.** (1) Change `position` to a centre offset for fit/fill clips: also re-anchors every fit clip that is already scaled or positioned (a `scale 0.5` picture-in-picture would jump), and splits "what position means" by mode. (2) Bake the centring into `position` when the mode is set: a stale number the moment the source or frame changes, the rejection D-425 already made for Premiere's bake into `scale`. (3) Keep `position` the top-left corner and add a derived **origin** to it: `(1 - footprint / frame) / 2` per axis, from the scale-1 footprint.
+
+**Choice (3).** `apelles_timeline::fitted_origin` / `clipScaling.ts fittedOrigin` is the one definition. It is zero on a binding axis (so a same-aspect fit clip, and every clip of the frame's own aspect, renders exactly as before), positive for a letterbox/pillarbox, negative for a `fill` overflow, and zero for `native`. It is computed from the scale-1 footprint, so `scale` keeps growing the box from its (now centred) top-left corner. A clip with an explicit `box_width`/`box_height` (D-193) gets no origin: that is a canvas fraction the person set. Consumers: the preview compositor (`ClipTransform::with_fit_origin`), the ffmpeg exporter (`fitOriginOf` in `timelineExport.ts`, added into the overlay `x`/`y`), FCPXML export, and the on-canvas box / click hit-rect / highlight overlay / dynamic-zoom boxes (`clipBoxOrigin`, passed to `clipBoxFraction`). The Inspector's Position fields still show the stored `position` (0 = centred); nothing is rewritten in a saved project.
+
+**Migration.** Only a clip with `scaling` fit/fill whose footprint is not the frame's size changes look, and `scaling` is stamped only on clips placed since D-425 (2026-10-28); every older clip is `native` and renders byte-identically. A clip hand-centred while this was open (the Nemotron project's C clips at `position_y -0.1486`, `position_x (1 - fitW)/2`) now double-shifts and needs its position reset to 0,0. No automatic rewrite: a stored `position` cannot be told apart from a deliberate offset.
+
+**Not done.** The Colorist's own single-clip view (`colorist_view.rs`) still sizes a clip at its native footprint and ignores `scaling` altogether (pre-existing, D-425 did not cover it).
+
+---
+
 ## D-428 — Silence detection: the audio is the authority over a transcribed word, and the detector is open-ended (basis, level, merge, cushions)
 
 **decided (2026-10-29)** · fixes B-327 · refines D-420 (B-289) · code: `packages/editor/src/silenceAudio.ts`, `crates/apelles-speech/src/energy.rs`

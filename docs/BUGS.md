@@ -6,39 +6,46 @@ Issues once public.
 ```
 ## B-331 — `sound_qa.py` reads the project's fps instead of the timeline's, and can read the wrong timeline
 
-status: **open** · severity: **minor** · area: `.claude/skills/apelles-sound-design/scripts/sound_qa.py` (D-406)
+status: **fixed** (2026-10-29) · severity: **minor** · area: `.claude/skills/apelles-sound-design/scripts/sound_qa.py` (D-406)
 
 - **found:** 2026-10-29, "Nemotron Transcribe": the report said "7:36.2 of audio, 24 fps" for a 30 fps, 6:05 timeline; every listen-moment timestamp built from `start_frame` came out x1.25 late (music entry reported 0:12.7, real 0:10.2).
 - **cause (read in code):** `load_audio_tracks` takes `fps` from `project.json` `settings.fps` (24, the project default) although every timeline has its own rate since D-424 (`timelines[i].fps`). It also picks the timeline with `doc["activeTimeline"]` only when that is an int; the field is a timeline id string, so it silently falls back to `timelines[0]`, which is not necessarily the active one (here a project with a backup "Voiceover" timeline and the working "Voiceover v2").
 - **workaround used:** re-derived the five listen moments by hand from timeline frames / 30.
-- **fix direction:** resolve the active timeline by id and use its `fps`; add a 30 fps / two-timeline fixture to the script's check.
+- **cause, confirmed:** the rate was read from `settings.fps` instead of the timeline's own `rate` (`{num, den}`, D-424), and the timeline selector only understood an integer `activeTimeline`, falling back to `timelines[0]` for anything else.
+- **fix:** `select_timeline` resolves the active timeline (index or id) or the one `--timeline` names (id, exact name, or index) and exits with the list of timelines for an unknown selector instead of falling back; `timeline_fps` reads the timeline's `rate` (then a plain `fps`, then the project default); the report header names the timeline. SKILL.md documents `--timeline`.
+- **verification:** `scripts/test_sound_qa.py` (two-timeline, 24 vs 30 fps fixture: a clip at frame 300 reports 10.0 s, selection by index/id/name, unknown selector refused).
 
 ## B-330 — `editor_snap_cuts_to_beats` will not roll a cut between two still images ("no media handle on one side")
 
-status: **open** · severity: **minor** · area: roll / snap-to-beats (D-413) on stills (D-292)
+status: **fixed** (2026-10-29) · severity: **minor** · area: roll / snap-to-beats (D-413) on stills (D-292)
 
 - **found:** 2026-10-29, "Nemotron Transcribe": a dry run with `max_shift_frames: 5` on the picture track refused e.g. the R02-a.png -> R02.png cut (2214) and the R03-b.png -> Motion render cut (2847) with "the roll cannot move this cut (no media handle on one side, a locked track, or a link group that cannot follow)". 13 other cuts rolled.
 - **expected:** a still reports a synthesized one-hour `sourceLen` (D-292) precisely so it can be extended; a roll between two stills, or a still and a Motion render with frames to spare, should move. Some refusals may be the Motion renders' auto-linked (silent) audio halves on the A/V track; the still->still case cannot be.
-- **not yet root-caused** (the edit was content work; no code read beyond the message). Left the refused cuts on their word-synced frames.
+- **cause:** a placed still sits at `source_start` 0, and `headRoom` bounded a clip's head by `source_start`, so a roll that pulls a cut EARLIER (the incoming still extends its head) had no room. The synthesized `sourceLen` only ever helped the tail. (The still-to-Motion-render refusal is the same: the Motion render is footage, so it refuses only when it genuinely has no head.)
+- **fix:** `headRoom` lets a still's head grow until the clip is as long as its synthesized extent, and a new `moveClipHead` keeps a still's `source_start` at 0 when it does (the picture is time-invariant). Used by roll, slide and ripple-trim. Plain `trim_start` on a still is unchanged.
+- **verification:** `beatGrid.test.ts` "snapping a cut between two stills" (roll earlier and later, `source_start` stays 0, length kept, outgoing-still limit still refused, still-vs-footage with and without handle).
 
 ## B-329 — `editor_music_edit` refuses a valid range on a mixed-rate bed ("nothing on track N lies inside frames ...")
 
-status: **open** · severity: **minor** · area: `applyMusicEdit` (`packages/editor/src/timeline.ts`, D-408), MCP `editor_music_edit` / Music edits panel
+status: **fixed** (2026-10-29) · severity: **minor** · area: `applyMusicEdit` (`packages/editor/src/timeline.ts`, D-408), MCP `editor_music_edit` / Music edits panel
 
 - **found:** 2026-10-29, "Nemotron Transcribe" (30 fps timeline, 24 fps-probed MP3 bed). A dropout over frames 1345..1507 and a breath over 6389..6427 were both refused with `nothing on track 6 lies inside frames ...`, although `get_timeline` showed one bed clip covering each range end to end. Other ranges on the same bed (556..731, 4062..4091, 10265..10295) applied.
 - **cause (read in code):** step 1 razors the bed at `e.end` and `e.start`; step 2 then lifts only a piece with `start_frame >= e.start && endFrame(c, fps) <= e.end`. A split keeps whole SOURCE frames, so on a 24-in-30 clip the middle piece's `endFrame` (round-trip through source frames) can land one frame past `e.end`; no piece qualifies, `removed === 0`, and the whole edit is refused (and rolled back). The same mixed-rate rounding class as B-310, which fixed `rippleDeleteOneRange` but not this path.
 - **workaround used (flagged, not a fix):** chose range edges whose distance from the bed piece's start is a multiple of 5 timeline frames (= 4 source frames, exact at 24/30), e.g. 1346..1506 and 6386..6426; those apply.
-- **fix direction:** lift pieces by the split boundaries the op itself just made (or compare in source frames / with a one-frame tolerance), and add a mixed-rate test (24 fps bed on a 30 fps timeline) next to the B-310 ones.
+- **fix:** a piece is lifted when it STARTS inside `[start, end)` (step 1 already cut at `end`, so it cannot reach past it) instead of when its rounded `endFrame` is `<= end`; the piece before the dropout (for its fade-out) is found with a one-frame tolerance on its rounded end.
+- **verification:** `musicEdits.test.ts` "a 24 fps bed on a 30 fps timeline": both refused Nemotron ranges (1345..1507, 6389..6427) plus the ones that already applied, and pause mode. The three refused cases fail with the old condition.
 
 ## B-328 — a `fit` / `fill` clip whose aspect differs from the frame is pinned to the top-left, not centred
 
-status: **open** · severity: **minor** · area: clip sizing (D-425 input scaling + D-338 top-left `position`), preview and export
+status: **fixed** (2026-10-29, D-429) · severity: **minor** · area: clip sizing (D-425 input scaling + D-338 top-left `position`), preview and export
 
 - **found:** 2026-10-29, building the "Nemotron Transcribe" explainer through MCP. A 1480x1080 demo clip placed on a 1920x1080 timeline with the default `fit` sits flush LEFT (a 440 px black band on the right only); switched to `fill` it covers the width but is anchored at the top, so the bottom ~23% of the picture (the burned-in captions) is cut off. Seen in the live preview (`debug_screenshot`, frames 61-62).
 - **expected:** every NLE's input scaling (Resolve "Scale entire image to fit/fill", Premiere "Set to frame size") centres the fitted picture, letterboxing or cropping evenly on both sides. D-425's own wording ("the whole picture ... letterbox/pillarbox on the other") reads as centred.
-- **cause (from the docs, not yet read in code):** `position_x/position_y` are the box's top-left corner (D-338) and default to 0,0; D-425 sizes the footprint but adds no centring offset, so any non-frame-aspect footprint starts at the corner.
+- **cause (confirmed in code):** `position_x/position_y` are the box's top-left corner (D-338) and default to 0,0; D-425 sizes the footprint (`fitted_footprint`) but nothing adds a centring offset, so any non-frame-aspect footprint starts at the corner, in the compositor and the exporter alike.
 - **workaround used (flagged, not a fix):** set `position_y = -(fillH - 1)/2` (here -0.1486) / `position_x = (1 - fitW)/2` by hand on each such clip.
-- **fix direction:** centre the fitted/filled footprint inside the frame when `position` is at its default, in the one shared footprint function both renderers use, with a migration note for clips that already carry a hand-centred position.
+- **fix (D-429):** `fitted_origin` / `fittedOrigin` (the footprint's twin, same vectors) gives the centring origin, `(1 - footprint / frame) / 2` per axis; the compositor (`ClipTransform::with_fit_origin`), the ffmpeg exporter (`fitOriginOf`), FCPXML export and every on-canvas consumer (`clipBoxOrigin`: box, click hit-rect, highlights, dynamic zoom) add it to `position`. Same-aspect and `native` clips are unchanged.
+- **migration:** only `fit`/`fill` clips placed since D-425 (2026-10-28) with a non-frame-aspect footprint move. Clips hand-centred as the workaround (Nemotron's C clips, `position_y -0.1486`) now double-shift and need `position` reset to 0,0.
+- **verification:** `scaling.rs` and `clipScaling.test.ts` origin vectors (the fill case reproduces the -0.1486 hand value); `composite_tests` fit letterbox / fill crop / override-and-native (Rust compositor pixels); `timelineExportScaling.ffmpeg.test.ts` real-ffmpeg pixels for letterbox, pillarbox and fill; `transformGeometry.test.ts` `clipBoxOrigin`.
 
 ## B-327 — word-aware `editor_detect_silences` drops real silences when the transcript's word times are wrong
 
