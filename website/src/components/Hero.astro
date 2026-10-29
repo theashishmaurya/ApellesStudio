@@ -72,6 +72,7 @@
  */
 import Signature from './Signature.astro';
 import HeroDevPanel from './HeroDevPanel.astro';
+import TurnstileWidget from './TurnstileWidget.astro';
 import { BETA_FORM_ENDPOINT } from '../data/beta.ts';
 ---
 
@@ -129,6 +130,7 @@ import { BETA_FORM_ENDPOINT } from '../data/beta.ts';
     <p class="status" data-status role="status" aria-live="polite"></p>
 
     <input type="hidden" name="source" value="hero" />
+    <TurnstileWidget />
     <!-- Honeypot: see Beta.astro's own. -->
     <div class="hp" aria-hidden="true">
       <label for="hero-beta-company">Company</label>

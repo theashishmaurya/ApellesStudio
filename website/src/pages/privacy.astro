@@ -6,7 +6,7 @@
  * What it is: an honest description of the two real things this site does
  * with visitor data — the beta signup form (own D1 database + Resend, D-426), and Cloudflare's own cookieless
  * Web Analytics beacon — written to match what actually runs, not a generic
- * template. Cross-checked against migrations/0001_waitlist.sql (the exact stored fields), functions/_lib/ (what is sent to Resend), BETA_SIGNUP_SETUP.md, and
+ * template. Cross-checked against migrations/0001_waitlist.sql and 0002_abuse_limits.sql (the exact stored fields; Turnstile, D-427), functions/_lib/ (what is sent to Resend), BETA_SIGNUP_SETUP.md, and
  * (as of D-293) Base.astro's own third-party script tag before writing a word
  * of it.
  * What it does NOT do: claim a cookie policy or a GDPR/CCPA compliance
@@ -49,7 +49,9 @@ const updated = 'October 29, 2026';
         of the two forms you used; whether you have confirmed your address, unsubscribed, or not
         yet done either; two random single-use link codes (one for confirming, one for
         unsubscribing); and the times you signed up, were last sent the confirmation email,
-        confirmed and unsubscribed. We do <em>not</em> store your IP address, browser, device or
+        confirmed and unsubscribed; and a flag that says whether the confirmation email is waiting
+        to be sent (we cap how many we send per day). We also keep a bare count of when
+        confirmation emails were sent, with no address attached. We do <em>not</em> store your IP address, browser, device or
         any other detail of the request, and the signup does not set a cookie. Nothing else on
         this site asks you for anything.
       </p>
@@ -64,17 +66,31 @@ const updated = 'October 29, 2026';
 
       <h2>Who actually receives it</h2>
       <p>
-        Two service providers handle your address on our behalf, and nobody else does.
+        Two service providers handle your address on our behalf, and nobody else does. A third,
+        Cloudflare Turnstile, checks that you are a person and never sees your address (below).
         <a class="link" href="https://www.cloudflare.com">Cloudflare</a>, which hosts this site,
         runs the database that holds the row described above.
         <a class="link" href="https://resend.com">Resend</a> sends our email: your address goes
         to it for the confirmation message, and once you confirm, it also keeps a copy of your
         address in a contact list we use to send announcements (with your unsubscribe status).
-        Resend's open and click tracking is switched off for our messages. Read
+        Resend's open and click tracking is switched off for our messages. Confirmation
+        emails come from <em>mail.apelles.studio</em> and replies reach hello@apelles.studio. Read
         <a class="link" href="https://www.cloudflare.com/privacypolicy/">Cloudflare's</a> and
         <a class="link" href="https://resend.com/legal/privacy-policy">Resend's</a> privacy
         policies for how they handle data on their side. We use no CRM and no analytics tool to
         process your address further.
+      </p>
+
+      <h2>The bot check</h2>
+      <p>
+        To stop scripts from mass-subscribing other people's addresses, the signup forms use
+        <a class="link" href="https://www.cloudflare.com/application-services/products/turnstile/">Cloudflare
+        Turnstile</a>. When you load the page, Cloudflare's script runs a short check in your
+        browser (usually invisible) and returns a one-use token. We send that token to Cloudflare
+        to confirm it is genuine, and we store nothing from it. Cloudflare processes the signals
+        from your browser to make that decision, under
+        <a class="link" href="https://www.cloudflare.com/privacypolicy/">its own privacy policy</a>;
+        we do not receive them, and the check does not set a cookie of ours.
       </p>
 
       <h2>Cookies and tracking</h2>

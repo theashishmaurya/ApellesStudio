@@ -13,6 +13,14 @@
 export const BETA_FORM_ENDPOINT = '/api/waitlist';
 
 /**
+ * Cloudflare's documented Turnstile TEST site key (always passes). Public by
+ * design; pairs only with the matching test secret in functions/_lib tests and
+ * local dev, never with a production secret.
+ * https://developers.cloudflare.com/turnstile/troubleshooting/testing/
+ */
+export const TURNSTILE_TEST_SITE_KEY = '1x00000000000000000000AA';
+
+/**
  * The one email rule the form applies. Deliberately permissive — it rejects the
  * mistakes people actually make (no @, no dot in the domain, stray spaces)
  * without rejecting valid-but-unusual addresses, which is the failure mode of

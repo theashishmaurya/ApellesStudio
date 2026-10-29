@@ -2,8 +2,8 @@
 #
 # `pages_build_output_dir` makes this the Pages project's source of truth: the
 # static site is `dist/`, and `functions/` (the waitlist API) is picked up by
-# convention from this directory. Secrets are NOT here — RESEND_API_KEY is a
-# Pages secret (BETA_SIGNUP_SETUP.md).
+# convention from this directory. Secrets are NOT here — RESEND_API_KEY and
+# TURNSTILE_SECRET_KEY are Pages secrets (BETA_SIGNUP_SETUP.md).
 name = "apelles-studio"
 compatibility_date = "2026-10-01"
 pages_build_output_dir = "dist"
@@ -15,9 +15,20 @@ database_id = "a954787b-3464-432b-bcd7-7ec097845f69"
 migrations_dir = "migrations"
 
 [vars]
-# The From header of every message. The domain must be verified in Resend.
-MAIL_FROM = "Apelles <hello@apelles.studio>"
+# The From header of every message. Sent from the mail. subdomain so the root
+# domain sends nothing (D-427); the subdomain must be verified in Resend.
+MAIL_FROM = "Apelles <hello@mail.apelles.studio>"
+# Where replies go: a real mailbox on the root domain.
+MAIL_REPLY_TO = "hello@apelles.studio"
 # Minimum gap before the confirmation email is sent again to the same pending address.
 RESEND_THROTTLE_MINUTES = "10"
 # The Resend segment ("Apelles Beta") that confirmed addresses are added to, for broadcasts.
 RESEND_SEGMENT_ID = "314eeeb3-e32b-46b6-86dd-e00d7f93fa4e"
+
+# Abuse protection (D-427). Resend's free plan allows 100 emails a day and 3,000
+# a month; confirmations over either cap are stored and held for the drain Worker
+# (workers/waitlist-drain/, which repeats these two values).
+CONFIRM_EMAILS_PER_DAY = "90"
+CONFIRM_EMAILS_PER_MONTH = "2900"
+# Hostnames a Turnstile token may have been issued for (siteverify's `hostname`).
+TURNSTILE_ALLOWED_HOSTNAMES = "apelles.studio,www.apelles.studio"

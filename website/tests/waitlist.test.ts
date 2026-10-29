@@ -1,7 +1,10 @@
 /**
  * waitlist.test.ts — the waitlist handlers (D-426), end to end over a real
  * SQLite database built from the real migration (node:sqlite stands in for D1,
- * which is SQLite) and a mocked `fetch` standing in for Resend.
+ * which is SQLite) and a mocked `fetch` standing in for Resend. Cloudflare's
+ * Turnstile siteverify has its own mock (`turnstileMock`) so the Resend call
+ * assertions stay about Resend. D-427 added Turnstile, the disposable-domain
+ * blocklist and the daily/monthly confirmation caps with their drain.
  */
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
@@ -18,10 +21,15 @@ import {
 } from '../functions/_lib/waitlist.ts';
 import { CONFIRM_SUBJECT } from '../functions/_lib/email.ts';
 import { listUnsubscribedContacts } from '../functions/_lib/resend-contacts.ts';
+import { drainHeld, MAX_DRAIN_PER_RUN, remainingBudget } from '../functions/_lib/quota.ts';
+import { TURNSTILE_FIELD, TURNSTILE_VERIFY_URL } from '../functions/_lib/turnstile.ts';
 import { ROLES } from '../src/data/beta.ts';
+import { DISPOSABLE_DOMAINS, isDisposableEmail } from '../src/data/disposable-domains.ts';
 
 const ORIGIN = 'https://apelles.studio';
-const MIGRATION = readFileSync(new URL('../migrations/0001_waitlist.sql', import.meta.url), 'utf8');
+const MIGRATIONS = ['0001_waitlist.sql', '0002_abuse_limits.sql'].map((f) =>
+  readFileSync(new URL(`../migrations/${f}`, import.meta.url), 'utf8'),
+);
 const T0 = 1_800_000_000_000;
 const MINUTE = 60_000;
 
@@ -38,12 +46,14 @@ interface Row {
   confirmed_at: number | null;
   unsubscribed_at: number | null;
   resend_synced: number;
+  email_held: number;
 }
 
 function d1Over(sqlite: DatabaseSync): Db {
   const statement = (sql: string, values: SqlValue[] = []): DbStatement => ({
     bind: (...v: unknown[]) => statement(sql, v as SqlValue[]),
     first: async <T>() => (sqlite.prepare(sql).get(...values) as T | undefined) ?? null,
+    all: async <T>() => ({ results: sqlite.prepare(sql).all(...values) as T[] }),
     run: async () => sqlite.prepare(sql).run(...values),
   });
   return { prepare: (sql) => statement(sql) };
@@ -52,16 +62,22 @@ function d1Over(sqlite: DatabaseSync): Db {
 let sqlite: DatabaseSync;
 let env: WaitlistEnv;
 let fetchMock: ReturnType<typeof vi.fn>;
+let turnstileMock: ReturnType<typeof vi.fn>;
+const GOOD_TOKEN = 'XXXX.DUMMY.TOKEN.XXXX';
 
 const rows = () => sqlite.prepare('SELECT * FROM waitlist ORDER BY id').all() as unknown as Row[];
 const row = (email: string) => rows().find((r) => r.email === email) as Row;
 
-function post(body: unknown, init: { type?: string; raw?: string } = {}): Request {
+/** A signup request; carries a Turnstile token unless `token` says otherwise (`null` = none). */
+function post(body: unknown, init: { type?: string; raw?: string; token?: string | null } = {}): Request {
   const type = init.type ?? 'application/json';
+  const token = init.token === undefined ? GOOD_TOKEN : init.token;
+  const withToken =
+    token !== null && typeof body === 'object' && body !== null ? { ...body, [TURNSTILE_FIELD]: token } : body;
   return new Request(`${ORIGIN}/api/waitlist`, {
     method: 'POST',
     headers: { 'content-type': type },
-    body: init.raw ?? JSON.stringify(body),
+    body: init.raw ?? JSON.stringify(withToken),
   });
 }
 
@@ -79,16 +95,23 @@ const sentMail = () => JSON.parse(mailCalls()[0][1].body as string);
 
 beforeEach(() => {
   sqlite = new DatabaseSync(':memory:');
-  sqlite.exec(MIGRATION);
+  for (const migration of MIGRATIONS) sqlite.exec(migration);
   env = {
     DB: d1Over(sqlite),
     RESEND_API_KEY: 'test-key',
     RESEND_SEGMENT_ID: SEGMENT,
-    MAIL_FROM: 'Apelles <hello@apelles.studio>',
+    MAIL_FROM: 'Apelles <hello@mail.apelles.studio>',
+    MAIL_REPLY_TO: 'hello@apelles.studio',
+    // Cloudflare's documented always-pass TEST secret; the mock below answers for it.
+    TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA',
   };
   fetchMock = vi.fn(async () => new Response('{"id":"x"}', { status: 200 }));
-  vi.stubGlobal('fetch', fetchMock);
+  turnstileMock = vi.fn(async () => Response.json({ success: true, hostname: 'apelles.studio' }));
+  vi.stubGlobal('fetch', (url: string, init: unknown) =>
+    url === TURNSTILE_VERIFY_URL ? turnstileMock(url, init) : fetchMock(url, init),
+  );
   vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 
@@ -121,7 +144,8 @@ describe('signup', () => {
     expect(url).toBe(RESEND_ENDPOINT);
     expect(init.headers.authorization).toBe('Bearer test-key');
     const mail = sentMail();
-    expect(mail.from).toBe('Apelles <hello@apelles.studio>');
+    expect(mail.from).toBe('Apelles <hello@mail.apelles.studio>');
+    expect(mail.reply_to).toBe('hello@apelles.studio');
     expect(mail.to).toEqual(['someone@example.com']);
     expect(mail.subject).toBe(CONFIRM_SUBJECT);
     expect(mail.html).toContain(`${ORIGIN}/api/confirm?token=${r.confirm_token}`);
@@ -132,7 +156,7 @@ describe('signup', () => {
 
   it('accepts a classic form post too', async () => {
     const res = await signup(
-      post(null, { type: 'application/x-www-form-urlencoded', raw: 'email=form%40example.com&source=beta' }),
+      post(null, { type: 'application/x-www-form-urlencoded', raw: `email=form%40example.com&source=beta&${TURNSTILE_FIELD}=${GOOD_TOKEN}` }),
       env,
       T0,
     );
@@ -266,7 +290,232 @@ describe('signup', () => {
       'confirmed_at',
       'unsubscribed_at',
       'resend_synced',
+      'email_held',
     ]);
+  });
+});
+
+describe('Turnstile (D-427)', () => {
+  const body = { email: 'human@example.com' };
+
+  it('sends the token and the secret to siteverify and admits the signup', async () => {
+    expect((await signup(post(body), env, T0)).status).toBe(200);
+    const [url, init] = turnstileMock.mock.calls[0];
+    expect(url).toBe(TURNSTILE_VERIFY_URL);
+    expect(JSON.parse(init.body)).toEqual({ secret: env.TURNSTILE_SECRET_KEY, response: GOOD_TOKEN });
+    expect(rows()).toHaveLength(1);
+  });
+
+  it('accepts the token on a classic form post as well', async () => {
+    const raw = `email=f%40example.com&${TURNSTILE_FIELD}=${GOOD_TOKEN}`;
+    expect((await signup(post(null, { type: 'application/x-www-form-urlencoded', raw }), env, T0)).status).toBe(200);
+  });
+
+  it('refuses a failed verification with 403 and stores and sends nothing', async () => {
+    turnstileMock.mockResolvedValue(Response.json({ success: false, 'error-codes': ['invalid-input-response'] }));
+    const res = await signup(post(body), env, T0);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'captcha_failed' });
+    expect(rows()).toHaveLength(0);
+    expect(mailCalls()).toHaveLength(0);
+  });
+
+  it('refuses a missing token without asking Cloudflare', async () => {
+    const res = await signup(post(body, { token: null }), env, T0);
+    expect(res.status).toBe(403);
+    expect(turnstileMock).not.toHaveBeenCalled();
+    expect(rows()).toHaveLength(0);
+  });
+
+  it('refuses a token issued for another hostname', async () => {
+    turnstileMock.mockResolvedValue(Response.json({ success: true, hostname: 'evil.example' }));
+    expect((await signup(post(body), env, T0)).status).toBe(403);
+  });
+
+  it('checks the hostname against TURNSTILE_ALLOWED_HOSTNAMES when set', async () => {
+    env.TURNSTILE_ALLOWED_HOSTNAMES = 'apelles.studio, www.apelles.studio';
+    turnstileMock.mockResolvedValue(Response.json({ success: true, hostname: 'www.apelles.studio' }));
+    expect((await signup(post(body), env, T0)).status).toBe(200);
+    turnstileMock.mockResolvedValue(Response.json({ success: true, hostname: 'example.com' }));
+    expect((await signup(post({ email: 'x@example.com' }), env, T0)).status).toBe(403);
+  });
+
+  it('fails closed with a clear log when the secret is missing', async () => {
+    delete env.TURNSTILE_SECRET_KEY;
+    const res = await signup(post(body), env, T0);
+    expect(res.status).toBe(503);
+    expect(rows()).toHaveLength(0);
+    expect(turnstileMock).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining('TURNSTILE_SECRET_KEY is not set'));
+  });
+
+  it('fails closed when siteverify is down or unreachable', async () => {
+    turnstileMock.mockResolvedValue(new Response('down', { status: 500 }));
+    expect((await signup(post(body), env, T0)).status).toBe(503);
+    turnstileMock.mockRejectedValue(new Error('offline'));
+    expect((await signup(post(body), env, T0)).status).toBe(503);
+    expect(rows()).toHaveLength(0);
+  });
+
+  it('keeps the duplicate response identical (no leak) with Turnstile in front', async () => {
+    const first = await signup(post(body), env, T0);
+    const again = await signup(post(body), env, T0 + MINUTE);
+    expect(await again.json()).toEqual(await first.json());
+  });
+});
+
+describe('disposable-address blocklist (D-427)', () => {
+  it.each(['x@hopefunder.com', 'X@HopeFunder.com', 'a@mailinator.com', 'a@sub.mailinator.com'])(
+    'rejects %s with the same error as an invalid address, before Turnstile',
+    async (email) => {
+      const res = await signup(post({ email }), env, T0);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'invalid_email' });
+      expect(turnstileMock).not.toHaveBeenCalled();
+      expect(rows()).toHaveLength(0);
+    },
+  );
+
+  it('lets ordinary providers and look-alike domains through', () => {
+    for (const e of ['a@gmail.com', 'a@example.com', 'a@notmailinator.com', 'a@mailinator.com.au']) {
+      expect(isDisposableEmail(e)).toBe(false);
+    }
+  });
+
+  it('holds only lowercase, bare domains', () => {
+    for (const d of DISPOSABLE_DOMAINS) expect(d).toMatch(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/);
+  });
+});
+
+describe('confirmation-email caps and the drain (D-427)', () => {
+  const sends = () => (sqlite.prepare('SELECT COUNT(*) AS n FROM email_sends').get() as { n: number }).n;
+  const held = () => rows().filter((r) => r.email_held === 1).map((r) => r.email);
+
+  it('counts every confirmation sent', async () => {
+    await signup(post({ email: 'a@example.com' }), env, T0);
+    await signup(post({ email: 'b@example.com' }), env, T0);
+    expect(sends()).toBe(2);
+  });
+
+  it('over the daily cap: stores the row pending, sends nothing, still answers success', async () => {
+    env.CONFIRM_EMAILS_PER_DAY = '2';
+    await signup(post({ email: 'a@example.com' }), env, T0);
+    await signup(post({ email: 'b@example.com' }), env, T0);
+    const res = await signup(post({ email: 'c@example.com' }), env, T0);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(mailCalls()).toHaveLength(2);
+    expect(row('c@example.com')).toMatchObject({ status: 'pending', email_held: 1, last_email_at: null });
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('cap reached'));
+  });
+
+  it('over the monthly cap holds too, even when the day has room', async () => {
+    env.CONFIRM_EMAILS_PER_MONTH = '1';
+    await signup(post({ email: 'a@example.com' }), env, T0);
+    await signup(post({ email: 'b@example.com' }), env, T0 + 3 * 86_400_000);
+    expect(mailCalls()).toHaveLength(1);
+    expect(held()).toEqual(['b@example.com']);
+  });
+
+  it('the day cap resets at the next UTC midnight, the month cap at the next month', async () => {
+    env.CONFIRM_EMAILS_PER_DAY = '1';
+    env.CONFIRM_EMAILS_PER_MONTH = '2';
+    const day = Date.UTC(2026, 10, 3, 12);
+    await signup(post({ email: 'a@example.com' }), env, day);
+    expect(await remainingBudget(env, day)).toBe(0);
+    expect(await remainingBudget(env, day + 86_400_000)).toBe(1);
+    await signup(post({ email: 'b@example.com' }), env, day + 86_400_000);
+    expect(await remainingBudget(env, day + 2 * 86_400_000)).toBe(0);
+    expect(await remainingBudget(env, Date.UTC(2026, 11, 1))).toBe(1);
+  });
+
+  it('a held address asking again changes nothing', async () => {
+    env.CONFIRM_EMAILS_PER_DAY = '0';
+    await signup(post({ email: 'a@example.com' }), env, T0);
+    await signup(post({ email: 'a@example.com' }), env, T0 + 20 * MINUTE);
+    expect(held()).toEqual(['a@example.com']);
+    expect(mailCalls()).toHaveLength(0);
+  });
+
+  it('a failed Resend send is not counted against the quota', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('nope', { status: 500 }));
+    await signup(post({ email: 'a@example.com' }), env, T0);
+    expect(sends()).toBe(0);
+  });
+
+  it('local dev (no Resend key) counts nothing', async () => {
+    delete env.RESEND_API_KEY;
+    await signup(post({ email: 'a@example.com' }), env, T0);
+    expect(sends()).toBe(0);
+  });
+
+  describe('drainHeld', () => {
+    async function holdThree() {
+      env.CONFIRM_EMAILS_PER_DAY = '0';
+      await signup(post({ email: 'one@example.com' }), env, T0);
+      await signup(post({ email: 'two@example.com' }), env, T0 + 1);
+      await signup(post({ email: 'three@example.com' }), env, T0 + 2);
+      env.CONFIRM_EMAILS_PER_DAY = '90';
+    }
+
+    it('sends held confirmations oldest first and clears the flag', async () => {
+      await holdThree();
+      expect(await drainHeld(env, ORIGIN, T0 + MINUTE)).toBe(3);
+      expect(mailCalls().map(([, init]) => JSON.parse(init.body as string).to[0])).toEqual([
+        'one@example.com',
+        'two@example.com',
+        'three@example.com',
+      ]);
+      expect(held()).toEqual([]);
+      expect(row('one@example.com').last_email_at).toBe(T0 + MINUTE);
+      expect(sends()).toBe(3);
+      const mail = JSON.parse(mailCalls()[0][1].body as string);
+      expect(mail.html).toContain(`${ORIGIN}/api/confirm?token=${row('one@example.com').confirm_token}`);
+    });
+
+    it('sends only what the remaining budget allows, oldest first, and the rest waits', async () => {
+      await holdThree();
+      env.CONFIRM_EMAILS_PER_DAY = '2';
+      expect(await drainHeld(env, ORIGIN, T0 + MINUTE)).toBe(2);
+      expect(held()).toEqual(['three@example.com']);
+      expect(await drainHeld(env, ORIGIN, T0 + 2 * MINUTE)).toBe(0);
+      // The next UTC day there is budget again.
+      expect(await drainHeld(env, ORIGIN, T0 + 86_400_000 + MINUTE)).toBe(1);
+      expect(held()).toEqual([]);
+    });
+
+    it('never sends more than MAX_DRAIN_PER_RUN in one run', async () => {
+      env.CONFIRM_EMAILS_PER_DAY = '0';
+      for (let i = 0; i < MAX_DRAIN_PER_RUN + 3; i += 1) {
+        await signup(post({ email: `u${i}@example.com` }), env, T0 + i);
+      }
+      env.CONFIRM_EMAILS_PER_DAY = '1000';
+      expect(await drainHeld(env, ORIGIN, T0 + MINUTE)).toBe(MAX_DRAIN_PER_RUN);
+      expect(held()).toHaveLength(3);
+    });
+
+    it('stops at the first failed send and leaves the rest held', async () => {
+      await holdThree();
+      fetchMock.mockResolvedValueOnce(new Response('down', { status: 500 }));
+      expect(await drainHeld(env, ORIGIN, T0 + MINUTE)).toBe(0);
+      expect(held()).toHaveLength(3);
+      expect(sends()).toBe(0);
+    });
+
+    it('skips an address that unsubscribed or confirmed meanwhile', async () => {
+      await holdThree();
+      sqlite.exec("UPDATE waitlist SET status = 'unsubscribed' WHERE email = 'one@example.com'");
+      sqlite.exec("UPDATE waitlist SET status = 'confirmed' WHERE email = 'two@example.com'");
+      expect(await drainHeld(env, ORIGIN, T0 + MINUTE)).toBe(1);
+      expect(held()).toEqual([]);
+    });
+
+    it('does nothing without a Resend key', async () => {
+      await holdThree();
+      delete env.RESEND_API_KEY;
+      expect(await drainHeld(env, ORIGIN, T0 + MINUTE)).toBe(0);
+      expect(held()).toHaveLength(3);
+    });
   });
 });
 
