@@ -269,10 +269,15 @@ import { BETA_FORM_ENDPOINT } from '../data/beta.ts';
      position/size, live from HeroDevPanel same as .headline's. */
 
   .ask {
+    /* The input row's own height. The ask is anchored by that row's middle, not
+       the whole form's, so the status line and the Turnstile check that appear
+       under it after a submit grow the form DOWNWARD only — centering the whole
+       form made it climb over the headline's second line when they appeared. */
+    --ask-row-h: 2.5rem;
     position: absolute;
     left: var(--dev-ask-left, 50%);
     top: var(--dev-ask-top, 50%);
-    transform: translate(-50%, -50%);
+    transform: translate(-50%, calc(var(--ask-row-h) / -2));
     width: var(--dev-ask-width, 32%);
     min-width: 18rem;
     max-width: 90vw;
@@ -337,7 +342,7 @@ import { BETA_FORM_ENDPOINT } from '../data/beta.ts';
 
   .ask .status {
     margin: 0.5rem 0 0;
-    text-align: left;
+    text-align: center;
     font-family: var(--font-ui);
     font-size: var(--step--2);
     line-height: 1.6;
@@ -345,6 +350,13 @@ import { BETA_FORM_ENDPOINT } from '../data/beta.ts';
     min-height: 1.2em;
     text-shadow: 0 1px 8px color-mix(in srgb, var(--pigment-basalt) 60%, transparent);
   }
+  /* Cloudflare's check, when it does show a challenge, sits centred under the row. */
+  .ask :global(.cf-turnstile) {
+    display: flex;
+    justify-content: center;
+    margin-top: 0.5rem;
+  }
+
   .ask .status[data-tone='ok'] {
     color: var(--ink-inverse);
   }

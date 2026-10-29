@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-29** — **Hero signup no longer climbs over the headline:** the inline form was centred on its whole height, so the status line and Turnstile check appearing after a submit pushed it up over "Apelles is the part you were missing." It is now anchored by its input row and grows downward only; status and check centred under it (`Hero.astro`).
 - **2026-10-29** — **Confirmation email is a Resend template the owner edits (D-427):** sends the published template `beta-confirm` (one variable, `CONFIRM_URL`) with the built-in email in `email.ts` as an automatic fallback if Resend rejects it; copy now reads "Hi, it's Ashish". Two tests.
 - **2026-10-29** — **"Check your inbox" dialog after signup (D-426):** a native `<dialog>` (`website/src/components/CheckInboxDialog.astro`) opens when a signup succeeds, naming the sender and subject to look for, telling people to check Promotions / Spam / Updates, and offering an Open Gmail / Outlook / Yahoo button for those addresses. Opened by the shared form handler's `apelles:waitlist-ok` event; one build-output test.
 - **2026-10-29** — **Waitlist confirmation reads as a personal note (D-427 addendum):** no `List-Unsubscribe` headers or unsubscribe link, sender `Ashish from Apelles`, subject "Confirm your email for the Apelles beta", near-plain first-person body; confirm links now really expire after 7 days; a failed confirmation send is held for the drain and the visitor sees the normal success.
