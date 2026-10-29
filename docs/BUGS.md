@@ -4,6 +4,15 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-327 — word-aware `editor_detect_silences` drops real silences when the transcript's word times are wrong
+
+status: **open** · severity: **major** · area: silence detection (`editor_detect_silences`, D-420 / B-289 word-aware trimming)
+
+- **found:** 2026-10-29, Nemotron Transcribe edit. The owner pointed at a flat, ~1 s waveform gap at 0:28 that no pass had cut.
+- **cause:** the transcriber timed "video." 0.8 s late, right over the silence (source 29.28–30.08 s; the measured audio is below −30 dB from 29.26 to 30.21 s). The word-aware step trims every silence back 0.125 s from each transcribed word, so the real gap was trimmed to nothing. The sweep answered "no silences anywhere on this track" with `wordAware: true`. Measured across the edit, 45 of 973 word timestamps sit with their midpoint inside real silence. They are mostly sentence-final words ("place.", "top.", "mine.", "watching.") whose end time is stretched into the following pause.
+- **workaround used (flagged to the owner):** the silences were measured straight from the source files' waveform (`ffmpeg silencedetect`, −30 dB, joined across clicks ≤ 0.12 s, ≥ 0.45 s), mapped onto the timeline, and cut through `editor_ripple_delete_ranges`. The cushion was asymmetric: 0.22 s kept after the preceding word, to protect soft tails, and 0.10 s before the next onset. 106 ranges, one undo step.
+- **fix wanted:** trust the audio when the two disagree. Use the waveform energy or VAD to correct a word whose span covers measured silence (clamp its end to the last voiced frame) before trimming, rather than discarding the silence. Also expose a `basis: "audio"` mode, and report how many silences were dropped because of a word.
+
 ## B-NNN — title
 status: open | fixed | wontfix   ·   severity: blocker | high | medium | low   ·   area: …
 repro / expected / actual / cause / fix

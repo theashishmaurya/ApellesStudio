@@ -70,6 +70,15 @@ What it does NOT do:
      word-safe. When gaps need different keep values (for example longer at section changes), dry-run
      it, then apply its planned ranges with `editor_ripple_delete_ranges`, shrinking only the ranges
      that need a longer keep. Every cut stays inside the tool's word-safe ranges.
+   - **Find pauses from the WAVEFORM, not the word timestamps** (B-327). The transcriber stretches
+     sentence-final words over the following silence, and word-aware silence detection then reports
+     nothing. Check the waveform: a flat stretch the person can see is dead air. Until B-327 is fixed,
+     measure the silences from the source audio and cut them with `editor_ripple_delete_ranges`:
+     - threshold −30 dB; room tone here was about −45 dB;
+     - join pieces across clicks of 0.12 s or less, and keep only silences of at least 0.45 s;
+     - keep 0.22 s after the preceding word, to protect soft endings, and 0.10 s before the next
+       onset (0.30 / 0.15 at section changes);
+     - say it is a workaround.
    - **Never touch mid-sentence gaps under ~0.3 s.** The transcriber times words to ~80 ms, so a
      "gap" in a fast phrase is often not silence. On 2026-10-29, tightening 0.15–0.25 s gaps
      chopped fast phrases into slivers. It garbled "misheard surnames…" (the word is split as
