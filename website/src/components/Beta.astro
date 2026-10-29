@@ -17,6 +17,7 @@
  */
 import { BETA_FORM_ENDPOINT, ROLES } from '../data/beta.ts';
 import TurnstileWidget from './TurnstileWidget.astro';
+import CheckInboxDialog from './CheckInboxDialog.astro';
 ---
 
 <section class="beta section" id="beta">
@@ -222,6 +223,9 @@ import TurnstileWidget from './TurnstileWidget.astro';
   }
 </style>
 
+<!-- The "check your inbox" dialog, once for both forms (D-426). -->
+<CheckInboxDialog />
+
 <!-- Turnstile's script, once for both forms (D-427). Explicitly versioned URL per Cloudflare's docs. -->
 <script is:inline src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 
@@ -307,6 +311,8 @@ import TurnstileWidget from './TurnstileWidget.astro';
         if (res.ok) {
           form.reset();
           setStatus('Almost there. Check your inbox for an email from us and click the link to confirm your spot.', 'ok');
+          // CheckInboxDialog.astro opens on this, with what to look for and where.
+          document.dispatchEvent(new CustomEvent('apelles:waitlist-ok', { detail: { email: value } }));
         } else if (res.status === 400) {
           setErr('That does not look like an email address.');
         } else if (res.status === 403) {

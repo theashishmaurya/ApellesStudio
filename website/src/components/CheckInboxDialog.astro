@@ -1,0 +1,239 @@
+---
+/**
+ * CheckInboxDialog.astro — the "check your inbox" dialog shown after a waitlist
+ * signup succeeds (D-426). What it does: tells the visitor the address is not on
+ * the list until they click the confirmation link, names the exact sender and
+ * subject to look for, and says to check Promotions / Spam / Updates, which is
+ * where a new sender's mail often lands in Gmail. For Gmail, Outlook and Yahoo
+ * addresses it offers a button that opens that inbox, searched for our sender.
+ *
+ * What it does NOT do: submit anything or re-send the email. It is a native
+ * <dialog> opened with showModal() (focus trap, Esc to close and the backdrop come
+ * from the browser), rendered once per page and opened by the shared form handler
+ * in Beta.astro through the `apelles:waitlist-ok` event.
+ */
+
+/** The confirmation email's sender and subject, as functions/_lib/email.ts sends them. */
+const SENDER_NAME = 'Ashish from Apelles';
+const SENDER_ADDRESS = 'hello@mail.apelles.studio';
+const SUBJECT = 'Confirm your email for the Apelles beta';
+---
+
+<dialog class="check-inbox" data-check-inbox aria-labelledby="check-inbox-title">
+  <form method="dialog" class="inner">
+    <p class="kicker">One more step</p>
+    <h2 id="check-inbox-title">Check your inbox</h2>
+    <p class="lede">
+      We sent a confirmation link to <strong data-check-inbox-email>your email</strong>. You are on the
+      list once you click it.
+    </p>
+
+    <dl class="look-for">
+      <div>
+        <dt>From</dt>
+        <dd>{SENDER_NAME} <span class="addr">&lt;{SENDER_ADDRESS}&gt;</span></dd>
+      </div>
+      <div>
+        <dt>Subject</dt>
+        <dd>{SUBJECT}</dd>
+      </div>
+    </dl>
+
+    <p class="hint">
+      <strong>Not there after a minute?</strong> Check <strong>Promotions</strong>, <strong>Spam</strong> or
+      <strong>Updates</strong>. If you find it there, moving it to your main inbox helps the next email
+      land in the right place. The link works for 7 days.
+    </p>
+
+    <div class="actions">
+      <a class="open-mail" data-check-inbox-open href="#" target="_blank" rel="noopener" hidden></a>
+      <button class="done" value="close" autofocus>Got it</button>
+    </div>
+  </form>
+</dialog>
+
+<style>
+  .check-inbox {
+    width: min(30rem, calc(100vw - 2rem));
+    padding: 0;
+    border: 1px solid var(--edge-strong);
+    border-radius: var(--radius-lg);
+    background: var(--pigment-marble);
+    color: var(--pigment-basalt);
+  }
+
+  .check-inbox::backdrop {
+    background: color-mix(in srgb, var(--pigment-basalt) 55%, transparent);
+  }
+
+  .inner {
+    display: grid;
+    gap: 1rem;
+    padding: clamp(1.25rem, 1rem + 1.5vw, 2rem);
+  }
+
+  .kicker {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--step--2);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--pigment-terracotta);
+  }
+
+  h2 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: var(--step-3);
+    line-height: 1.1;
+  }
+
+  .lede,
+  .hint {
+    margin: 0;
+    font-family: var(--font-ui);
+    font-size: var(--step-0);
+    line-height: 1.5;
+    color: var(--pigment-basalt-soft);
+  }
+
+  .lede strong {
+    color: var(--pigment-basalt);
+    overflow-wrap: anywhere;
+  }
+
+  .look-for {
+    display: grid;
+    gap: 0.5rem;
+    margin: 0;
+    padding: 0.875rem 1rem;
+    border-radius: var(--radius-md);
+    background: var(--pigment-marble-deep);
+  }
+
+  .look-for div {
+    display: grid;
+    grid-template-columns: 4.5rem 1fr;
+    gap: 0.75rem;
+  }
+
+  dt {
+    font-family: var(--font-mono);
+    font-size: var(--step--2);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--pigment-basalt-soft);
+    padding-top: 0.15rem;
+  }
+
+  dd {
+    margin: 0;
+    font-family: var(--font-ui);
+    font-size: var(--step--1);
+    color: var(--pigment-basalt);
+    overflow-wrap: anywhere;
+  }
+
+  .addr {
+    color: var(--pigment-basalt-soft);
+  }
+
+  .hint {
+    font-size: var(--step--1);
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    justify-content: flex-end;
+    margin-top: 0.25rem;
+  }
+
+  .open-mail,
+  .done {
+    font-family: var(--font-ui);
+    font-size: var(--step--1);
+    font-weight: 600;
+    padding: 0.7rem 1.1rem;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease-out);
+  }
+
+  .open-mail {
+    text-decoration: none;
+    color: var(--pigment-basalt);
+    border: 1px solid var(--edge-strong);
+    background: transparent;
+  }
+
+  .open-mail:hover {
+    background: var(--wash);
+  }
+
+  .done {
+    border: 0;
+    color: var(--ink-inverse);
+    background: var(--pigment-basalt);
+  }
+
+  .done:hover {
+    background: var(--pigment-basalt-soft);
+  }
+</style>
+
+<script>
+  /**
+   * Opens the dialog on the shared form handler's `apelles:waitlist-ok` event,
+   * filling in the address and, for the big webmail providers, a button that
+   * opens the inbox searched for our sender.
+   */
+  const SENDER = 'mail.apelles.studio';
+
+  /** Webmail inbox links, searched for our sender where the provider supports a search URL. */
+  const PROVIDERS: ReadonlyArray<{ domains: readonly string[]; label: string; href: string }> = [
+    {
+      domains: ['gmail.com', 'googlemail.com'],
+      label: 'Open Gmail',
+      href: `https://mail.google.com/mail/u/0/#search/from%3A${SENDER}+in%3Aanywhere`,
+    },
+    {
+      domains: ['outlook.com', 'hotmail.com', 'live.com', 'msn.com'],
+      label: 'Open Outlook',
+      href: 'https://outlook.live.com/mail/0/',
+    },
+    {
+      domains: ['yahoo.com', 'ymail.com'],
+      label: 'Open Yahoo Mail',
+      href: 'https://mail.yahoo.com/',
+    },
+  ];
+
+  const dialog = document.querySelector<HTMLDialogElement>('[data-check-inbox]');
+  const emailSlot = dialog?.querySelector<HTMLElement>('[data-check-inbox-email]');
+  const openLink = dialog?.querySelector<HTMLAnchorElement>('[data-check-inbox-open]');
+
+  document.addEventListener('apelles:waitlist-ok', (event) => {
+    if (!dialog || !emailSlot || !openLink) return;
+    const email = event instanceof CustomEvent && typeof event.detail?.email === 'string' ? event.detail.email : '';
+    emailSlot.textContent = email || 'your email';
+
+    const domain = email.split('@')[1]?.toLowerCase() ?? '';
+    const provider = PROVIDERS.find((p) => p.domains.includes(domain));
+    if (provider) {
+      openLink.textContent = provider.label;
+      openLink.href = provider.href;
+      openLink.hidden = false;
+    } else {
+      openLink.hidden = true;
+    }
+
+    if (!dialog.open) dialog.showModal();
+  });
+
+  // A click on the backdrop (outside the inner form) closes it, like Esc does.
+  dialog?.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+</script>

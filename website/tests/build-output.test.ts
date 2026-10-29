@@ -436,6 +436,17 @@ describe('the shipped HTML carries nothing it should not', () => {
     expect(home?.html.toLowerCase()).not.toContain('formsubmit');
   });
 
+  it('renders one "check your inbox" dialog that names the sender and the tabs to check (D-426)', () => {
+    const home = pages.find((p) => p.route === '/');
+    const { document } = parseHTML(home?.html ?? '');
+    const dialogs = [...document.querySelectorAll('dialog[data-check-inbox]')];
+    expect(dialogs).toHaveLength(1);
+    const text = dialogs[0]?.textContent ?? '';
+    expect(text).toContain('hello@mail.apelles.studio');
+    expect(text).toContain('Confirm your email for the Apelles beta');
+    for (const tab of ['Promotions', 'Spam', 'Updates']) expect(text).toContain(tab);
+  });
+
   it('puts a Turnstile widget in each of the two forms and loads its script once (D-427)', () => {
     const home = pages.find((p) => p.route === '/');
     const { document } = parseHTML(home?.html ?? '');
