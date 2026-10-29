@@ -257,3 +257,42 @@ describe('editor_set_track_sync_locked (B-315)', () => {
     expect(undoDepth()).toBe(before);
   });
 });
+
+describe('marker creation time and sort (B-317)', () => {
+  const frameOf = (id: string): number => useEditorTimelineStore.getState().timeline!.markers!.find((m) => m.id === id)!.frame;
+
+  it('stamps createdAt on creation; a patch and a ripple never change it', async () => {
+    const t0 = Date.now();
+    const added = await callOp('editor_add_marker', { frame: 130, name: 'review note' });
+    const createdAt = added.result.marker.createdAt as number;
+    expect(createdAt).toBeGreaterThanOrEqual(t0);
+    expect(createdAt).toBeLessThanOrEqual(Date.now());
+    const id = added.result.marker.id as string;
+
+    await callOp('editor_set_marker', { id, name: 'renamed' });
+    act(() =>
+      useEditorTimelineStore.getState().applyOp({ kind: 'ripple_delete_ranges', track: 0, ranges: [{ start: 10, end: 40 }] }),
+    );
+    expect(frameOf(id)).toBe(100); // the ripple really moved it
+    const stored = useEditorTimelineStore.getState().timeline!.markers!.find((m) => m.id === id)!;
+    expect(stored.created_at).toBe(createdAt);
+    expect(stored.name).toBe('renamed');
+  });
+
+  it('editor_list_markers is frame ordered by default, newest-first on request, unstamped markers last', async () => {
+    const a = (await callOp('editor_add_marker', { frame: 300 })).result.marker;
+    await new Promise((r) => setTimeout(r, 5)); // a strictly later stamp
+    const b = (await callOp('editor_add_marker', { frame: 5 })).result.marker;
+
+    const ids = (r: OpEnvelope): string[] => r.result.markers.map((m: { id: string }) => m.id);
+    const byFrame = ids(await callOp('editor_list_markers'));
+    expect(byFrame).toEqual([b.id, 'm1', 'm2', a.id]);
+    expect(ids(await callOp('editor_list_markers', { sort: 'frame' }))).toEqual(byFrame);
+
+    const newest = await callOp('editor_list_markers', { sort: 'newest' });
+    expect(ids(newest)).toEqual([b.id, a.id, 'm1', 'm2']);
+    expect(newest.result.markers[2].createdAt).toBeNull();
+
+    expect((await callOp('editor_list_markers', { sort: 'oldest' })).result.error).toMatch(/sort must be/);
+  });
+});

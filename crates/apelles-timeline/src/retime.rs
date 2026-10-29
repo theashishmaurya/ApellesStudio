@@ -196,6 +196,7 @@ mod tests {
             duration_frames: Some(48),
             name: None,
             note: None,
+            created_at: None,
         });
         tl.set_rate(Rational::new(30, 1)).unwrap();
         let c = &tl.tracks[0].clips[0];

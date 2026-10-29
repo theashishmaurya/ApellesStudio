@@ -1023,6 +1023,7 @@ mod tests {
             duration_frames: None,
             name: None,
             note: None,
+            created_at: None,
         });
         assert_ne!(content_hash(&tl).expect("hash"), h);
     }

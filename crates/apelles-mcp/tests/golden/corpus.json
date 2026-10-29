@@ -4357,9 +4357,22 @@
     },
     {
       "name": "editor_list_markers",
-      "description": "Every marker on the current timeline, in frame order \u2014 a marker is a\n    colour-coded, optionally titled flag pinned to a TIMELINE frame (\"client\n    wants a cut here\", \"sync point\", \"VFX shot start\").\n\n    Markers belong to the TIMELINE, not to any clip or track: there is no\n    `track` argument on any of the four marker tools, and a marker survives\n    the clip beneath it being trimmed, moved to another track, or deleted.\n    They are pure annotation \u2014 nothing in the live preview or in\n    `editor_export`'s output is affected by one.\n\n    Each entry is `{id, frame, color, durationFrames, endFrame, name, note}`;\n    `name`/`note` are `null` when unset. A marker may span a RANGE rather than\n    flag one frame: `durationFrames` is 0 for a point marker (the default, and\n    what every marker made before ranges existed is) and `endFrame` is the\n    derived last frame it covers, inclusive \u2014 equal to `frame` for a point\n    marker. `id` is what `editor_set_marker`/`editor_remove_marker` take.\n    Also returns `palette`, the marker colour names `editor_add_marker` and\n    `editor_set_marker` accept. `editor_get_timeline` reports the same list\n    under its own `markers` key, so this tool is the cheap way to re-read just\n    the markers after writing one.",
+      "description": "Every marker on the current timeline, in frame order \u2014 a marker is a\n    colour-coded, optionally titled flag pinned to a TIMELINE frame (\"client\n    wants a cut here\", \"sync point\", \"VFX shot start\").\n\n    Markers belong to the TIMELINE, not to any clip or track: there is no\n    `track` argument on any of the four marker tools, and a marker survives\n    the clip beneath it being trimmed, moved to another track, or deleted.\n    They are pure annotation \u2014 nothing in the live preview or in\n    `editor_export`'s output is affected by one.\n\n    Each entry is `{id, frame, color, durationFrames, endFrame, name, note,\n    createdAt}`; `name`/`note` are `null` when unset, and `createdAt` (Unix\n    epoch milliseconds, stamped when the marker was created and never changed\n    by an edit) is `null` for a marker made before it was recorded. A marker may span a RANGE rather than\n    flag one frame: `durationFrames` is 0 for a point marker (the default, and\n    what every marker made before ranges existed is) and `endFrame` is the\n    derived last frame it covers, inclusive \u2014 equal to `frame` for a point\n    marker. `id` is what `editor_set_marker`/`editor_remove_marker` take.\n    `sort` picks the order: `\"frame\"` (the default, and the documented\n    contract) is timeline position; `\"newest\"` is most recently created\n    first, markers without a `createdAt` last, in frame order. The Markers\n    panel offers the same two choices.\n    Also returns `palette`, the marker colour names `editor_add_marker` and\n    `editor_set_marker` accept. `editor_get_timeline` reports the same list\n    under its own `markers` key, so this tool is the cheap way to re-read just\n    the markers after writing one.",
       "inputSchema": {
-        "properties": {},
+        "properties": {
+          "sort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sort"
+          }
+        },
         "type": "object",
         "title": "editor_list_markersArguments"
       }
@@ -17626,6 +17639,29 @@
         {
           "op": "editor_list_markers",
           "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_list_markers",
+      "case": "full",
+      "arguments": {
+        "sort": "v_editor_list_markers.sort"
+      },
+      "requests": [
+        {
+          "op": "editor_list_markers",
+          "args": {
+            "sort": "v_editor_list_markers.sort"
+          },
           "timeout_ms": 20000
         }
       ],

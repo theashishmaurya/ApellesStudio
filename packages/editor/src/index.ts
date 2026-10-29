@@ -222,6 +222,7 @@ export {
   markerEndFrame,
   normaliseMarkerDuration,
   markersOf,
+  type MarkerSort,
   newMarker,
   resolveMarkerColor,
   MARKER_COLORS,

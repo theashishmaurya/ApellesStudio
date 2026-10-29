@@ -101,6 +101,7 @@ import {
   type ClipKeyframeParam,
   type EditOp,
   type EaseCurve,
+  type MarkerSort,
   type OutputSpec,
   type Timeline,
   type TimelineOrigin,
@@ -361,6 +362,11 @@ interface EditorTimelineState {
    *  drives, not a parallel copy (CLAUDE.md's "one op/store action under both
    *  interfaces"). */
   playbackRate: number;
+  /** B-317 — how the Index panel's Markers list is ordered. A session-level UI
+   *  preference like `playbackRate` (the app has no `localStorage` by design),
+   *  so it survives switching panels but not a restart; not part of the
+   *  project and not reset by a project switch. */
+  markerSort: MarkerSort;
   /** D-234 — which clip's DYNAMIC ZOOM boxes the viewer is showing, and the
    *  ease the next bake will use. `null` (the default) = the ordinary
    *  single-box transform overlay.
@@ -518,6 +524,7 @@ interface EditorTimelineState {
    *  `setAudioMonitor`'s own contract and the Rust command's; nonsense reads as
    *  ordinary playback. Writes nothing to the project. */
   setPlaybackRate: (rate: number) => void;
+  setMarkerSort: (sort: MarkerSort) => void;
   /** D-234 — arm/disarm the viewer's dynamic-zoom boxes, or change the ease
    *  the next bake uses. The one writer for both the human's Inspector toggle
    *  and `editor_set_dynamic_zoom`'s own arming. Writes no keyframes: a bake
@@ -766,6 +773,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   // something you set to skim a specific take and would be startled to find
   // still running on the next project you open. See `setOpenProject`.
   playbackRate: DEFAULT_PLAYBACK_RATE,
+  markerSort: 'newest',
   // D-234 — disarmed by default; the viewer shows the ordinary transform box.
   dynamicZoom: null,
   // D-252 — nothing open by default; see the field's own doc.
@@ -985,6 +993,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
     })),
 
   setPlaybackRate: (rate) => set({ playbackRate: clampPlaybackRate(rate) }),
+  setMarkerSort: (markerSort) => set({ markerSort }),
 
   setDynamicZoom: (mode) => set({ dynamicZoom: mode }),
 

@@ -805,6 +805,13 @@ pub struct EditorSetTrackHiddenArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorListMarkersArgs {
+    /// B-317 — `"frame"` (default) or `"newest"`.
+    #[serde(default)]
+    pub sort: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EditorAddMarkerArgs {
     #[serde(default)]
     pub frame: Option<i64>,
@@ -4130,19 +4137,28 @@ impl ApellesMcp {
     They are pure annotation — nothing in the live preview or in
     `editor_export`'s output is affected by one.
 
-    Each entry is `{id, frame, color, durationFrames, endFrame, name, note}`;
-    `name`/`note` are `null` when unset. A marker may span a RANGE rather than
+    Each entry is `{id, frame, color, durationFrames, endFrame, name, note,
+    createdAt}`; `name`/`note` are `null` when unset, and `createdAt` (Unix
+    epoch milliseconds, stamped when the marker was created and never changed
+    by an edit) is `null` for a marker made before it was recorded. A marker may span a RANGE rather than
     flag one frame: `durationFrames` is 0 for a point marker (the default, and
     what every marker made before ranges existed is) and `endFrame` is the
     derived last frame it covers, inclusive — equal to `frame` for a point
     marker. `id` is what `editor_set_marker`/`editor_remove_marker` take.
+    `sort` picks the order: `"frame"` (the default, and the documented
+    contract) is timeline position; `"newest"` is most recently created
+    first, markers without a `createdAt` last, in frame order. The Markers
+    panel offers the same two choices.
     Also returns `palette`, the marker colour names `editor_add_marker` and
     `editor_set_marker` accept. `editor_get_timeline` reports the same list
     under its own `markers` key, so this tool is the cheap way to re-read just
     the markers after writing one."#
     )]
-    pub async fn editor_list_markers(&self) -> Result<CallToolResult, ErrorData> {
-        let args = WireArgs::new();
+    pub async fn editor_list_markers(
+        &self,
+        Parameters(p): Parameters<EditorListMarkersArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().put("sort", p.sort);
         let env = self.op("editor_list_markers", args).await?;
         Ok(render::json_text(&env))
     }

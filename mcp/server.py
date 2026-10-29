@@ -3629,7 +3629,7 @@ def editor_set_track_hidden(track: int, hidden: bool) -> str:
 
 
 @mcp.tool()
-def editor_list_markers() -> str:
+def editor_list_markers(sort: str | None = None) -> str:
     """Every marker on the current timeline, in frame order — a marker is a
     colour-coded, optionally titled flag pinned to a TIMELINE frame ("client
     wants a cut here", "sync point", "VFX shot start").
@@ -3640,19 +3640,28 @@ def editor_list_markers() -> str:
     They are pure annotation — nothing in the live preview or in
     `editor_export`'s output is affected by one.
 
-    Each entry is `{id, frame, color, durationFrames, endFrame, name, note}`;
-    `name`/`note` are `null` when unset. A marker may span a RANGE rather than
+    Each entry is `{id, frame, color, durationFrames, endFrame, name, note,
+    createdAt}`; `name`/`note` are `null` when unset, and `createdAt` (Unix
+    epoch milliseconds, stamped when the marker was created and never changed
+    by an edit) is `null` for a marker made before it was recorded. A marker may span a RANGE rather than
     flag one frame: `durationFrames` is 0 for a point marker (the default, and
     what every marker made before ranges existed is) and `endFrame` is the
     derived last frame it covers, inclusive — equal to `frame` for a point
     marker. `id` is what `editor_set_marker`/`editor_remove_marker` take.
+    `sort` picks the order: `"frame"` (the default, and the documented
+    contract) is timeline position; `"newest"` is most recently created
+    first, markers without a `createdAt` last, in frame order. The Markers
+    panel offers the same two choices.
     Also returns `palette`, the marker colour names `editor_add_marker` and
     `editor_set_marker` accept. `editor_get_timeline` reports the same list
     under its own `markers` key, so this tool is the cheap way to re-read just
     the markers after writing one."""
     import json
 
-    return json.dumps(_op("editor_list_markers"), indent=2, default=str)
+    args: dict = {}
+    if sort is not None:
+        args["sort"] = sort
+    return json.dumps(_op("editor_list_markers", **args), indent=2, default=str)
 
 
 @mcp.tool()

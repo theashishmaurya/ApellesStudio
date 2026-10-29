@@ -146,10 +146,13 @@ status: **fixed** (2026-10-28) · severity: **major** (agents fall back to scrip
 
 ## B-317 — the Markers panel lists markers by timeline position only; the owner needs newest-created first (or a sort choice)
 
-status: **open** (owner: "log the bug, will solve it later") · severity: **minor** · area: Edit Index panel › Markers list; marker model (no created-at timestamp today)
+status: **fixed** (2026-10-29) · severity: **minor** · area: Edit Index panel › Markers list; marker model
 
 - **found:** 2026-10-28 by the owner reviewing "Five Levels" with 25 markers (his own review notes mixed with 21 agent "v3 fix" markers): the note he had just added ("Here is a retake :)", 1:20) sat in the middle of the list ordered by timeline time, so new review notes are hard to find. Screenshot: `scratch/bug-refs/markers-panel-sort-order.png`.
-- **expected:** markers carry a creation time (and author: person vs agent); the Markers panel can sort by created (newest first, the default for review) or by timeline position, and filter by author/colour; `editor_list_markers` returns the timestamp and accepts the same sort.
+- **reference:** Premiere's Markers panel and Resolve's marker index list by timeline position only (their own help pages); neither has a created-order sort, so "Newest first" is the owner's review need and "Time on timeline" is what both do.
+- **fix:** a marker carries `created_at` (Unix epoch ms; Rust `Marker::created_at: Option<i64>`, `#[serde(default, skip_serializing_if)]`, so a project saved before this loads unchanged). `newMarker` stamps it, and that is the one construction path of the flag button, the `M` shortcut and `editor_add_marker`; `set_marker`, ripples and replays never touch it. The Index panel's Markers view has a **Sort** control: **Newest first** (the default) or **Time on timeline**; the choice is `markerSort` in the editor store (session-level like `playbackRate`; the app has no `localStorage`, and the project file is not a place for a view preference). Markers without `created_at` (made before this) follow the stamped ones, in frame order. A marker that appears while the panel is open is highlighted and scrolled into view. `editor_list_markers` stays frame-ordered by default, each entry gains `createdAt` (`null` for an unstamped marker), and the optional `sort: "frame" | "newest"` (both MCP servers, still 255 tools, parity re-captured) returns the same order the panel shows.
+- **not done:** author (person vs agent) and an author/colour filter from the original wish; not needed for the sort.
+- **verification:** `trackOps.e2e.dom.test.tsx` "marker creation time and sort" (stamp, edit/ripple leave it alone, both sorts, bad `sort` refused), `EditIndexPanel.dom.test.tsx` "Markers sort" (default order with unstamped markers, switching, new marker on top and highlighted); Rust parity + timeline tests pass. Not checked in the live app.
 
 ## B-316 — placed Motion clips keep their old `sourceLen` after the scene is re-rendered shorter
 
