@@ -289,8 +289,8 @@ export function Shell({
   );
 
   // D-051 — global undo/redo, see the module doc comment above. The
-  // don't-hijack-an-in-progress-edit guard (including its "a number input is
-  // not prose" refinement) moved into the shared dispatcher in D-273, where it
+  // don't-hijack-an-in-progress-edit guard (now `keymap/typingGuard.ts`, which
+  // since B-332 lets only Cmd/Ctrl app combos through a number input) moved into the shared dispatcher in D-273, where it
   // now protects every shortcut in the app rather than only these two.
   // D-383 — the step itself (pop, then follow the entry to its tab) lives in
   // `historyStep.ts`, shared with the `undo` / `redo` control ops.

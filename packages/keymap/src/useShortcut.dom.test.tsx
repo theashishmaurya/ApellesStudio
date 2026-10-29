@@ -127,19 +127,98 @@ describe('the dispatcher', () => {
     input.remove();
   });
 
-  it('DOES fire while a number input has focus — it holds no prose to protect', () => {
+  // B-332 — a focused value control owns its bare keys. Every shortcut path
+  // that can mutate the timeline is asserted, against each kind of control.
+  const BARE_SHORTCUTS: Array<[string, string, KeyboardEventInit & { code: string }]> = [
+    ['edit.delete_selection', 'Delete', { code: 'Delete', key: 'Delete' }],
+    ['edit.delete_selection', 'Backspace', { code: 'Backspace', key: 'Backspace' }],
+    ['edit.add_marker', 'M', { code: 'KeyM', key: 'm' }],
+    ['edit.play_pause', 'Space', { code: 'Space', key: ' ' }],
+    ['edit.frame_back', 'ArrowLeft', { code: 'ArrowLeft', key: 'ArrowLeft' }],
+    ['edit.frame_forward', 'ArrowRight', { code: 'ArrowRight', key: 'ArrowRight' }],
+    ['edit.tool_slip', 'Y', { code: 'KeyY', key: 'y' }],
+  ];
+
+  function focused(make: () => HTMLElement): HTMLElement {
+    const el = make();
+    document.body.appendChild(el);
+    el.focus();
+    return el;
+  }
+  const input = (type: string) => () => {
+    const el = document.createElement('input');
+    el.type = type;
+    return el;
+  };
+  const withRole = (role: string) => () => {
+    const el = document.createElement('div');
+    el.tabIndex = 0;
+    el.setAttribute('role', role);
+    return el;
+  };
+  const CONTROLS: Array<[string, () => HTMLElement]> = [
+    ['text input', input('text')],
+    ['number input', input('number')],
+    ['range input (Base UI slider thumb)', input('range')],
+    ['textarea', () => document.createElement('textarea')],
+    ['select', () => document.createElement('select')],
+    ['contenteditable', () => {
+      const el = document.createElement('div');
+      el.contentEditable = 'true';
+      // jsdom does not implement isContentEditable; the guard reads it.
+      Object.defineProperty(el, 'isContentEditable', { value: true });
+      el.tabIndex = 0;
+      return el;
+    }],
+    ['role=spinbutton', withRole('spinbutton')],
+    ['role=slider', withRole('slider')],
+  ];
+
+  describe.each(CONTROLS)('with a %s focused', (_name, make) => {
+    it.each(BARE_SHORTCUTS)('%s does not fire on %s', (id, _label, init) => {
+      const handler = vi.fn();
+      render(<Claimer id={id} on={handler} />);
+      const el = focused(make);
+      press(init);
+      expect(handler).not.toHaveBeenCalled();
+      el.remove();
+    });
+
+    it('does not fire Cmd+Backspace (macOS normalises it to Delete)', () => {
+      const handler = vi.fn();
+      render(<Claimer id="edit.delete_selection" on={handler} />);
+      const el = focused(make);
+      press({ code: 'Backspace', key: 'Backspace', metaKey: true });
+      expect(handler).not.toHaveBeenCalled();
+      el.remove();
+    });
+  });
+
+  it('still fires bare shortcuts when a plain button has focus', () => {
+    const handler = vi.fn();
+    render(<Claimer id="edit.delete_selection" on={handler} />);
+    const el = focused(() => document.createElement('button'));
+    press({ code: 'Delete', key: 'Delete' });
+    expect(handler).toHaveBeenCalledTimes(1);
+    el.remove();
+  });
+
+  it.each(['number', 'range'])('DOES fire app-level undo (Cmd+Z) with a %s input focused (D-051)', (type) => {
     const undo = vi.fn();
     render(<Claimer id="app.undo" on={undo} />);
-
-    const input = document.createElement('input');
-    input.type = 'number';
-    document.body.appendChild(input);
-    input.focus();
-
+    const el = focused(input(type));
     press({ code: 'KeyZ', key: 'z', metaKey: true });
     expect(undo).toHaveBeenCalledTimes(1);
+    el.remove();
+  });
 
-    input.remove();
+  it('does NOT fire undo with a text field focused (the field owns its own undo)', () => {
+    const undo = vi.fn();
+    render(<Claimer id="app.undo" on={undo} />);
+    const el = focused(input('text'));
+    press({ code: 'KeyZ', key: 'z', metaKey: true });
+    expect(undo).not.toHaveBeenCalled();
+    el.remove();
   });
 
   it('stops listening once the last claimer unmounts', () => {
