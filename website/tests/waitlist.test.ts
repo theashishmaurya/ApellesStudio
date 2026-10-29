@@ -100,7 +100,7 @@ beforeEach(() => {
     DB: d1Over(sqlite),
     RESEND_API_KEY: 'test-key',
     RESEND_SEGMENT_ID: SEGMENT,
-    MAIL_FROM: 'Apelles <hello@mail.apelles.studio>',
+    MAIL_FROM: 'Ashish from Apelles <hello@mail.apelles.studio>',
     MAIL_REPLY_TO: 'hello@apelles.studio',
     // Cloudflare's documented always-pass TEST secret; the mock below answers for it.
     TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA',
@@ -144,14 +144,20 @@ describe('signup', () => {
     expect(url).toBe(RESEND_ENDPOINT);
     expect(init.headers.authorization).toBe('Bearer test-key');
     const mail = sentMail();
-    expect(mail.from).toBe('Apelles <hello@mail.apelles.studio>');
+    expect(mail.from).toBe('Ashish from Apelles <hello@mail.apelles.studio>');
     expect(mail.reply_to).toBe('hello@apelles.studio');
     expect(mail.to).toEqual(['someone@example.com']);
     expect(mail.subject).toBe(CONFIRM_SUBJECT);
     expect(mail.html).toContain(`${ORIGIN}/api/confirm?token=${r.confirm_token}`);
     expect(mail.text).toContain(`${ORIGIN}/api/confirm?token=${r.confirm_token}`);
-    expect(mail.headers['List-Unsubscribe']).toBe(`<${ORIGIN}/api/unsubscribe?token=${r.unsubscribe_token}>`);
-    expect(mail.headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+    // A personal transactional note: no bulk-mail headers, no unsubscribe link.
+    expect(mail.headers).toBeUndefined();
+    expect(mail.html).not.toMatch(/unsubscribe/i);
+    expect(mail.text).not.toMatch(/unsubscribe/i);
+    expect(mail.subject).toBe('Confirm your email for the Apelles beta');
+    expect(mail.from).toBe('Ashish from Apelles <hello@mail.apelles.studio>');
+    expect(mail.text.split('\n')[0]).toBe('Click to confirm. This link expires in 7 days.');
+    expect(mail.html).toContain("Didn't ask for this? Ignore it");
   });
 
   it('accepts a classic form post too', async () => {
@@ -253,15 +259,26 @@ describe('signup', () => {
     expect(mailCalls()).toHaveLength(2);
   });
 
-  it('reports a failed send as an error and leaves the throttle open so the visitor can retry', async () => {
+  it('hides a failed send from the visitor: normal ok, row held for the drain, nothing counted', async () => {
     fetchMock.mockResolvedValueOnce(new Response('nope', { status: 500 }));
     const res = await signup(post({ email: 'retry@example.com' }), env, T0);
-    expect(res.status).toBe(502);
-    expect(row('retry@example.com').last_email_at).toBeNull();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(row('retry@example.com')).toMatchObject({ email_held: 1, last_email_at: null });
+    expect(console.error).toHaveBeenCalled();
+    expect(await remainingBudget(env, T0)).toBe(90);
 
-    const retry = await signup(post({ email: 'retry@example.com' }), env, T0 + 1000);
-    expect(retry.status).toBe(200);
-    expect(mailCalls()).toHaveLength(2);
+    // The drain retries it; only that successful send is counted.
+    expect(await drainHeld(env, ORIGIN, T0 + 60 * MINUTE)).toBe(1);
+    expect(row('retry@example.com').email_held).toBe(0);
+    expect(await remainingBudget(env, T0 + 60 * MINUTE)).toBe(89);
+  });
+
+  it('hides a network error on send the same way', async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError('network down'));
+    const res = await signup(post({ email: 'net@example.com' }), env, T0);
+    expect(res.status).toBe(200);
+    expect(row('net@example.com').email_held).toBe(1);
   });
 
   it('without RESEND_API_KEY stores the row, skips the send, and says so in the log', async () => {
@@ -529,6 +546,19 @@ describe('confirm', () => {
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe(`${ORIGIN}/waitlist/confirmed/`);
     expect(row('c@example.com')).toMatchObject({ status: 'confirmed', confirmed_at: T0 + MINUTE });
+  });
+
+  it('expires a link 7 days after the last confirmation email, and a fresh signup revives it', async () => {
+    await signup(post({ email: 'late@example.com' }), env, T0);
+    const { confirm_token } = row('late@example.com');
+    const day = 86_400_000;
+    const dead = await confirm(get(confirm_token), env, T0 + 7 * day + MINUTE);
+    expect(dead.headers.get('location')).toBe(`${ORIGIN}/waitlist/invalid/`);
+    expect(row('late@example.com').status).toBe('pending');
+
+    await signup(post({ email: 'late@example.com' }), env, T0 + 8 * day);
+    const ok = await confirm(get(confirm_token), env, T0 + 8 * day + MINUTE);
+    expect(ok.headers.get('location')).toBe(`${ORIGIN}/waitlist/confirmed/`);
   });
 
   it('is idempotent and keeps the first confirmation time', async () => {

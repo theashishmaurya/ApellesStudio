@@ -1,67 +1,47 @@
 /**
- * website/functions/_lib/email.ts — the confirmation email (D-426).
+ * website/functions/_lib/email.ts — the confirmation email (D-426, D-427).
  *
- * What it is: a pure function from two URLs to the subject, HTML and plain-text
- * bodies of the one message the waitlist sends before the launch email.
- * What it does NOT do: send anything (see waitlist.ts) or carry tracking — no
- * pixels, no rewritten links; Resend's open/click tracking is off for the domain.
- *
- * Colours come from the site's palette source of record (src/data/palette.ts),
- * not retyped hex literals; email clients cannot read CSS variables, so they
- * are inlined at render time.
+ * What it is: a pure function from the confirm URL to the subject, HTML and
+ * plain-text bodies of the one message the waitlist sends before the launch
+ * email. It is written to read as a personal, transactional note from Ashish:
+ * near-plain HTML (one sentence, a plain link, the expiry line), no button,
+ * image, styling or tracking, and no unsubscribe link or List-Unsubscribe
+ * header (those mark bulk mail; see D-427's addendum). Unconfirmed addresses
+ * are never emailed again, so there is nothing to unsubscribe from.
+ * What it does NOT do: send anything (see send.ts / waitlist.ts).
  */
-import { PIGMENTS } from '../../src/data/palette.ts';
-
 export interface EmailContent {
   subject: string;
   html: string;
   text: string;
 }
 
-export const CONFIRM_SUBJECT = 'Confirm your spot on the Apelles beta';
+export const CONFIRM_SUBJECT = 'Confirm your email for the Apelles beta';
+/** The first line of both parts, so it doubles as the inbox preview text. */
+export const PREHEADER = 'Click to confirm. This link expires in 7 days.';
 
-function pigment(token: string): string {
-  const hex = PIGMENTS.find((p) => p.token === token)?.hex;
-  if (!hex) throw new Error(`palette has no ${token}`);
-  return hex;
-}
-
-export function confirmationEmail(confirmUrl: string, unsubscribeUrl: string): EmailContent {
-  const ground = pigment('pigment-marble');
-  const ink = pigment('pigment-basalt');
-  const soft = pigment('pigment-basalt-soft');
-  const serif = "Georgia, 'Times New Roman', serif";
-  const sans = "-apple-system, 'Helvetica Neue', Arial, sans-serif";
-
+export function confirmationEmail(confirmUrl: string): EmailContent {
   const text = [
-    'Confirm your spot on the Apelles beta',
+    PREHEADER,
     '',
-    'Someone, hopefully you, asked to hear when a new build of Apelles is ready.',
-    'Confirm this address and that is the one message you will get from us:',
+    'Hi, it is Ashish. Someone, hopefully you, asked to hear when a new build of Apelles is ready. Please confirm this address:',
     '',
     confirmUrl,
     '',
-    'If it was not you, ignore this email and nothing happens.',
+    "Didn't ask for this? Ignore it — you won't hear from us.",
     '',
-    `Unsubscribe: ${unsubscribeUrl}`,
+    'Ashish',
     '',
   ].join('\n');
 
   const html = `<!doctype html>
-<html lang="en">
-<body style="margin:0;padding:0;background:${ground};">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${ground};">
-<tr><td align="center" style="padding:40px 20px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;">
-<tr><td style="font-family:${serif};font-size:26px;line-height:1.3;color:${ink};padding-bottom:16px;">Confirm your spot on the Apelles beta</td></tr>
-<tr><td style="font-family:${sans};font-size:16px;line-height:1.6;color:${soft};padding-bottom:28px;">Someone, hopefully you, asked to hear when a new build of Apelles is ready. Confirm this address and that is the one message you will get from us.</td></tr>
-<tr><td style="padding-bottom:28px;"><a href="${confirmUrl}" style="display:inline-block;background:${ink};color:${ground};font-family:${sans};font-size:16px;font-weight:500;text-decoration:none;padding:14px 24px;border-radius:8px;">Confirm my address</a></td></tr>
-<tr><td style="font-family:${sans};font-size:13px;line-height:1.6;color:${soft};">If it was not you, ignore this email and nothing happens.<br><a href="${unsubscribeUrl}" style="color:${soft};">Unsubscribe</a></td></tr>
-</table>
-</td></tr>
-</table>
-</body>
-</html>`;
+<html lang="en"><body>
+<p>${PREHEADER}</p>
+<p>Hi, it is Ashish. Someone, hopefully you, asked to hear when a new build of Apelles is ready. Please confirm this address:</p>
+<p><a href="${confirmUrl}">${confirmUrl}</a></p>
+<p>Didn't ask for this? Ignore it &mdash; you won't hear from us.</p>
+<p>Ashish</p>
+</body></html>`;
 
   return { subject: CONFIRM_SUBJECT, html, text };
 }

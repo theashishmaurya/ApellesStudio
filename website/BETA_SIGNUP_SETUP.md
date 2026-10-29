@@ -12,7 +12,7 @@ form ──POST /api/waitlist──▶ size cap, honeypot, email rule, disposabl
                              Cloudflare Turnstile siteverify (fails closed)
                              INSERT OR IGNORE into D1 (status = pending)
                              daily / monthly cap? over it: flag email_held, send nothing
-                             Resend "send email": confirmation + List-Unsubscribe headers
+                             Resend "send email": plain confirmation (no List-Unsubscribe)
 Cron (hourly) ──▶ workers/waitlist-drain: send the held confirmations, oldest first, within the budget
 inbox ──GET /api/confirm?token=──▶ status = confirmed ──▶ Resend contact + segment ──▶ /waitlist/confirmed/
 inbox ──GET|POST /api/unsubscribe?token=──▶ status = unsubscribed ──▶ Resend contact unsubscribed ──▶ /waitlist/unsubscribed/
@@ -66,14 +66,23 @@ Behaviours worth knowing:
   non-waitlist send (tests, one-off mail) on the same Resend account.
 - A Resend failure at confirm or unsubscribe never fails the visitor: it is
   logged and the row keeps `resend_synced = 0` for the backfill (below). A
-  failure to send the confirmation email itself does return an error to the
-  form, so the visitor can retry.
+  failure to send the confirmation email itself (Resend non-2xx or a network
+  error) is hidden too: the row is flagged `email_held = 1`, the visitor sees the
+  normal success, and the hourly drain retries it. Only successful sends are
+  counted against the caps.
+- **Confirmation email.** Subject "Confirm your email for the Apelles beta", a
+  near-plain first-person note from Ashish with a plain link and no unsubscribe
+  link or `List-Unsubscribe` headers (Gmail files bulk-styled mail under
+  Promotions; D-427 addendum). The link works for 7 days from the last
+  confirmation email sent (`CONFIRM_TTL_MS`); after that signing up again sends
+  a fresh one. Unconfirmed addresses are never emailed again: only signup and
+  the drain send, and broadcasts go to the confirmed Resend segment.
 - Email security scanners sometimes open links in a message, which can confirm
   an address on the visitor's behalf. Acceptable for a beta list; the
   unsubscribe link has the same property.
 - With no `RESEND_API_KEY` (local dev) the row is stored and the sending is
   skipped, with a warning in the log; nothing is counted against the caps.
-- **Sender addresses.** Confirmations send from `Apelles <hello@mail.apelles.studio>`
+- **Sender addresses.** Confirmations send from `Ashish from Apelles <hello@mail.apelles.studio>`
   with `Reply-To: hello@apelles.studio` (`MAIL_FROM`, `MAIL_REPLY_TO`).
   Broadcasts send from `news.apelles.studio`, a separate subdomain, so
   marketing complaints cannot hurt signup confirmations. The root domain
@@ -120,7 +129,7 @@ npx wrangler pages secret put RESEND_API_KEY --project-name=apelles-studio
 
 In Resend, verify the sending subdomain `mail.apelles.studio` (its DNS records
 go on that subdomain only) and `news.apelles.studio` for broadcasts. The sender
-is `Apelles <hello@mail.apelles.studio>` (`MAIL_FROM`), replies go to
+is `Ashish from Apelles <hello@mail.apelles.studio>` (`MAIL_FROM`), replies go to
 `hello@apelles.studio` (`MAIL_REPLY_TO`). The segment `Apelles Beta` is
 `RESEND_SEGMENT_ID`.
 
