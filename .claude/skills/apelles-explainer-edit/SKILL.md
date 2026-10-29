@@ -43,6 +43,7 @@ time.
   Lip-sync them; never show the face over unrelated audio.
 - **No looking-down shots.** Never repeat a cutaway: each one (looking at the lens, a gesture) is
   used once.
+- **No photo or still of the owner anywhere** (end cards included) unless he asks for it in that video. On 2026-10-29: "please remove this photo of mine… why did you add it".
 - **PIP (face in a corner):** only when it is lip-synced, looking at the camera, and covering no
   text. Otherwise remove it. Some PIPs were explicitly unwanted ("useless PIP here"), so when in
   doubt, leave it out.
