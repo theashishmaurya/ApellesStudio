@@ -12,20 +12,26 @@
  * on the list — a signup answers the same `{ ok: true }` for a new address, a
  * pending one, a confirmed one and a returning one.
  *
- * Abuse limits that need no identifier: a hard body-size cap, a honeypot, a
- * strict email check, and a per-address throttle on the confirmation email.
- * Cloudflare Turnstile is a follow-up (docs/04-roadmap.md).
+ * Abuse limits that need no identifier (D-427): a hard body-size cap, a
+ * honeypot, a strict email check, a disposable-domain blocklist, Cloudflare
+ * Turnstile, a per-address throttle on the confirmation email, and daily and
+ * monthly caps on all confirmation emails (an email over a cap is held and sent
+ * later by the drain Worker, workers/waitlist-drain/).
  */
 import { isValidEmail, ROLES } from '../../src/data/beta.ts';
-import { confirmationEmail } from './email.ts';
+import { isDisposableEmail } from '../../src/data/disposable-domains.ts';
+import { recordSend, remainingBudget, type QuotaEnv } from './quota.ts';
 import { addConfirmedContact, unsubscribeContact } from './resend-contacts.ts';
+import { RESEND_ENDPOINT, sendConfirmation, type SendEnv } from './send.ts';
+import { TURNSTILE_FIELD, verifyTurnstile, type TurnstileEnv } from './turnstile.ts';
+
+export { RESEND_ENDPOINT };
 
 /** Largest request body accepted; a real signup is a few hundred bytes. */
 export const MAX_BODY_BYTES = 4096;
 /** RFC 5321 path limit; also bounds what is written to the table. */
 export const MAX_EMAIL_LENGTH = 254;
 export const HONEYPOT_FIELD = 'company';
-export const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const DEFAULT_THROTTLE_MINUTES = 10;
 const SOURCE_PATTERN = /^[a-z0-9_-]{1,32}$/;
 const TOKEN_BYTES = 24;
@@ -34,6 +40,7 @@ const TOKEN_BYTES = 24;
 export interface DbStatement {
   bind(...values: unknown[]): DbStatement;
   first<T>(): Promise<T | null>;
+  all<T>(): Promise<{ results: T[] }>;
   run(): Promise<unknown>;
 }
 /** The slice of a D1 database this module uses; `D1Database` satisfies it. */
@@ -41,13 +48,10 @@ export interface Db {
   prepare(sql: string): DbStatement;
 }
 
-export interface WaitlistEnv {
+export interface WaitlistEnv extends SendEnv, TurnstileEnv, QuotaEnv {
   DB: Db;
-  /** Pages secret. Absent in local dev: rows are stored, nothing is sent. */
-  RESEND_API_KEY?: string;
   /** The Resend segment confirmed addresses join; absent = no contact sync. */
   RESEND_SEGMENT_ID?: string;
-  MAIL_FROM: string;
   RESEND_THROTTLE_MINUTES?: string;
 }
 
@@ -61,6 +65,7 @@ interface Row {
   unsubscribe_token: string;
   last_email_at: number | null;
   resend_synced: 0 | 1;
+  email_held: 0 | 1;
 }
 
 function json(body: Record<string, unknown>, status = 200): Response {
@@ -84,6 +89,7 @@ interface Fields {
   role: string;
   source: string;
   company: string;
+  turnstile: string;
 }
 
 /** Reads the body as JSON or a form post; `null` when it is oversized or unreadable. */
@@ -100,7 +106,13 @@ async function readFields(request: Request): Promise<Fields | null> {
       const body: unknown = JSON.parse(new TextDecoder().decode(raw));
       if (typeof body !== 'object' || body === null) return null;
       const o = body as Record<string, unknown>;
-      return { email: text(o.email), role: text(o.role), source: text(o.source), company: text(o[HONEYPOT_FIELD]) };
+      return {
+        email: text(o.email),
+        role: text(o.role),
+        source: text(o.source),
+        company: text(o[HONEYPOT_FIELD]),
+        turnstile: text(o[TURNSTILE_FIELD]),
+      };
     }
     const form = await new Response(raw, { headers: { 'content-type': type } }).formData();
     return {
@@ -108,37 +120,11 @@ async function readFields(request: Request): Promise<Fields | null> {
       role: text(form.get('role')),
       source: text(form.get('source')),
       company: text(form.get(HONEYPOT_FIELD)),
+      turnstile: text(form.get(TURNSTILE_FIELD)),
     };
   } catch {
     return null;
   }
-}
-
-async function sendConfirmation(env: WaitlistEnv, origin: string, row: Row): Promise<boolean> {
-  if (!env.RESEND_API_KEY) {
-    console.warn('waitlist: RESEND_API_KEY is not set; stored the signup and skipped the email');
-    return true;
-  }
-  const confirmUrl = `${origin}/api/confirm?token=${row.confirm_token}`;
-  const unsubscribeUrl = `${origin}/api/unsubscribe?token=${row.unsubscribe_token}`;
-  const mail = confirmationEmail(confirmUrl, unsubscribeUrl);
-  const res = await fetch(RESEND_ENDPOINT, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      from: env.MAIL_FROM,
-      to: [row.email],
-      subject: mail.subject,
-      html: mail.html,
-      text: mail.text,
-      headers: {
-        'List-Unsubscribe': `<${unsubscribeUrl}>`,
-        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-      },
-    }),
-  });
-  if (!res.ok) console.error(`waitlist: Resend answered ${res.status}`);
-  return res.ok;
 }
 
 /** POST /api/waitlist */
@@ -150,7 +136,15 @@ export async function signup(request: Request, env: WaitlistEnv, now: number = D
   if (fields.company.trim() !== '') return json({ ok: true });
 
   const email = fields.email.trim().toLowerCase();
-  if (email.length > MAX_EMAIL_LENGTH || !isValidEmail(email)) return json({ error: 'invalid_email' }, 400);
+  // A throwaway-mailbox domain gets the same answer as a malformed address.
+  if (email.length > MAX_EMAIL_LENGTH || !isValidEmail(email) || isDisposableEmail(email)) {
+    return json({ error: 'invalid_email' }, 400);
+  }
+
+  // Cheap checks first, so a bad address never costs a Turnstile round trip.
+  const human = await verifyTurnstile(fields.turnstile, env, new URL(request.url).hostname);
+  if (human === 'unavailable') return json({ error: 'unavailable' }, 503);
+  if (human === 'rejected') return json({ error: 'captcha_failed' }, 403);
   const role = (ROLES as readonly string[]).includes(fields.role) ? fields.role : null;
   const source = SOURCE_PATTERN.test(fields.source) ? fields.source : null;
 
@@ -169,19 +163,30 @@ export async function signup(request: Request, env: WaitlistEnv, now: number = D
     // Asking again is consent again: back to pending with a fresh confirm link.
     const confirmToken = newToken();
     await env.DB.prepare(
-      "UPDATE waitlist SET status = 'pending', confirm_token = ?, unsubscribed_at = NULL, last_email_at = NULL, resend_synced = 0 WHERE id = ?",
+      "UPDATE waitlist SET status = 'pending', confirm_token = ?, unsubscribed_at = NULL, last_email_at = NULL, email_held = 0, resend_synced = 0 WHERE id = ?",
     )
       .bind(confirmToken, row.id)
       .run();
-    row = { ...row, status: 'pending', confirm_token: confirmToken, last_email_at: null };
+    row = { ...row, status: 'pending', confirm_token: confirmToken, last_email_at: null, email_held: 0 };
   }
 
   const throttleMinutes = Number(env.RESEND_THROTTLE_MINUTES ?? DEFAULT_THROTTLE_MINUTES);
   const throttleMs = (Number.isFinite(throttleMinutes) ? throttleMinutes : DEFAULT_THROTTLE_MINUTES) * 60_000;
   if (row.last_email_at !== null && now - row.last_email_at < throttleMs) return json({ ok: true });
 
+  // Already queued behind a cap: the drain sends it, asking again changes nothing.
+  if (row.email_held === 1) return json({ ok: true });
+
+  // Over the daily or monthly cap: keep the row, hold the email, answer as usual.
+  if ((await remainingBudget(env, now)) === 0) {
+    await env.DB.prepare('UPDATE waitlist SET email_held = 1 WHERE id = ?').bind(row.id).run();
+    console.warn('waitlist: confirmation email cap reached; held a confirmation for the drain Worker');
+    return json({ ok: true });
+  }
+
   const origin = new URL(request.url).origin;
   if (!(await sendConfirmation(env, origin, row))) return json({ error: 'send_failed' }, 502);
+  if (env.RESEND_API_KEY) await recordSend(env.DB, now);
   await env.DB.prepare('UPDATE waitlist SET last_email_at = ? WHERE id = ?').bind(now, row.id).run();
   return json({ ok: true });
 }

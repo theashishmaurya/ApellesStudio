@@ -52,6 +52,9 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run build
+        env:
+          # The Turnstile site key is public; it is a repo VARIABLE, not a secret (D-427).
+          PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.PUBLIC_TURNSTILE_SITE_KEY }}
       - run: npm run test
 
       - name: Publish to Cloudflare Pages

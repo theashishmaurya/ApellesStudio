@@ -152,6 +152,7 @@ website/
   functions/            the waitlist API (Pages Functions): api/ routes, _lib/ logic
   migrations/           D1 schema (wrangler d1 migrations)
   scripts/              waitlist CSV export, Resend reconcile + backfill
+  workers/              waitlist-drain: hourly Cron Worker for held confirmation emails (D-427)
   wrangler.toml         Pages config: D1 binding, non-secret vars
   public/shots/         real application screenshots
   tests/                Vitest — see below

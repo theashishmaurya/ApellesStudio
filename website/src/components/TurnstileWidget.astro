@@ -1,0 +1,28 @@
+---
+/**
+ * TurnstileWidget.astro — the Cloudflare Turnstile bot check inside a signup
+ * form (D-427).
+ *
+ * What it is: the canonical implicit-render widget. Cloudflare's script (loaded
+ * once, by Beta.astro) finds every `.cf-turnstile` element, runs the challenge
+ * and adds the one-use token to the enclosing form as `cf-turnstile-response`;
+ * the shared submit handler posts it and functions/_lib/turnstile.ts verifies it.
+ * `interaction-only` keeps the widget invisible unless Cloudflare decides a
+ * visitor must click, so most people never see it.
+ * What it does NOT do: store anything or set cookies of ours. The widget is
+ * Cloudflare processing, disclosed on /privacy/.
+ *
+ * The site key is public. It comes from `PUBLIC_TURNSTILE_SITE_KEY` at build
+ * time; without it the build falls back to Cloudflare's documented always-pass
+ * TEST key, which only works against the matching test secret, so a production
+ * build without the key refuses every signup (and warns here).
+ */
+import { TURNSTILE_TEST_SITE_KEY } from '../data/beta.ts';
+
+const siteKey: string = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY || TURNSTILE_TEST_SITE_KEY;
+if (import.meta.env.PROD && siteKey === TURNSTILE_TEST_SITE_KEY) {
+  console.warn('PUBLIC_TURNSTILE_SITE_KEY is not set: this build uses the Turnstile TEST key and signups will fail in production');
+}
+---
+
+<div class="cf-turnstile" data-sitekey={siteKey} data-appearance="interaction-only" data-theme="auto"></div>

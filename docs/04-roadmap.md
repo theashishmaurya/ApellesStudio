@@ -4147,7 +4147,7 @@ screenshots predate the rename and need retaking
 (they wait on real installers), no public changelog page, and no
 Motion/Colorist screenshots (none have ever been captured). The beta-signup
 form itself is **not** open anymore — it moved off the Formspree placeholder to
-the site's own waitlist (D1 + Resend, D-426, 2026-10-29; FormSubmit.co before that) (`website/BETA_SIGNUP_SETUP.md`). Follow-up: Cloudflare Turnstile on the form if it is abused.
+the site's own waitlist (D1 + Resend, D-426, 2026-10-29; FormSubmit.co before that) (`website/BETA_SIGNUP_SETUP.md`). Abuse protection (Turnstile, blocklist, quota caps + drain Worker, D-427) is in; the owner steps to switch it on are in that file.
 
 **Motion primitive catalog — now 10, not 8 (2026-09-09, D-258):** the eight
 abstract explainer primitives (`text`, `emphasis`, `matrix`, `graph`, `layers`,

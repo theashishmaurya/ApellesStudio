@@ -436,6 +436,18 @@ describe('the shipped HTML carries nothing it should not', () => {
     expect(home?.html.toLowerCase()).not.toContain('formsubmit');
   });
 
+  it('puts a Turnstile widget in each of the two forms and loads its script once (D-427)', () => {
+    const home = pages.find((p) => p.route === '/');
+    const { document } = parseHTML(home?.html ?? '');
+    const forms = [...document.querySelectorAll('form[data-beta-form]')];
+    expect(forms).toHaveLength(2);
+    for (const form of forms) expect(form.querySelectorAll('.cf-turnstile[data-sitekey]')).toHaveLength(1);
+    const scripts = [...document.querySelectorAll('script[src]')].filter((s) =>
+      (s.getAttribute('src') ?? '').startsWith('https://challenges.cloudflare.com/turnstile/v0/api.js'),
+    );
+    expect(scripts).toHaveLength(1);
+  });
+
   it('keeps the waitlist landing pages out of search', () => {
     for (const route of ['/waitlist/confirmed/', '/waitlist/unsubscribed/', '/waitlist/invalid/']) {
       const page = pages.find((p) => p.route === route);

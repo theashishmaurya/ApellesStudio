@@ -12,3 +12,6 @@
 dist/
 node_modules/
 .DS_Store
+
+# Local secrets for `wrangler pages dev` (BETA_SIGNUP_SETUP.md); never committed.
+.dev.vars
