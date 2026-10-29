@@ -6,6 +6,26 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-426 — The beta waitlist is our own: D1 as the master list, Resend for the confirmation email and for broadcasts (replaces FormSubmit.co)
+
+**decided (2026-10-29)** · supersedes the FormSubmit.co endpoint (2026-09-10) · builds on D-255, D-264, D-289
+
+**Context.** The signup posted to FormSubmit.co, which emailed each submission to the owner's inbox. It was never a list (no confirmation, no unsubscribe, no way to mail the people on it), it did not deliver reliably any more, and the privacy page named it as a processor.
+
+**Options.** (1) *Brevo, MailerLite, Kit (ConvertKit)*: a hosted list with a form and a campaign tool. Free tiers exist but are capped by subscribers or daily sends (limits not re-verified for this entry), and each owns the list, puts its own form and double-opt-in flow in front of the site's, and ties the list's shape to its limits and pricing. (2) *Resend Contacts alone*: one vendor, but the confirmation step, the status model and the pages would still need our own code, and the list would live only in a dashboard. Free tier: 1,000 marketing contacts, 3,000 transactional emails a month, 100 a day. (3) *Own list in Cloudflare D1, sending through Resend* (chosen). The site is already on Cloudflare Pages, so Pages Functions plus D1 add no new vendor beyond the mailer, and D1 is free at this scale.
+
+**Choice.** The forms post to `/api/waitlist` (Pages Function). It validates (the rules in `src/data/beta.ts` are shared with the forms), applies a honeypot and a 4 KiB cap, inserts a `pending` row in D1 and sends a double-opt-in confirmation through Resend's HTTP API with `List-Unsubscribe` and one-click `List-Unsubscribe-Post` headers. `/api/confirm` marks it `confirmed`; `/api/unsubscribe` (link and one-click POST) marks it `unsubscribed`. No IP address or request header is stored. A duplicate gets the same answer as a new address so the form cannot be used to probe the list; the confirmation email is re-sent at most once per 10 minutes. Without the API key (local dev) the row is stored and sending is skipped.
+
+**Resend as the broadcast tool, D1 stays the master.** On confirm the address is created as a Resend contact and added to the "Apelles Beta" segment; on our own unsubscribe link the contact is marked unsubscribed. A Resend failure there never fails the visitor's confirmation: it is logged and the row keeps `resend_synced = 0`. `scripts/sync-resend.ts backfill` retries those rows, and `unsubscribes` copies opt-outs made in a broadcast footer back into D1. There is deliberately no Resend webhook handler: the reconcile is run before each broadcast, which is infrequent, and a handler would add a public endpoint that needs signature verification for little gain. The role is not copied to Resend (a contact property must be defined in the dashboard first); it stays in D1.
+
+**Limits.** Free Resend: 1,000 marketing contacts, 3,000 transactional emails a month, 100 a day (each signup costs one). Past 1,000 confirmed contacts: pay for the month the broadcast goes out, or export the CSV (`npm run export:waitlist`) and send from another tool; D1 holds the whole list, so neither is a migration. Cloudflare Turnstile is a follow-up if the form is abused to mail third parties.
+
+**Accepted risks.** Link scanners can pre-open the confirm or unsubscribe link. Confirmation emails depend on Resend's domain verification of `apelles.studio`.
+
+**Where.** `website/functions/`, `website/migrations/0001_waitlist.sql`, `website/wrangler.toml`, `website/scripts/`, `/privacy/` rewritten to list exactly the stored fields and the two processors (Cloudflare, Resend), `website/BETA_SIGNUP_SETUP.md`. Dependency: `wrangler` (dev, Apache-2.0/MIT, Cloudflare's own CLI) for the Pages dev server, D1 migrations and the scripts. Tests: `website/tests/waitlist.test.ts` (real SQLite built from the real migration, mocked `fetch`).
+
+---
+
 ## D-425 — Input scaling: a clip is sized into the timeline frame by a per-clip mode (`fit` / `fill` / `native`), defaulted per timeline at placement; existing clips stay `native`
 
 **decided (2026-10-28)** · fixes B-325 · builds on D-353 (`scale` multiplies the clip's footprint), D-193 (`box_width`/`box_height`), D-342 (Motion renders at 2x), D-411 Phase 0 (per-timeline settings)

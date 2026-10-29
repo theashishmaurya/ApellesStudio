@@ -72,10 +72,7 @@
  */
 import Signature from './Signature.astro';
 import HeroDevPanel from './HeroDevPanel.astro';
-import { BETA_FORM_ENDPOINT, isPlaceholderEndpoint } from '../data/beta.ts';
-
-const endpoint = BETA_FORM_ENDPOINT;
-const placeholder = isPlaceholderEndpoint(endpoint);
+import { BETA_FORM_ENDPOINT } from '../data/beta.ts';
 ---
 
 <section class="hero">
@@ -110,9 +107,7 @@ const placeholder = isPlaceholderEndpoint(endpoint);
   <form
     class="ask"
     data-beta-form
-    data-endpoint={endpoint}
-    data-placeholder={placeholder ? 'true' : 'false'}
-    action={endpoint}
+    action={BETA_FORM_ENDPOINT}
     method="POST"
     novalidate
   >
@@ -133,11 +128,11 @@ const placeholder = isPlaceholderEndpoint(endpoint);
     <p class="err" id="hero-beta-email-err" data-err hidden></p>
     <p class="status" data-status role="status" aria-live="polite"></p>
 
-    <input type="hidden" name="_subject" value="New Apelles beta signup" />
-    <!-- Honeypot: see Beta.astro's own for why `_honey` and not `_gotcha`. -->
+    <input type="hidden" name="source" value="hero" />
+    <!-- Honeypot: see Beta.astro's own. -->
     <div class="hp" aria-hidden="true">
       <label for="hero-beta-company">Company</label>
-      <input id="hero-beta-company" name="_honey" type="text" tabindex="-1" autocomplete="off" />
+      <input id="hero-beta-company" name="company" type="text" tabindex="-1" autocomplete="off" />
     </div>
   </form>
 </section>

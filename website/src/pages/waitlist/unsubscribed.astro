@@ -1,0 +1,29 @@
+---
+/**
+ * waitlist/unsubscribed.astro — where /api/unsubscribe lands (D-426).
+ *
+ * What it is: confirmation that the address will not be written to again.
+ * What it does NOT do: offer to resubscribe in place; noindex, not in the sitemap.
+ */
+import Base from '../../layouts/Base.astro';
+import PageHead from '../../components/PageHead.astro';
+---
+
+<Base
+  title="Unsubscribed — Apelles"
+  description="You will not get any more email from the Apelles beta waitlist."
+  noindex
+>
+  <PageHead
+    eyebrow="Beta"
+    title="You are unsubscribed."
+    lede="We will not write to this address again. If that was a mistake, the signup on the home page puts you back."
+  />
+  <section class="section">
+    <div class="shell">
+      <a class="onward" href="/">
+        Back to the start <span class="arrow" aria-hidden="true">&rarr;</span>
+      </a>
+    </div>
+  </section>
+</Base>

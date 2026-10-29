@@ -359,7 +359,10 @@ describe('the sitemap', () => {
 
   it('lists every built page except the 404, each with a real lastmod', () => {
     const listed = entries().map((e) => new URL(e.loc).pathname).sort();
-    const built = pages.map((p) => p.route).filter((r) => r !== '/404/').sort();
+    const built = pages
+      .map((p) => p.route)
+      .filter((r) => r !== '/404/' && !r.startsWith('/waitlist/'))
+      .sort();
     expect(listed).toEqual(built);
     for (const e of entries()) {
       expect(e.lastmod, e.loc).toBeTruthy();
@@ -427,9 +430,17 @@ describe('the shipped HTML carries nothing it should not', () => {
     }
   });
 
-  it('ships a real beta endpoint, not the placeholder', () => {
+  it('posts the beta signup to the site’s own waitlist, not a third-party form service', () => {
     const home = pages.find((p) => p.route === '/');
-    expect(home?.html).not.toContain('YOUR_FORM_ID');
-    expect(home?.html).toContain('https://formsubmit.co/ajax/');
+    expect(home?.html).toContain('action="/api/waitlist"');
+    expect(home?.html.toLowerCase()).not.toContain('formsubmit');
+  });
+
+  it('keeps the waitlist landing pages out of search', () => {
+    for (const route of ['/waitlist/confirmed/', '/waitlist/unsubscribed/', '/waitlist/invalid/']) {
+      const page = pages.find((p) => p.route === route);
+      expect(page, `${route} was not built`).toBeTruthy();
+      expect(page?.html, route).toContain('name="robots" content="noindex"');
+    }
   });
 });

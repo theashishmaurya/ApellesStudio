@@ -1,0 +1,31 @@
+---
+/**
+ * waitlist/invalid.astro — where /api/confirm and /api/unsubscribe land when
+ * the link's token is unknown, or an old confirm link meets an address that
+ * has since unsubscribed (D-426).
+ *
+ * What it is: a plain "that link does not work" with the way forward.
+ * What it does NOT do: say which of those it was; noindex, not in the sitemap.
+ */
+import Base from '../../layouts/Base.astro';
+import PageHead from '../../components/PageHead.astro';
+---
+
+<Base
+  title="Link not valid — Apelles"
+  description="That waitlist link is not valid any more."
+  noindex
+>
+  <PageHead
+    eyebrow="Beta"
+    title="That link does not work."
+    lede="It may be old or mistyped. Sign up again from the home page and we will send a fresh one."
+  />
+  <section class="section">
+    <div class="shell">
+      <a class="onward" href="/">
+        Back to the start <span class="arrow" aria-hidden="true">&rarr;</span>
+      </a>
+    </div>
+  </section>
+</Base>

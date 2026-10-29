@@ -1,0 +1,23 @@
+# Cloudflare Pages configuration for the Apelles site (D-426).
+#
+# `pages_build_output_dir` makes this the Pages project's source of truth: the
+# static site is `dist/`, and `functions/` (the waitlist API) is picked up by
+# convention from this directory. Secrets are NOT here — RESEND_API_KEY is a
+# Pages secret (BETA_SIGNUP_SETUP.md).
+name = "apelles-studio"
+compatibility_date = "2026-10-01"
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "apelles-waitlist"
+database_id = "a954787b-3464-432b-bcd7-7ec097845f69"
+migrations_dir = "migrations"
+
+[vars]
+# The From header of every message. The domain must be verified in Resend.
+MAIL_FROM = "Apelles <hello@apelles.studio>"
+# Minimum gap before the confirmation email is sent again to the same pending address.
+RESEND_THROTTLE_MINUTES = "10"
+# The Resend segment ("Apelles Beta") that confirmed addresses are added to, for broadcasts.
+RESEND_SEGMENT_ID = "314eeeb3-e32b-46b6-86dd-e00d7f93fa4e"
