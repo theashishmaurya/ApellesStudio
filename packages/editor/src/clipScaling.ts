@@ -72,3 +72,25 @@ export function fittedFootprint(
   const bindWidth = mode === 'fit' ? widthIsTighter : !widthIsTighter;
   return bindWidth ? { width: fw, height: (sh * fw) / sw } : { width: (sw * fh) / sh, height: fh };
 }
+
+/** Where a `fit`/`fill` clip's footprint starts when `position` is `0, 0`, as a
+ *  fraction of `frame` on each axis (B-328). Mirrors
+ *  `apelles_timeline::fitted_origin`.
+ *
+ *  `position` is the box's top-left corner (D-338), so a footprint that is not
+ *  the frame's own size would sit flush top-left. Every NLE centres the sized
+ *  picture instead, so the origin is half of what the footprint leaves over:
+ *  `(1 - footprint / frame) / 2` — positive for a letterbox/pillarbox, negative
+ *  for a `fill` overflow, exactly `0` on a binding axis. `native` has none (the
+ *  pre-D-425 top-left behaviour). `footprint` is the scale-1 footprint
+ *  ({@link fittedFootprint}'s answer), so the origin does not move with `scale`.
+ *  Callers add it to `position` for an axis with no `box_width`/`box_height`
+ *  override. */
+export function fittedOrigin(
+  mode: ClipScaling,
+  footprint: { width: number; height: number },
+  frame: { width: number; height: number },
+): { x: number; y: number } {
+  if (mode === 'native' || !(frame.width > 0 && frame.height > 0)) return { x: 0, y: 0 };
+  return { x: (1 - footprint.width / frame.width) / 2, y: (1 - footprint.height / frame.height) / 2 };
+}

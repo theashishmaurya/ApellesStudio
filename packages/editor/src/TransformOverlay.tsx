@@ -162,7 +162,7 @@ import { clipCoversFrame, findClip, timelineFps, type ClipTransformParam } from 
 import { useEditorTimelineStore } from './timelineStore';
 import { useClipGeometry } from './useClipGeometry';
 import { TransformBox, type TransformDraft, type TransformGestureKind } from './TransformBox';
-import { clipBoxAnchor, resolvedBoxSize } from './transformGeometry';
+import { clipBoxAnchor, clipBoxOrigin, resolvedBoxSize } from './transformGeometry';
 
 export function TransformOverlay({ container }: { container: HTMLElement | null }) {
   const timeline = useEditorTimelineStore((s) => s.timeline);
@@ -452,6 +452,7 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
         natural={natural}
         restSize={restSize}
         anchor={clipBoxAnchor(clip)}
+        origin={clipBoxOrigin(clip, natural, { width: effective.box_width, height: effective.box_height })}
         moveEnabled={!trackLocked}
         scaleEnabled={!trackLocked && !isText}
         strokeClassName="border-accent"

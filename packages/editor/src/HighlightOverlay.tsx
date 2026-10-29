@@ -28,6 +28,7 @@ import {
   boxToScreenRect,
   clipBoxAnchor,
   clipBoxFraction,
+  clipBoxOrigin,
   resolvedBoxSize,
   type FractionBox,
 } from './transformGeometry';
@@ -92,7 +93,7 @@ export function HighlightOverlay({ container }: { container: HTMLElement | null 
   };
   const size = resolvedBoxSize(natural, effective.scale, { width: effective.box_width, height: effective.box_height }, crop);
   const placement: FractionBox = {
-    ...clipBoxFraction(natural, { x: effective.position_x, y: effective.position_y }, effective.scale, clipBoxAnchor(clip)),
+    ...clipBoxFraction(natural, { x: effective.position_x, y: effective.position_y }, effective.scale, clipBoxAnchor(clip), clipBoxOrigin(clip, natural, { width: effective.box_width, height: effective.box_height })),
     ...size,
   };
   const highlights = clip.highlights ?? [];

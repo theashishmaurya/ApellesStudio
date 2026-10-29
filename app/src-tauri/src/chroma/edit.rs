@@ -2361,6 +2361,33 @@ impl ClipTransform {
         self
     }
 
+    /// B-328 — add the centring origin of a `fit`/`fill` clip to `position`.
+    ///
+    /// `position` is the box's top-left corner (D-338) and defaults to 0, 0, so
+    /// a sized footprint that is not the frame's own size would sit flush
+    /// top-left. [`apelles_timeline::fitted_origin`] is the one definition of
+    /// where it starts instead (centred); this applies it. `natural` is the
+    /// scale-1 footprint and `canvas` the canvas it is measured against, in the
+    /// same pixels, so the origin is a pure ratio and survives the preview's
+    /// resolution cap. An explicit `box_width`/`box_height` is a canvas
+    /// fraction the person set rather than a footprint, so a clip that has
+    /// either keeps its plain top-left `position` (no origin), and a `native`
+    /// clip never has one — pre-D-425 projects render byte-identically.
+    pub(super) fn with_fit_origin(
+        mut self,
+        mode: apelles_timeline::ScalingMode,
+        natural: (f64, f64),
+        canvas: (f64, f64),
+    ) -> Self {
+        if self.box_width.is_some() || self.box_height.is_some() {
+            return self;
+        }
+        let (ox, oy) = apelles_timeline::fitted_origin(mode, natural, canvas);
+        self.position_x += ox;
+        self.position_y += oy;
+        self
+    }
+
     /// How much of each axis the crop insets KEEP, as a fraction — the same
     /// `1 - near - far` per axis that [`crop_pixel_rect`] turns into pixels,
     /// and clamped the same way so a nonsense inset can never make this
@@ -2812,36 +2839,43 @@ fn composite_video_frame(
         // exactly this point in the per-clip chain (after `lut3d`, before
         // `crop`). A clip with none costs one empty-slice check.
         highlighted_picture(&clip.id, &mut rgba, &clip.highlights, *source_frame);
+        // D-425 / B-325 — the layer's footprint at `scale == 1`: its **source**
+        // size (not its decoded size — the decoded size follows the preview
+        // quality, the source size does not) sized into the frame by the clip's
+        // input scaling. `fit` maps a source of the frame's aspect to exactly
+        // the frame, `native` (a clip with no `scaling`, i.e. every pre-D-425
+        // clip) leaves it at one source pixel per frame pixel. The frame is the
+        // canvas itself, so the binding axis lands on its edge exactly.
+        let scaling = clip
+            .scaling
+            .unwrap_or(apelles_timeline::ScalingMode::LEGACY);
+        let canvas_px = (canvas_w as f64, canvas_h as f64);
+        let natural = apelles_timeline::fitted_footprint(
+            scaling,
+            (
+                source_size.0 as f64 * render_scale,
+                source_size.1 as f64 * render_scale,
+            ),
+            canvas_px,
+        );
         decoded.push(Step::Paint {
             img: rgba,
             // D-344 — `corner_radius` is the one geometry field authored in
             // OUTPUT pixels rather than as a ratio, so it is the one that has
             // to ride `render_scale` explicitly; see
             // `ClipTransform::scaled_to_render`. Exactly the same `render_scale`
-            // `natural` below is built from, so a rounded box and its rounding
-            // can never disagree about which canvas they are in.
+            // `natural` is built from, so a rounded box and its rounding can
+            // never disagree about which canvas they are in.
+            //
+            // B-328 — and a `fit`/`fill` footprint that is not the frame's own
+            // size starts centred, not flush top-left: `with_fit_origin`.
             transform: with_transition_alpha(
-                resolve_clip_transform(clip, *source_frame).scaled_to_render(render_scale),
+                resolve_clip_transform(clip, *source_frame)
+                    .scaled_to_render(render_scale)
+                    .with_fit_origin(scaling, natural, canvas_px),
                 layer.alpha,
             ),
-            // The layer's **source** size, not its decoded size — that is the
-            // whole point: the decoded size follows the preview quality, the
-            // source size does not.
-            //
-            // D-425 / B-325 — then sized into the frame by the clip's input
-            // scaling: `fit` maps a source of the frame's aspect to exactly the
-            // frame, `native` (a clip with no `scaling`, i.e. every pre-D-425
-            // clip) leaves it at one source pixel per frame pixel. The frame is
-            // the canvas itself, so the binding axis lands on its edge exactly.
-            natural: apelles_timeline::fitted_footprint(
-                clip.scaling
-                    .unwrap_or(apelles_timeline::ScalingMode::LEGACY),
-                (
-                    source_size.0 as f64 * render_scale,
-                    source_size.1 as f64 * render_scale,
-                ),
-                (canvas_w as f64, canvas_h as f64),
-            ),
+            natural,
         });
     }
 
@@ -4025,18 +4059,67 @@ mod composite_tests {
         assert_eq!(natural, size);
     }
 
-    /// D-425 — `fit` letterboxes a wider source: the unpainted rows stay as the
-    /// canvas was, the painted rows are the layer's, at the frame's full width.
+    /// D-425 / B-328 — `fit` letterboxes a wider source and CENTRES it: equal
+    /// unpainted bands above and below, the painted rows in the middle.
     #[test]
-    fn fit_letterboxes_a_wide_source_inside_the_frame() {
+    fn fit_letterboxes_a_wide_source_centred_in_the_frame() {
         use apelles_timeline::{ScalingMode, fitted_footprint};
         let layer = flat(40, 20, [255, 0, 0, 255]); // 2:1 into a 1:1 frame
-        let natural = fitted_footprint(ScalingMode::Fit, (40.0, 20.0), (20.0, 20.0));
+        let frame = (20.0, 20.0);
+        let natural = fitted_footprint(ScalingMode::Fit, (40.0, 20.0), frame);
         assert_eq!(natural, (20.0, 10.0));
+        let t = identity_transform().with_fit_origin(ScalingMode::Fit, natural, frame);
         let mut canvas = flat(20, 20, [0, 0, 255, 255]);
-        composite_layer_onto(&mut canvas, &layer, &identity_transform(), natural);
-        assert_eq!(*canvas.get_pixel(19, 9), Rgba([255, 0, 0, 255]));
-        assert_eq!(*canvas.get_pixel(0, 10), Rgba([0, 0, 255, 255]));
+        composite_layer_onto(&mut canvas, &layer, &t, natural);
+        let (red, blue) = (Rgba([255, 0, 0, 255]), Rgba([0, 0, 255, 255]));
+        assert_eq!(*canvas.get_pixel(10, 4), blue, "band above");
+        assert_eq!(*canvas.get_pixel(10, 5), red, "picture starts at row 5");
+        assert_eq!(*canvas.get_pixel(10, 14), red, "picture ends at row 14");
+        assert_eq!(*canvas.get_pixel(10, 15), blue, "band below");
+    }
+
+    /// B-328 — `fill` crops the overflow evenly: a 1:2 source filled into a 1:1
+    /// frame is 20x40, shown as its middle 20 rows. A source with a
+    /// distinguishable middle proves it is the CENTRE that survives.
+    #[test]
+    fn fill_crops_a_tall_source_around_its_centre() {
+        use apelles_timeline::{ScalingMode, fitted_footprint};
+        let mut layer = flat(10, 20, [255, 0, 0, 255]);
+        for y in 5..15 {
+            for x in 0..10 {
+                layer.put_pixel(x, y, Rgba([0, 255, 0, 255]));
+            }
+        }
+        let frame = (20.0, 20.0);
+        let natural = fitted_footprint(ScalingMode::Fill, (10.0, 20.0), frame);
+        assert_eq!(natural, (20.0, 40.0));
+        let t = identity_transform().with_fit_origin(ScalingMode::Fill, natural, frame);
+        let mut canvas = flat(20, 20, [0, 0, 255, 255]);
+        composite_layer_onto(&mut canvas, &layer, &t, natural);
+        // The resampler blends the red/green seam into the outermost rows, so the
+        // interior is exact and the two edge rows are mostly green and equal:
+        // the crop is symmetric about the source's centre.
+        let green = Rgba([0, 255, 0, 255]);
+        for y in 1..19 {
+            assert!((0..20).all(|x| *canvas.get_pixel(x, y) == green), "row {y}");
+        }
+        let (top, bottom) = (canvas.get_pixel(10, 0), canvas.get_pixel(10, 19));
+        assert!(top[1] > 150 && top[0] < 100, "top edge row {top:?}");
+        assert_eq!(top, bottom, "equal crop top and bottom");
+    }
+
+    /// B-328 — an explicit box override or `native` keeps the plain top-left
+    /// `position`: no origin is added.
+    #[test]
+    fn an_override_or_native_gets_no_fit_origin() {
+        use apelles_timeline::ScalingMode;
+        let frame = (20.0, 20.0);
+        let t = identity_transform().with_fit_origin(ScalingMode::Native, (20.0, 10.0), frame);
+        assert_eq!((t.position_x, t.position_y), (0.0, 0.0));
+        let mut boxed = identity_transform();
+        boxed.box_width = Some(1.0);
+        let t = boxed.with_fit_origin(ScalingMode::Fit, (20.0, 10.0), frame);
+        assert_eq!((t.position_x, t.position_y), (0.0, 0.0));
     }
 
     #[test]

@@ -69,6 +69,7 @@ import { clipAt, clipCoversFrame, timelineFps, type Clip, type Timeline } from '
 import {
   clipBoxAnchor,
   clipBoxFraction,
+  clipBoxOrigin,
   fractionBoxContains,
   resolvedBoxSize,
   type FractionBox,
@@ -150,6 +151,8 @@ export function layerBoxFraction(
     // property D-204/B-085 extracted `resolvedBoxSize` for, now covering the
     // anchor too — a title is composition-centred, everything else top-left).
     clipBoxAnchor(clip),
+    // B-328 — a `fit`/`fill` clip's footprint starts centred, not top-left.
+    clipBoxOrigin(clip, natural, { width: t.box_width, height: t.box_height }),
   );
 }
 

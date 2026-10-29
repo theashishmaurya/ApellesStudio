@@ -144,15 +144,58 @@ describe.skipIf(!FFMPEG_AVAILABLE)('input scaling — real ffmpeg export (D-425,
     }
   }, 120000);
 
-  it('fit: a 16:9 source letterboxes inside the portrait frame', () => {
+  it('fit: a 16:9 source letterboxes CENTRED inside the portrait frame (B-328)', () => {
     const out = exportClip(clip('wide', wide, { scaling: 'fit' }), 'wide-out.mp4');
-    // 1920x1080 fitted to 1080 wide is 607.5 tall, placed at `position_y` 0
-    // (the box's top-left is the frame's), so the bars are all below: the
-    // picture spans rows 0..~607 and the rest is the black base.
-    expect(isMagenta(pixelAt(out, 540, 300))).toBe(true);
-    expect(isMagenta(pixelAt(out, 1076, 10))).toBe(true);
-    expect(isBlack(pixelAt(out, 540, 900))).toBe(true);
+    // 1920x1080 fitted to 1080 wide is 607.5 tall, at position 0,0 centred: equal
+    // bands above and below, the picture spanning rows ~656..1264.
+    expect(isBlack(pixelAt(out, 540, 300))).toBe(true);
+    expect(isBlack(pixelAt(out, 540, 640))).toBe(true);
+    expect(isMagenta(pixelAt(out, 540, 960))).toBe(true);
+    expect(isMagenta(pixelAt(out, 1076, 670))).toBe(true);
+    expect(isMagenta(pixelAt(out, 4, 1250))).toBe(true);
+    expect(isBlack(pixelAt(out, 540, 1280))).toBe(true);
     expect(isBlack(pixelAt(out, 540, 1800))).toBe(true);
+  }, 120000);
+
+  it('fit: a pillarboxed source is centred horizontally (B-328)', () => {
+    // 1480x1080 into the 1080x1920 frame is width-bound; use a landscape frame
+    // via a tall source instead: 540x1920 into 1080x1920 -> 540 wide, 270 px bars.
+    const tall = join(dir, 'tall.mp4');
+    execFileSync(
+      'ffmpeg',
+      ['-y', '-f', 'lavfi', '-i', `color=c=magenta:size=540x1920:duration=1:rate=${FPS}`, '-pix_fmt', 'yuv420p', '-preset', 'ultrafast', tall],
+      { stdio: 'pipe' },
+    );
+    useMediaPoolStore.setState({ items: [...useMediaPoolStore.getState().items, media('m-tall', tall, 540, 1920)] });
+    const out = exportClip(clip('tall', tall, { scaling: 'fit' }), 'tall-out.mp4');
+    expect(isBlack(pixelAt(out, 100, 960))).toBe(true);
+    expect(isMagenta(pixelAt(out, 300, 960))).toBe(true);
+    expect(isMagenta(pixelAt(out, 770, 960))).toBe(true);
+    expect(isBlack(pixelAt(out, 970, 960))).toBe(true);
+  }, 120000);
+
+  it('fill: a 16:9 source covers the portrait frame, cropped evenly left and right (B-328)', () => {
+    // Left half of the source is magenta, right half is blue: filled and centred,
+    // the frame shows the middle 607.5 px of the 1920, so the seam sits mid-frame.
+    const split = join(dir, 'split.mp4');
+    execFileSync(
+      'ffmpeg',
+      [
+        '-y',
+        '-f', 'lavfi', '-i', `color=c=magenta:size=960x1080:duration=1:rate=${FPS}`,
+        '-f', 'lavfi', '-i', `color=c=blue:size=960x1080:duration=1:rate=${FPS}`,
+        '-filter_complex', 'hstack', '-pix_fmt', 'yuv420p', '-preset', 'ultrafast', split,
+      ],
+      { stdio: 'pipe' },
+    );
+    useMediaPoolStore.setState({ items: [...useMediaPoolStore.getState().items, media('m-split', split, 1920, 1080)] });
+    const out = exportClip(clip('split', split, { scaling: 'fill' }), 'split-out.mp4');
+    const isBlue = (p: [number, number, number]) => p[2] > 150 && p[0] < 90 && p[1] < 90;
+    expect(isMagenta(pixelAt(out, 100, 960))).toBe(true);
+    expect(isBlue(pixelAt(out, 980, 960))).toBe(true);
+    // Covers top to bottom: no black anywhere.
+    expect(isMagenta(pixelAt(out, 100, 4))).toBe(true);
+    expect(isMagenta(pixelAt(out, 100, 1912))).toBe(true);
   }, 120000);
 
   it('native (no scaling — a clip saved before D-425) keeps the 2x footprint: the migration rule', () => {
