@@ -187,3 +187,55 @@ describe('the beat lane thins with zoom', () => {
     expect(far.labels).toBe(false);
   });
 });
+
+// B-330 — stills have a synthesized one-hour `sourceLen` (D-292) and sit at
+// `source_start` 0, so a roll that pulls a cut EARLIER used to be refused for
+// "no media handle" on the incoming still.
+describe('snapping a cut between two stills (B-330)', () => {
+  const STILL_LEN = 24 * 3600;
+  const still = (id: string, over: Partial<Clip>): Clip =>
+    clip({ id, name: id, source_path: `/img/${id}.png`, source_start: 0, source_len: STILL_LEN, ...over });
+  const stills = (): Timeline => ({
+    id: 't',
+    name: 't',
+    rate: { num: 24, den: 1 },
+    tracks: [
+      {
+        kind: 'video',
+        clips: [
+          still('s1', { duration: 50, start_frame: 0 }),
+          still('s2', { duration: 46, start_frame: 50 }),
+          still('s3', { duration: 40, start_frame: 96 }),
+        ],
+      },
+    ],
+  });
+
+  it('rolls the cut earlier (the incoming still extends its head) and later', () => {
+    const early = planCutSnaps(stills(), 0, [48], 6, [0]);
+    expect(early.cuts[0]).toEqual({ clip: 0, fromFrame: 50, toFrame: 48 });
+    const later = planCutSnaps(stills(), 0, [53], 6, [0]);
+    expect(later.cuts[0]).toEqual({ clip: 0, fromFrame: 50, toFrame: 53 });
+    const after = applyOp(stills(), { kind: 'rolls', track: 0, rolls: early.rolls });
+    const [a, b, c] = after.tracks[0].clips;
+    expect(endFrame(a, 24)).toBe(48);
+    expect(b.start_frame).toBe(48);
+    expect(b.source_start).toBe(0); // the picture is the same at every frame
+    expect(b.duration).toBe(48);
+    expect(endFrame(b, 24)).toBe(96);
+    expect(c.start_frame).toBe(96);
+  });
+
+  it('still refuses a roll that would shorten the outgoing still to nothing', () => {
+    const plan = planCutSnaps(stills(), 0, [0], 60, [0]);
+    expect(plan.rolls).toEqual([]);
+  });
+
+  it('rolls a still against a video clip that has handle, and refuses one that has none', () => {
+    const t = stills();
+    t.tracks[0].clips[1] = clip({ id: 'v', source_start: 20, duration: 46, start_frame: 50 });
+    expect(planCutSnaps(t, 0, [48], 6, [0]).cuts[0].toFrame).toBe(48);
+    t.tracks[0].clips[1].source_start = 0;
+    expect(planCutSnaps(t, 0, [48], 6, [0]).cuts[0].reason).toMatch(/no media handle/);
+  });
+});
