@@ -7,6 +7,9 @@
 //! - **Silence**, from a real acoustic VAD ([`vad`] + [`silence`]). Speech
 //!   probabilities from silero-vad's ONNX export, run on-device, turned into
 //!   spans by a hysteresis state machine.
+//! - **Loudness**, from the waveform itself ([`energy`], B-327/D-428): a dBFS
+//!   envelope the silence tool uses as the authority when a transcribed word's
+//!   timestamp disagrees with the audio, and as a `basis: "energy"` detector.
 //! - **Retakes**, from the transcript ([`retake`]). Near-duplicate *spans* of
 //!   adjacent utterances — not single utterances, because Whisper's segment
 //!   boundaries do not line up with a speaker's restarts (D-327) — grouped by
@@ -53,6 +56,7 @@
 //! makes the tests real, and nothing here needs a decoder.
 
 pub mod dark;
+pub mod energy;
 pub mod phrase;
 pub mod proposal;
 pub mod retake;

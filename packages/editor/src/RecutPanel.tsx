@@ -89,7 +89,6 @@ import {
   DEFAULT_MIN_SILENCE_MS,
   clipSourceRangeSecs,
   groupTakes,
-  spanToFrames,
   type DetectedSpan,
 } from './recut';
 import { sweepTargets } from './recutSweep';
@@ -119,7 +118,16 @@ import { clipTranscriptView, runTranscriptView } from './darkRecovery';
 // same Cut button.
 import { buildWordViewInput, viewBasisKey } from './retakeWordView';
 // B-289 / D-420 — silence rows stop short of every transcribed word.
-import { transcriptWordSpans, wordAwareSilences } from './silenceWords';
+import { transcriptWordSpans } from './silenceWords';
+// B-327 / D-428 — the same resolver `editor_detect_silences` uses, and its knobs.
+import {
+  DEFAULT_SILENCE_OPTIONS,
+  SILENCE_BASES,
+  framedSilences,
+  resolveSilences,
+  type SilenceBasis,
+  type SilenceOptions,
+} from './silenceAudio';
 // D-382 — the detector's own groups through the same gate.
 import { detectedForGate, gateDetectorGroups, type DetectorGateResult } from './detectorGate';
 import type { ProposalStatus, ProposalWord, RetakeProposalSet } from './retakeProposals';
@@ -277,8 +285,51 @@ interface PendingJob {
   track: number;
   fps: number;
   minSilenceMs: number;
+  /** B-327 / D-428 — the silence knobs the run was started with. */
+  silenceOptions: SilenceOptions;
   clips: PendingClip[];
 }
+
+/** B-327 / D-428 — the labels the "Detect by" select shows for each basis. */
+const SILENCE_BASIS_LABEL: Record<SilenceBasis, string> = {
+  'vad+words': 'Voice + words',
+  vad: 'Voice only',
+  energy: 'Loudness',
+  'energy+words': 'Loudness + words',
+};
+
+/** The numeric Advanced silence knobs (ms), in display order. */
+const SILENCE_ADVANCED_NUMBERS: ReadonlyArray<{
+  key: 'mergeGapMs' | 'padAfterMs' | 'padBeforeMs' | 'keepMs';
+  label: string;
+  placeholder: string;
+  hint: string;
+}> = [
+  {
+    key: 'mergeGapMs',
+    label: 'Join across clicks (ms)',
+    placeholder: '120',
+    hint: 'Silences split by a click or blip no longer than this become one.',
+  },
+  {
+    key: 'padAfterMs',
+    label: 'Keep after speech (ms)',
+    placeholder: '0',
+    hint: 'Cushion left at the start of each silence, to protect soft word tails.',
+  },
+  {
+    key: 'padBeforeMs',
+    label: 'Keep before speech (ms)',
+    placeholder: '0',
+    hint: 'Cushion left at the end of each silence, to protect sharp onsets.',
+  },
+  {
+    key: 'keepMs',
+    label: 'Pause to leave (ms)',
+    placeholder: 'off',
+    hint: 'Leave this much pause in each silence (overrides the two cushions; they set how it splits).',
+  },
+];
 
 export function RecutPanel() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
@@ -291,6 +342,9 @@ export function RecutPanel() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [ticked, setTicked] = useState<Record<string, boolean>>({});
   const [minSilenceMs, setMinSilenceMs] = useState(DEFAULT_MIN_SILENCE_MS);
+  /** B-327 / D-428 — the Advanced silence knobs; the same ones
+   *  `editor_detect_silences` takes. Empty-string number fields mean "unset". */
+  const [silenceOptions, setSilenceOptions] = useState<SilenceOptions>(DEFAULT_SILENCE_OPTIONS);
   /** D-342 — what the next run covers. Defaults to the selected clip: a scan
    *  is cheap but not free, and "the thing I am looking at" is what a click on
    *  a selected clip means. `track` is one click away and is what a cleanup
@@ -435,6 +489,7 @@ export function RecutPanel() {
         track,
         fps,
         minSilenceMs,
+        silenceOptions,
         clips: chosen.map((t) => {
           const range = clipSourceRangeSecs(t.c, fps);
           return {
@@ -461,6 +516,7 @@ export function RecutPanel() {
       track,
       fps,
       minSilenceMs,
+      silenceOptions,
       clips: runs.map((run) => ({
         index: run.targets[0].clip,
         clip: run.targets[0].c,
@@ -648,13 +704,17 @@ export function RecutPanel() {
             transcripts[c.source],
             recoveriesIn({ recoveries, appliedRereads }, c.source),
           );
-          if (words) wordAwareRuns += 1;
-          const ranges = words
-            ? wordAwareSilences(found.silences, words, pending.minSilenceMs / 1000).silences
-            : found.silences;
-          ranges.forEach((s, i) => {
-            const span = spanToFrames(c.clip, s.start_secs, s.end_secs, fps);
-            if (span.endFrame <= span.startFrame) return;
+          const resolved = resolveSilences(found, words, pending.minSilenceMs, pending.silenceOptions);
+          if ('error' in resolved) {
+            failures.push(resolved.error);
+            continue;
+          }
+          if (resolved.wordAware) wordAwareRuns += 1;
+          // A row is the SUGGESTED CUT (the silence minus the cushions), so the
+          // padding the person asked for is what gets deleted.
+          framedSilences(c.clip, fps, resolved).forEach((fs, i) => {
+            const span = fs.cut;
+            if (!span) return;
             rows.push({
               id: `sil-${c.index}-${i}`,
               kind: 'silence',
@@ -760,7 +820,7 @@ export function RecutPanel() {
       // ending; say so rather than let it read as safe to cut.
       const analysed = pending.clips.filter((c) => !c.failure && !errors[c.key as string]).length;
       const vadOnlyNote =
-        pending.kind === 'silence' && wordAwareRuns < analysed
+        pending.kind === 'silence' && pending.silenceOptions.basis.endsWith('+words') && wordAwareRuns < analysed
           ? ` ${analysed - wordAwareRuns === analysed ? 'These ranges are' : `${analysed - wordAwareRuns} clip(s) are`} from the voice detector alone — transcribe the source (Index › Transcript) so silences stop short of every word.`
           : '';
       const darkNote = recoveredNote + unreadNote + vadOnlyNote;
@@ -938,6 +998,92 @@ export function RecutPanel() {
                 className="w-20 rounded border border-border-color bg-bg-primary px-1.5 py-1 text-right text-text-primary"
               />
             </label>
+            <details className="text-[11px] text-text-secondary" data-chroma-recut-silence-advanced>
+              <summary className="cursor-pointer select-none">Advanced</summary>
+              <div className="mt-1 flex flex-col gap-1.5">
+                <label className="flex items-center justify-between gap-2">
+                  <span title="What decides a stretch is silent. If you can see a flat waveform the voice model missed, try Energy.">
+                    Detect by
+                  </span>
+                  <select
+                    value={silenceOptions.basis}
+                    data-chroma-recut-silence-basis
+                    onChange={(e) =>
+                      setSilenceOptions({ ...silenceOptions, basis: e.target.value as SilenceBasis })
+                    }
+                    className="rounded border border-border-color bg-bg-primary px-1.5 py-1 text-text-primary"
+                  >
+                    {SILENCE_BASES.map((b) => (
+                      <option key={b} value={b}>
+                        {SILENCE_BASIS_LABEL[b]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex items-center justify-between gap-2">
+                  <span title="Level below which the waveform counts as quiet. Auto = the measured room tone + 12 dB.">
+                    Threshold
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <label className="flex items-center gap-1">
+                      <input
+                        type="checkbox"
+                        checked={silenceOptions.autoThreshold}
+                        data-chroma-recut-silence-auto
+                        onChange={(e) =>
+                          setSilenceOptions({
+                            ...silenceOptions,
+                            autoThreshold: e.target.checked,
+                            thresholdDb: e.target.checked ? undefined : silenceOptions.thresholdDb,
+                          })
+                        }
+                      />
+                      <span>Auto</span>
+                    </label>
+                    <input
+                      type="number"
+                      max={0}
+                      step={1}
+                      placeholder="-30"
+                      disabled={silenceOptions.autoThreshold}
+                      value={silenceOptions.thresholdDb ?? ''}
+                      data-chroma-recut-silence-threshold
+                      onChange={(e) =>
+                        setSilenceOptions({
+                          ...silenceOptions,
+                          thresholdDb: e.target.value === '' ? undefined : Math.min(0, Number(e.target.value)),
+                        })
+                      }
+                      className="w-16 rounded border border-border-color bg-bg-primary px-1.5 py-1 text-right text-text-primary disabled:opacity-40"
+                    />
+                    <span>dB</span>
+                  </span>
+                </label>
+                {SILENCE_ADVANCED_NUMBERS.map((f) => (
+                  <label key={f.key} className="flex items-center justify-between gap-2">
+                    <span title={f.hint}>{f.label}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={10}
+                      placeholder={f.placeholder}
+                      value={silenceOptions[f.key] ?? ''}
+                      data-chroma-recut-silence-option={f.key}
+                      onChange={(e) =>
+                        setSilenceOptions({
+                          ...silenceOptions,
+                          [f.key]:
+                            e.target.value === '' && f.key === 'keepMs'
+                              ? undefined
+                              : Math.max(0, Number(e.target.value) || 0),
+                        })
+                      }
+                      className="w-20 rounded border border-border-color bg-bg-primary px-1.5 py-1 text-right text-text-primary"
+                    />
+                  </label>
+                ))}
+              </div>
+            </details>
             <div className="flex gap-1.5">
               <Button
                 variant="ghost"

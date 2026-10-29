@@ -219,6 +219,32 @@ describe('RecutPanel (D-318)', () => {
     expect((q('[data-chroma-recut-cut]') as HTMLButtonElement).disabled).toBe(true);
   });
 
+  /** B-327 / D-428 — the Advanced knobs are the same ones the MCP op takes: a
+   *  cushion shrinks the row to the SUGGESTED CUT, so what is ticked is what is cut. */
+  it('3b. Advanced padding turns each row into the suggested cut (silence minus the cushions)', async () => {
+    await mountPanel(true);
+    const set = (selector: string, value: string) => {
+      const el = q(selector) as HTMLInputElement;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      actSync(() => {
+        setter.call(el, value);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    };
+    expect(q('[data-chroma-recut-silence-advanced]')).not.toBeNull();
+    set('[data-chroma-recut-silence-option="padAfterMs"]', '500');
+    set('[data-chroma-recut-silence-option="padBeforeMs"]', '500');
+    await waitFrames(2);
+    await click(q('[data-chroma-recut-find-silences]'));
+    actSync(() => boxes()[0].click());
+    await waitFrames(2);
+    await click(q('[data-chroma-recut-cut]'));
+    // 4.0-6.0 s minus 0.5 s each side = 4.5-5.5 s = frames 108-132: 24 frames out.
+    const clips = useEditorTimelineStore.getState().timeline!.tracks[0].clips;
+    expect(clips[0].duration).toBe(108);
+    expect(clips[1].source_start).toBe(132);
+  });
+
   it('4. cuts only the ticked range, as ONE op, and converts seconds to the right frames', async () => {
     await mountPanel(true);
     await click(q('[data-chroma-recut-find-silences]'));

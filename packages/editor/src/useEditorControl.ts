@@ -291,7 +291,8 @@ import { warmCompositionSize } from './compositionSize';
 // renders, so `editor_get_timeline_transcript` and the GUI cannot disagree.
 import { stitchTimelineTranscript, transcriptSources } from './timelineTranscript';
 // B-289 / D-420 — a VAD silence never overlaps a transcribed word.
-import { SILENCE_WORD_GUARD_SECS, transcriptWordSpans, wordAwareSilences } from './silenceWords';
+import { transcriptWordSpans } from './silenceWords';
+import { framedSilences, parseSilenceOptions, resolveSilences, type SilenceOptions } from './silenceAudio';
 // D-256 — the baked Colorist grade for each clip, behind `editor_get_grade_status`.
 import { warmGradeLuts } from './gradeLuts';
 import {
@@ -1071,6 +1072,7 @@ function resolveSilenceArgs(
       args: SilenceDetectionArgs;
       key: string;
       minSilenceMs: number;
+      options: SilenceOptions;
     } {
   const tl = useEditorTimelineStore.getState().timeline;
   if (!tl) return noTimeline();
@@ -1080,6 +1082,8 @@ function resolveSilenceArgs(
   if (!c.source_path) {
     return { error: 'that clip is generated (a title or adjustment) and has no audio to analyse' };
   }
+  const parsed = parseSilenceOptions(a);
+  if ('error' in parsed) return parsed;
 
   const requested = a?.minSilenceMs === undefined ? undefined : Number(a.minSilenceMs);
   if (requested !== undefined && (!Number.isFinite(requested) || requested <= 0)) {
@@ -1101,6 +1105,7 @@ function resolveSilenceArgs(
     args,
     key: silenceKey(args),
     minSilenceMs: requested ?? DEFAULT_MIN_SILENCE_MS,
+    options: parsed.options,
   };
 }
 
@@ -1113,6 +1118,7 @@ function silenceEnvelope(
   c: Clip,
   fps: number,
   minSilenceMs: number,
+  options: SilenceOptions,
 ) {
   if (status.phase === 'error') return { error: status.error ?? 'silence detection failed' };
   const head = {
@@ -1133,7 +1139,9 @@ function silenceEnvelope(
           : 'nothing has been started for this clip — call editor_detect_silences',
     };
   }
-  const { spans: silences, basis } = silenceSpansDto(status, c, fps, minSilenceMs);
+  const dto = silenceSpansDto(status, c, fps, minSilenceMs, options);
+  if ('error' in dto) return dto;
+  const { spans: silences, basis } = dto;
   return {
     ...head,
     state: 'done',
@@ -1143,7 +1151,14 @@ function silenceEnvelope(
       silences.length === 0
         ? 'no silence found in this clip at that threshold'
         : 'nothing was cut — pass these ranges to editor_ripple_delete_ranges to apply them',
-    ...(basis.wordAware
+    ...(silences.length === 0 && basis.basis.startsWith('vad')
+      ? {
+          hint:
+            'if you can see a flat waveform the voice model missed, ask again with basis="energy" ' +
+            '(and autoThreshold=true if the room is noisy)',
+        }
+      : {}),
+    ...(basis.wordAware || !basis.requestedBasis.endsWith('+words')
       ? {}
       : {
           wordAwareNote:
@@ -1497,26 +1512,24 @@ function groupHomeClip(g: { takes: Array<{ clips: number[] }> }): number | null 
  *  every range is the VAD's minus each word and its guard
  *  (`wordAwareSilences`), so cutting the answer can never clip a word. The
  *  `basis` says which it was; a VAD-only answer is never passed off as safe. */
-function silenceSpansDto(status: AnalysisStatus<SilenceDetection>, c: Clip, fps: number, minSilenceMs: number) {
-  const raw = status.result?.silences ?? [];
+function silenceSpansDto(
+  status: AnalysisStatus<SilenceDetection>,
+  c: Clip,
+  fps: number,
+  minSilenceMs: number,
+  options: SilenceOptions,
+) {
+  const detection = status.result;
+  if (!detection) return { error: 'silence detection returned no result' };
   const store = useMediaUnderstandingStore.getState();
   const path = c.source_path ?? '';
   const words = transcriptWordSpans(store.transcripts[path], store.recoveriesFor(path));
-  const aware = words ? wordAwareSilences(raw, words, minSilenceMs / 1000) : null;
-  const spans = cuttableSpans(
-    (aware ? aware.silences : raw).map((s) => spanToFrames(c, s.start_secs, s.end_secs, fps)),
-  );
-  const basis = aware
-    ? {
-        wordAware: true as const,
-        basis: 'vad+words' as const,
-        wordGuardSecs: SILENCE_WORD_GUARD_SECS,
-        vadSilences: raw.length,
-        trimmedForWords: aware.trimmed,
-        droppedForWords: aware.dropped,
-      }
-    : { wordAware: false as const, basis: 'vad' as const };
-  return { spans, basis };
+  const resolved = resolveSilences(detection, words, minSilenceMs, options);
+  if ('error' in resolved) return resolved;
+  const { silences: _ranges, ...stats } = resolved;
+  const spans = framedSilences(c, fps, resolved);
+  // `vadSilences` kept under its D-420 name: what the base detector found.
+  return { spans, basis: { ...stats, vadSilences: stats.baseSilences }, resolved };
 }
 
 /** [`silenceEnvelope`]'s retake twin. */
@@ -1816,6 +1829,9 @@ async function silenceSweep(a: OpArgs, start: boolean) {
   if (requested !== undefined && (!Number.isFinite(requested) || requested <= 0)) {
     return { error: 'minSilenceMs must be a positive number of milliseconds' };
   }
+  const parsed = parseSilenceOptions(a);
+  if ('error' in parsed) return parsed;
+  const { options } = parsed;
 
   const { targets, skipped } = sweepTargets(tr);
   const jobs = targets.map((target) => {
@@ -1842,30 +1858,50 @@ async function silenceSweep(a: OpArgs, start: boolean) {
   // says it as plainly as the single-clip answer does.
   const vadOnlyClips: number[] = [];
   let wordAwareClips = 0;
+  let droppedForWords = 0;
+  let correctedWords = 0;
+  const levels: Array<{ clip: number; noiseFloorDb: number | null; thresholdDb?: number }> = [];
   const results: SweepClipResult[] = jobs.map(({ target, key }) => {
     const status = read(key);
-    let findings: ReturnType<typeof silenceSpansDto>['spans'] = [];
+    let findings: unknown[] = [];
+    let failure: string | undefined;
     if (status.phase === 'done') {
-      const dto = silenceSpansDto(status, target.c, fps, minSilenceMs);
-      findings = dto.spans;
-      if (dto.basis.wordAware) wordAwareClips += 1;
-      else vadOnlyClips.push(target.clip);
+      const dto = silenceSpansDto(status, target.c, fps, minSilenceMs, options);
+      if ('error' in dto) {
+        failure = dto.error;
+      } else {
+        findings = dto.spans;
+        if (dto.basis.wordAware) wordAwareClips += 1;
+        else if (options.basis.endsWith('+words')) vadOnlyClips.push(target.clip);
+        droppedForWords += dto.basis.droppedForWords;
+        correctedWords += dto.basis.correctedWords;
+        levels.push({
+          clip: target.clip,
+          noiseFloorDb: dto.basis.noiseFloorDb,
+          ...(dto.basis.thresholdDb !== undefined ? { thresholdDb: dto.basis.thresholdDb } : {}),
+        });
+      }
     }
     return {
       clip: target.clip,
       clipId: target.c.id,
       source: target.source,
-      state: status.phase,
+      state: failure ? 'error' : status.phase,
       findings,
       ...(status.phase === 'error' ? { error: status.error ?? 'silence detection failed' } : {}),
+      ...(failure ? { error: failure } : {}),
     };
   });
 
   return {
     ...sweepReport(SILENCE_SWEEP, track, results, skipped),
     minSilenceMs,
+    requestedBasis: options.basis,
     wordAware: vadOnlyClips.length === 0 && wordAwareClips > 0,
     wordAwareClips,
+    droppedForWords,
+    correctedWords,
+    levels,
     ...(vadOnlyClips.length > 0
       ? {
           vadOnlyClips,
@@ -5698,23 +5734,23 @@ export function useEditorControl(): void {
         if (isSweep(a)) return await silenceSweep(a, true);
         const resolved = resolveSilenceArgs(a);
         if ('error' in resolved) return resolved;
-        const { found, c, fps, args, key, minSilenceMs } = resolved;
+        const { found, c, fps, args, key, minSilenceMs, options } = resolved;
 
         useMediaUnderstandingStore.getState().startSilenceDetection(args, !!a?.force);
         const status = await settleWithin(
           () => useMediaUnderstandingStore.getState().silenceDetectionStatus(key),
           DETECT_GRACE_MS,
         );
-        return silenceEnvelope(status, found, c, fps, minSilenceMs);
+        return silenceEnvelope(status, found, c, fps, minSilenceMs, options);
       },
 
       editor_detect_silences_status: async (a) => {
         if (isSweep(a)) return await silenceSweep(a, false);
         const resolved = resolveSilenceArgs(a);
         if ('error' in resolved) return resolved;
-        const { found, c, fps, key, minSilenceMs } = resolved;
+        const { found, c, fps, key, minSilenceMs, options } = resolved;
         const status = useMediaUnderstandingStore.getState().silenceDetectionStatus(key);
-        return silenceEnvelope(status, found, c, fps, minSilenceMs);
+        return silenceEnvelope(status, found, c, fps, minSilenceMs, options);
       },
 
       editor_detect_retakes: async (a) => {

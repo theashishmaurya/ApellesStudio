@@ -1202,6 +1202,42 @@ fn media_args(
         .put("sourcePath", source_path)
 }
 
+/// B-327 / D-428 — the optional silence knobs shared by `editor_detect_silences`
+/// and its poll (flattened into both argument structs, so they cannot drift).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SilenceKnobs {
+    #[serde(default)]
+    pub basis: Option<String>,
+    #[serde(default)]
+    pub threshold_db: Option<f64>,
+    #[serde(default)]
+    pub auto_threshold: bool,
+    #[serde(default)]
+    pub auto_offset_db: Option<f64>,
+    #[serde(default)]
+    pub merge_gap_ms: Option<f64>,
+    #[serde(default)]
+    pub pad_before_ms: Option<f64>,
+    #[serde(default)]
+    pub pad_after_ms: Option<f64>,
+    #[serde(default)]
+    pub keep_ms: Option<f64>,
+}
+
+impl SilenceKnobs {
+    /// Add the knobs that were given to `args`, in wire (camelCase) form.
+    fn apply(&self, args: WireArgs) -> WireArgs {
+        args.put("basis", self.basis.clone())
+            .put("thresholdDb", self.threshold_db)
+            .put_if("autoThreshold", self.auto_threshold)
+            .put("autoOffsetDb", self.auto_offset_db)
+            .put("mergeGapMs", self.merge_gap_ms)
+            .put("padBeforeMs", self.pad_before_ms)
+            .put("padAfterMs", self.pad_after_ms)
+            .put("keepMs", self.keep_ms)
+    }
+}
+
 /// D-318 — the recut detectors and the batched cut they feed.
 ///
 /// `clip` is `Option` since D-342 (fixes B-216): omitting it sweeps every
@@ -1217,6 +1253,8 @@ pub struct EditorDetectSilencesArgs {
     pub min_silence_ms: Option<f64>,
     #[serde(default = "default_editor_detect_silences_force")]
     pub force: bool,
+    #[serde(flatten)]
+    pub knobs: SilenceKnobs,
 }
 
 /// D-321 — the poll half. No `force`: a status read starts nothing.
@@ -1227,6 +1265,8 @@ pub struct EditorDetectSilencesStatusArgs {
     pub clip: Option<i64>,
     #[serde(default)]
     pub min_silence_ms: Option<f64>,
+    #[serde(flatten)]
+    pub knobs: SilenceKnobs,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -5334,10 +5374,14 @@ impl ApellesMcp {
     the clip's source has a transcript** (B-289, D-420): every range then stops
     0.125 s short of each transcribed word, because the VAD alone calls a soft
     sentence ending or a quiet first word silence, and cutting its raw ranges
-    clipped real words. The answer says which it was: `wordAware: true`
-    (`basis: "vad+words"`, with `vadSilences` / `trimmedForWords` /
-    `droppedForWords`) or `wordAware: false` (`basis: "vad"` — no transcript
-    yet; transcribe the source first if you are going to cut these).
+    clipped real words. **The audio is the authority** (B-327, D-428): a word
+    the transcriber timed over a real pause (common for a sentence-final word)
+    is clamped to the part of it the waveform shows as voiced BEFORE it protects
+    anything, so it can no longer swallow the pause. The answer says which it
+    was: `wordAware: true` (`basis: "vad+words"`, with `vadSilences` /
+    `trimmedForWords` / `droppedForWords` / `correctedWords`) or
+    `wordAware: false` (`basis: "vad"` — no transcript yet; transcribe the
+    source first if you are going to cut these).
 
     - `track` — required.
     - `clip` — **optional**. Name a clip index (`editor_get_timeline` lists
@@ -5349,6 +5393,23 @@ impl ApellesMcp {
     - `min_silence_ms` — the shortest gap worth reporting (default 600). Below
       about 400 you start getting the pauses *inside* sentences, which are not
       cut points.
+    - `basis` — what decides a stretch is silent: `"vad+words"` (default; voice
+      model, kept clear of words), `"vad"` (voice model alone), `"energy"`
+      (the waveform: RMS below a level — **if the person can see a flat
+      waveform this tool did not report, ask again with `basis="energy"`**),
+      or `"energy+words"` (waveform silences kept clear of the words).
+    - `threshold_db` — energy level in dBFS (default -30); or
+      `auto_threshold: true` to use the measured noise floor + `auto_offset_db`
+      (default 12). The answer reports `noiseFloorDb` and the `thresholdDb`
+      used. Not both.
+    - `merge_gap_ms` — silences split by a click or blip no longer than this
+      become one (default 120).
+    - `pad_after_ms` / `pad_before_ms` — cushion kept inside each silence right
+      after the speech before it (protects soft word tails) / right before the
+      speech after it (protects sharp onsets). `keep_ms` instead leaves that
+      total pause. Each silence then carries a suggested `cut` (the silence
+      minus the cushions; `null` if they eat it) beside its measured range —
+      cut the `cut` ranges.
     - `force` — re-run even though this exact clip range and threshold has
       already been analysed (the answer is cached per range+threshold).
 
@@ -5365,7 +5426,10 @@ impl ApellesMcp {
     Each entry of `silences` carries `startSecs`/`endSecs` (source seconds, what
     was measured), `sourceStartFrame`/`sourceEndFrame` (the clip's own source
     frames) and `startFrame`/`endFrame` — **timeline** frames, which is what
-    `editor_ripple_delete_ranges` takes. An empty list is a normal answer, not
+    `editor_ripple_delete_ranges` takes. It also says `rawStartSecs`/`rawEndSecs`
+    (the measured range before words trimmed it), `cut` (the suggested cut with
+    the cushions applied), `basis`, and `wordCorrected` (a mistimed word was
+    clamped to the audio there). An empty list is a normal answer, not
     an error: that clip has no gap that long.
 
     **A SWEEP (no `clip`) answers in a different, aggregate shape**, built so
@@ -5391,6 +5455,7 @@ impl ApellesMcp {
         if p.force {
             args = args.set("force", true);
         }
+        let args = p.knobs.apply(args);
         // D-321 — back on the default budget: the op now answers within its own
         // grace window or hands back a pollable `state: "running"`, so there is
         // nothing left for a 180s ceiling to protect against.
@@ -5404,7 +5469,10 @@ impl ApellesMcp {
 
     Pass the SAME `track` / `clip` / `min_silence_ms` you started it with — a
     detection is cached per clip range and threshold, so different arguments are
-    a different question and will read as `state: "idle"`.
+    a different question and will read as `state: "idle"`. The `basis` /
+    `threshold_db` / `auto_threshold` / `auto_offset_db` / `merge_gap_ms` /
+    `pad_*_ms` / `keep_ms` knobs only re-read the cached answer, so pass the
+    ones you want applied.
 
     `clip` is optional here for the same reason it is on the start tool (D-342):
     **omit it to poll a whole-track sweep**, and the answer comes back in the
@@ -5423,6 +5491,7 @@ impl ApellesMcp {
             .set("track", p.track)
             .put("clip", p.clip)
             .put("minSilenceMs", p.min_silence_ms);
+        let args = p.knobs.apply(args);
         let env = self.op("editor_detect_silences_status", args).await?;
         Ok(render::json_text(&env))
     }

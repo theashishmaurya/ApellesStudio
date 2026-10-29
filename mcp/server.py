@@ -1329,6 +1329,46 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "pixel measurement on both sides, not by argv inspection."
         ),
     },
+    "silence_detection": {
+        "which_basis_when": (
+            "editor_detect_silences takes `basis` (B-327, D-428). `vad+words` "
+            "(default): the voice model's silences, kept clear of every transcribed "
+            "word; the audio corrects a word whose timestamp sits over measured "
+            "silence BEFORE it protects anything. `vad`: the voice model alone, no "
+            "transcript needed, may clip a soft word ending. `energy`: silence read "
+            "straight from the waveform (RMS below a level) - use it when the person "
+            "can SEE a flat waveform the tool did not report, when the voice model "
+            "hears music/noise as speech, or for a noisy room (with auto_threshold). "
+            "`energy+words`: energy silences kept clear of the (audio-corrected) "
+            "words. If a `+words` basis finds no transcript it says so (`wordAware: "
+            "false`) and answers with the base detector."
+        ),
+        "level_knobs": (
+            "Energy level: `threshold_db` (e.g. -30, the default for energy) or "
+            "`auto_threshold: true` (measured noise floor + `auto_offset_db`, default "
+            "12, never below -60 dB). The answer always reports `noiseFloorDb` and "
+            "the `thresholdDb` it used - read them, then widen or tighten. Do not "
+            "pass both threshold_db and auto_threshold."
+        ),
+        "merge_and_cushions": (
+            "`merge_gap_ms` (default 120) joins silences split by a click or blip. "
+            "`pad_after_ms` is the cushion kept right AFTER the speech before a "
+            "silence (soft word tails need 150-250), `pad_before_ms` the cushion kept "
+            "right BEFORE the next onset (sharp onsets need 50-100). Each silence "
+            "then carries a suggested `cut` = the silence minus the cushions (null if "
+            "they eat it) next to its raw measured range "
+            "(`rawStartSecs`/`rawEndSecs`); `keep_ms` instead leaves that total pause "
+            "(split 2:1 after:before unless the pads say otherwise). Pass the `cut` "
+            "ranges to editor_ripple_delete_ranges."
+        ),
+        "reading_the_answer": (
+            "Per silence: `basis`, `wordCorrected` (a mistimed word was clamped to "
+            "the audio here). Totals: `droppedForWords` (silences a word still "
+            "removed), `correctedWords` (words the audio re-timed), "
+            "`trimmedForWords`. Deterministic: the same arguments on the same audio "
+            "give the same ranges."
+        ),
+    },
     "known_gaps_and_landmines": {
         "animated_captions_D241": (
             "An ANIMATED caption (editor_add_caption_preset, or "
@@ -5056,6 +5096,14 @@ def editor_detect_silences(
     clip: int | None = None,
     min_silence_ms: float | None = None,
     force: bool = False,
+    basis: str | None = None,
+    threshold_db: float | None = None,
+    auto_threshold: bool = False,
+    auto_offset_db: float | None = None,
+    merge_gap_ms: float | None = None,
+    pad_before_ms: float | None = None,
+    pad_after_ms: float | None = None,
+    keep_ms: float | None = None,
 ) -> str:
     """Find the stretches of a timeline clip — or of a WHOLE TRACK — where
     **nobody is speaking**: "where is the dead air." Uses a real on-device
@@ -5063,10 +5111,14 @@ def editor_detect_silences(
     the clip's source has a transcript** (B-289, D-420): every range then stops
     0.125 s short of each transcribed word, because the VAD alone calls a soft
     sentence ending or a quiet first word silence, and cutting its raw ranges
-    clipped real words. The answer says which it was: `wordAware: true`
-    (`basis: "vad+words"`, with `vadSilences` / `trimmedForWords` /
-    `droppedForWords`) or `wordAware: false` (`basis: "vad"` — no transcript
-    yet; transcribe the source first if you are going to cut these).
+    clipped real words. **The audio is the authority** (B-327, D-428): a word
+    the transcriber timed over a real pause (common for a sentence-final word)
+    is clamped to the part of it the waveform shows as voiced BEFORE it protects
+    anything, so it can no longer swallow the pause. The answer says which it
+    was: `wordAware: true` (`basis: "vad+words"`, with `vadSilences` /
+    `trimmedForWords` / `droppedForWords` / `correctedWords`) or
+    `wordAware: false` (`basis: "vad"` — no transcript yet; transcribe the
+    source first if you are going to cut these).
 
     - `track` — required.
     - `clip` — **optional**. Name a clip index (`editor_get_timeline` lists
@@ -5078,6 +5130,23 @@ def editor_detect_silences(
     - `min_silence_ms` — the shortest gap worth reporting (default 600). Below
       about 400 you start getting the pauses *inside* sentences, which are not
       cut points.
+    - `basis` — what decides a stretch is silent: `"vad+words"` (default; voice
+      model, kept clear of words), `"vad"` (voice model alone), `"energy"`
+      (the waveform: RMS below a level — **if the person can see a flat
+      waveform this tool did not report, ask again with `basis="energy"`**),
+      or `"energy+words"` (waveform silences kept clear of the words).
+    - `threshold_db` — energy level in dBFS (default -30); or
+      `auto_threshold: true` to use the measured noise floor + `auto_offset_db`
+      (default 12). The answer reports `noiseFloorDb` and the `thresholdDb`
+      used. Not both.
+    - `merge_gap_ms` — silences split by a click or blip no longer than this
+      become one (default 120).
+    - `pad_after_ms` / `pad_before_ms` — cushion kept inside each silence right
+      after the speech before it (protects soft word tails) / right before the
+      speech after it (protects sharp onsets). `keep_ms` instead leaves that
+      total pause. Each silence then carries a suggested `cut` (the silence
+      minus the cushions; `null` if they eat it) beside its measured range —
+      cut the `cut` ranges.
     - `force` — re-run even though this exact clip range and threshold has
       already been analysed (the answer is cached per range+threshold).
 
@@ -5094,7 +5163,10 @@ def editor_detect_silences(
     Each entry of `silences` carries `startSecs`/`endSecs` (source seconds, what
     was measured), `sourceStartFrame`/`sourceEndFrame` (the clip's own source
     frames) and `startFrame`/`endFrame` — **timeline** frames, which is what
-    `editor_ripple_delete_ranges` takes. An empty list is a normal answer, not
+    `editor_ripple_delete_ranges` takes. It also says `rawStartSecs`/`rawEndSecs`
+    (the measured range before words trimmed it), `cut` (the suggested cut with
+    the cushions applied), `basis`, and `wordCorrected` (a mistimed word was
+    clamped to the audio there). An empty list is a normal answer, not
     an error: that clip has no gap that long.
 
     **A SWEEP (no `clip`) answers in a different, aggregate shape**, built so
@@ -5117,6 +5189,22 @@ def editor_detect_silences(
         args["minSilenceMs"] = min_silence_ms
     if force:
         args["force"] = True
+    if basis is not None:
+        args["basis"] = basis
+    if threshold_db is not None:
+        args["thresholdDb"] = threshold_db
+    if auto_threshold:
+        args["autoThreshold"] = True
+    if auto_offset_db is not None:
+        args["autoOffsetDb"] = auto_offset_db
+    if merge_gap_ms is not None:
+        args["mergeGapMs"] = merge_gap_ms
+    if pad_before_ms is not None:
+        args["padBeforeMs"] = pad_before_ms
+    if pad_after_ms is not None:
+        args["padAfterMs"] = pad_after_ms
+    if keep_ms is not None:
+        args["keepMs"] = keep_ms
     return json.dumps(_op("editor_detect_silences", **args), indent=2, default=str)
 
 
@@ -5125,12 +5213,23 @@ def editor_detect_silences_status(
     track: int,
     clip: int | None = None,
     min_silence_ms: float | None = None,
+    basis: str | None = None,
+    threshold_db: float | None = None,
+    auto_threshold: bool = False,
+    auto_offset_db: float | None = None,
+    merge_gap_ms: float | None = None,
+    pad_before_ms: float | None = None,
+    pad_after_ms: float | None = None,
+    keep_ms: float | None = None,
 ) -> str:
     """Poll a silence detection started by `editor_detect_silences` (D-321).
 
     Pass the SAME `track` / `clip` / `min_silence_ms` you started it with — a
     detection is cached per clip range and threshold, so different arguments are
-    a different question and will read as `state: "idle"`.
+    a different question and will read as `state: "idle"`. The `basis` /
+    `threshold_db` / `auto_threshold` / `auto_offset_db` / `merge_gap_ms` /
+    `pad_*_ms` / `keep_ms` knobs only re-read the cached answer, so pass the
+    ones you want applied.
 
     `clip` is optional here for the same reason it is on the start tool (D-342):
     **omit it to poll a whole-track sweep**, and the answer comes back in the
@@ -5147,6 +5246,22 @@ def editor_detect_silences_status(
         args["clip"] = clip
     if min_silence_ms is not None:
         args["minSilenceMs"] = min_silence_ms
+    if basis is not None:
+        args["basis"] = basis
+    if threshold_db is not None:
+        args["thresholdDb"] = threshold_db
+    if auto_threshold:
+        args["autoThreshold"] = True
+    if auto_offset_db is not None:
+        args["autoOffsetDb"] = auto_offset_db
+    if merge_gap_ms is not None:
+        args["mergeGapMs"] = merge_gap_ms
+    if pad_before_ms is not None:
+        args["padBeforeMs"] = pad_before_ms
+    if pad_after_ms is not None:
+        args["padAfterMs"] = pad_after_ms
+    if keep_ms is not None:
+        args["keepMs"] = keep_ms
     return json.dumps(_op("editor_detect_silences_status", **args), indent=2, default=str)
 
 
