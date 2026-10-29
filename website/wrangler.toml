@@ -17,7 +17,7 @@ migrations_dir = "migrations"
 [vars]
 # The From header of every message. Sent from the mail. subdomain so the root
 # domain sends nothing (D-427); the subdomain must be verified in Resend.
-MAIL_FROM = "Apelles <hello@mail.apelles.studio>"
+MAIL_FROM = "Ashish from Apelles <hello@mail.apelles.studio>"
 # Where replies go: a real mailbox on the root domain.
 MAIL_REPLY_TO = "hello@apelles.studio"
 # Minimum gap before the confirmation email is sent again to the same pending address.

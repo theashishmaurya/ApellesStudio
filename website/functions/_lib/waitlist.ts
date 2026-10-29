@@ -35,6 +35,8 @@ export const HONEYPOT_FIELD = 'company';
 const DEFAULT_THROTTLE_MINUTES = 10;
 const SOURCE_PATTERN = /^[a-z0-9_-]{1,32}$/;
 const TOKEN_BYTES = 24;
+/** How long a confirm link works, counted from the last confirmation email sent (the email says 7 days). */
+export const CONFIRM_TTL_MS = 7 * 86_400_000;
 
 /** The slice of a D1 prepared statement this module uses. */
 export interface DbStatement {
@@ -66,6 +68,7 @@ interface Row {
   last_email_at: number | null;
   resend_synced: 0 | 1;
   email_held: 0 | 1;
+  created_at: number;
 }
 
 function json(body: Record<string, unknown>, status = 200): Response {
@@ -185,7 +188,12 @@ export async function signup(request: Request, env: WaitlistEnv, now: number = D
   }
 
   const origin = new URL(request.url).origin;
-  if (!(await sendConfirmation(env, origin, row))) return json({ error: 'send_failed' }, 502);
+  if (!(await sendConfirmation(env, origin, row))) {
+    // Never show the visitor a Resend problem: queue it for the hourly drain and answer as usual.
+    await env.DB.prepare('UPDATE waitlist SET email_held = 1 WHERE id = ?').bind(row.id).run();
+    console.error('waitlist: confirmation send failed; held it for the drain Worker');
+    return json({ ok: true });
+  }
   if (env.RESEND_API_KEY) await recordSend(env.DB, now);
   await env.DB.prepare('UPDATE waitlist SET last_email_at = ? WHERE id = ?').bind(now, row.id).run();
   return json({ ok: true });
@@ -208,6 +216,10 @@ export async function confirm(request: Request, env: WaitlistEnv, now: number = 
     : null;
   // An unsubscribed address cannot be revived by an old confirm link.
   if (!row || row.status === 'unsubscribed') return redirect(origin, '/waitlist/invalid/');
+  // A link older than the 7 days the email promises is dead; signing up again sends a fresh email.
+  if (row.status === 'pending' && now - (row.last_email_at ?? row.created_at) > CONFIRM_TTL_MS) {
+    return redirect(origin, '/waitlist/invalid/');
+  }
   if (row.status === 'pending') {
     await env.DB.prepare("UPDATE waitlist SET status = 'confirmed', confirmed_at = ?, resend_synced = 0 WHERE id = ?")
       .bind(now, row.id)

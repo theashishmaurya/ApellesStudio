@@ -72,7 +72,6 @@ interface HeldRow {
   id: number;
   email: string;
   confirm_token: string;
-  unsubscribe_token: string;
 }
 
 /**
@@ -89,7 +88,7 @@ export async function drainHeld(env: WaitlistEnv, origin: string, now: number): 
   if (budget === 0) return 0;
 
   const held = await env.DB.prepare(
-    `SELECT id, email, confirm_token, unsubscribe_token FROM waitlist
+    `SELECT id, email, confirm_token FROM waitlist
      WHERE email_held = 1 AND status = 'pending' ORDER BY created_at, id LIMIT ?`,
   )
     .bind(budget)
