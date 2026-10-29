@@ -111,6 +111,11 @@ field, ~10 KB) plus null image/histogram/scopes keys, when the caller only needs
 through the grading reply wrapper instead of the bridge op class B-296 changed. Fix: answer
 `{created}` / `{opened}` only, with the grade behind an explicit flag if anything needs it.
 
+- **addendum 2026-10-29** (Nemotron Transcribe edit): `list_projects` has the same shape: it
+  answered `{projects, folder}` wrapped in the full `adjustments` object plus null
+  histogram keys (~10 KB of grade the caller never asked for). `new_project` still does it too.
+  Same fix applies: list_projects answers `{projects, folder}` only.
+
 ## B-323 — a new project's Edit timeline is 24 fps and no MCP tool can change it; `set_project_settings(fps=30)` does not reach it
 
 status: **fixed** (2026-10-28, D-424) · severity: **major** (a 30 fps deliverable silently becomes a 24 fps timeline) · area: Edit MCP / project settings (human+AI parity) · found 2026-10-28
