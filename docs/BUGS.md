@@ -4,6 +4,21 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-332 — a clip was deleted right after its level was set in the Inspector (Delete/Backspace reached the timeline)
+
+status: **open** · severity: **critical** (silent loss of a clip and its linked audio) · area: Edit tab keyboard shortcuts / Inspector focus
+
+- **found:** 2026-10-29, live in the Nemotron Transcribe edit. The owner was lowering the NVIDIA demo clip's volume, and the clip "C01 hook demo" vanished, picture and A/V partner both. Undo history, newest first: `Duck track 4…` (agent), `Unmute track 4` (agent), **`Remove "C01 hook demo"`**, `Set "C01 hook demo" level`. The removal came straight after a level edit in the Inspector, with no agent op in between.
+- **likely cause (to confirm):** the timeline's Delete/Backspace "delete selected clip" shortcut fires while focus is in an Inspector number field. Clearing the volume value with Backspace deleted the selected clip instead.
+- **expected:** a key press inside any input, select, textarea or contenteditable never reaches the timeline's destructive shortcuts. Deleting a clip with its linked partner while an Inspector field is focused must be impossible.
+- **restored** by undoing back past the removal; the owner's level and the agent's gain/duck were re-applied.
+
+## B-333 — `editor_set_track_gain` is labelled "Unmute track N" in the undo history
+
+status: **open** · severity: **minor** · area: undo labels
+
+- **found:** 2026-10-29, same session. Setting track gain 1.0 → 0.4 recorded the undo entry "Unmute track 4". Expected something like "Set track 4 gain to 40%". A wrong label makes reading the history, as the owner had to here, misleading.
+
 ## B-331 — `sound_qa.py` reads the project's fps instead of the timeline's, and can read the wrong timeline
 
 status: **open** · severity: **minor** · area: `.claude/skills/apelles-sound-design/scripts/sound_qa.py` (D-406)
