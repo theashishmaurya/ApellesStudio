@@ -60,6 +60,12 @@ What it does NOT do:
 
    - **Breaths:** cut breaths and mouth sounds that sit alone in a gap. Keep a breath that leads
      into a word.
+     - Breaths and "ehh"s are not in the word transcript, and no tool detects them yet (noted
+       2026-10-29).
+     - Tightening every gap to the targets removes most lone breaths: cut edges stop ~50 ms short
+       of a word.
+     - What remains (a drawn-out syllable, a sigh inside a word's own timing) only a listen finds.
+       Ask the person for timestamps.
    - **How to cut:** use `editor_cut_words` (`tighten_gaps_ms` / `keep_breath_ms`), which is
      word-safe. When gaps need different keep values (for example longer at section changes), dry-run
      it, then apply its planned ranges with `editor_ripple_delete_ranges`, shrinking only the ranges
