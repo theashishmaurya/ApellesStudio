@@ -129,6 +129,7 @@ export function TransformBox({
   natural,
   restSize,
   anchor = 'top-left',
+  origin,
   model,
   moveEnabled,
   scaleEnabled,
@@ -161,6 +162,11 @@ export function TransformBox({
    *  Ignored when `model` is given, which supplies its own rectangle and
    *  pivot outright. */
   anchor?: BoxAnchor;
+  /** B-328 — where the box starts when `position` is `0, 0` (a `fit`/`fill`
+   *  clip's centring origin, from `transformGeometry.ts`'s `clipBoxOrigin`).
+   *  Added to `position` for drawing and for the scale pivot only: a move or
+   *  resize still commits `position` itself. Defaults to none. */
+  origin?: { x: number; y: number };
   /** D-316 — an explicit rectangle + scale pivot, for a consumer whose box is
    *  measured rather than derived from `natural`/`scale`/`position`. When
    *  given it supersedes `natural`/`restSize` entirely (pass `natural` as the
@@ -256,7 +262,7 @@ export function TransformBox({
     // `natural * scale` rather than `restSize` deliberately — a drag always
     // falls back to the uniform formula (see `restSize`'s own doc), so this is
     // the centre of the box that will actually be DRAWN for the gesture.
-    const center = model ? model.pivot : boxCentre(natural, position, scale, anchor);
+    const center = model ? model.pivot : boxCentre(natural, position, scale, anchor, origin);
     dragRef.current = {
       kind: 'scale',
       startPoint: localPoint(e),
@@ -330,8 +336,8 @@ export function TransformBox({
         scale !== 0 ? liveScale / scale : 1,
       )
     : draft || !restSize
-      ? clipBoxFraction(natural, livePosition, liveScale, anchor)
-      : clipBoxFraction(restSize, livePosition, 1, anchor);
+      ? clipBoxFraction(natural, livePosition, liveScale, anchor, origin)
+      : clipBoxFraction(restSize, livePosition, 1, anchor, origin);
   const rect = boxToScreenRect(box, contentBox);
 
   return (

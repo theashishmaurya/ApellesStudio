@@ -217,7 +217,7 @@ pub use output::{
     TimelineOriginKind, TimelineOriginSource,
 };
 pub use retime::{MAX_TIMELINE_FPS, fps_to_rational};
-pub use scaling::{ScalingMode, fitted_footprint};
+pub use scaling::{ScalingMode, fitted_footprint, fitted_origin};
 pub use speed_ramp::{SpeedPoint, SpeedSegment};
 
 // D-224 — same shape, same reason, one layer further: a clip's EQ band type

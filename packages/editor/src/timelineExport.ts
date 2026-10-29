@@ -85,6 +85,7 @@ import { captionMetricKey, type CaptionMetrics } from './captionMetrics';
 import { buildAdjustmentSteps, clipAdjustmentOps } from './adjustment';
 import { highlightGeqSteps } from './timelineExportHighlight';
 import { piecewiseLinearExpr, type ExprPoint } from './ffmpegExpr';
+import { fittedOrigin } from './clipScaling';
 // D-236 — one definition of a clip's time remap, shared with the live
 // preview's own `clipSourceFrameAt`/`Clip::source_frame_at`. See `speedRamp.ts`.
 import {
@@ -2043,11 +2044,29 @@ function positionExpr(
   param: 'position_x' | 'position_y',
   fps: number,
   clipStartSec = 0,
+  origin = 0,
 ): string {
   const staticValue = clip[param] ?? 0;
-  if (!hasKeyframesFor(clip, param)) return String(staticValue);
+  if (!hasKeyframesFor(clip, param)) return String(staticValue + origin);
   const timeVar = clipStartSec !== 0 ? `(t-${clipStartSec})` : 't';
-  return keyframeExprAt(rebaseKeyframesToClipInput(clip), param, staticValue, fps, timeVar);
+  const expr = keyframeExprAt(rebaseKeyframesToClipInput(clip), param, staticValue, fps, timeVar);
+  // Parenthesised whole: the caller appends `*W`/`*H`, which must scale the sum.
+  return origin === 0 ? expr : `((${expr})+${origin})`;
+}
+
+/** B-328 — a `fit`/`fill` clip's centring origin, the fraction of the output
+ *  composition its footprint starts at when `position` is `0, 0`: added to the
+ *  overlay's `x`/`y` so the export centres the picture exactly where the
+ *  preview does (`ClipTransform::with_fit_origin`, one definition in
+ *  `fittedOrigin`). Zero for a `native`/unset clip, for a clip whose source
+ *  footprint is unknown (`sourceFootprints` absent — nothing to centre), and
+ *  for a clip with an explicit `box_width`/`box_height` (static or keyframed):
+ *  that is a canvas fraction the person set, not a footprint. */
+function fitOriginOf(clip: Clip, opts: TimelineExportOptions): { x: number; y: number } {
+  if (!clip.scaling || clip.scaling === 'native') return { x: 0, y: 0 };
+  if (clip.box_width != null || clip.box_height != null) return { x: 0, y: 0 };
+  if (hasKeyframesFor(clip, 'box_width') || hasKeyframesFor(clip, 'box_height')) return { x: 0, y: 0 };
+  return fittedOrigin(clip.scaling, sourceFootprintOf(clip, opts), { width: 1, height: 1 });
 }
 
 /**
@@ -2571,8 +2590,9 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
     }
     // B-075 — a keyframe's `frame` is source-frame-absolute (this clip's own
     // native rate), not `opts.fps` — same reasoning as above.
-    const xExpr = positionExpr(chain.clip, 'position_x', chain.clipFps, chain.clipStartSec);
-    const yExpr = positionExpr(chain.clip, 'position_y', chain.clipFps, chain.clipStartSec);
+    const fitOrigin = fitOriginOf(chain.clip, opts);
+    const xExpr = positionExpr(chain.clip, 'position_x', chain.clipFps, chain.clipStartSec, fitOrigin.x);
+    const yExpr = positionExpr(chain.clip, 'position_y', chain.clipFps, chain.clipStartSec, fitOrigin.y);
     // B-075 — ffmpeg's filtergraph syntax splits filter/option text on bare
     // `,`/`:` OUTSIDE quotes; a keyframed `if(between(t,a,b),...)` expression
     // is FULL of exactly those characters. `enable=` was already correctly

@@ -19,6 +19,10 @@
 //!   This is the only behaviour clips had before D-425, so a clip with no
 //!   `scaling` key *is* `Native`: an old project does not change look.
 //!
+//! [`fitted_origin`] (B-328, D-429) is the footprint's companion: where a
+//! `fit`/`fill` footprint starts when `position` is 0, 0 — centred, not flush
+//! top-left.
+//!
 //! Resolve's fourth mode, *Stretch*, is not a mode here: it is the existing
 //! `box_width = box_height = 1` override (D-193), which both renderers already
 //! agree on.
@@ -94,6 +98,33 @@ pub fn fitted_footprint(mode: ScalingMode, source: (f64, f64), frame: (f64, f64)
     }
 }
 
+/// Where a `fit`/`fill` clip's footprint starts when `position` is `0, 0`, as
+/// a fraction of `frame` on each axis (B-328).
+///
+/// `position` is the box's top-left corner (D-338), so a footprint that is not
+/// the frame's own size would sit flush top-left. Every NLE centres the sized
+/// picture instead (Resolve's *Scale entire image to fit*, Premiere's *Set to
+/// Frame Size*), so the **origin** is half of what the footprint leaves over:
+/// `(1 - footprint / frame) / 2` — positive for a letterbox/pillarbox, negative
+/// for a `fill` overflow, and exactly `0` on a binding axis ([`fitted_footprint`]
+/// returns the frame's own extent there). `Native` has no origin: it is the
+/// pre-D-425 top-left behaviour every old project was saved under.
+///
+/// `footprint` is the **scale-1** footprint ([`fitted_footprint`]'s answer), so
+/// the origin does not move as `scale` changes — `scale` grows the box from its
+/// centred top-left corner, exactly as it always grew from the top-left. The
+/// caller adds the result to `position` for any axis that has no explicit
+/// `box_width`/`box_height` override (an override is a canvas fraction the
+/// person set, not a footprint).
+pub fn fitted_origin(mode: ScalingMode, footprint: (f64, f64), frame: (f64, f64)) -> (f64, f64) {
+    let (pw, ph) = footprint;
+    let (fw, fh) = frame;
+    if mode == ScalingMode::Native || !(fw > 0.0 && fh > 0.0) {
+        return (0.0, 0.0);
+    }
+    ((1.0 - pw / fw) / 2.0, (1.0 - ph / fh) / 2.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,6 +176,36 @@ mod tests {
         let (w, h) = fitted_footprint(ScalingMode::Fill, (1920.0, 1080.0), FRAME);
         assert_eq!(h, 1920.0);
         assert!((w - 3413.333).abs() < 1e-3, "w = {w}");
+    }
+
+    #[test]
+    fn a_letterboxed_fit_and_a_fill_overflow_are_centred() {
+        // B-328: 16:9 into 9:16 -> 607.5 tall in 1920 -> equal bands above and below.
+        let fit = fitted_footprint(ScalingMode::Fit, (1920.0, 1080.0), FRAME);
+        let (ox, oy) = fitted_origin(ScalingMode::Fit, fit, FRAME);
+        assert_eq!(ox, 0.0);
+        assert!((oy - (1.0 - 607.5 / 1920.0) / 2.0).abs() < 1e-12);
+        // 1480x1080 into 1920x1080 fit: pillarbox, 220 px each side.
+        let wide = (1920.0, 1080.0);
+        let fit = fitted_footprint(ScalingMode::Fit, (1480.0, 1080.0), wide);
+        let (ox, oy) = fitted_origin(ScalingMode::Fit, fit, wide);
+        assert!((ox - 220.0 / 1920.0).abs() < 1e-12 && oy == 0.0);
+        // The same source filled: overflow cropped evenly top and bottom.
+        let fill = fitted_footprint(ScalingMode::Fill, (1480.0, 1080.0), wide);
+        let (ox, oy) = fitted_origin(ScalingMode::Fill, fill, wide);
+        assert_eq!(ox, 0.0);
+        // The hand-centring used on the Nemotron clips: -(fillH - 1) / 2 = -0.1486.
+        assert!((oy + 0.1486).abs() < 1e-3, "oy = {oy}");
+    }
+
+    #[test]
+    fn a_matching_aspect_and_native_have_no_origin() {
+        let fit = fitted_footprint(ScalingMode::Fit, (2160.0, 3840.0), FRAME);
+        assert_eq!(fitted_origin(ScalingMode::Fit, fit, FRAME), (0.0, 0.0));
+        assert_eq!(
+            fitted_origin(ScalingMode::Native, (607.5, 1080.0), FRAME),
+            (0.0, 0.0)
+        );
     }
 
     #[test]

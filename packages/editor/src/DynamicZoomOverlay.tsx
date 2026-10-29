@@ -52,6 +52,7 @@ import { findClip } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 import { useClipGeometry } from './useClipGeometry';
 import { TransformBox, type TransformDraft } from './TransformBox';
+import { clipBoxOrigin } from './transformGeometry';
 
 /** Which end of the zoom a box is. */
 type Which = 'start' | 'end';
@@ -175,6 +176,8 @@ export function DynamicZoomOverlay({ container }: { container: HTMLElement | nul
           position={{ x: framings[which].position_x, y: framings[which].position_y }}
           scale={framings[which].scale}
           natural={natural}
+          // B-328 — the commit clears any box override, so the origin applies.
+          origin={clipBoxOrigin(clip, natural)}
           // Always the uniform `natural * scale` box: a dynamic zoom clears
           // any independent size override on commit (see `commit` above), so
           // drawing the rest box at an override it is about to remove would

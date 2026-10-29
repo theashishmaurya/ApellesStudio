@@ -145,10 +145,10 @@ After placing audio (and after an export), run:
 
 ```
 ai-env/.venv/bin/python .claude/skills/apelles-sound-design/scripts/sound_qa.py \
-    --project "<project>.chroma" [--export <rendered.mp4>] [--voice-track N]
+    --project "<project>.chroma" [--timeline <id|name|index>] [--export <rendered.mp4>] [--voice-track N]
 ```
 
-It reports per-role clip counts and levels, effects density per minute, music coverage and every
+It reads the active timeline (or the one `--timeline` names) at that timeline's own frame rate. It reports per-role clip counts and levels, effects density per minute, music coverage and every
 dropout, ducking settings, and (with `--export`) integrated loudness / true peak against -14 LUFS
 plus moments where effects poke above the voice. It ends with **five timestamps to check by
 ear** and why. Put that list in your reply. You cannot hear the mix; the person can, in five

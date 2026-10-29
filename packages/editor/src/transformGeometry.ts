@@ -26,6 +26,7 @@
  * than re-derived in either component.
  */
 
+import { fittedOrigin } from './clipScaling';
 import type { Clip } from './timeline';
 
 export interface ContentBoxLike {
@@ -93,6 +94,28 @@ export function clipBoxAnchor(clip: Pick<Clip, 'text'>): BoxAnchor {
   return clip.text ? 'composition-centre' : 'top-left';
 }
 
+const NO_ORIGIN: { x: number; y: number } = { x: 0, y: 0 };
+
+/** B-328 — where a clip's box starts when `position` is `0, 0`: the centring
+ *  origin of a `fit`/`fill` clip, which the compositor and the exporter add to
+ *  `position` (`ClipTransform::with_fit_origin`, `timelineExport.ts`).
+ *
+ *  `natural` is the clip's scale-1 footprint in composition fractions (the
+ *  frame is 1 x 1 in that space). Zero for a text clip (composition-centred),
+ *  for `native` / unset scaling, and for a clip with an explicit
+ *  `box_width`/`box_height` override — that is a canvas fraction the person
+ *  set, not a footprint. The ONE place the TS side decides this, so the drawn
+ *  box (`TransformOverlay`), the click hit-rect (`canvasPick.ts`) and the
+ *  highlight overlay cannot disagree. */
+export function clipBoxOrigin(
+  clip: Pick<Clip, 'text' | 'scaling'>,
+  natural: { width: number; height: number },
+  override: { width?: number | null; height?: number | null } = {},
+): { x: number; y: number } {
+  if (clip.text || !clip.scaling || override.width != null || override.height != null) return NO_ORIGIN;
+  return fittedOrigin(clip.scaling, natural, { width: 1, height: 1 });
+}
+
 /** The clip's bounding box, in composition fractions, at its current
  *  `position`/`scale` and (unscaled) `natural` footprint.
  *
@@ -107,12 +130,13 @@ export function clipBoxFraction(
   position: { x: number; y: number },
   scale: number,
   anchor: BoxAnchor = 'top-left',
+  origin: { x: number; y: number } = NO_ORIGIN,
 ): FractionBox {
   const width = natural.width * scale;
   const height = natural.height * scale;
   return anchor === 'composition-centre'
     ? { left: 0.5 - width / 2 + position.x, top: 0.5 - height / 2 + position.y, width, height }
-    : { left: position.x, top: position.y, width, height };
+    : { left: position.x + origin.x, top: position.y + origin.y, width, height };
 }
 
 /** The box's own centre, in composition fractions — the pivot a corner drag
@@ -124,8 +148,9 @@ export function boxCentre(
   position: { x: number; y: number },
   scale: number,
   anchor: BoxAnchor = 'top-left',
+  origin: { x: number; y: number } = NO_ORIGIN,
 ): { x: number; y: number } {
-  const box = clipBoxFraction(natural, position, scale, anchor);
+  const box = clipBoxFraction(natural, position, scale, anchor, origin);
   return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
 }
 

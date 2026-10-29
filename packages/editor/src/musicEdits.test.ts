@@ -337,3 +337,49 @@ describe('GUI helpers', () => {
     expect(musicTrackFor(two, 900, 950, null)).toMatchObject({ error: expect.stringMatching(/no music bed/) });
   });
 });
+
+// B-329 — a 24 fps-probed bed on a 30 fps timeline. A split keeps whole SOURCE
+// frames, so the middle piece's `endFrame` round-trips through source frames and
+// can land a frame past the range end; the dropout used to be refused with
+// "nothing on track N lies inside frames ...".
+describe('applyMusicEdit — a 24 fps bed on a 30 fps timeline (B-329)', () => {
+  const FPS30 = 30;
+  const mixed = (): Timeline => ({
+    id: 'tl',
+    name: 'T',
+    rate: { num: FPS30, den: 1 },
+    tracks: [
+      { gain: 1, kind: 'video', clips: [bed('v', 0, 12000, { source_path: '/talk.mov' })] },
+      { gain: 1, kind: 'audio', clips: [bed('m', 0, 9600, { source_fps: 24, source_len: 20000 })] },
+    ],
+  });
+
+  // The two ranges the Nemotron edit was refused on, plus control ranges that applied.
+  it.each([
+    [1345, 1507],
+    [6389, 6427],
+    [1346, 1506],
+    [556, 731],
+    [4062, 4091],
+    [10265, 10295],
+    [1001, 1002],
+  ])('applies a dropout over %i..%i', (start, end) => {
+    const { timeline, result } = applyMusicEdit(mixed(), range(1, start, end), FPS30);
+    expect(result, JSON.stringify(result)).toMatchObject({ applied: true, splits: 2, removed: 1 });
+    const clips = timeline.tracks[1].clips;
+    expect(clips).toHaveLength(2);
+    // Nothing is left inside the range, and the timeline did not ripple.
+    expect(clips[0].start_frame).toBe(0);
+    expect(endFrame(clips[0], FPS30)).toBeLessThanOrEqual(start + 1);
+    expect(clips[1].start_frame).toBe(end);
+    expect(result.fadeOutClipId).toBe(clips[0].id);
+    expect(result.fadeInClipId).toBe(clips[1].id);
+    expect(clips[0].fade_out_frames).toBeGreaterThan(0);
+    expect(clips[1].fade_in_frames).toBeGreaterThan(0);
+  });
+
+  it('applies a breath (pause mode) too', () => {
+    const { result } = applyMusicEdit(mixed(), range(1, 6389, 6427, { mode: 'pause' }), FPS30);
+    expect(result, JSON.stringify(result)).toMatchObject({ applied: true });
+  });
+});

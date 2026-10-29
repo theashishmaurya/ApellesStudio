@@ -53,7 +53,7 @@
 
 import type { Clip, Rational, Timeline, Track } from './timeline';
 import { timelineDuration, timelineFps } from './timeline';
-import { fittedFootprint } from './clipScaling';
+import { fittedFootprint, fittedOrigin } from './clipScaling';
 
 // --------------------------------------------------------------------------- //
 // Rational time — FCPXML's own `%time;` grammar: "<num>/<den>s" (or a bare
@@ -255,9 +255,16 @@ function resolveBox(clip: Clip, opts: FcpxmlExportOptions, nativeAspect: number)
   // no mode) keeps the canvas-fraction reading this module has always used.
   const info = opts.sourceInfo?.[clip.id];
   const sized = clip.scaling != null && clip.scaling !== 'native' && (info?.width ?? 0) > 0 && (info?.height ?? 0) > 0;
-  const fittedWidth = sized
-    ? fittedFootprint(clip.scaling ?? 'native', { width: info?.width ?? 0, height: info?.height ?? 0 }, opts).width
-    : opts.width;
+  const footprint = sized
+    ? fittedFootprint(clip.scaling ?? 'native', { width: info?.width ?? 0, height: info?.height ?? 0 }, opts)
+    : null;
+  const fittedWidth = footprint ? footprint.width : opts.width;
+  // B-328 — a fit/fill footprint starts centred, as in the preview and the
+  // ffmpeg export; an explicit box override is a plain canvas fraction.
+  const origin =
+    footprint && clip.box_width == null && clip.box_height == null
+      ? fittedOrigin(clip.scaling ?? 'native', footprint, opts)
+      : { x: 0, y: 0 };
   const widthPx = clip.box_width != null ? opts.width * clip.box_width : fittedWidth * scale;
   const heightPx =
     clip.box_height != null
@@ -271,8 +278,8 @@ function resolveBox(clip: Clip, opts: FcpxmlExportOptions, nativeAspect: number)
   return {
     widthPx,
     heightPx,
-    topLeftXPx: (clip.position_x ?? 0) * opts.width,
-    topLeftYPx: (clip.position_y ?? 0) * opts.height,
+    topLeftXPx: ((clip.position_x ?? 0) + origin.x) * opts.width,
+    topLeftYPx: ((clip.position_y ?? 0) + origin.y) * opts.height,
   };
 }
 
@@ -481,8 +488,8 @@ export function buildFcpxml(timeline: Timeline, opts: FcpxmlExportOptions): Fcpx
       const { aspect, postCropWidth, postCropHeight, approximated } = nativeAspectAndPostCrop(clip);
       const box = resolveBox(clip, opts, aspect);
       const hasRealTransform =
-        (clip.position_x ?? 0) !== 0 ||
-        (clip.position_y ?? 0) !== 0 ||
+        box.topLeftXPx !== 0 ||
+        box.topLeftYPx !== 0 ||
         (clip.scale ?? 1) !== 1 ||
         clip.box_width != null ||
         clip.box_height != null ||

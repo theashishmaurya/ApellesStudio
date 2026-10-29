@@ -2822,10 +2822,18 @@ export function applyMusicEdit(
 
   // 2. Lift every piece now wholly inside the range. `checkMusicEdit` refused
   //    a range covering the whole track, so no removal here can empty it.
+  //
+  //    B-329 — "inside" is decided by where a piece STARTS, not by where its
+  //    `endFrame` lands: step 1 cut the bed at `e.end`, so a piece that starts in
+  //    `[e.start, e.end)` cannot reach past it. A split keeps whole SOURCE
+  //    frames, so on a clip whose rate differs from the timeline's (a 24 fps bed
+  //    in a 30 fps timeline) the middle piece's `endFrame` — a round trip
+  //    through source frames — can land one frame past `e.end`; testing it
+  //    against `e.end` found no piece and refused a perfectly valid range.
   let removed = 0;
   for (;;) {
     const tr = next.tracks[e.track];
-    const idx = tr.clips.findIndex((c) => c.start_frame >= e.start && endFrame(c, fps) <= e.end);
+    const idx = tr.clips.findIndex((c) => c.start_frame >= e.start && c.start_frame < e.end);
     if (idx < 0) break;
     const ok = checkRemove(next, e.track, idx);
     if (!ok.ok) return refuse(`"${tr.clips[idx].name}" inside the range could not be removed — ${ok.reason}`);
@@ -2856,7 +2864,10 @@ export function applyMusicEdit(
   //    may not exist (the range touched the bed's first or last edge).
   const result: MusicEditResult = { ...head, applied: true, splits, removed };
   const clips = next.tracks[e.track].clips;
-  const bi = clips.findIndex((c) => endFrame(c, fps) === e.start);
+  // B-329 — the piece before the dropout ends where the first cut was made, but
+  //    on a mixed-rate bed its `endFrame` can round one frame either side of
+  //    `e.start`; it is the piece that starts before the range and ends there.
+  const bi = clips.findIndex((c) => c.start_frame < e.start && Math.abs(endFrame(c, fps) - e.start) <= 1);
   if (bi >= 0) {
     const c = clips[bi];
     next = applyOp(next, {
@@ -3444,10 +3455,27 @@ function clampedSlipDelta(tr: Track, clipIdx: number, delta: number, fps: number
  *  `source_start` stays ≥ 0 and at least one frame of the clip survives. The
  *  clip's OUT point is held fixed, so `duration` absorbs the whole delta. */
 function headRoom(c: Clip, fps: number): [number, number] {
+  // B-330 — a still has no real head to run out of: it is the same picture at
+  // every frame, and D-292 gave it a synthesized `source_len` precisely so it
+  // can be extended. A placed still sits at `source_start` 0, so bounding its
+  // head by `source_start` made every roll that pulls its cut EARLIER refuse
+  // ("no media handle"). Its head may grow until the clip is as long as the
+  // synthesized extent; `moveClipHead` keeps `source_start` at 0 when it does.
+  const headFrames = isStillSource(c.source_path) ? Math.max(c.source_len - c.duration, c.source_start) : c.source_start;
   return [
-    sourceFramesToTimeline(c, -c.source_start, fps),
+    sourceFramesToTimeline(c, -headFrames, fps),
     sourceFramesToTimeline(c, Math.max(c.duration - 1, 0), fps),
   ];
+}
+
+/** Move `c`'s head (in-point) by `dSource` SOURCE frames with the out point
+ *  held: `duration` absorbs the whole delta. A still's `source_start` never
+ *  goes below 0 (B-330, see [`headRoom`]) — the picture is time-invariant, so
+ *  an extended head just lengthens the clip; everything else moves its
+ *  in-point by exactly `dSource`, as before. */
+function moveClipHead(c: Clip, dSource: number): void {
+  c.source_start = isStillSource(c.source_path) ? Math.max(0, c.source_start + dSource) : c.source_start + dSource;
+  c.duration -= dSource;
 }
 
 /** [`headRoom`]'s counterpart for `c`'s TAIL (out-point), same convention:
@@ -4849,8 +4877,7 @@ function applyRippleTrim(
     // `source_fps`, exactly as `trim_start`/`trim_end`/`slip` already do.
     const dSource = timelineFramesToSource(nc, d, fps);
     if (edge === 'start') {
-      nc.source_start += dSource;
-      nc.duration -= dSource;
+      moveClipHead(nc, dSource);
     } else {
       nc.duration += dSource;
     }
@@ -6784,8 +6811,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       for (const [ti, ci] of rightTargets) {
         const nc = next.tracks[ti].clips[ci];
         const dSource = timelineFramesToSource(nc, d, fps);
-        nc.source_start += dSource;
-        nc.duration -= dSource;
+        moveClipHead(nc, dSource);
         nc.start_frame += d;
       }
       // Result check rather than a per-member neighbour clamp — see
@@ -6855,8 +6881,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       for (const [ti, ci] of nextTargets ?? []) {
         const nc = next.tracks[ti].clips[ci];
         const dSource = timelineFramesToSource(nc, d, fps);
-        nc.source_start += dSource;
-        nc.duration -= dSource;
+        moveClipHead(nc, dSource);
         nc.start_frame += d;
       }
       const touchedTracks = new Set(

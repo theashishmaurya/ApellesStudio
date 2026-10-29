@@ -6,6 +6,7 @@ import {
   MIN_DRAG_SCALE,
   boxToScreenRect,
   clipBoxFraction,
+  clipBoxOrigin,
   dragCornerReposition,
   dragCornerScale,
   dragReposition,
@@ -328,5 +329,31 @@ describe('scaleFractionBoxAbout', () => {
     // A drag whose start distance was zero can only produce garbage; the box
     // must stay put rather than becoming NaN and vanishing from the DOM.
     expect(scaleFractionBoxAbout(box, pivot, Number.NaN)).toEqual(box);
+  });
+});
+
+describe('clipBoxOrigin (B-328)', () => {
+  const natural = { width: 1, height: 607.5 / 1920 };
+
+  it('centres a fit clip: the drawn box sits mid-frame at position 0,0', () => {
+    const origin = clipBoxOrigin({ scaling: 'fit' }, natural);
+    const box = clipBoxFraction(natural, { x: 0, y: 0 }, 1, 'top-left', origin);
+    expect(box.left).toBe(0);
+    expect(box.top + box.height / 2).toBeCloseTo(0.5, 12);
+  });
+
+  it('keeps scale about the centred top-left, so position still means the top-left offset', () => {
+    const origin = clipBoxOrigin({ scaling: 'fit' }, natural);
+    const half = clipBoxFraction(natural, { x: 0.1, y: 0 }, 0.5, 'top-left', origin);
+    expect(half.left).toBeCloseTo(0.1, 12);
+    expect(half.top).toBeCloseTo(origin.y, 12);
+  });
+
+  it('is nothing for native, an unset scaling, a text clip or a box override', () => {
+    const none = { x: 0, y: 0 };
+    expect(clipBoxOrigin({ scaling: 'native' }, natural)).toEqual(none);
+    expect(clipBoxOrigin({}, natural)).toEqual(none);
+    expect(clipBoxOrigin({ scaling: 'fit', text: { font: 'x' } as never }, natural)).toEqual(none);
+    expect(clipBoxOrigin({ scaling: 'fit' }, natural, { width: 1, height: 1 })).toEqual(none);
   });
 });
