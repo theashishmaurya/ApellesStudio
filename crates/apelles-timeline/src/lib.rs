@@ -389,6 +389,15 @@ pub struct Marker {
     /// Longer free-text note, shown only in the marker's own popover.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// When this marker was created, Unix epoch **milliseconds** (B-317) — what
+    /// the Markers panel and `editor_list_markers` sort "newest first" by. Set
+    /// once, by `newMarker` (the one construction path behind the GUI button,
+    /// the `M` shortcut and `editor_add_marker`); no edit, ripple or `set_marker`
+    /// ever changes it. `None` for a marker written before B-317, which
+    /// `#[serde(default)]` loads with no migration and which sorts after every
+    /// stamped marker, by frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<i64>,
 }
 
 /// One track: a typed, ordered lane of clips.
@@ -4855,6 +4864,7 @@ mod tests {
             duration_frames: duration,
             name: None,
             note: None,
+            created_at: None,
         }
     }
 
@@ -4998,6 +5008,7 @@ mod tests {
             duration_frames: None,
             name: None,
             note: None,
+            created_at: None,
         });
         assert_eq!(
             fp,
@@ -5385,6 +5396,7 @@ mod tests {
                     duration_frames: Some(48),
                     name: Some("cut here".into()),
                     note: Some("client note".into()),
+                    created_at: None,
                 },
                 Marker {
                     id: "m2".into(),
@@ -5393,6 +5405,7 @@ mod tests {
                     duration_frames: None,
                     name: None,
                     note: None,
+                    created_at: None,
                 },
             ],
             ..Default::default()

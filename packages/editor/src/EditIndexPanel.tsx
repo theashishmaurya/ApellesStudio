@@ -79,14 +79,26 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowsClockwiseIcon, FlagIcon, TextAlignLeftIcon, TrashIcon } from '@phosphor-icons/react';
-import { Button, Input, Tabs, TabsContent, TabsList, TabsTrigger } from '@apelles/ui';
+import {
+  Button,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@apelles/ui';
 import { fmtTimecode } from '@apelles/player';
 
 // D-408 — right-click a line or a marker for a music dropout there.
 import { MusicEditMenu, type MusicEditTarget } from './MusicEditMenu';
 import { useEditorTimelineStore } from './timelineStore';
 import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
-import { clipAt, markerEndFrame, markersOf, timelineFps, type Marker } from './timeline';
+import { clipAt, markerEndFrame, markersOf, timelineFps, type Marker, type MarkerSort } from './timeline';
 import {
   locateTimelineFrame,
   stitchTimelineTranscript,
@@ -185,13 +197,51 @@ function EmptyNote({ children }: { children: React.ReactNode }) {
 
 // ---- Markers ---------------------------------------------------------------
 
+/** B-317 — the sort choices. Premiere's Markers panel and Resolve's marker
+ *  index both list by position only (their own help pages; neither offers a
+ *  created-order sort), so "Newest first" is the owner's review need, not a
+ *  borrowed pattern; "Time on timeline" is what both references do. */
+const MARKER_SORT_LABELS: Record<MarkerSort, string> = {
+  newest: 'Newest first',
+  frame: 'Time on timeline',
+};
+
+/** The most recently created of `added` (a lone ripple-free add is one marker;
+ *  a replace/paste can add several). A plain function: the React Compiler
+ *  bails out on a ternary with a nullish test inside a component (D-201). */
+function newestOf(added: readonly Marker[]): Marker {
+  let best = added[0];
+  for (const m of added) {
+    if ((m.created_at ?? 0) > (best.created_at ?? 0)) best = m;
+  }
+  return best;
+}
+
 function MarkersView() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
   const setPlayhead = useEditorTimelineStore((s) => s.setPlayhead);
+  const sort = useEditorTimelineStore((s) => s.markerSort);
+  const setSort = useEditorTimelineStore((s) => s.setMarkerSort);
 
   const fps = timelineFps(timeline);
-  const markers = useMemo(() => markersOf(timeline), [timeline]);
+  const markers = useMemo(() => markersOf(timeline, sort), [timeline, sort]);
+
+  // B-317 — a marker that APPEARS while the panel is open (the `M` key, the
+  // flag button, `editor_add_marker`) is highlighted and scrolled into view,
+  // so a new review note is never lost in the list. The first render only
+  // seeds the known ids: markers already on the timeline are not "new".
+  const knownIds = useRef<Set<string> | null>(null);
+  const [freshId, setFreshId] = useState<string | null>(null);
+  useEffect(() => {
+    const ids = new Set(markers.map((m) => m.id));
+    const known = knownIds.current;
+    knownIds.current = ids;
+    if (!known) return;
+    const added = markers.filter((m) => !known.has(m.id));
+    if (added.length === 0) return;
+    setFreshId(newestOf(added).id);
+  }, [markers]);
   // D-408 — the row the music context menu acts on (the last one right-clicked).
   const [menuTarget, setMenuTarget] = useState<MusicEditTarget | null>(null);
 
@@ -207,11 +257,27 @@ function MarkersView() {
 
   return (
     <MusicEditMenu target={menuTarget}>
-      <ul className="flex flex-col gap-1" data-chroma-marker-index>
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-[11px] text-text-secondary">Sort</span>
+        <Select value={sort} onValueChange={(v) => v && setSort(v as MarkerSort)}>
+          <SelectTrigger data-chroma-marker-index-sort className="h-7 flex-1 text-[11px]">
+            <SelectValue>{MARKER_SORT_LABELS[sort]}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {(Object.keys(MARKER_SORT_LABELS) as MarkerSort[]).map((k) => (
+              <SelectItem key={k} value={k}>
+                {MARKER_SORT_LABELS[k]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <ul className="flex flex-col gap-1" data-chroma-marker-index data-chroma-marker-index-sort-mode={sort}>
         {markers.map((m) => (
           <MarkerRow
             key={m.id}
             marker={m}
+            fresh={m.id === freshId}
             fps={fps}
             onContextMenu={() =>
               setMenuTarget({ start: m.frame, end: markerEndFrame(m), noun: 'this marker', text: m.name || undefined })
@@ -228,6 +294,8 @@ function MarkersView() {
 
 interface MarkerRowProps {
   marker: Marker;
+  /** B-317 — the marker that was just added: highlighted, scrolled into view. */
+  fresh: boolean;
   fps: number;
   /** D-408 — this row was right-clicked (the music context menu's target). */
   onContextMenu: () => void;
@@ -236,7 +304,7 @@ interface MarkerRowProps {
   onRemove: () => void;
 }
 
-function MarkerRow({ marker, fps, onContextMenu, onSeek, onComment, onRemove }: MarkerRowProps) {
+function MarkerRow({ marker, fresh, fps, onContextMenu, onSeek, onComment, onRemove }: MarkerRowProps) {
   const thumb = useMarkerThumb(marker, fps);
 
   // The comment is a DRAFT while it is being typed and commits on blur —
@@ -250,6 +318,12 @@ function MarkerRow({ marker, fps, onContextMenu, onSeek, onComment, onRemove }: 
 
   const ranged = !!marker.duration_frames;
 
+  const rowRef = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    // `scrollIntoView` is absent in jsdom, hence the optional call.
+    if (fresh) rowRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [fresh]);
+
   return (
     // Two ROWS, not one line of five columns. The first draft put the comment
     // box beside the name and delete, and in the real 288px column (verified in
@@ -259,9 +333,11 @@ function MarkerRow({ marker, fps, onContextMenu, onSeek, onComment, onRemove }: 
     // spans both rows on the left; everything textual stacks to its right and
     // gets the column's full remaining width.
     <li
+      ref={rowRef}
       data-chroma-marker-index-item={marker.id}
+      data-chroma-marker-index-fresh={fresh || undefined}
       onContextMenu={onContextMenu}
-      className="group flex items-start gap-2 rounded-md p-1.5 hover:bg-bg-primary"
+      className={`group flex items-start gap-2 rounded-md p-1.5 hover:bg-bg-primary ${fresh ? 'bg-bg-primary ring-1 ring-accent' : ''}`}
     >
       {/* The row's seek target is a real button wrapping the thumbnail and the
           text, not a click handler on the <li>: the row also contains an input

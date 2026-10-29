@@ -808,6 +808,9 @@ function markerDto(m: Marker) {
     endFrame: markerEndFrame(m),
     name: m.name ?? null,
     note: m.note ?? null,
+    // B-317 — creation time (epoch ms), `null` for a marker made before it
+    // was recorded.
+    createdAt: m.created_at ?? null,
   };
 }
 
@@ -5262,10 +5265,15 @@ export function useEditorControl(): void {
       // No `track` argument anywhere here, deliberately: a marker belongs to
       // the timeline, not to a track or a clip (see `Timeline.markers`).
 
-      editor_list_markers: () => {
+      editor_list_markers: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
-        return { markers: markersOf(tl).map(markerDto), palette: MARKER_COLORS.map((c) => c.name) };
+        // B-317 — `sort` is optional and defaults to the documented frame order.
+        const sort = a?.sort ?? 'frame';
+        if (sort !== 'frame' && sort !== 'newest') {
+          return { error: `sort must be "frame" or "newest", got ${JSON.stringify(sort)}` };
+        }
+        return { markers: markersOf(tl, sort).map(markerDto), palette: MARKER_COLORS.map((c) => c.name) };
       },
 
       editor_add_marker: (a) => {

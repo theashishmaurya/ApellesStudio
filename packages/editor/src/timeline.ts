@@ -1915,6 +1915,13 @@ export interface Marker {
   duration_frames?: number;
   name?: string;
   note?: string;
+  /** B-317 — when the marker was created, Unix epoch MILLISECONDS. Stamped once
+   *  by [`newMarker`] (the one construction path of the GUI button, the `M`
+   *  shortcut and `editor_add_marker`) and never changed afterwards: not by
+   *  `set_marker`, not by a ripple, not by a replayed op. Absent on a marker
+   *  written before B-317, which sorts after every stamped one (by frame) in
+   *  [`markersOf`]'s `'newest'` order — no migration of the project file. */
+  created_at?: number;
 }
 
 /** The LAST timeline frame a marker covers — its own `frame` for a point
@@ -2015,6 +2022,7 @@ export function newMarker(
     id: `marker-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
     frame: Math.max(0, Math.round(frame)),
     color: hex,
+    created_at: Date.now(),
   };
   // D-328 — a point marker is the default and has exactly one representation:
   // the key is absent, never `0`. `normaliseMarkerDuration` is the single
@@ -2033,8 +2041,26 @@ export function newMarker(
  *  `applyOp`'s own sorted writes, so a caller that got its `Timeline` from
  *  somewhere else (a hand-built fixture, a pre-D-222 `project.json` an MCP
  *  client wrote by hand) still sees them in ruler order. */
-export function markersOf(tl: Timeline | null | undefined): Marker[] {
-  return sortedMarkers(tl?.markers ?? []);
+export function markersOf(tl: Timeline | null | undefined, sort: MarkerSort = 'frame'): Marker[] {
+  const byFrame = sortedMarkers(tl?.markers ?? []);
+  return sort === 'newest' ? newestFirst(byFrame) : byFrame;
+}
+
+/** B-317 — how a marker list is ordered for display: `'frame'` is timeline
+ *  position (the stored order, and `editor_list_markers`' default contract),
+ *  `'newest'` is most recently created first. */
+export type MarkerSort = 'frame' | 'newest';
+
+/** `created_at` descending; markers without one (pre-B-317) follow the stamped
+ *  ones in frame order. Input is already frame-sorted and `Array.sort` is
+ *  stable, so equal stamps keep frame order too. */
+function newestFirst(byFrame: readonly Marker[]): Marker[] {
+  return [...byFrame].sort((a, b) => {
+    if (a.created_at === undefined || b.created_at === undefined) {
+      return (a.created_at === undefined ? 1 : 0) - (b.created_at === undefined ? 1 : 0);
+    }
+    return b.created_at - a.created_at;
+  });
 }
 
 /** Frame order, stable on ties — the one sort the marker ops and

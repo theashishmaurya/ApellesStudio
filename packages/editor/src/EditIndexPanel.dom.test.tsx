@@ -180,6 +180,7 @@ afterEach(() => {
       selection: [],
       selectedGap: null,
       playhead: 0,
+      markerSort: 'newest',
     }),
   );
   useMediaUnderstandingStore.getState().clear();
@@ -193,8 +194,8 @@ afterEach(() => {
 });
 
 describe('Index panel — Markers view (D-328)', () => {
-  it('1. lists every marker in frame order', async () => {
-    setUp(fixture([mk('b', 300), mk('a', 100)]));
+  it('1. lists every marker in frame order when sorted by time on the timeline', async () => {
+    setUp(fixture([mk('b', 300), mk('a', 100)]), { markerSort: 'frame' });
     await mountPanel();
 
     const rows = Array.from(document.querySelectorAll('[data-chroma-marker-index-item]'));
@@ -274,6 +275,52 @@ describe('Index panel — Markers view (D-328)', () => {
     await mountPanel();
     expect(document.querySelectorAll('[data-chroma-marker-index-item]').length).toBe(0);
     expect(document.body.textContent).toContain('No markers yet');
+  });
+});
+
+describe('Index panel — Markers sort (B-317)', () => {
+  const ids = () =>
+    Array.from(document.querySelectorAll('[data-chroma-marker-index-item]')).map((r) =>
+      r.getAttribute('data-chroma-marker-index-item'),
+    );
+
+  it('defaults to newest first; markers without a creation time follow, in frame order', async () => {
+    setUp(
+      fixture([
+        mk('old', 100, { created_at: 1_000 }),
+        mk('new', 900, { created_at: 3_000 }),
+        mk('mid', 500, { created_at: 2_000 }),
+        mk('legacy-late', 700, { created_at: undefined }),
+        mk('legacy-early', 50, { created_at: undefined }),
+      ]),
+    );
+    await mountPanel();
+    expect(ids()).toEqual(['new', 'mid', 'old', 'legacy-early', 'legacy-late']);
+  });
+
+  it('time-on-timeline sort lists by frame, and the choice lives in the store', async () => {
+    setUp(fixture([mk('x', 900, { created_at: 3_000 }), mk('y', 100, { created_at: 1_000 })]));
+    await mountPanel();
+    expect(ids()).toEqual(['x', 'y']);
+    actSync(() => useEditorTimelineStore.getState().setMarkerSort('frame'));
+    await waitFrames(2);
+    expect(ids()).toEqual(['y', 'x']);
+  });
+
+  it('a marker added while the panel is open lands at the top and is highlighted', async () => {
+    setUp(fixture([mk('a', 100, { created_at: 1_000 }), mk('b', 500, { created_at: 2_000 })]));
+    await mountPanel();
+    expect(document.querySelector('[data-chroma-marker-index-fresh]')).toBeNull();
+
+    const added = newMarker(300, 'red', 'review note', null);
+    if ('error' in added) throw new Error(added.error);
+    actSync(() => useEditorTimelineStore.getState().applyOp({ kind: 'add_marker', marker: added }));
+    await waitFrames(2);
+
+    expect(ids()[0]).toBe(added.id);
+    expect(document.querySelector('[data-chroma-marker-index-fresh]')?.getAttribute('data-chroma-marker-index-item')).toBe(
+      added.id,
+    );
   });
 });
 
