@@ -54,7 +54,7 @@ What it does NOT do:
 
    | Where | Keep |
    |---|---|
-   | Inside a sentence (hesitations) | ~0.08–0.12 s |
+   | Inside a sentence (hesitations): only gaps ≥ 0.3 s | ~0.12 s |
    | Between sentences | ~0.18–0.22 s |
    | Section change (a `##` heading in the script) | ~0.4 s |
 
@@ -70,6 +70,10 @@ What it does NOT do:
      word-safe. When gaps need different keep values (for example longer at section changes), dry-run
      it, then apply its planned ranges with `editor_ripple_delete_ranges`, shrinking only the ranges
      that need a longer keep. Every cut stays inside the tool's word-safe ranges.
+   - **Never touch mid-sentence gaps under ~0.3 s.** The transcriber times words to ~80 ms, so a
+     "gap" in a fast phrase is often not silence. On 2026-10-29, tightening 0.15–0.25 s gaps
+     chopped fast phrases into slivers. It garbled "misheard surnames…" (the word is split as
+     "Miss | Heard") and "Seven paid systems…". The between-sentence and section targets are safe.
    - **Never clip a word's start or end** (B-289 history). Check that the word count is equal before
      and after the pacing pass.
 5. **Final read.** Re-read the cut transcript top to bottom against the script. Anything doubled,
