@@ -18,7 +18,8 @@
 import { useRef, useState } from 'react';
 import { usePreviewContentBox } from './usePreviewContentBox';
 import { clipSourceFrame, hasParamKeyframes, resolveClipBoxTransform } from './clipKeyframes';
-import { clipCoversFrame, findClip, timelineFps } from './timeline';
+import { clipCoversFrame, timelineFps } from './timeline';
+import { canvasTarget } from './inspectorTarget';
 import { useEditorTimelineStore } from './timelineStore';
 import { useClipGeometry } from './useClipGeometry';
 import { useHighlightEditStore } from './highlightEditStore';
@@ -53,8 +54,10 @@ export function HighlightOverlay({ container }: { container: HTMLElement | null 
   const selected = useHighlightEditStore((s) => s.selected);
   const select = useHighlightEditStore((s) => s.select);
 
-  const primary = selection.length === 1 ? selection[0] : null;
-  const found = primary ? findClip(timeline, primary.track, primary.id) : null;
+  // B-334/D-430 — the picture half of a linked pair, whichever half is selected.
+  const picture = canvasTarget(timeline, selection.length === 1 ? selection[0] : null);
+  const primary = picture ? { track: picture.track, id: picture.clip.id } : null;
+  const found = picture ? { clip: picture.clip, index: picture.index } : null;
   const clip = found?.clip ?? null;
   const track = primary ? (timeline?.tracks[primary.track] ?? null) : null;
   const armed = !!clip && clip.id === armedClipId;

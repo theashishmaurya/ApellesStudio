@@ -6,6 +6,26 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-430 — A linked A/V pair acts as one clip in the Inspector, the canvas and the MCP ops: one resolver, "which half does this facet edit"
+
+**decided (2026-10-29)** · fixes **B-334** · builds on D-129 (A/V linking), D-223 (clip volume/pan), D-224 (EQ), D-246 (Video/Audio tabs) · code: `packages/editor/src/inspectorTarget.ts`
+
+**Context.** A linked pair is two real clips (D-129): the picture on a video track, its sound on an audio track, and the picture's embedded stream is suppressed. Every Inspector section read the *selected* clip, so the two halves told different stories. On the owner's "C01 hook demo" the Audio tab showed **Volume 10.6, no keyframe** with the picture half selected and **0.55 with a keyframe** with the audio half selected; with the audio half selected the Video tab edited a transform nothing draws and the canvas drew the video box. The 10.6 was the picture half's own stored `volume`, a field the mixer never reads once the sound lives in a linked clip (the live mixer skips a linked picture's embedded stream, `timelineExport.ts` skips it for the export, D-129): a stray linear gain (about +20 dB), most likely written to the wrong half by an earlier level edit or agent call (not recoverable from the project), perfectly editable and perfectly inert: editing it never reached the mix.
+
+**Reference, checked.** Premiere's and Resolve's Inspectors present a linked pair as one shot: Resolve's Inspector lists Video / Audio tabs for the timeline item whichever half is selected, Premiere's Effect Controls shows Motion and Volume together for the clip and its link. The tab, not the clicked half, decides which property is shown.
+
+**Options.** (a) Move the audio fields into the picture clip on load (rewrites the owner's project, and the audio clip still exists as the thing the mixer reads). (b) Hide the Audio tab on the picture half (breaks "the pair acts as one"). (c) Resolve, in one place, which clip each *facet* (video / audio) of a selection edits, and use that everywhere.
+
+**Choice: (c).** `facetTarget(timeline, track, index, facet)` / `inspectorTarget(timeline, selection, facet)`: unlinked clip is its own target for both facets (a video clip's embedded audio is audible, nothing changes); linked, the **audio** facet is the group member on an audio track and the **video** facet the member on a non-audio track. A linked picture with no audio half has no audio target (silent, D-129): no Audio tab, and `editor_set_clip_audio` refuses. `canvasTarget` is the video facet restricted to non-audio tracks, so the transform box, the dynamic-zoom boxes and the highlight boxes belong to the picture whichever half is selected and a standalone audio clip draws none; a press on the picture while the audio half is selected is that box's drag, not a re-selection (`useCanvasClipPick`).
+
+**Used by.** Every `EditorInspectorPanel` section (picture: transform, crop, speed, fade, highlights, dynamic zoom, picture keyframes; sound: volume, pan, EQ, their keyframes and curve), `TransformOverlay`, `DynamicZoomOverlay`, `HighlightOverlay`, `ClipHighlightsSection`, and the MCP ops: `editor_set_clip_audio`, `editor_set_clip_eq` land on the audio half; `editor_set_clip_transform`, `editor_set_dynamic_zoom` on the picture; `editor_set_clip_keyframes` routes each param by `paramFacet` (`volume`/`pan` to the sound, the rest to the picture), so one mixed list splits across the two halves, a half's list is replaced only when the request names one of its params, and an empty list clears the addressed clip's own facet; `editor_set_keyframe_ease` follows the param. A redirected result reports the clip actually written and a `note`. Both MCP servers' descriptions state this (still 255 tools, parity corpus re-captured).
+
+**Stray audio fields on a picture half (migration): ignored, not cleared.** Existing projects may carry `volume`/`pan`/`eq_bands`/audio keyframes on linked picture clips. They are inert, now also invisible (no control reads them), and can never be written again through any surface. Clearing them on load would rewrite the owner's timeline unasked (the same call D-129 made about not migrating old clips) for no audible gain, and an *unlinked* clip's values are real, so a blanket sweep would need the link test anyway. If a pair is ever unlinked the picture clip's old values would surface again, which is why the Unlink path is left alone: it is the user's explicit "make these independent".
+
+**Not done / known.** Fade and speed on the picture half keep their Video-tab home; an audio half's own fade is edited by its timeline fade handles (`ClipFadeOverlay`), as before. The Rust parity test (`cargo test -p apelles-mcp`) was not run in this session (disk); the corpus was re-captured and the Rust descriptions are byte-identical copies of the Python ones.
+
+---
+
 ## D-428 — Silence detection: the audio is the authority over a transcribed word, and the detector is open-ended (basis, level, merge, cushions)
 
 **decided (2026-10-29)** · fixes B-327 · refines D-420 (B-289) · code: `packages/editor/src/silenceAudio.ts`, `crates/apelles-speech/src/energy.rs`

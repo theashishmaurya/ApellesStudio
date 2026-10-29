@@ -6,7 +6,10 @@ Issues once public.
 ```
 ## B-334 — Inspector shows different values for the two halves of a linked A/V clip
 
-status: **open** · severity: **major** · area: Edit Inspector (Video/Audio tabs) on an A/V-linked pair (D-129)
+status: **fixed 2026-10-29 (D-430)** · severity: **major** · area: Edit Inspector (Video/Audio tabs) on an A/V-linked pair (D-129)
+
+- **root cause:** every Inspector section read the SELECTED clip, and a linked pair is two clips. The 10.6 was the picture half's own stored `volume`, a field the mixer never reads (a linked picture's embedded stream is suppressed, D-129), so editing it changed nothing audible; the real level (0.55, keyframed) lives on the audio partner. Same split for the Video tab and the canvas box on the audio half.
+- **fix:** one resolver (`packages/editor/src/inspectorTarget.ts`) picks the half each facet edits; the Inspector, the canvas overlays and the MCP ops (`editor_set_clip_audio`, `editor_set_clip_eq`, `editor_set_clip_transform`, `editor_set_dynamic_zoom`, `editor_set_clip_keyframes`, `editor_set_keyframe_ease`) all use it. Stray audio fields on picture halves are ignored, not cleared (D-430). Tests: `ClipInspectorPanel.linkedAv.dom.test.tsx`, `TransformOverlay.linkedAv.dom.test.tsx`, `linkedAvOps.e2e.dom.test.tsx`.
 
 - **found:** 2026-10-29 by the owner, Nemotron edit, clip "C01 hook demo" (a video clip linked to its audio partner). Screenshots: `scratch/bug-refs/linked-av-*.png`.
 - **what happens:**

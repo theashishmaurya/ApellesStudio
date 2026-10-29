@@ -3960,6 +3960,11 @@ def editor_set_clip_transform(
     value — this tool reads the clip back first, it never silently resets a
     field you didn't mention.
 
+    A/V-LINKED PAIR (D-129, B-334/D-430): a transform is the PICTURE's. Address
+    either half and the write lands on the pair's VIDEO half (the result's
+    `track`/`clip` say which), the same clip the on-canvas box and the Inspector's
+    Video tab edit. A standalone audio clip has no picture to transform.
+
     **BASE means "the fallback for a property no keyframe names."** Per
     property, a keyframe overrides this value at every frame (D-208), so on
     an animated clip a field you set here can be a real, persisted write that
@@ -4092,6 +4097,14 @@ def editor_set_clip_audio(
     once that audio has been unlinked into its own clip (D-129), which is where
     the level then lives. A title/text clip has no audio and ignores both.
 
+    A/V-LINKED PAIR (D-129, B-334/D-430): a dropped clip is two clips -- a picture
+    on a video track and its sound on an audio track. Address EITHER half: the
+    write always lands on the AUDIO half, the only clip whose volume/pan the mix
+    reads, and the result reports that clip's own `track`/`clip` plus a `note`
+    saying it was redirected. (A linked picture whose audio half has been
+    deleted is silent and is refused.) Any `volume`/`pan` already stored on a
+    linked PICTURE half is inert and ignored.
+
     Both are KEYFRAMEABLE under the names "volume" and "pan" via
     editor_set_clip_keyframes -- that is how you write an automation ramp (a
     fade under dialogue, a pan sweep). Keyed values are interpolated linearly
@@ -4182,6 +4195,10 @@ def editor_set_clip_eq(
     audio-track clip that is the whole clip; on a video clip it is that clip's
     EMBEDDED audio, and nothing at all once that audio has been unlinked into
     its own clip (D-129). A title/text clip has no audio and ignores it.
+
+    A/V-LINKED PAIR (D-129, B-334/D-430): address either half -- the EQ always
+    lands on the pair's AUDIO half, exactly as editor_set_clip_audio does, and the
+    result names the clip it really edited.
 
     Returns what was actually STORED (every field is clamped on the way in),
     a one-line summary of each band, `eqActive` (whether the EQ does anything
@@ -4340,6 +4357,15 @@ def editor_set_clip_keyframes(track: int, clip: int, keyframes: list[ClipKeyfram
     that list and cannot be keyed — see editor_set_clip_eq for why.) They are applied per
     output SAMPLE (not per video frame) in both the live mixer and
     `editor_export`, so a ramp is smooth rather than stepped.
+
+    A/V-LINKED PAIR (D-129, B-334/D-430): on a linked pair the picture's
+    properties and the sound's (`volume`/`pan`) live on two different clips, so
+    each key's params are routed to the half they belong to whichever half you
+    addressed -- one mixed list is split between them. A half's whole list is
+    replaced only when your list names one of its properties (zoom keys never
+    wipe the audio half's volume ramp), and an EMPTY list clears the addressed
+    clip's own facet (a video clip: its picture keys; an audio clip: its
+    volume/pan keys). The result lists any `also` clip it wrote.
 
     Interpolation is PER PROPERTY (D-208): each param is resolved over only
     the keys that name it, so an entry naming a `params` SUBSET animates just

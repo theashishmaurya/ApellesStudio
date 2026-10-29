@@ -98,7 +98,6 @@ import {
   EASE_PRESETS,
   easePresetName,
   endFrame,
-  findClip,
   isClipAudioParam,
   timelineFps,
   type ClipAudioParam,
@@ -109,7 +108,16 @@ import {
 } from './timeline';
 import type { SpeedPoint } from './speedRamp';
 import { useEditorTimelineStore } from './timelineStore';
+import { inspectorTarget, paramFacet, type ClipTarget } from './inspectorTarget';
 import { useClipGeometry } from './useClipGeometry';
+
+/** One facet's clip plus the keyframe context every per-property handler
+ *  needs: that clip's own keys and the playhead's source frame within it. */
+interface FacetCtx {
+  target: ClipTarget | null;
+  keyframes: ClipKeyframe[];
+  sourceFrame: number;
+}
 
 export function EditorInspectorPanel() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
@@ -135,17 +143,37 @@ export function EditorInspectorPanel() {
   // every single-clip-only consumer (docs/notes/multi-select.md): a
   // selection that isn't exactly one clip falls back to the empty state,
   // it isn't a real N-clip batch-edit contract yet.
-  const primary = selection.length === 1 ? selection[0] : null;
-  const found = primary ? findClip(timeline, primary.track, primary.id) : null;
-  const selectedClip = found?.clip ?? null;
-  const selectedIdx = found?.index ?? -1;
-  const selectedTrackLocked = primary ? !!timeline?.tracks[primary.track]?.locked : false;
+  const selected = selection.length === 1 ? selection[0] : null;
+
+  // B-334/D-430 — a linked A/V pair is one shot in the Inspector: the Video
+  // tab reads and writes the PICTURE half and the Audio tab the AUDIBLE audio
+  // partner, whichever half is selected (`inspectorTarget.ts`). Everything
+  // below that is not explicitly audio therefore speaks of the picture half —
+  // `primary` is that half (not the raw selection), so `selectedClip`,
+  // `selectedIdx` and every `primary.track` write already address it.
+  const videoTarget = inspectorTarget(timeline, selected, 'video');
+  const audioTarget = inspectorTarget(timeline, selected, 'audio');
+  const primary = videoTarget ? { track: videoTarget.track, id: videoTarget.clip.id } : null;
+  const selectedClip = videoTarget?.clip ?? null;
+  const selectedIdx = videoTarget?.index ?? -1;
+  const selectedTrackLocked = videoTarget ? !!timeline?.tracks[videoTarget.track]?.locked : false;
+  const audioTrackLocked = audioTarget ? !!timeline?.tracks[audioTarget.track]?.locked : false;
 
   // Keyframes are interpolated against the clip's own SOURCE frame, not the
   // absolute timeline position — see `clipKeyframes.ts`'s doc. B-079 —
-  // fps-aware as of this pass, so this needs the project's own rate.
-  const clipKfSourceFrame = selectedClip ? clipSourceFrame(selectedClip, playhead, timelineFps(timeline)) : 0;
-  const clipKeyframes = selectedClip?.chroma_keyframes ?? [];
+  // fps-aware as of this pass, so this needs the project's own rate. One
+  // context per facet: the picture half and the audio partner each have their
+  // own clip, keys and source frame.
+  const fps = timelineFps(timeline);
+  const facetCtx = (t: ClipTarget | null): FacetCtx => ({
+    target: t,
+    keyframes: t?.clip.chroma_keyframes ?? [],
+    sourceFrame: t ? clipSourceFrame(t.clip, playhead, fps) : 0,
+  });
+  const ctxVideo = facetCtx(videoTarget);
+  const ctxAudio = facetCtx(audioTarget);
+  const clipKfSourceFrame = ctxVideo.sourceFrame;
+  const clipKeyframes = ctxVideo.keyframes;
   const keyedHere = clipKeyframes.some((k) => k.frame === Math.round(clipKfSourceFrame));
 
   // D-193 — the same `chroma_timeline_clip_geometry` fetch `TransformOverlay.
@@ -219,8 +247,8 @@ export function EditorInspectorPanel() {
   // `applyFade` this does NOT restate the clip's other value: an omitted field
   // is left alone by the reducer itself.
   const applyAudio = (patch: Partial<Record<ClipAudioParam, number>>) => {
-    if (!primary || !selectedClip || selectedIdx < 0) return;
-    applyOp({ kind: 'set_clip_audio', track: primary.track, clip: selectedIdx, ...patch });
+    if (!audioTarget) return;
+    applyOp({ kind: 'set_clip_audio', track: audioTarget.track, clip: audioTarget.index, ...patch });
   };
 
   // D-224 — per-clip EQ gets its own op too, for `set_clip_audio`'s own
@@ -229,21 +257,22 @@ export function EditorInspectorPanel() {
   // looked at — the reducer materialises the default four-band strip for a
   // clip that has no EQ yet, so the panel never has to.
   const applyEqBand = (band: number, patch: Partial<EqBand>) => {
-    if (!primary || !selectedClip || selectedIdx < 0) return;
-    applyOp({ kind: 'set_clip_eq', track: primary.track, clip: selectedIdx, band, patch });
+    if (!audioTarget) return;
+    applyOp({ kind: 'set_clip_eq', track: audioTarget.track, clip: audioTarget.index, band, patch });
   };
 
   const clearEq = () => {
-    if (!primary || !selectedClip || selectedIdx < 0) return;
-    applyOp({ kind: 'set_clip_eq', track: primary.track, clip: selectedIdx, clear: true });
+    if (!audioTarget) return;
+    applyOp({ kind: 'set_clip_eq', track: audioTarget.track, clip: audioTarget.index, clear: true });
   };
 
   // D-208 — every keyframeable property's static (un-animated) value, read
   // once here through `CLIP_KEYFRAME_DEFAULTS` instead of eleven scattered
   // `?? 1` / `?? 0` fallbacks that could each drift from the backend's own
   // defaults independently.
+  const ctxOf = (param: ClipKeyframeParam): FacetCtx => (paramFacet(param) === 'audio' ? ctxAudio : ctxVideo);
   const staticValue = (param: ClipKeyframeParam): number =>
-    (selectedClip?.[param] as number | undefined) ?? CLIP_KEYFRAME_DEFAULTS[param];
+    (ctxOf(param).target?.clip[param] as number | undefined) ?? CLIP_KEYFRAME_DEFAULTS[param];
 
   /** D-223 — write ONE property's static field through the op that owns it.
    *  The only place the transform/audio split shows up in this file's
@@ -261,9 +290,9 @@ export function EditorInspectorPanel() {
   // D-208 — one write of a `set_clip_keyframes` op, so every per-property
   // handler below stays a single expression and none of them can forget the
   // guard or the track/clip indices.
-  const applyKeyframes = (keyframes: ClipKeyframe[] | undefined) => {
-    if (!primary || selectedIdx < 0) return;
-    applyOp({ kind: 'set_clip_keyframes', track: primary.track, clip: selectedIdx, keyframes: keyframes ?? [] });
+  const applyKeyframes = (keyframes: ClipKeyframe[] | undefined, ctx: FacetCtx = ctxVideo) => {
+    if (!ctx.target) return;
+    applyOp({ kind: 'set_clip_keyframes', track: ctx.target.track, clip: ctx.target.index, keyframes: keyframes ?? [] });
   };
 
   // D-208 — what `ClipInspectorPanel` renders each row from. `value` is the
@@ -272,15 +301,15 @@ export function EditorInspectorPanel() {
   // the key's own source frame back through `source_fps`), ready to hand
   // straight to `setPlayhead`.
   const paramState = (param: ClipKeyframeParam): PropertyState => {
-    const prev = adjacentParamKeyframeFrame(clipKeyframes, param, clipKfSourceFrame, -1);
-    const next = adjacentParamKeyframeFrame(clipKeyframes, param, clipKfSourceFrame, 1);
-    const toTimeline = (f: number | null) =>
-      f === null || !selectedClip ? null : clipTimelineFrame(selectedClip, f, timelineFps(timeline));
+    const { target, keyframes, sourceFrame } = ctxOf(param);
+    const prev = adjacentParamKeyframeFrame(keyframes, param, sourceFrame, -1);
+    const next = adjacentParamKeyframeFrame(keyframes, param, sourceFrame, 1);
+    const toTimeline = (f: number | null) => (f === null || !target ? null : clipTimelineFrame(target.clip, f, fps));
     return {
-      value: paramValueAt(clipKeyframes, param, clipKfSourceFrame, staticValue(param)),
-      animated: hasParamKeyframes(clipKeyframes, param),
-      keyedHere: clipKeyframes.some(
-        (k) => k.frame === Math.round(clipKfSourceFrame) && Object.prototype.hasOwnProperty.call(k.params, param),
+      value: paramValueAt(keyframes, param, sourceFrame, staticValue(param)),
+      animated: hasParamKeyframes(keyframes, param),
+      keyedHere: keyframes.some(
+        (k) => k.frame === Math.round(sourceFrame) && Object.prototype.hasOwnProperty.call(k.params, param),
       ),
       prevFrame: toTimeline(prev),
       nextFrame: toTimeline(next),
@@ -308,12 +337,13 @@ export function EditorInspectorPanel() {
    *  when an override actually exists (the rare case), so the ordinary
    *  animated edit stays one op. */
   const applyParam = (param: ClipKeyframeParam, value: number) => {
-    if (!primary || !selectedClip || selectedIdx < 0 || !Number.isFinite(value)) return;
-    if (hasParamKeyframes(clipKeyframes, param)) {
-      if (param === 'scale' && (selectedClip.box_width != null || selectedClip.box_height != null)) {
+    const ctx = ctxOf(param);
+    if (!ctx.target || !Number.isFinite(value)) return;
+    if (hasParamKeyframes(ctx.keyframes, param)) {
+      if (param === 'scale' && (ctx.target.clip.box_width != null || ctx.target.clip.box_height != null)) {
         applyTransform({ box_width: null, box_height: null });
       }
-      applyKeyframes(mergeClipKeyframeParams(clipKeyframes, clipKfSourceFrame, { [param]: value }));
+      applyKeyframes(mergeClipKeyframeParams(ctx.keyframes, ctx.sourceFrame, { [param]: value }), ctx);
     } else {
       staticWrite(param, value);
     }
@@ -334,13 +364,14 @@ export function EditorInspectorPanel() {
    *  edit model has one op per history entry — see `applyOp` — and there is
    *  no combined transform-and-keyframes op to reach for). */
   const toggleParamKeyframes = (param: ClipKeyframeParam) => {
-    if (!primary || !selectedClip || selectedIdx < 0) return;
-    if (hasParamKeyframes(clipKeyframes, param)) {
-      const held = paramValueAt(clipKeyframes, param, clipKfSourceFrame, staticValue(param));
+    const ctx = ctxOf(param);
+    if (!ctx.target) return;
+    if (hasParamKeyframes(ctx.keyframes, param)) {
+      const held = paramValueAt(ctx.keyframes, param, ctx.sourceFrame, staticValue(param));
       if (held !== staticValue(param)) staticWrite(param, held);
-      applyKeyframes(removeClipKeyframeParam(clipKeyframes, param));
+      applyKeyframes(removeClipKeyframeParam(ctx.keyframes, param), ctx);
     } else {
-      applyKeyframes(mergeClipKeyframeParams(clipKeyframes, clipKfSourceFrame, { [param]: staticValue(param) }));
+      applyKeyframes(mergeClipKeyframeParams(ctx.keyframes, ctx.sourceFrame, { [param]: staticValue(param) }), ctx);
     }
   };
 
@@ -366,11 +397,12 @@ export function EditorInspectorPanel() {
    *  clip with a `box_width`/`box_height` pair would report scale 1 while
    *  still rendering at the overridden size. */
   const resetParam = (param: ClipKeyframeParam) => {
-    if (!primary || !selectedClip || selectedIdx < 0) return;
+    const ctx = ctxOf(param);
+    if (!ctx.target) return;
     const value = CLIP_KEYFRAME_DEFAULTS[param];
     staticWrite(param, value);
-    if (hasParamKeyframes(clipKeyframes, param)) {
-      applyKeyframes(mergeClipKeyframeParams(clipKeyframes, clipKfSourceFrame, { [param]: value }));
+    if (hasParamKeyframes(ctx.keyframes, param)) {
+      applyKeyframes(mergeClipKeyframeParams(ctx.keyframes, ctx.sourceFrame, { [param]: value }), ctx);
     }
   };
 
@@ -417,16 +449,17 @@ export function EditorInspectorPanel() {
    * matching Inspector row's, and vice versa, with no state to synchronise.
    */
   const toggleParamCurve = (param: ClipKeyframeParam) => {
-    if (!selectedClip || !primary) return;
-    const open = curveEditor?.id === selectedClip.id && curveEditor?.param === param;
-    setCurveEditor(open ? null : { track: primary.track, id: selectedClip.id, param });
+    const target = ctxOf(param).target;
+    if (!target) return;
+    const open = curveEditor?.id === target.clip.id && curveEditor?.param === param;
+    setCurveEditor(open ? null : { track: target.track, id: target.clip.id, param });
   };
 
   /** Which property's curve is open, but only when it belongs to the clip this
    *  panel is showing — otherwise a row here would light up for a curve that
    *  is open on some other clip. */
   const openCurveParam =
-    selectedClip && curveEditor?.id === selectedClip.id ? curveEditor.param : null;
+    curveEditor && ctxOf(curveEditor.param).target?.clip.id === curveEditor.id ? curveEditor.param : null;
 
   // ---- D-234: dynamic zoom -------------------------------------------------
   //
@@ -488,9 +521,11 @@ export function EditorInspectorPanel() {
       // (ephemeral UI state, not a `Clip` field — see that file's own doc)
       // back to the right default for the newly-selected clip, without
       // this file having to own or thread that state itself.
-      key={selectedClip?.id ?? 'none'}
+      key={`${selectedClip?.id ?? 'none'}|${audioTarget?.clip.id ?? 'none'}`}
       clip={selectedClip}
+      audioClip={audioTarget?.clip ?? null}
       trackLocked={selectedTrackLocked}
+      audioTrackLocked={audioTrackLocked}
       geometry={geometry}
       clipKeyframes={clipKeyframes}
       keyedHere={keyedHere}

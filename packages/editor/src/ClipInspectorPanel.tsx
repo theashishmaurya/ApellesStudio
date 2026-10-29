@@ -447,7 +447,9 @@ const INSPECTOR_SECTION_DIVIDERS = '[&>*+*]:border-t [&>*+*]:border-border-color
 
 export function ClipInspectorPanel({
   clip,
+  audioClip,
   trackLocked,
+  audioTrackLocked,
   geometry,
   clipKeyframes,
   keyedHere,
@@ -476,8 +478,17 @@ export function ClipInspectorPanel({
   tab,
   onTabChange,
 }: {
+  /** The PICTURE half — what every Video-tab section reads (B-334/D-430;
+   *  `inspectorTarget.ts`). For an unlinked clip, the selected clip itself. */
   clip: Clip | null;
+  /** The AUDIBLE half — what the Audio tab's level, pan and EQ read and write:
+   *  a linked pair's audio partner, else the clip itself. `null` for a linked
+   *  picture with no audio half (silent, so no Audio tab). */
+  audioClip: Clip | null;
   trackLocked: boolean;
+  /** Whether the audio half's own track is locked — a pair's two tracks lock
+   *  independently, so the Audio tab cannot borrow the picture track's flag. */
+  audioTrackLocked: boolean;
   /** D-193 — the selected clip's composition/source geometry, or `null`
    *  while it hasn't resolved yet (fresh selection, still probing, or the
    *  source is offline). The Width/Height fields below are disabled without
@@ -579,11 +590,11 @@ export function ClipInspectorPanel({
   // real edit, so merely selecting a clip never dirties the project (the
   // reducer materialises the same strip on the first patch, so what a user
   // sees and what their first edit stores are the same four bands).
-  const eqBands = eqBandsForDisplay(clip.eq_bands);
+  const eqBands = eqBandsForDisplay(audioClip?.eq_bands);
   // …and whether any of it is doing anything, which is what the section's own
   // note tells the user. An untouched strip is completely inert, and saying so
   // is what stops "I set up four bands and nothing happened" reading as a bug.
-  const eqActive = hasActiveEq(clip.eq_bands);
+  const eqActive = hasActiveEq(audioClip?.eq_bands);
 
   // D-193 — the box's CURRENT effective size, in composition fractions:
   // the override when the clip has one, else `scale`'s own natural-footprint
@@ -624,7 +635,7 @@ export function ClipInspectorPanel({
     }
   };
 
-  const tabs = clipInspectorTabs(clip);
+  const tabs = clipInspectorTabs(clip, audioClip);
   const activeTab = resolveClipInspectorTab(tab, tabs);
 
   return (
@@ -1137,7 +1148,7 @@ export function ClipInspectorPanel({
                 step={step}
                 min={min}
                 max={max}
-                disabled={trackLocked}
+                disabled={audioTrackLocked}
                 onChange={(v) => onParamChange(param, v)}
                 onKeyframeToggle={onKeyframeToggle}
                 onKeyframeNav={onKeyframeNav}
@@ -1185,7 +1196,7 @@ export function ClipInspectorPanel({
 
               Hidden for a TEXT clip, exactly as Audio and Crop are. */}
           <InspectorSection label="EQ">
-            <EqResponseGraph bands={eqBands} disabled={trackLocked} onBandChange={onEqBandChange} />
+            <EqResponseGraph bands={eqBands} disabled={audioTrackLocked} onBandChange={onEqBandChange} />
             {eqBands.map((band, index) => (
               <div className="flex flex-col gap-1.5 border-l border-border-color pl-2" key={index}>
                 <div className={row}>
@@ -1197,7 +1208,7 @@ export function ClipInspectorPanel({
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={trackLocked}
+                    disabled={audioTrackLocked}
                     className={`h-7 px-1.5 text-[11px] ${band.enabled ? 'text-accent' : 'text-text-secondary/50'}`}
                     onClick={() => onEqBandChange(index, { enabled: !band.enabled })}
                     title={
@@ -1212,7 +1223,7 @@ export function ClipInspectorPanel({
                   <Select
                     value={band.kind}
                     onValueChange={(v) => onEqBandChange(index, { kind: v as EqBandKind })}
-                    disabled={trackLocked}
+                    disabled={audioTrackLocked}
                   >
                     <SelectTrigger className="h-7 w-28 text-xs">
                       <SelectValue />
@@ -1241,7 +1252,7 @@ export function ClipInspectorPanel({
                     // do nothing, so it is disabled rather than hidden (hiding
                     // it would make the three bands' rows jump around as kinds
                     // change).
-                    disabled={trackLocked || (key === 'gain_db' && !eqKindUsesGain(band.kind))}
+                    disabled={audioTrackLocked || (key === 'gain_db' && !eqKindUsesGain(band.kind))}
                     onChange={(v) => onEqBandChange(index, { [key]: v })}
                     onReset={() => onEqBandChange(index, { [key]: DEFAULT_EQ_BAND_VALUES[key] })}
                   />
@@ -1257,7 +1268,7 @@ export function ClipInspectorPanel({
               <Button
                 variant="ghost"
                 size="icon-xs"
-                disabled={trackLocked || !clip.eq_bands || clip.eq_bands.length === 0}
+                disabled={audioTrackLocked || !audioClip?.eq_bands || audioClip.eq_bands.length === 0}
                 onClick={onEqClear}
                 title="Remove this clip's EQ entirely"
                 aria-label="Reset EQ"

@@ -34,7 +34,8 @@ import { useHighlightEditStore } from './highlightEditStore';
 import { suggestClipHighlights } from './highlightSuggestOp';
 import { liveSuggestDeps } from './highlightSuggestLive';
 import { clipSourceFrame } from './clipKeyframes';
-import { findClip, timelineFps } from './timeline';
+import { timelineFps } from './timeline';
+import { canvasTarget } from './inspectorTarget';
 import { useEditorTimelineStore } from './timelineStore';
 
 /** The box a new highlight starts with: a band across the middle of the image,
@@ -56,8 +57,10 @@ export function ClipHighlightsSection() {
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const primary = selection.length === 1 ? selection[0] : null;
-  const found = primary ? findClip(timeline, primary.track, primary.id) : null;
+  // B-334/D-430 — the picture half of a linked pair, whichever half is selected.
+  const picture = canvasTarget(timeline, selection.length === 1 ? selection[0] : null);
+  const primary = picture ? { track: picture.track, id: picture.clip.id } : null;
+  const found = picture ? { clip: picture.clip, index: picture.index } : null;
   const clip = found?.clip ?? null;
   const trackLocked = primary ? !!timeline?.tracks[primary.track]?.locked : false;
   if (!primary || !clip || !found) return null;
