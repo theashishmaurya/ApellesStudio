@@ -158,7 +158,8 @@ import {
   mergeClipKeyframeParams,
   resolveClipBoxTransform,
 } from './clipKeyframes';
-import { clipCoversFrame, findClip, timelineFps, type ClipTransformParam } from './timeline';
+import { clipCoversFrame, timelineFps, type ClipTransformParam } from './timeline';
+import { canvasTarget } from './inspectorTarget';
 import { useEditorTimelineStore } from './timelineStore';
 import { useClipGeometry } from './useClipGeometry';
 import { TransformBox, type TransformDraft, type TransformGestureKind } from './TransformBox';
@@ -181,10 +182,13 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
 
   // Same Phase-1 multi-select fallback `EditorInspectorPanel.tsx` already
   // uses: a selection that isn't exactly one clip draws nothing.
-  const primary = selection.length === 1 ? selection[0] : null;
-  const found = primary ? findClip(timeline, primary.track, primary.id) : null;
-  const clip = found?.clip ?? null;
-  const clipIndex = found?.index ?? -1;
+  // B-334/D-430 — the box belongs to the PICTURE: selecting either half of a
+  // linked A/V pair draws it on the video half, and a clip on an audio track
+  // (no frame to put a box on, whatever its source file contains) draws none.
+  const pictureTarget = canvasTarget(timeline, selection.length === 1 ? selection[0] : null);
+  const primary = pictureTarget ? { track: pictureTarget.track } : null;
+  const clip = pictureTarget?.clip ?? null;
+  const clipIndex = pictureTarget?.index ?? -1;
   const track = primary ? (timeline?.tracks[primary.track] ?? null) : null;
   const trackLocked = !!track?.locked;
   // D-211 follow-up — see this module's own doc: a text clip's `scale` is

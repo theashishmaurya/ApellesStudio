@@ -87,6 +87,7 @@ import {
   type CaptionPickCandidate,
   type PickCandidate,
 } from './canvasPick';
+import { canvasTarget } from './inspectorTarget';
 import { screenToFraction } from './transformGeometry';
 import { resolveCaptionStyle, type Timeline } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
@@ -220,8 +221,12 @@ export function useCanvasClipPick(container: HTMLElement | null, size: Compositi
       // render body — see B-087 for what the render-body version costs).
       const selection = useEditorTimelineStore.getState().selection;
       // Rule 4 — a grab on the already-selected clip's own picture is D-136's
-      // move drag, not a selection change.
-      if (hit && selection.length === 1 && selection[0].track === hit.track && selection[0].id === hit.clip.id) return;
+      // move drag, not a selection change. B-334/D-430 — "its own picture"
+      // includes the picture of a linked pair whose AUDIO half is the
+      // selection: the box is drawn on that picture (`canvasTarget`), so a grab
+      // of it is that box's drag, not a re-selection that would eat the press.
+      const boxOwner = canvasTarget(timeline, selection.length === 1 ? selection[0] : null);
+      if (hit && boxOwner && boxOwner.track === hit.track && boxOwner.clip.id === hit.clip.id) return;
       // Rule 5 — nothing under the pointer, but the press is on the transform
       // overlay itself: leave that gesture alone.
       if (!hit && target?.closest('[data-transform-overlay]')) return;

@@ -130,7 +130,7 @@ import {
 // D-233 — the curve editor's own model helpers, shared verbatim with the GUI
 // (`ClipCurveEditor.tsx` / `EditorInspectorPanel.tsx`) rather than reimplemented
 // here: one write path for the human and the agent, per CLAUDE.md.
-import { animatedParams, paramKeyframeFrames, setClipKeyframeEase } from './clipKeyframes';
+import { animatedParams, paramKeyframeFrames, setClipKeyframeEase, type ClipKeyframe } from './clipKeyframes';
 import { validateHighlights } from './clipHighlights';
 import { suggestClipHighlights } from './highlightSuggestOp';
 import { liveSuggestDeps } from './highlightSuggestLive';
@@ -214,6 +214,7 @@ import {
   type TransitionAlignment,
   type TransitionKind,
 } from './timeline';
+import { facetTarget, paramFacet, type ClipFacet } from './inspectorTarget';
 import {
   CLIP_SCALING_MODES,
   effectiveClipScaling,
@@ -394,6 +395,53 @@ function resolveClip(
 /** [`resolveClip`]'s success branch, named so the helpers that pass one around
  *  don't have to restate its shape. */
 type ResolvedClip = Exclude<ReturnType<typeof resolveClip>, { error: string }>;
+
+/** B-334/D-430 — re-address an already-resolved clip to the half of its A/V
+ *  pair that `facet` actually belongs to (`inspectorTarget.ts`, the same
+ *  resolver the Inspector and the canvas overlay use). An agent that addresses
+ *  EITHER half of a linked pair therefore gets the same clip the Inspector
+ *  would have edited: `editor_set_clip_audio` / `editor_set_clip_eq` land on
+ *  the audible audio partner, `editor_set_clip_transform` / the dynamic zoom on
+ *  the picture. An unlinked clip resolves to itself. A linked picture with no
+ *  audio half is silent, so an audio write to it is refused rather than stored
+ *  on a clip the mix never reads. */
+/** A {@link ResolvedClip} that remembers the clip the caller actually named
+ *  when {@link resolveFacet} moved the write to the pair's other half. */
+type ResolvedFacet = ResolvedClip & { redirectedFrom?: { track: number; clip: number } };
+
+function resolveFacet(
+  tl: Timeline,
+  found: ResolvedClip,
+  facet: ClipFacet,
+): ResolvedFacet | { error: string } {
+  const target = facetTarget(tl, found.track, found.clip, facet);
+  if (!target) {
+    return {
+      error:
+        `"${found.c.name}" is A/V-linked (D-129) but its audio half is gone, so it is silent — its own volume/pan/EQ are never ` +
+        'mixed. Set the level on a clip that plays, or add an audio half back.',
+    };
+  }
+  if (target.track === found.track && target.index === found.clip) return found;
+  return {
+    track: target.track,
+    clip: target.index,
+    tr: tl.tracks[target.track],
+    c: target.clip,
+    redirectedFrom: { track: found.track, clip: found.clip },
+  };
+}
+
+/** The `note` an op's result carries when {@link resolveFacet} moved the write
+ *  to the pair's other half — said out loud so an agent that addressed the
+ *  picture is not surprised to find the answer reports the audio clip. */
+function redirectNote(r: { redirectedFrom?: { track: number; clip: number } }, facet: ClipFacet): string | undefined {
+  if (!r.redirectedFrom) return undefined;
+  return (
+    `addressed clip ${r.redirectedFrom.clip} on track ${r.redirectedFrom.track} is half of an A/V-linked pair (D-129); ` +
+    `${facet === 'audio' ? 'sound' : 'picture'} properties live on the ${facet === 'audio' ? 'audio' : 'video'} half, so the write went there`
+  );
+}
 
 /** The raw argument bag an op handler is handed off the wire. Untrusted and
  *  unvalidated by construction — every field is `unknown` until the handler
@@ -4311,7 +4359,11 @@ export function useEditorControl(): void {
       editor_set_clip_transform: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
-        const found = resolveClip(tl, a?.track, a?.clip);
+        const addressed = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in addressed) return addressed;
+        // B-334/D-430 — a transform is the PICTURE's: addressing the audio half
+        // of a linked pair writes the video half.
+        const found = resolveFacet(tl, addressed, 'video');
         if ('error' in found) return found;
         if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
         const num = (v: unknown, fallback: number) => {
@@ -4435,15 +4487,14 @@ export function useEditorControl(): void {
           crop_bottom: num(a?.crop_bottom, c.crop_bottom ?? 0),
           corner_radius: num(a?.corner_radius, c.corner_radius ?? 0),
         });
-        return { ok: true, track: found.track, clip: found.clip };
+        return { ok: true, track: found.track, clip: found.clip, note: redirectNote(found, 'video') };
       },
 
       editor_set_clip_keyframes: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
-        const found = resolveClip(tl, a?.track, a?.clip);
-        if ('error' in found) return found;
-        if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
+        const addressed = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in addressed) return addressed;
         const keyframes = a?.keyframes;
         if (!Array.isArray(keyframes)) return { error: 'keyframes must be an array of {frame, params}' };
         for (const k of keyframes) {
@@ -4451,27 +4502,68 @@ export function useEditorControl(): void {
             return { error: 'each keyframe needs a numeric frame and a params object' };
           }
         }
-        // D-230 — an ADJUSTMENT clip has nothing keyframeable. Its correction
-        // is compiled to ffmpeg filter coefficients that are fixed at filter
-        // init, so even its `opacity` (the correction's mix amount, the one
-        // transform field it honours at all) is read statically by BOTH
-        // renderers. Storing keyframes here would animate nothing anywhere —
-        // refused rather than silently ignored, same B-053 reasoning as
-        // `editor_set_clip_transform`'s own refusals above. Note this differs
-        // from a TEXT clip, whose opacity/position keyframes really do animate.
-        if (isAdjustmentClip(found.c) && keyframes.length > 0) {
-          return {
-            error:
-              'an adjustment clip cannot be keyframed — its correction compiles to ffmpeg filter coefficients that are fixed when the filter starts, so both the preview and the export read its opacity statically. Set a constant strength with editor_set_clip_transform\'s `opacity`, or split the clip and give each half its own correction.',
-          };
+        // B-334/D-430 — a keyframe list can mix the picture's properties with
+        // the sound's (`volume`/`pan`), and on a linked pair those live on two
+        // different clips. Each property goes to the half it belongs to,
+        // whichever half was addressed. A half's whole list is replaced only
+        // when the request names one of its properties (so zoom keys written
+        // through the picture never wipe the audio partner's volume ramp), and
+        // an EMPTY list clears the addressed clip's own facet.
+        const partFor = (facet: ClipFacet): ClipKeyframe[] =>
+          (keyframes as ClipKeyframe[])
+            .map((k) => ({
+              ...k,
+              params: Object.fromEntries(Object.entries(k.params).filter(([name]) => paramFacet(name) === facet)),
+            }))
+            .filter((k) => Object.keys(k.params).length > 0);
+        const addressedFacet: ClipFacet = tl.tracks[addressed.track].kind === 'audio' ? 'audio' : 'video';
+        const writes: Array<{ facet: ClipFacet; r: ResolvedFacet; part: ClipKeyframe[] }> = [];
+        for (const facet of ['video', 'audio'] as const) {
+          const part = partFor(facet);
+          if (part.length === 0 && !(keyframes.length === 0 && facet === addressedFacet)) continue;
+          const r = resolveFacet(tl, addressed, facet);
+          if ('error' in r) return r;
+          if (r.tr.locked) return { error: `track ${r.track} is locked — unlock it first` };
+          // D-230 — an ADJUSTMENT clip has nothing keyframeable. Its correction
+          // is compiled to ffmpeg filter coefficients that are fixed at filter
+          // init, so even its `opacity` (the correction's mix amount, the one
+          // transform field it honours at all) is read statically by BOTH
+          // renderers. Storing keyframes here would animate nothing anywhere —
+          // refused rather than silently ignored, same B-053 reasoning as
+          // `editor_set_clip_transform`'s own refusals above. Note this differs
+          // from a TEXT clip, whose opacity/position keyframes really do animate.
+          if (isAdjustmentClip(r.c) && part.length > 0) {
+            return {
+              error:
+                'an adjustment clip cannot be keyframed — its correction compiles to ffmpeg filter coefficients that are fixed when the filter starts, so both the preview and the export read its opacity statically. Set a constant strength with editor_set_clip_transform\'s `opacity`, or split the clip and give each half its own correction.',
+            };
+          }
+          writes.push({ facet, r, part });
         }
-        useEditorTimelineStore.getState().applyOp({
-          kind: 'set_clip_keyframes',
-          track: found.track,
-          clip: found.clip,
-          keyframes,
-        });
-        return { ok: true, track: found.track, clip: found.clip, count: keyframes.length };
+        for (const { r, part } of writes) {
+          useEditorTimelineStore.getState().applyOp({
+            kind: 'set_clip_keyframes',
+            track: r.track,
+            clip: r.clip,
+            keyframes: part,
+          });
+        }
+        const first = writes[0]?.r ?? addressed;
+        const redirected = writes.find((w) => w.r.redirectedFrom);
+        return {
+          ok: true,
+          track: first.track,
+          clip: first.clip,
+          count: keyframes.length,
+          ...(writes.length > 1
+            ? {
+                also: writes.slice(1).map((w) => ({ track: w.r.track, clip: w.r.clip })),
+                note: 'the list mixed picture and sound properties of an A/V-linked pair (D-129): each went to its own half',
+              }
+            : redirected
+              ? { note: redirectNote(redirected.r, redirected.facet) }
+              : {}),
+        };
       },
 
       /**
@@ -4494,14 +4586,17 @@ export function useEditorControl(): void {
       editor_set_keyframe_ease: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
-        const found = resolveClip(tl, a?.track, a?.clip);
-        if ('error' in found) return found;
-        if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
+        const addressed = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in addressed) return addressed;
 
         const param = a?.param;
         if (typeof param !== 'string' || !(param in CLIP_KEYFRAME_DEFAULTS)) {
           return { error: `param must be one of ${Object.keys(CLIP_KEYFRAME_DEFAULTS).join(' | ')}` };
         }
+        // B-334/D-430 — the keys of a property live on the half it belongs to.
+        const found = resolveFacet(tl, addressed, paramFacet(param));
+        if ('error' in found) return found;
+        if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
         const frame = Number(a?.frame);
         if (!Number.isFinite(frame)) {
           return { error: 'frame must be a number (the clip source frame the segment starts at)' };
@@ -4622,7 +4717,11 @@ export function useEditorControl(): void {
       editor_set_dynamic_zoom: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
-        const found = resolveClip(tl, a?.track, a?.clip);
+        const addressed = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in addressed) return addressed;
+        // B-334/D-430 — a zoom animates the picture, so it lands on the video
+        // half of a linked pair whichever half was addressed.
+        const found = resolveFacet(tl, addressed, 'video');
         if ('error' in found) return found;
         if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
         const c = found.c;
@@ -4994,7 +5093,12 @@ export function useEditorControl(): void {
       editor_set_clip_audio: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
-        const found = resolveClip(tl, a?.track, a?.clip);
+        const addressed = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in addressed) return addressed;
+        // B-334/D-430 — a level is the SOUND's: addressing the picture half of
+        // a linked pair writes the audible audio partner, the only clip whose
+        // volume/pan the mix reads.
+        const found = resolveFacet(tl, addressed, 'audio');
         if ('error' in found) return found;
         if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
         const c = found.c;
@@ -5044,7 +5148,9 @@ export function useEditorControl(): void {
           panGainLeft: left,
           panGainRight: right,
           trackGain: found.tr.gain ?? 1,
-          note: 'clip volume multiplies with the track gain, the clip fade and any duck — it does not replace them',
+          note:
+            redirectNote(found, 'audio') ??
+            'clip volume multiplies with the track gain, the clip fade and any duck — it does not replace them',
         };
       },
 
@@ -5059,7 +5165,10 @@ export function useEditorControl(): void {
       editor_set_clip_eq: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
-        const found = resolveClip(tl, a?.track, a?.clip);
+        const addressed = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in addressed) return addressed;
+        // B-334/D-430 — an EQ is the SOUND's, same redirect as the level.
+        const found = resolveFacet(tl, addressed, 'audio');
         if ('error' in found) return found;
         if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
 

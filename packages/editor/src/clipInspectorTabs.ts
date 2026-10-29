@@ -55,8 +55,12 @@ export const DEFAULT_CLIP_INSPECTOR_TAB: ClipInspectorTab = 'video';
  *  empty panel. Everything else — video, audio-track, caption and adjustment
  *  clips — keeps both, because every one of them renders at least one section
  *  in each. */
-export function clipInspectorTabs(clip: Clip): readonly ClipInspectorTab[] {
+export function clipInspectorTabs(clip: Clip, audioClip: Clip | null = clip): readonly ClipInspectorTab[] {
   if (clip.text) return ['video'];
+  // B-334/D-430 — a linked picture whose audio half is gone is silent, so it
+  // has no audible clip to show (`inspectorTarget.ts`): no Audio tab rather
+  // than one editing fields the mix never reads.
+  if (!audioClip) return ['video'];
   return CLIP_INSPECTOR_TABS;
 }
 

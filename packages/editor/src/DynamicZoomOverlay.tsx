@@ -48,7 +48,7 @@ import {
   dynamicZoomSpan,
   type DynamicZoomFraming,
 } from './dynamicZoom';
-import { findClip } from './timeline';
+import { canvasTarget } from './inspectorTarget';
 import { useEditorTimelineStore } from './timelineStore';
 import { useClipGeometry } from './useClipGeometry';
 import { TransformBox, type TransformDraft } from './TransformBox';
@@ -80,8 +80,10 @@ export function DynamicZoomOverlay({ container }: { container: HTMLElement | nul
   // applies. The armed clip is identified by ID, so a selection change (or an
   // insert that shifts every index) simply stops matching and the overlay
   // disappears rather than drawing over the wrong picture.
-  const primary = selection.length === 1 ? selection[0] : null;
-  const found = primary ? findClip(timeline, primary.track, primary.id) : null;
+  // B-334/D-430 — the picture half of a linked pair, whichever half is selected.
+  const picture = canvasTarget(timeline, selection.length === 1 ? selection[0] : null);
+  const primary = picture ? { track: picture.track, id: picture.clip.id } : null;
+  const found = picture ? { clip: picture.clip, index: picture.index } : null;
   const clip = found?.clip ?? null;
   const clipIndex = found?.index ?? -1;
   const armed = !!dynamicZoom && !!clip && clip.id === dynamicZoom.clipId;
