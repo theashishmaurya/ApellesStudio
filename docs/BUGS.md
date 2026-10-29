@@ -4,6 +4,25 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-334 — Inspector shows different values for the two halves of a linked A/V clip
+
+status: **open** · severity: **major** · area: Edit Inspector (Video/Audio tabs) on an A/V-linked pair (D-129)
+
+- **found:** 2026-10-29 by the owner, Nemotron edit, clip "C01 hook demo" (a video clip linked to its audio partner). Screenshots: `scratch/bug-refs/linked-av-*.png`.
+- **what happens:**
+  - Select the **video** half and open the Audio tab: Volume reads **10.6**, with no keyframe controls lit.
+  - Select the **audio** half and open the Audio tab: Volume reads **0.55**, with a keyframe set (the real, audible level).
+  - So the Audio tab on the video half shows, and edits, a different value from the one that plays.
+  - With the **audio** half selected, the Video tab is there but does nothing.
+  - The preview draws the video transform box with handles, as if the picture were selected.
+- **expected (Premiere/Resolve behaviour for linked clips):**
+  - The pair behaves as one clip in the Inspector. The Audio tab always shows and edits the audible audio partner's level, pan, EQ and keyframes, whichever half was clicked.
+  - The Video tab always shows and edits the picture half.
+  - Neither half shows a value the mix doesn't use.
+  - The on-canvas box belongs to the video half.
+  - The MCP tools (`editor_set_clip_audio`, `editor_set_clip_transform`) resolve the same way when given either half.
+- **also check:** what the 10.6 actually is, a stray `volume` on the video clip or another field; and whether editing it ever reached the mix. The owner's earlier level edit right before B-332's lost clip went through this path.
+
 ## B-332 — a clip was deleted right after its level was set in the Inspector (Delete/Backspace reached the timeline)
 
 status: **open** · severity: **critical** (silent loss of a clip and its linked audio) · area: Edit tab keyboard shortcuts / Inspector focus
