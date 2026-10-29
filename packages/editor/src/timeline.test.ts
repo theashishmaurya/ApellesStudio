@@ -136,7 +136,13 @@ describe('labelForOp', () => {
     expect(labelForOp({ kind: 'add_track', trackKind: 'audio' }, before)).toBe('Add audio track');
     expect(labelForOp({ kind: 'remove_track', track: 1 }, before)).toBe('Remove track 2');
     expect(labelForOp({ kind: 'set_track_gain', track: 0, gain: 0 }, before)).toBe('Mute track 1');
-    expect(labelForOp({ kind: 'set_track_gain', track: 0, gain: 1 }, before)).toBe('Unmute track 1');
+    // B-333 — a level change is not an unmute.
+    expect(labelForOp({ kind: 'set_track_gain', track: 0, gain: 0.4 }, before)).toBe('Set track 1 gain to 40%');
+    expect(labelForOp({ kind: 'set_track_gain', track: 0, gain: 1 }, before)).toBe('Set track 1 gain to 100%');
+    const muted = { ...before, tracks: before.tracks.map((t, i) => (i === 0 ? { ...t, gain: 0 } : t)) };
+    expect(labelForOp({ kind: 'set_track_gain', track: 0, gain: 1 }, muted)).toBe('Unmute track 1');
+    expect(labelForOp({ kind: 'set_track_gain', track: 0, gain: 0.4 }, muted)).toBe('Unmute track 1');
+    expect(labelForOp({ kind: 'set_track_gain', track: 0, gain: 0 }, muted)).toBe('Mute track 1');
   });
 
   it('names lock/hide/rearrange/transform ops (D-086/D-089)', () => {

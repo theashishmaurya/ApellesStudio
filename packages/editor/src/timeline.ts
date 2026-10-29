@@ -4532,6 +4532,16 @@ function transitionAtLabel(tl: Timeline, track: number, id: string): string {
   return t ? `${transitionLabel(t.kind)} at ${t.at_frame}` : id;
 }
 
+/** B-333 — a track-gain op's history label. Mute / Unmute name only a move
+ *  to or from zero; a plain level change (1.0 → 0.4) says what it set. */
+function trackGainLabel(track: number, gain: number, before: Timeline): string {
+  const n = track + 1;
+  const prev = before.tracks[track]?.gain ?? 1;
+  if (gain <= 0) return `Mute track ${n}`;
+  if (prev <= 0) return `Unmute track ${n}`;
+  return `Set track ${n} gain to ${Math.round(gain * 100)}%`;
+}
+
 /** Human-readable one-liner for an `EditOp`, evaluated against the timeline
  *  it's about to be applied to (`before`) — used as the `label` on the
  *  `@apelles/history` entry `useEditorTimelineStore.applyOp` pushes for every
@@ -4609,7 +4619,7 @@ export function labelForOp(op: EditOp, before: Timeline): string {
     case 'remove_track':
       return `Remove track ${op.track + 1}`;
     case 'set_track_gain':
-      return op.gain <= 0 ? `Mute track ${op.track + 1}` : `Unmute track ${op.track + 1}`;
+      return trackGainLabel(op.track, op.gain, before);
     case 'set_track_locked':
       return op.locked ? `Lock track ${op.track + 1}` : `Unlock track ${op.track + 1}`;
     case 'set_track_hidden':

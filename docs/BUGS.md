@@ -6,18 +6,21 @@ Issues once public.
 ```
 ## B-332 — a clip was deleted right after its level was set in the Inspector (Delete/Backspace reached the timeline)
 
-status: **open** · severity: **critical** (silent loss of a clip and its linked audio) · area: Edit tab keyboard shortcuts / Inspector focus
+status: **fixed** · severity: **critical** (silent loss of a clip and its linked audio) · area: Edit tab keyboard shortcuts / Inspector focus
 
 - **found:** 2026-10-29, live in the Nemotron Transcribe edit. The owner was lowering the NVIDIA demo clip's volume, and the clip "C01 hook demo" vanished, picture and A/V partner both. Undo history, newest first: `Duck track 4…` (agent), `Unmute track 4` (agent), **`Remove "C01 hook demo"`**, `Set "C01 hook demo" level`. The removal came straight after a level edit in the Inspector, with no agent op in between.
-- **likely cause (to confirm):** the timeline's Delete/Backspace "delete selected clip" shortcut fires while focus is in an Inspector number field. Clearing the volume value with Backspace deleted the selected clip instead.
+- **cause (confirmed in code):** the one shortcut dispatcher (`packages/keymap/src/useShortcut.ts`) deliberately exempted `<input type="number">` from its typing guard (D-051/D-273: "holds no prose"). The Inspector's level field is a number input (`ScrubbableNumberInput`), so Backspace/Delete pressed while clearing it matched `edit.delete_selection` and removed the selected clip and its linked partner. The same hole let Space, arrows and M through from number inputs, range inputs (Base UI slider thumbs) and selects. Every shortcut goes through that one listener (the only other Delete handler, the Edit Index words list, is element-scoped), so the fix is one shared guard.
 - **expected:** a key press inside any input, select, textarea or contenteditable never reaches the timeline's destructive shortcuts. Deleting a clip with its linked partner while an Inspector field is focused must be impossible.
 - **restored** by undoing back past the removal; the owner's level and the agent's gain/duck were re-applied.
+- **fix:** new `packages/keymap/src/typingGuard.ts` (`shortcutBlockedByTarget`), called once from the dispatcher. Text entry (text-like inputs, textarea, contenteditable, ARIA textbox/searchbox/combobox) blocks everything; value controls (number, range, select, ARIA spinbutton/slider/listbox) block every bare key and Cmd/Ctrl+Delete/Backspace (macOS normalises Cmd+Backspace to Delete) but still pass Cmd/Ctrl app combos (undo/redo, tab switch). A Delete that does fire is one undo step labelled `Remove "<clip>"` (`labelForOp`).
+- **verification:** `useShortcut.dom.test.tsx` runs Delete, Backspace, Cmd+Backspace, M, Space, arrows and Y against eight kinds of focused control (text, number, range, textarea, select, contenteditable, spinbutton, slider), plus Cmd+Z passing on number/range and blocked on text; 78 tests pass, editor suite 2596 pass, `tsc` unchanged (editor 3, keymap 0).
 
 ## B-333 — `editor_set_track_gain` is labelled "Unmute track N" in the undo history
 
-status: **open** · severity: **minor** · area: undo labels
+status: **fixed** · severity: **minor** · area: undo labels
 
 - **found:** 2026-10-29, same session. Setting track gain 1.0 → 0.4 recorded the undo entry "Unmute track 4". Expected something like "Set track 4 gain to 40%". A wrong label makes reading the history, as the owner had to here, misleading.
+- **cause:** `labelForOp` (`packages/editor/src/timeline.ts`) labelled every non-zero `set_track_gain` "Unmute". **fix:** `trackGainLabel` — to 0 is `Mute track N`, from 0 to >0 is `Unmute track N`, anything else `Set track N gain to X%`. Covers the GUI fader and `editor_set_track_gain` (same op). **verification:** `timeline.test.ts` "names track ops" (1.0→0.4, 1.0→1.0, 0→1, 0→0.4, →0).
 
 ## B-331 — `sound_qa.py` reads the project's fps instead of the timeline's, and can read the wrong timeline
 
