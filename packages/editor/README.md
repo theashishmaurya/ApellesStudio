@@ -296,7 +296,7 @@ clips cut to the boundary in both, optional pause tightening to a breath;
 page and highlighted in the panel). The GUI is the Index panel's transcript
 (`transcriptWordEdit.tsx`: ⇧/⌘-click selection, Delete, the Fillers bar).
 `retakeWordView.ts`'s `viewWordFrames` gives `include_timeline` its per-word
-timeline frames. `silenceWords.ts` makes VAD silences word-aware (B-289) for
+timeline frames. `silenceAudio.ts` is the one silence resolver (B-327, D-428: audio-corrected words, `basis`, level, merge, cushions) over `silenceWords.ts`, which makes VAD silences word-aware (B-289) for
 `editor_detect_silences` and the Recut panel; `timelineTranscript.ts` reads
 voice-over audio tracks. Tests: `cutWords.test.ts`, `fillers.test.ts`,
 `silenceWords.test.ts`, `editByText.e2e.dom.test.tsx`,

@@ -31,6 +31,7 @@ use std::sync::Mutex;
 use apelles_speech::dark::{
     DarkInput, DarkParams, RMS_HOP_SECS, WordSpan, detect_dark_regions, rms_envelope,
 };
+use apelles_speech::energy::{ENERGY_HOP_SECS, rms_db_envelope};
 use apelles_speech::retake::{RetakeParams, Utterance};
 use apelles_speech::silence::SilenceParams;
 use apelles_speech::vad::{
@@ -146,6 +147,13 @@ pub async fn chroma_detect_silences(
     // Inference is CPU-bound and holds a `std::sync::Mutex`; both belong off the
     // async runtime's worker threads.
     let analysed_secs = samples.len() as f64 / SAMPLE_RATE as f64;
+    // B-327 / D-428 — the waveform's own loudness, 0.1 dB resolution. The
+    // frontend decides what counts as silent (threshold, auto floor, merge,
+    // padding) from this without decoding again.
+    let energy_db: Vec<f64> = rms_db_envelope(&samples, SAMPLE_RATE, ENERGY_HOP_SECS)
+        .iter()
+        .map(|&d| (f64::from(d) * 10.0).round() / 10.0)
+        .collect();
     let spans = tokio::task::spawn_blocking(move || {
         let mut vad = session
             .lock()
@@ -174,6 +182,11 @@ pub async fn chroma_detect_silences(
         "min_silence_ms": params.min_silence_ms,
         "model": MODEL_FILENAME,
         "silences": spans,
+        "energy": {
+            "hop_secs": ENERGY_HOP_SECS,
+            "start_secs": start,
+            "db": energy_db,
+        },
     }))
 }
 

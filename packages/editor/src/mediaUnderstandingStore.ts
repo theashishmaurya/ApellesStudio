@@ -178,6 +178,10 @@ export interface SilenceDetection {
   min_silence_ms: number;
   model: string;
   silences: Array<{ start_secs: number; end_secs: number; duration_secs: number }>;
+  /** B-327 / D-428 — the waveform's loudness: `db[i]` is the RMS level in dBFS
+   *  of `[start_secs + i*hop_secs, start_secs + (i+1)*hop_secs)` (source
+   *  seconds). The audio authority `silenceAudio.ts` reads. */
+  energy: { hop_secs: number; start_secs: number; db: number[] };
 }
 
 /** `chroma_detect_retakes`'s result, verbatim. */

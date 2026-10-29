@@ -9,6 +9,7 @@ the retakes, and find the speech the transcription silently never read.
 |---|---|---|
 | `vad` | is anyone talking, right now? | silero-vad v6.2.1 ONNX (D-319), 16 kHz mono, one probability per 512-sample hop |
 | `silence` | where are the gaps worth cutting? | hysteresis over those probabilities → spans in seconds |
+| `energy` | how loud is the waveform? (B-327, D-428) | per-20 ms RMS in dBFS; the audio-authority signal for silence |
 | `retake` | did they say this line already? | normalised edit distance + containment over **spans** of adjacent utterances (D-320, D-327), ORed with `phrase` |
 | `phrase` | did they just repair the same PHRASE? | a repeated, content-bearing word n-gram — the "rough copy" property of a reparandum/repair (D-365) |
 | `dark` | is there speech here that nobody transcribed? | VAD speech ∩ the gaps in transcript word coverage, gated on a per-file amplitude floor (D-349) |

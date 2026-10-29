@@ -39,6 +39,11 @@ export interface SilenceSecs {
   start_secs: number;
   end_secs: number;
   duration_secs: number;
+  /** The measured silence this piece was cut from, before any word trimmed it
+   *  (B-327): set by [`wordAwareSilences`] so a caller can report the raw range
+   *  next to the word-safe one. */
+  raw_start_secs?: number;
+  raw_end_secs?: number;
 }
 
 export interface WordSpanSecs {
@@ -95,7 +100,13 @@ export function wordAwareSilences(
       if (kept.length === 0) dropped += 1;
     }
     for (const p of kept) {
-      out.push({ start_secs: p.start, end_secs: p.end, duration_secs: p.end - p.start });
+      out.push({
+        start_secs: p.start,
+        end_secs: p.end,
+        duration_secs: p.end - p.start,
+        raw_start_secs: s.start_secs,
+        raw_end_secs: s.end_secs,
+      });
     }
   }
   return { silences: out, trimmed, dropped };

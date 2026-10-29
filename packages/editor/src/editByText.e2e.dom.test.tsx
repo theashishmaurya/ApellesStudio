@@ -47,7 +47,11 @@ function viewWords(args: Record<string, unknown> | undefined) {
 const idOf = (ws: Array<{ text: string; start: number; piece: number }>, pieces: unknown) =>
   `v-${JSON.stringify(pieces)}-${ws.map((w) => `${w.text}@${w.start}`).join(',')}`;
 
-const silenceAnswer = vi.hoisted(() => ({ silences: [] as Array<{ start_secs: number; end_secs: number; duration_secs: number }> }));
+const silenceAnswer = vi.hoisted(() => ({
+  silences: [] as Array<{ start_secs: number; end_secs: number; duration_secs: number }>,
+  /** B-327 — the loudness envelope the stubbed detector returns (none = a pre-B-327 answer). */
+  energy: undefined as { hop_secs: number; start_secs: number; db: number[] } | undefined,
+}));
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
@@ -75,6 +79,7 @@ vi.mock('@tauri-apps/api/core', () => ({
       min_silence_ms: args?.minSilenceMs ?? 350,
       model: 'silero-stub',
       silences: silenceAnswer.silences,
+      ...(silenceAnswer.energy ? { energy: silenceAnswer.energy } : {}),
     }),
     chroma_timeline_set: () => undefined,
     chroma_text_fonts: () => [],
@@ -383,6 +388,66 @@ describe('editor_detect_silences — word-aware (B-289)', () => {
     expect(r.result).toMatchObject({ wordAware: false, basis: 'vad' });
     expect(r.result.wordAwareNote).toMatch(/VAD-only/);
     expect(r.result.silences.map((s: { startFrame: number; endFrame: number }) => [s.startFrame, s.endFrame])).toEqual([[67, 113]]);
+  });
+});
+
+describe('editor_detect_silences — audio is the authority (B-327)', () => {
+  // "simple," is mistimed 2.5-4.5 s, stretched over the real 3.0-4.6 s pause.
+  const MISTIMED = TALK_WORDS.map((w) => (w[0] === 'simple,' ? ([w[0], 2.5, 4.5] as [string, number, number]) : w));
+  const loud = (from: number, to: number) => ({ from, to });
+  const energyFor = (voiced: Array<{ from: number; to: number }>) => {
+    const db = new Array<number>(500).fill(-60); // 10 s at 20 ms
+    for (const { from, to } of voiced) for (let i = Math.round(from / 0.02); i < Math.round(to / 0.02); i++) db[i] = -20;
+    return { hop_secs: 0.02, start_secs: 0, db };
+  };
+  const rangeOf = (r: { result: { silences: Array<{ startFrame: number; endFrame: number }> } }) =>
+    r.result.silences.map((s) => [s.startFrame, s.endFrame]);
+  const setup = async () => {
+    await mountWith(talkTimeline(), { [TALK]: transcript(TALK, MISTIMED) });
+    silenceAnswer.silences = [{ start_secs: 3.05, end_secs: 4.55, duration_secs: 1.5 }];
+    silenceAnswer.energy = energyFor([loud(0, 3.0), loud(4.6, 10)]);
+  };
+
+  it('the default sweep no longer says "no silences" when a word is timed over the pause', async () => {
+    await setup();
+    const r = await callOp('editor_detect_silences', { track: 0, clip: 0, minSilenceMs: 350 });
+    expect(r.result).toMatchObject({ state: 'done', basis: 'vad+words', wordAware: true, correctedWords: 1, droppedForWords: 0 });
+    // word end clamps to 3.0 s: 3.125 s -> frame 75; the next word "the" starts 4.6 s: 4.475 s -> frame 107.
+    expect(rangeOf(r)).toEqual([[75, 107]]);
+    expect(r.result.silences[0]).toMatchObject({ wordCorrected: true, basis: 'vad+words' });
+    expect(r.result.noiseFloorDb).toBe(-60);
+  });
+
+  it('basis=energy finds the waveform pause with no voice model help, and reports the level', async () => {
+    await setup();
+    silenceAnswer.silences = [];
+    const r = await callOp('editor_detect_silences', { track: 0, clip: 0, minSilenceMs: 350, basis: 'energy' });
+    expect(r.result).toMatchObject({ basis: 'energy', wordAware: false, thresholdDb: -30, noiseFloorDb: -60 });
+    expect(rangeOf(r)).toEqual([[72, 110]]); // 3.0-4.6 s
+  });
+
+  it('pads return a suggested cut inside the measured range', async () => {
+    await setup();
+    const r = await callOp('editor_detect_silences', {
+      track: 0, clip: 0, minSilenceMs: 350, basis: 'energy', padAfterMs: 250, padBeforeMs: 125,
+    });
+    const s = r.result.silences[0];
+    expect([s.startFrame, s.endFrame]).toEqual([72, 110]);
+    expect([s.cut.startFrame, s.cut.endFrame]).toEqual([78, 107]); // 3.25 s, 4.475 s
+    expect(s.rawStartSecs).toBeCloseTo(3.0, 6);
+  });
+
+  it('the sweep carries the same knobs and totals', async () => {
+    await setup();
+    const r = await callOp('editor_detect_silences', { track: 0, minSilenceMs: 350 });
+    expect(r.result).toMatchObject({ requestedBasis: 'vad+words', correctedWords: 1, droppedForWords: 0 });
+    expect(r.result.flagged[0].silences[0]).toMatchObject({ wordCorrected: true });
+  });
+
+  it('rejects a bad knob instead of guessing', async () => {
+    await setup();
+    const r = await callOp('editor_detect_silences', { track: 0, clip: 0, basis: 'loud' });
+    expect(r.result.error).toMatch(/basis must be one of/);
   });
 });
 

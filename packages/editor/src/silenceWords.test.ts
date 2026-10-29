@@ -50,14 +50,14 @@ describe('wordAwareSilences', () => {
   it('only ever shrinks: a silence no word touches is returned exactly, and nothing is added', () => {
     const vad = [sil(1, 2), sil(5, 7)];
     const got = wordAwareSilences(vad, [{ start: 3, end: 4 }], 0.35);
-    expect(got.silences).toEqual(vad);
+    expect(got.silences).toMatchObject(vad);
     expect(got.trimmed).toBe(0);
     expect(wordAwareSilences([], [{ start: 0, end: 1 }], 0.1).silences).toEqual([]);
   });
 
   it('ignores an untimed or inverted word instead of blocking everything', () => {
     const got = wordAwareSilences([sil(1, 2)], [{ start: Number.NaN, end: Number.NaN }, { start: 1.8, end: 1.2 }], 0.35);
-    expect(got.silences).toEqual([sil(1, 2)]);
+    expect(got.silences).toMatchObject([sil(1, 2)]);
   });
 });
 

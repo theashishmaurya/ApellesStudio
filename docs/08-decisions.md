@@ -6,6 +6,20 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-428 — Silence detection: the audio is the authority over a transcribed word, and the detector is open-ended (basis, level, merge, cushions)
+
+**decided (2026-10-29)** · fixes B-327 · refines D-420 (B-289) · code: `packages/editor/src/silenceAudio.ts`, `crates/apelles-speech/src/energy.rs`
+
+- **Context.** D-420 made `editor_detect_silences` word-aware by trimming each VAD silence 0.125 s back from every transcribed word. On the Nemotron edit the transcriber timed 45 of 973 words over real silence (mostly sentence-final words stretched into the pause); the trim removed the whole pause and the tool answered "no silences" while the owner could see the flat waveform. An agent had no way to ask the tool to look differently, so it fell back to `ffmpeg silencedetect` and a hand-made script.
+- **Options.** (a) Shrink the 0.125 s guard — still wrong for a word timed 0.8 s late, and clips soft endings again. (b) Drop word protection when VAD and words disagree — reintroduces B-289. (c) Let the waveform decide where a word really is, then protect that. (d) Add a waveform-only mode and expose the thresholds so the agent can tune them.
+- **Choice: (c) and (d).**
+  - *Audio is the authority.* Before words protect anything, each word is clamped to the part of its span the loudness envelope shows as voiced: an unvoiced run of at least 60 ms at its start or end is cut off, a dip inside a word is left alone, and a word with no voiced frame at all protects nothing. Word protection (0.125 s guard) then uses the corrected spans. B-289 still holds: a real word is voiced, so it stays protected.
+  - *Measurement.* `chroma_detect_silences` now also returns a 20 ms RMS envelope in dBFS (`apelles_speech::energy`, deterministic, 0.1 dB resolution, about 3 numbers per 60 ms). It is decoded once with the VAD and cached with it; no threshold lives in Rust, so changing a knob never decodes again.
+  - *Parameters* (optional, both MCP servers and the Recut panel's Advanced section; one resolver, `resolveSilences`): `basis` = `vad+words` (default) | `vad` | `energy` | `energy+words`; `threshold_db` (energy default -30) or `auto_threshold` with `auto_offset_db` (noise floor + 12, floor = 10th-percentile level, never below -60 dB; the answer reports `noiseFloorDb` and `thresholdDb`); `merge_gap_ms` (default 120, joins silences split by a click); `pad_after_ms` / `pad_before_ms` (cushion left inside each silence after the preceding speech / before the next onset); `keep_ms` (leave a total pause, split 2:1 after:before unless the pads set another ratio). Defaults keep the pre-fix behaviour except the correction.
+  - *Answer.* Each silence keeps `startSecs`/`endSecs`/frames (the word-safe range, as before) and adds `rawStartSecs`/`rawEndSecs` (as measured), `cut` (the silence minus the cushions; `null` if they eat it), `basis`, `wordCorrected`. Totals: `droppedForWords`, `correctedWords`, `trimmedForWords`, `noiseFloorDb`, `thresholdDb`/`thresholdSource`. A `+words` basis with no transcript degrades to the base detector and says `wordAware: false`.
+- **Not done.** No tool was added (255 stay; the knobs are optional parameters). The Recut panel's rows are the suggested `cut`, so what is ticked is what is cut. The per-clip noise floor is not shared across a sweep's clips.
+- **Consequences.** A detection cached in memory before the change has no envelope; `basis=energy` then asks for `force`. Parity corpus re-captured (`crates/apelles-mcp/parity/capture.py`).
+
 ## D-427 — Waitlist abuse protection: Turnstile, a disposable-domain blocklist, quota caps with an hourly drain Worker, and a WAF rate limit
 
 **decided (2026-10-29)** · hardens D-426

@@ -70,15 +70,20 @@ What it does NOT do:
      word-safe. When gaps need different keep values (for example longer at section changes), dry-run
      it, then apply its planned ranges with `editor_ripple_delete_ranges`, shrinking only the ranges
      that need a longer keep. Every cut stays inside the tool's word-safe ranges.
-   - **Find pauses from the WAVEFORM, not the word timestamps** (B-327). The transcriber stretches
-     sentence-final words over the following silence, and word-aware silence detection then reports
-     nothing. Check the waveform: a flat stretch the person can see is dead air. Until B-327 is fixed,
-     measure the silences from the source audio and cut them with `editor_ripple_delete_ranges`:
-     - threshold −30 dB; room tone here was about −45 dB;
-     - join pieces across clicks of 0.12 s or less, and keep only silences of at least 0.45 s;
-     - keep 0.22 s after the preceding word, to protect soft endings, and 0.10 s before the next
-       onset (0.30 / 0.15 at section changes);
-     - say it is a workaround.
+   - **Find pauses with the audio as the authority** (B-327, D-428). The transcriber stretches
+     sentence-final words over the following silence; `editor_detect_silences` now clamps such a
+     word to the part the waveform shows as voiced, so the pause is no longer swallowed. Sweep the
+     track in one call, with the cushions as arguments instead of a hand-made script:
+     `editor_detect_silences(track, min_silence_ms=450, basis="energy+words", auto_threshold=true,
+     merge_gap_ms=120, pad_after_ms=220, pad_before_ms=100)` (use `pad_after_ms=300,
+     pad_before_ms=150` at section changes), then pass each silence's `cut` range to
+     `editor_ripple_delete_ranges`.
+     - Read `noiseFloorDb` and `thresholdDb` in the answer. Room tone here was about −45 dB; if the
+       floor looks wrong, set `threshold_db` (for example −30) instead of `auto_threshold`.
+     - If the person can see a flat waveform the sweep did not report, ask again with
+       `basis="energy"` (no transcript needed), and compare `droppedForWords` / `correctedWords`.
+     - `basis="vad+words"` (the default) is the safest when you only need word-safe ranges;
+       `keep_ms` leaves a fixed pause instead of fixed cushions.
    - **Never touch mid-sentence gaps under ~0.3 s.** The transcriber times words to ~80 ms, so a
      "gap" in a fast phrase is often not silence. On 2026-10-29, tightening 0.15–0.25 s gaps
      chopped fast phrases into slivers. It garbled "misheard surnames…" (the word is split as
