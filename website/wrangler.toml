@@ -20,6 +20,8 @@ migrations_dir = "migrations"
 MAIL_FROM = "Ashish from Apelles <hello@mail.apelles.studio>"
 # Where replies go: a real mailbox on the root domain.
 MAIL_REPLY_TO = "hello@apelles.studio"
+# The published Resend template for the confirmation (edit it in Resend; send.ts falls back to the built-in email).
+CONFIRM_TEMPLATE = "beta-confirm"
 # Minimum gap before the confirmation email is sent again to the same pending address.
 RESEND_THROTTLE_MINUTES = "10"
 # The Resend segment ("Apelles Beta") that confirmed addresses are added to, for broadcasts.

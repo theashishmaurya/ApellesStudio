@@ -160,6 +160,37 @@ describe('signup', () => {
     expect(mail.html).toContain("Didn't ask for this? Ignore it");
   });
 
+  it('sends through the Resend template, with the confirm link as its one variable, when one is configured', async () => {
+    env.CONFIRM_TEMPLATE = 'beta-confirm';
+    const res = await signup(post({ email: 'tpl@example.com' }), env, T0);
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const mail = sentMail();
+    const [r] = rows();
+    expect(mail.template).toEqual({
+      id: 'beta-confirm',
+      variables: { CONFIRM_URL: `${ORIGIN}/api/confirm?token=${r.confirm_token}` },
+    });
+    expect(mail.from).toBe('Ashish from Apelles <hello@mail.apelles.studio>');
+    expect(mail.reply_to).toBe('hello@apelles.studio');
+    // Resend refuses html/text alongside a template.
+    expect(mail.html).toBeUndefined();
+    expect(mail.text).toBeUndefined();
+  });
+
+  it('falls back to the built-in email when Resend rejects the template', async () => {
+    env.CONFIRM_TEMPLATE = 'beta-confirm';
+    fetchMock.mockImplementationOnce(async () => new Response('{"message":"template not found"}', { status: 422 }));
+    const res = await signup(post({ email: 'fallback@example.com' }), env, T0);
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const fallback = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(fallback.template).toBeUndefined();
+    expect(fallback.subject).toBe(CONFIRM_SUBJECT);
+    expect(fallback.text).toContain(`${ORIGIN}/api/confirm?token=`);
+    expect(rows()[0].last_email_at).toBe(T0);
+  });
+
   it('accepts a classic form post too', async () => {
     const res = await signup(
       post(null, { type: 'application/x-www-form-urlencoded', raw: `email=form%40example.com&source=beta&${TURNSTILE_FIELD}=${GOOD_TOKEN}` }),

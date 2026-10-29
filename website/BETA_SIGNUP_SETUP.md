@@ -89,6 +89,15 @@ Behaviours worth knowing:
   `apelles.studio` sends nothing. Both subdomains must be verified in Resend
   (sending only, tracking off).
 
+## Editing the confirmation email (no code change)
+
+The confirmation email's wording is the published Resend template **"Apelles beta confirmation"** (alias `beta-confirm`, set as `CONFIRM_TEMPLATE` in both `wrangler.toml` files). To change it: Resend → Templates → *Apelles beta confirmation* → edit → **Publish**. It is live on the next signup; no deploy.
+
+- It receives one variable, `{{{CONFIRM_URL}}}`, the person's confirm link. Keep it in the template, or nobody can confirm.
+- The template's own subject, From and Reply-To are used unless the code overrides them; the code sends From `MAIL_FROM` and Reply-To `MAIL_REPLY_TO`.
+- Keep it a plain, personal note with no unsubscribe link or header, so Gmail keeps it out of Promotions (D-427 addendum).
+- **Safety net:** if Resend rejects a template send (deleted, unpublished, or a broken variable), `functions/_lib/send.ts` sends the built-in email from `functions/_lib/email.ts` instead, so confirmations never stop. That built-in copy is only the fallback; the template is what people normally get.
+
 ## One-time setup (the coordinator / owner does the remote steps)
 
 ### 1. Cloudflare Turnstile (owner, in the dashboard)

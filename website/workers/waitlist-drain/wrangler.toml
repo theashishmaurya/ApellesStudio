@@ -24,5 +24,7 @@ database_id = "a954787b-3464-432b-bcd7-7ec097845f69"
 SITE_ORIGIN = "https://apelles.studio"
 MAIL_FROM = "Ashish from Apelles <hello@mail.apelles.studio>"
 MAIL_REPLY_TO = "hello@apelles.studio"
+# The published Resend template for the confirmation (edit it in Resend; send.ts falls back to the built-in email).
+CONFIRM_TEMPLATE = "beta-confirm"
 CONFIRM_EMAILS_PER_DAY = "90"
 CONFIRM_EMAILS_PER_MONTH = "2900"

@@ -24,7 +24,7 @@ export function confirmationEmail(confirmUrl: string): EmailContent {
   const text = [
     PREHEADER,
     '',
-    'Hi, it is Ashish. Someone, hopefully you, asked to hear when a new build of Apelles is ready. Please confirm this address:',
+    'Hi, it\'s Ashish. Someone, hopefully you, asked to hear when a new build of Apelles is ready. Please confirm this address:',
     '',
     confirmUrl,
     '',
@@ -37,7 +37,7 @@ export function confirmationEmail(confirmUrl: string): EmailContent {
   const html = `<!doctype html>
 <html lang="en"><body>
 <p>${PREHEADER}</p>
-<p>Hi, it is Ashish. Someone, hopefully you, asked to hear when a new build of Apelles is ready. Please confirm this address:</p>
+<p>Hi, it&rsquo;s Ashish. Someone, hopefully you, asked to hear when a new build of Apelles is ready. Please confirm this address:</p>
 <p><a href="${confirmUrl}">${confirmUrl}</a></p>
 <p>Didn't ask for this? Ignore it &mdash; you won't hear from us.</p>
 <p>Ashish</p>
