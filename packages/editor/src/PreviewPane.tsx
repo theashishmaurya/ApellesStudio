@@ -245,6 +245,8 @@ export function PreviewPane() {
   const savedVersion = useEditorTimelineStore((s) => s.savedVersion);
   const setPlayhead = useEditorTimelineStore((s) => s.setPlayhead);
   const setPlaying = useEditorTimelineStore((s) => s.setPlaying);
+  // B-326 — a seek while playing re-baselines the video loop and audio session.
+  const seekEpoch = useEditorTimelineStore((s) => s.seekEpoch);
   // D-232 — the waveform strip's own visibility. Store state, not local
   // `useState`, so `editor_set_waveform_view` drives the same flag the human's
   // toggle does; see the field's own doc in `timelineStore.ts`.
@@ -743,6 +745,7 @@ export function PreviewPane() {
     duration,
     fps,
     playbackRate,
+    seekEpoch,
     lastFrame,
     setPlayhead,
     setPlaying,
@@ -804,7 +807,7 @@ export function PreviewPane() {
     // clocks starting from the same frame at the same moment (D-130's note
     // about NOT depending on the `timeline` object still stands — a rate is a
     // transport fact, not a timeline one, so this adds no session churn).
-  }, [playing, hasTimeline, playbackRate]);
+  }, [playing, hasTimeline, playbackRate, seekEpoch]);
 
   // D-232 — the transport's own scrub gesture. `Player` reports the position
   // bar's drag as a real start/move/end triple (`onSeek` alone cannot tell a

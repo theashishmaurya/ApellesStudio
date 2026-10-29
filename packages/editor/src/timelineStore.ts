@@ -238,6 +238,11 @@ interface EditorTimelineState {
   error: string | null;
   playhead: number;
   playing: boolean;
+  /** B-326 — bumped by `seekPlayhead` and nothing else. The preview's play
+   *  loop and the audio session each free-run against a clock baselined at
+   *  `playhead` when playback started, so a seek DURING playback has to
+   *  re-baseline both; they key their effects on this counter to do it. */
+  seekEpoch: number;
   /** every timeline in the open project, for the switcher (D-046 pass 3) */
   timelines: TimelineSummary[];
   /** the current clip selection (D-107 multi-select) — see `Selection`'s doc */
@@ -472,6 +477,10 @@ interface EditorTimelineState {
   load: (opts?: { afterOwnSave?: boolean }) => Promise<void>;
   setPlayhead: (frame: number) => void;
   setPlaying: (playing: boolean) => void;
+  /** B-326 — a USER seek (timeline click, MCP): `setPlayhead` plus a re-baseline
+   *  of the running transport, so playback continues from `frame` instead of
+   *  the loop's own clock overwriting it on the next tick. */
+  seekPlayhead: (frame: number) => void;
   /** Accepts a value or a `useState`-style updater — `TimelinePane.tsx`'s
    *  own call sites (shift-click range extend, cmd-click toggle, etc., all
    *  predating this store lift) use the functional form to read the
@@ -744,6 +753,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   error: null,
   playhead: 0,
   playing: false,
+  seekEpoch: 0,
   timelines: [],
   selection: [],
   selectedGap: null,
@@ -953,6 +963,11 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   },
 
   setPlaying: (playing) => set({ playing }),
+
+  seekPlayhead: (frame) => {
+    get().setPlayhead(frame);
+    set((s) => ({ seekEpoch: s.seekEpoch + 1 }));
+  },
 
   setSelection: (selection) =>
     set((s) => ({

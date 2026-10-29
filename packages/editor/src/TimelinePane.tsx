@@ -336,6 +336,7 @@ import {
 } from '@phosphor-icons/react';
 import { snapSpan, snapTo } from '@apelles/beats';
 import { beatFramesOf } from './beatGrid';
+import { followScrollLeft } from './playbackFollow';
 import { setBeatGrid, snapCutsToBeats } from './beatOps';
 import { BeatLane } from './TimelineBeats';
 import { useTimelineBeats } from './useTimelineBeats';
@@ -533,6 +534,8 @@ const RULER_AND_MARGIN_PX = RULER_HEIGHT_PX + MARKER_STRIP_HEIGHT;
  *  reduces to `/ pxPerSec` since `scaleWidth = tickSeconds * pxPerSec` —
  *  checked against its bundled source, not guessed). */
 const START_LEFT_PX = 32;
+/** B-326 — scroll events this soon after the follower's own write are its echo. */
+const FOLLOW_ECHO_WINDOW_MS = 100;
 
 /** D-233 — below this clip width (px) the curve button is not drawn.
  *
@@ -1207,6 +1210,8 @@ export function TimelinePane() {
   // reads at the split/marker/zoom-anchor call sites, none of which need a
   // re-render to do their job, only the value at the moment they run.
   const setPlayhead = useEditorTimelineStore((s) => s.setPlayhead);
+  // B-326 — a click-to-seek keeps a running transport running (re-baselined).
+  const seekPlayhead = useEditorTimelineStore((s) => s.seekPlayhead);
   // D-232 — grabbing the playhead during playback pauses it, the way every
   // reference NLE does and the way the player's own position bar already did.
   // It is also what keeps the ONE audio transport coherent: a scrub claims it,
@@ -1269,6 +1274,10 @@ export function TimelinePane() {
    *  call, so there is exactly ONE writer and a future third setter cannot
    *  silently leave it stale. */
   const scrollRef = useRef<ScrollOffset>({ left: 0, top: 0 });
+  // B-326 — playback view-follow bookkeeping (see the store subscription).
+  const followGeomRef = useRef({ pxPerSec: DEFAULT_PX_PER_SEC, viewportWidth: 0 });
+  const followWriteAtRef = useRef(Number.NEGATIVE_INFINITY);
+  const userScrolledDuringPlayRef = useRef(false);
   /** B-145 — the scroll offset at the moment the current dnd-kit drag began.
    *  `dragDelta` needs it to turn an on-screen displacement into a
    *  content-space one: if the timeline scrolls mid-drag, the clip has moved
@@ -1397,13 +1406,38 @@ export function TimelinePane() {
   // through the hook is what stops this ~4500-line component from
   // re-rendering on every displayed frame during playback — see the D-325
   // decision doc for the measured cost this removed.
+  //
+  // B-326 — the same subscription also pages the VIEW during playback, still
+  // imperatively (a `setScrollLeft` on the library, no React state): the
+  // playhead used to run off the edge of the visible window and the user was
+  // left clicking a part of the timeline the playhead was nowhere near.
+  // Following pauses once the user scrolls on their own (any scroll event that
+  // is not the echo of our own write) and resumes the next time Play starts.
   useEffect(() => {
     editorRef.current?.setTime(useEditorTimelineStore.getState().playhead / fps);
     let last = useEditorTimelineStore.getState().playhead;
+    let wasPlaying = useEditorTimelineStore.getState().playing;
     return useEditorTimelineStore.subscribe((state) => {
+      if (state.playing !== wasPlaying) {
+        wasPlaying = state.playing;
+        if (wasPlaying) userScrolledDuringPlayRef.current = false;
+      }
       if (state.playhead === last) return;
       last = state.playhead;
       editorRef.current?.setTime(last / fps);
+      if (!state.playing || userScrolledDuringPlayRef.current) return;
+      const geom = followGeomRef.current;
+      const next = followScrollLeft({
+        frame: last,
+        fps,
+        pxPerSec: geom.pxPerSec,
+        scrollLeft: scrollRef.current.left,
+        viewportWidth: geom.viewportWidth,
+        startLeftPx: START_LEFT_PX,
+      });
+      if (next === null) return;
+      followWriteAtRef.current = performance.now();
+      editorRef.current?.setScrollLeft(next);
     });
   }, [fps]);
 
@@ -1514,12 +1548,19 @@ export function TimelinePane() {
     scrollRef.current = { left: scrollLeft, top: scrollTop };
   }, [scrollLeft, scrollTop]);
 
+
   // D-128 — keep `viewportWidth` honest across window and panel resizes.
   // B-267 — `measureEpoch` bumps once when the pane was laid out hidden (a tab
   // that stays mounted under `display: none`) and is first shown; it keys the
   // library below so its AutoSizer measures a visible element.
   // B-123 — `editArea`, not a ref: this node mounts late; see the `wheel` effect.
   const { width: viewportWidth, epoch: measureEpoch } = useViewportWidth(editArea);
+
+  // B-326 — what the playback follower (the store subscription above) needs
+  // that lives in React state: kept in a ref so reading it costs no render.
+  useEffect(() => {
+    followGeomRef.current = { pxPerSec, viewportWidth };
+  }, [pxPerSec, viewportWidth]);
 
   // D-413 — the beat grid: the grid track's beats on timeline frames, and the
   // one snapping rule the clip drag, the edge trims and the playhead share
@@ -2955,6 +2996,15 @@ export function TimelinePane() {
     };
 
   const onTimelineScroll = useCallback(({ scrollTop: st, scrollLeft: sl }: { scrollTop: number; scrollLeft: number }) => {
+    // B-326 — a horizontal scroll that is not the echo of the playback
+    // follower's own write is the user taking the wheel: stop following.
+    if (
+      useEditorTimelineStore.getState().playing &&
+      sl !== scrollRef.current.left &&
+      performance.now() - followWriteAtRef.current > FOLLOW_ECHO_WINDOW_MS
+    ) {
+      userScrolledDuringPlayRef.current = true;
+    }
     setScrollTop(st);
     setScrollLeft(sl);
   }, []);
@@ -4504,6 +4554,14 @@ export function TimelinePane() {
               if (rect) {
                 const y = e.clientY - rect.top - RULER_AND_MARGIN_PX + scrollTop;
                 const trackIdx = Math.floor(y / ROW_HEIGHT);
+                // B-326 — a click on empty track space (not a clip — that
+                // returned above) moves the playhead there, the Resolve /
+                // Premiere default; the library only does it for the ruler.
+                // Below the ruler only: the ruler's own click already seeks.
+                if (y >= 0 && e.clientX - rect.left + scrollLeft >= START_LEFT_PX) {
+                  const seekFrame = Math.round(((e.clientX - rect.left + scrollLeft - START_LEFT_PX) / pxPerSec) * fps);
+                  seekPlayhead(snapFrameToBeat(seekFrame));
+                }
                 if (trackIdx >= 0 && trackIdx < tracks.length) {
                   const frame = Math.round(((e.clientX - rect.left + scrollLeft - START_LEFT_PX) / pxPerSec) * fps);
                   const gap = gapAt(tracks[trackIdx], frame, fps);
@@ -4535,7 +4593,7 @@ export function TimelinePane() {
               getActionRender={getActionRender}
               onClickAction={onClickAction}
               onClickTimeArea={(time) => {
-                setPlayhead(snapFrameToBeat(s2f(time)));
+                seekPlayhead(snapFrameToBeat(s2f(time)));
                 return true;
               }}
               // D-232 — the timeline's own tape-scrub gesture. The library
