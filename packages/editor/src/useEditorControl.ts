@@ -2349,7 +2349,7 @@ export function useEditorControl(): void {
       editor_set_playhead: (a) => {
         const frame = Math.round(Number(a?.frame));
         if (!Number.isFinite(frame)) return { error: 'frame must be a finite number' };
-        useEditorTimelineStore.getState().setPlayhead(frame);
+        useEditorTimelineStore.getState().seekPlayhead(frame);
         return { ok: true, playhead: useEditorTimelineStore.getState().playhead };
       },
 
