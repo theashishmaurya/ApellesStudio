@@ -4,6 +4,42 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-331 — `sound_qa.py` reads the project's fps instead of the timeline's, and can read the wrong timeline
+
+status: **open** · severity: **minor** · area: `.claude/skills/apelles-sound-design/scripts/sound_qa.py` (D-406)
+
+- **found:** 2026-10-29, "Nemotron Transcribe": the report said "7:36.2 of audio, 24 fps" for a 30 fps, 6:05 timeline; every listen-moment timestamp built from `start_frame` came out x1.25 late (music entry reported 0:12.7, real 0:10.2).
+- **cause (read in code):** `load_audio_tracks` takes `fps` from `project.json` `settings.fps` (24, the project default) although every timeline has its own rate since D-424 (`timelines[i].fps`). It also picks the timeline with `doc["activeTimeline"]` only when that is an int; the field is a timeline id string, so it silently falls back to `timelines[0]`, which is not necessarily the active one (here a project with a backup "Voiceover" timeline and the working "Voiceover v2").
+- **workaround used:** re-derived the five listen moments by hand from timeline frames / 30.
+- **fix direction:** resolve the active timeline by id and use its `fps`; add a 30 fps / two-timeline fixture to the script's check.
+
+## B-330 — `editor_snap_cuts_to_beats` will not roll a cut between two still images ("no media handle on one side")
+
+status: **open** · severity: **minor** · area: roll / snap-to-beats (D-413) on stills (D-292)
+
+- **found:** 2026-10-29, "Nemotron Transcribe": a dry run with `max_shift_frames: 5` on the picture track refused e.g. the R02-a.png -> R02.png cut (2214) and the R03-b.png -> Motion render cut (2847) with "the roll cannot move this cut (no media handle on one side, a locked track, or a link group that cannot follow)". 13 other cuts rolled.
+- **expected:** a still reports a synthesized one-hour `sourceLen` (D-292) precisely so it can be extended; a roll between two stills, or a still and a Motion render with frames to spare, should move. Some refusals may be the Motion renders' auto-linked (silent) audio halves on the A/V track; the still->still case cannot be.
+- **not yet root-caused** (the edit was content work; no code read beyond the message). Left the refused cuts on their word-synced frames.
+
+## B-329 — `editor_music_edit` refuses a valid range on a mixed-rate bed ("nothing on track N lies inside frames ...")
+
+status: **open** · severity: **minor** · area: `applyMusicEdit` (`packages/editor/src/timeline.ts`, D-408), MCP `editor_music_edit` / Music edits panel
+
+- **found:** 2026-10-29, "Nemotron Transcribe" (30 fps timeline, 24 fps-probed MP3 bed). A dropout over frames 1345..1507 and a breath over 6389..6427 were both refused with `nothing on track 6 lies inside frames ...`, although `get_timeline` showed one bed clip covering each range end to end. Other ranges on the same bed (556..731, 4062..4091, 10265..10295) applied.
+- **cause (read in code):** step 1 razors the bed at `e.end` and `e.start`; step 2 then lifts only a piece with `start_frame >= e.start && endFrame(c, fps) <= e.end`. A split keeps whole SOURCE frames, so on a 24-in-30 clip the middle piece's `endFrame` (round-trip through source frames) can land one frame past `e.end`; no piece qualifies, `removed === 0`, and the whole edit is refused (and rolled back). The same mixed-rate rounding class as B-310, which fixed `rippleDeleteOneRange` but not this path.
+- **workaround used (flagged, not a fix):** chose range edges whose distance from the bed piece's start is a multiple of 5 timeline frames (= 4 source frames, exact at 24/30), e.g. 1346..1506 and 6386..6426; those apply.
+- **fix direction:** lift pieces by the split boundaries the op itself just made (or compare in source frames / with a one-frame tolerance), and add a mixed-rate test (24 fps bed on a 30 fps timeline) next to the B-310 ones.
+
+## B-328 — a `fit` / `fill` clip whose aspect differs from the frame is pinned to the top-left, not centred
+
+status: **open** · severity: **minor** · area: clip sizing (D-425 input scaling + D-338 top-left `position`), preview and export
+
+- **found:** 2026-10-29, building the "Nemotron Transcribe" explainer through MCP. A 1480x1080 demo clip placed on a 1920x1080 timeline with the default `fit` sits flush LEFT (a 440 px black band on the right only); switched to `fill` it covers the width but is anchored at the top, so the bottom ~23% of the picture (the burned-in captions) is cut off. Seen in the live preview (`debug_screenshot`, frames 61-62).
+- **expected:** every NLE's input scaling (Resolve "Scale entire image to fit/fill", Premiere "Set to frame size") centres the fitted picture, letterboxing or cropping evenly on both sides. D-425's own wording ("the whole picture ... letterbox/pillarbox on the other") reads as centred.
+- **cause (from the docs, not yet read in code):** `position_x/position_y` are the box's top-left corner (D-338) and default to 0,0; D-425 sizes the footprint but adds no centring offset, so any non-frame-aspect footprint starts at the corner.
+- **workaround used (flagged, not a fix):** set `position_y = -(fillH - 1)/2` (here -0.1486) / `position_x = (1 - fitW)/2` by hand on each such clip.
+- **fix direction:** centre the fitted/filled footprint inside the frame when `position` is at its default, in the one shared footprint function both renderers use, with a migration note for clips that already carry a hand-centred position.
+
 ## B-327 — word-aware `editor_detect_silences` drops real silences when the transcript's word times are wrong
 
 status: **open** · severity: **major** · area: silence detection (`editor_detect_silences`, D-420 / B-289 word-aware trimming)
