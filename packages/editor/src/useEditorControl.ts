@@ -288,6 +288,13 @@ import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
 import { resolveExportTimeline, runEditorExport } from './editorExport';
 // D-411 Phase 0 — the composition size of a timeline by id (FCPXML's default size).
 import { warmCompositionSize } from './compositionSize';
+import {
+  SAFE_AREA_PRESETS,
+  SAFE_AREA_VIEW_IDS,
+  isSafeAreaViewId,
+  presetRects,
+  suggestedPresets,
+} from './safeAreas';
 // D-329 — the whole timeline's transcript, the same stitch the Index panel
 // renders, so `editor_get_timeline_transcript` and the GUI cannot disagree.
 import { stitchTimelineTranscript, transcriptSources } from './timelineTranscript';
@@ -2262,6 +2269,9 @@ export function useEditorControl(): void {
           // ambiguous without it (the strip changes what the transport area
           // even contains).
           waveformView: s.waveformView,
+          // D-431 — which safe-area guide the preview draws ('off' = none);
+          // the read half of `editor_set_safe_area_view`.
+          safeAreaView: s.safeAreaView,
           // D-266 — the master monitoring volume + mute, the read half of
           // `editor_set_audio_monitor`. Reported here for the same reason
           // `previewZoom` is: it silently changes what `editor_set_playing`
@@ -2597,6 +2607,67 @@ export function useEditorControl(): void {
         }
         useEditorTimelineStore.getState().setWaveformView(!!a.open);
         return { ok: true, waveformView: useEditorTimelineStore.getState().waveformView };
+      },
+
+      // D-431 — the platform safe areas as numbers: every preset's rectangles
+      // in the ACTIVE timeline's composition pixels, so an agent can place a
+      // title or caption inside them (`SafeAreaOverlay` draws the same ones).
+      editor_get_safe_areas: async () => {
+        const s = useEditorTimelineStore.getState();
+        if (!s.timeline) return noTimeline();
+        const size = await warmCompositionSize();
+        if (!size) return { error: 'the timeline has no composition size yet (no clip and no project output settings)' };
+        const suggested = suggestedPresets(size.width, size.height);
+        return {
+          frame: { width: size.width, height: size.height },
+          active: s.safeAreaView,
+          suggested,
+          // The one rectangle to keep a short's hook title, captions and key
+          // visuals inside: safe on every vertical platform at once. Null on a
+          // landscape timeline, where the broadcast title-safe rect applies.
+          recommended: (() => {
+            const id = suggested[0];
+            const preset = SAFE_AREA_PRESETS.find((p) => p.id === id);
+            if (!preset) return null;
+            const rects = presetRects(preset, size.width, size.height);
+            return { preset: preset.id, rect: rects[rects.length - 1] };
+          })(),
+          presets: SAFE_AREA_PRESETS.map((p) => ({
+            id: p.id,
+            label: p.label,
+            orientation: p.orientation,
+            source: p.source,
+            regions: presetRects(p, size.width, size.height),
+          })),
+        };
+      },
+
+      // D-431 — drive the preview's safe-area guide: the same store value the
+      // toolbar menu writes. `preset` picks a guide ('off' hides it);
+      // `enabled` alone turns the suggested one on/off.
+      editor_set_safe_area_view: async (a) => {
+        const s = useEditorTimelineStore.getState();
+        const hasPreset = a?.preset !== undefined && a?.preset !== null;
+        const hasEnabled = a?.enabled !== undefined && a?.enabled !== null;
+        if (!hasPreset && !hasEnabled) {
+          return { error: `pass preset (one of ${SAFE_AREA_VIEW_IDS.join(', ')}) and/or enabled: true|false` };
+        }
+        let next = s.safeAreaView;
+        if (hasPreset) {
+          if (!isSafeAreaViewId(a.preset)) {
+            return { error: `unknown preset ${JSON.stringify(a.preset)}; use one of ${SAFE_AREA_VIEW_IDS.join(', ')}` };
+          }
+          next = a.preset;
+        }
+        if (hasEnabled) {
+          if (!a.enabled) next = 'off';
+          else if (!hasPreset && next === 'off') {
+            const size = await warmCompositionSize();
+            next = (size ? suggestedPresets(size.width, size.height)[0] : undefined) ?? 'broadcast';
+          }
+        }
+        useEditorTimelineStore.getState().setSafeAreaView(next);
+        return { ok: true, safeAreaView: useEditorTimelineStore.getState().safeAreaView };
       },
 
       editor_get_waveform: async (a) => {

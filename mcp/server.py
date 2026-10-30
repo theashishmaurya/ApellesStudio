@@ -1451,6 +1451,34 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
         "structural risk of an uncaught crash elsewhere in that tree is "
         "not)."
     ),
+    "safe_areas": {
+        "rule": (
+            "D-431: a short (9:16) is watched under the platform's own UI -- "
+            "caption, channel name, buttons, progress bar -- so a title, "
+            "caption or key visual placed near an edge is covered. Call "
+            "editor_get_safe_areas BEFORE placing text, captions or key "
+            "visuals on a vertical timeline and keep them inside "
+            "`recommended.rect` (the union: safe on YouTube Shorts, "
+            "Instagram Reels and TikTok at once). On a landscape timeline "
+            "keep titles inside the 80% title-safe rect."
+        ),
+        "numbers": (
+            "The rectangles are in the ACTIVE timeline's composition pixels "
+            "(x, y, width, height plus the per-edge `insets`), so they hold "
+            "at 1080x1920 and at 2160x3840 alike. The per-platform figures "
+            "are the conservative ad-guidance values (upload-post.com, "
+            "2026-09-23); no platform publishes an official organic-post "
+            "spec and independent guides give smaller margins, so treat "
+            "them as a safe bound, not a pixel-exact map. Each preset "
+            "carries its `source`."
+        ),
+        "view": (
+            "editor_set_safe_area_view shows/hides the same guide the "
+            "preview toolbar's Safe Area menu does (a translucent tint over "
+            "the unsafe margin); it is a view aid, never part of an export, "
+            "though it does appear in a debug_screenshot of the app window."
+        ),
+    },
     "workflow_tip": (
         "Live-test the surface before trusting it for a real edit: call "
         "editor_get_state (cheap read), then do one real mutating round "
@@ -1517,6 +1545,10 @@ def editor_get_state() -> str:
     Also reports `waveformView` (D-232) — whether the viewer is showing its
     audio waveform strip under the picture. `editor_set_waveform_view` is that
     one's write half; `editor_get_waveform` reads the envelope itself.
+
+    Also reports `safeAreaView` (D-431) — which platform safe-area guide the
+    preview is drawing (`off` or a preset id). `editor_set_safe_area_view` is
+    its write half; `editor_get_safe_areas` reads the rectangles.
 
     Also reports `activeTimeline` (D-411) — `{id, name, output}` of the
     timeline every other `editor_*` tool acts on — and `timelineCount`. A
@@ -1874,6 +1906,58 @@ def editor_set_waveform_view(open: bool) -> str:
     import json
 
     return json.dumps(_op("editor_set_waveform_view", open=open), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_get_safe_areas() -> str:
+    """The platform **safe areas** for the active timeline, as pixel rectangles
+    (D-431). A short is watched under YouTube Shorts', Instagram Reels' or
+    TikTok's own UI (caption, channel name, buttons, progress bar); anything you
+    place near an edge can be covered. Call this BEFORE placing titles,
+    captions or key visuals on a vertical timeline and keep them inside
+    `recommended.rect`.
+
+    Returns `frame` (the timeline's composition `{width, height}`), `active`
+    (the guide the preview is drawing, or `off`), `suggested` (preset ids that
+    fit this frame's shape, best first), `recommended` (`{preset, rect}` — for
+    a vertical timeline the union that is safe on every platform at once; for
+    landscape the title-safe rect) and `presets`: every preset with its
+    `regions`, each `{id, label, x, y, width, height, insets}` in composition
+    pixels, plus the `source` of its numbers. Presets: `broadcast` (action 90%
+    + title 80%), `youtube-shorts`, `instagram-reels`, `tiktok`,
+    `vertical-union`.
+
+    The platform figures are conservative ad-guidance values; none of the
+    platforms publishes an official organic-post spec. Needs an open timeline
+    with a resolvable size."""
+    import json
+
+    return json.dumps(_op("editor_get_safe_areas"), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_safe_area_view(preset: str | None = None, enabled: bool | None = None) -> str:
+    """Show or hide the Edit preview's **safe-area guide** (D-431) — the
+    translucent tint over the margins a platform's UI covers, with the safe
+    rectangle outlined. The same state the preview toolbar's Safe Area menu
+    drives, not a parallel one; a view aid only, never part of an export.
+
+    `preset` picks a guide: `off`, `broadcast`, `youtube-shorts`,
+    `instagram-reels`, `tiktok` or `vertical-union`. `enabled=False` hides it;
+    `enabled=True` with no preset shows the one suggested for the active frame
+    (`vertical-union` on a 9:16 timeline). Pass at least one. Returns
+    `{ok, safeAreaView}`.
+
+    The rectangles themselves (to place text inside) come from
+    `editor_get_safe_areas`; this tool only changes what is on screen."""
+    import json
+
+    args: dict[str, Any] = {}
+    if preset is not None:
+        args["preset"] = preset
+    if enabled is not None:
+        args["enabled"] = enabled
+    return json.dumps(_op("editor_set_safe_area_view", **args), indent=2, default=str)
 
 
 @mcp.tool()

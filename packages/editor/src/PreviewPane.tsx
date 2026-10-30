@@ -184,6 +184,8 @@ import { DynamicZoomOverlay } from './DynamicZoomOverlay';
 import { HighlightOverlay } from './HighlightOverlay';
 import { CaptionTransformOverlay } from './CaptionTransformOverlay';
 import { CanvasBoundary } from './CanvasBoundary';
+import { SafeAreaOverlay } from './SafeAreaOverlay';
+import { SafeAreaMenu } from './SafeAreaMenu';
 import { useCanvasClipPick } from './useCanvasClipPick';
 import { EditOverlay } from './EditOverlay';
 import { useCompositionSize } from './useCompositionSize';
@@ -937,6 +939,9 @@ export function PreviewPane() {
                 style={{ transform: imageTransform }}
               />
               <CanvasBoundary container={surfaceEl} size={compSize} />
+              {/* D-431 — the platform safe-area guide: a view aid over the
+                  picture, pointer-events none, never part of an export. */}
+              <SafeAreaOverlay container={surfaceEl} size={compSize} />
               {/* D-234 — the two overlays are mutually exclusive by
                   construction: each renders `null` when the other owns the
                   picture (`TransformOverlay` stands aside for the armed clip,
@@ -977,6 +982,7 @@ export function PreviewPane() {
         onSeekStart={onSeekStart}
         onSeekEnd={endScrub}
         waveform={<ScrubWaveform />}
+        viewControls={<SafeAreaMenu size={compSize} />}
         waveformOn={waveformView}
         onWaveformToggle={() => setWaveformView(!waveformView)}
       />

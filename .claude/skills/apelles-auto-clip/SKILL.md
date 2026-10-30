@@ -59,6 +59,16 @@ What it does NOT do:
 - Do not propose until you have read every page: the best moment may be in the last
   minutes, and the set should spread across the recording.
 
+## 2b. Know the safe area
+
+Shorts are watched under the platform's own UI (captions, channel name, buttons, progress
+bar). Before you place or judge any hook title, caption or key visual, call
+`editor_get_safe_areas` on the 9:16 timeline and use `recommended.rect`, the union that is
+safe on YouTube Shorts, Instagram Reels and TikTok at once (about x 120, y 288, 768 x 960 on
+1080x1920). Hook titles, captions and anything the viewer must read or see stay inside it;
+decoration may bleed out. `editor_set_safe_area_view {preset: "vertical-union"}` shows the
+guide in the preview so the person sees the same rectangle when they review.
+
 ## 3. Propose
 
 One call, your `count` best shorts (add one or two alternates only if the person

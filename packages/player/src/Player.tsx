@@ -203,6 +203,10 @@ export interface PlayerProps {
   waveformOn?: boolean;
   /** Omit → the waveform toggle button is hidden. */
   onWaveformToggle?: () => void;
+  /** D-431 — extra caller-owned controls, rendered in the transport's right
+   *  cluster just before the waveform toggle (the Edit tab's Safe Area menu).
+   *  Presentational: this component owns no state for them. */
+  viewControls?: ReactNode;
 
   className?: string;
 }
@@ -350,6 +354,7 @@ export function Player({
   waveform,
   waveformOn,
   onWaveformToggle,
+  viewControls,
   className,
 }: PlayerProps) {
   const showTitleStrip = Boolean(title || onPrev || onNext || menu);
@@ -599,6 +604,7 @@ export function Player({
               same kind of thing: a control over what this viewer tells you
               about the AUDIO at this position. Omitted, not disabled, when the
               caller supplies no handler — this component's standing rule. */}
+          {viewControls}
           {onWaveformToggle && (
             <Button
               variant="ghost"
