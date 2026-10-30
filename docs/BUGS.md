@@ -4,6 +4,33 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-338 — a generated caption cue cannot be lengthened with `editor_trim_clip`
+
+status: **open** · severity: **minor** · area: caption clips (D-228/D-229) under `checkTrim` (`packages/editor/src/timeline.ts`)
+
+- **found:** 2026-10-30, Nemotron shorts. After `editor_generate_captions_from_transcript(scope="timeline")`, merging a 4-frame cue ("most") into its neighbour needed the neighbour 4 frames longer. `editor_trim_clip(edge="end", delta=4)` refused: "already 33 source frames long and cannot grow: that is all its media has (source_len 33)".
+- **what happens:** a caption has no media, but it is stamped with `source_len == duration`, so the media-bounds clamp treats it like footage that has run out. A title gets an hour of synthesized headroom (D-292's still-image rule); a caption gets none, so its end (or start) can only ever move inward.
+- **expected:** a caption, like a title or a still, can be extended freely in both directions with the ordinary trim tools and the GUI edge drag.
+
+## B-337 — `editor_trim_clip`'s docstring has the sign of `delta` backwards for `edge="end"`
+
+status: **open** · severity: **minor** · area: `editor_trim_clip` contract (`mcp/server.py`, `crates/apelles-mcp/src/tools/edit.rs`) vs `checkTrim` (`packages/editor/src/timeline.ts`)
+
+- **found:** 2026-10-30, Nemotron shorts. `editor_trim_clip(edge="end", delta=-85)` on a 222-frame still SHORTENED it to 137; `delta=+170` then extended it to 307.
+- **what happens:** the reducer treats `delta` as a signed move of the edge (end edge: + is later, so longer; start edge: + is later, so shorter). The docstring says "positive shortens the clip, negative extends it" for both edges, which is only true of `start`.
+- **expected:** one contract, stated once. Either the docstring describes the edge-move sign per edge, or the op normalises to "positive shortens" for both edges. An agent following the docstring today cuts material when it meant to extend.
+
+## B-336 — a short built from a voice-over TIMELINE has no picture and no captions
+
+status: **open** · severity: **major** · area: Automatic Clipper build (`packages/editor/src/clipper/clipBuild.ts`, D-411)
+
+- **found:** 2026-10-30, Nemotron shorts. `editor_auto_clip {timeline_id: "Voiceover v2", track: 7}`, where track 7 is the cleaned voice-over (an unlinked audio clip) and the picture is on Video 1/2 with demo sound, SFX and a music bed on other tracks: the usual shape of an edited explainer. All four proposed shorts built "ok" with the warning "the source has no picture: the short is sound only (and has no captions; captions follow video clips)".
+- **what happens:**
+  - The build copies only the analysed dialogue track's clips over each range. Every other track of the source timeline is dropped (picture, titles, demo sound, music), so a short "plays what the edit plays" only when the dialogue sits in the video clips themselves.
+  - Captions are skipped because `hasPicture` is false, although `captionsForTimeline` reads unlinked voice on audio tracks since D-420. A voice-only short could still be captioned.
+- **expected:** a timeline source builds each range across ALL of the source timeline's tracks, the same way a multi-track ripple would (picture with its keyframes and highlights, linked sound, titles), reframed for the short's aspect, and captioned from the stitched transcript including audio-track voice. At least: caption a voice-only build, and say up front that a timeline source with its dialogue on an audio track loses the picture.
+- **worked around (content only, no code):** each short was made by duplicating the source timeline, ripple-deleting outside the chosen sentence ranges and reframing the clips by hand. Those timelines are not linked to the Clipper run, so they are not in the Clipper panel.
+
 ## B-335 — a second `editor_export` while one runs reports the FIRST job's result as its own
 
 status: **open** · severity: **major** · area: `editor_export` / `editor_export_status` (D-362 polling)
