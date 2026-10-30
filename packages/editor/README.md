@@ -18,6 +18,12 @@ dragging a pool item in from the shell's Sources panel.
   (also double-click), Duplicate (independent copy, grades copied), Size (project
   size or a delivery preset), Delete (confirmed, not undoable). A timeline with its
   own size shows it on its tab (`9:16`).
+- `safeAreas.ts` / `SafeAreaOverlay.tsx` / `SafeAreaMenu.tsx` (D-431) — platform safe-area guides
+  for the preview: one table of presets (Title + Action safe, YouTube Shorts, Instagram Reels,
+  TikTok, all vertical platforms) as fractions of the frame with their sources, resolved to pixel
+  rectangles on the active timeline; a toolbar menu and a pointer-events-none tint/outline
+  overlay that follows zoom. `safeAreaView` in the store is shared with the MCP tools
+  `editor_get_safe_areas` / `editor_set_safe_area_view`. A view aid, never in an export.
 - `clipScaling.ts` (D-425 / B-325) — a clip's input scaling (`fit` / `fill` / `native`) and
   `fittedFootprint`, the pure function that sizes a source into the frame; the twin of
   `apelles_timeline::scaling`. `add_clip` / `edit_in` stamp the timeline's `default_scaling`

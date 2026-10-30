@@ -107,6 +107,7 @@ import {
   type TimelineOrigin,
 } from './timeline';
 import { clampPreviewView, FIT_VIEW, type PreviewView } from './previewZoom';
+import type { SafeAreaViewId } from './safeAreas';
 // D-280 — the transport's playback-rate model lives with the transport
 // component (`@apelles/player`), which renders the control; this store only
 // holds the value and clamps it. See that module's own doc.
@@ -317,6 +318,11 @@ interface EditorTimelineState {
    *  vertical space in the viewer, and a user who has not asked for it should
    *  get the picture. */
   waveformView: boolean;
+  /** D-431 — which platform safe-area guide the preview draws over the picture
+   *  (`'off'` = none). Session chrome exactly like `waveformView`: here so
+   *  `editor_set_safe_area_view` drives the same value the toolbar menu does;
+   *  not persisted, not undoable, never part of an export. */
+  safeAreaView: SafeAreaViewId;
   /** D-413 — whether clip drags, trims and the playhead snap to the beat
    *  grid while one is shown. Session chrome like `waveformView` (not
    *  persisted, not undoable); defaults ON, because a grid that is shown is
@@ -517,6 +523,8 @@ interface EditorTimelineState {
    *  human's toggle button (`Player`, via `PreviewPane`) and
    *  `editor_set_waveform_view`. */
   setWaveformView: (open: boolean) => void;
+  /** D-431 — pick the preview's safe-area guide; `editor_set_safe_area_view`. */
+  setSafeAreaView: (view: SafeAreaViewId) => void;
   /** D-413 — turn beat snapping on/off (the timeline toolbar's magnet). */
   setBeatSnap: (on: boolean) => void;
   /** D-266 — set the monitoring volume and/or the mute flag. Either half may
@@ -773,6 +781,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   inspectorTab: DEFAULT_CLIP_INSPECTOR_TAB,
   // D-232 — off by default; see the field's own doc.
   waveformView: false,
+  safeAreaView: 'off',
   // D-413 — on; see the field's own doc.
   beatSnap: true,
   // D-126/D-266 — unity and unmuted: monitoring starts at "what the mix says".
@@ -996,6 +1005,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   setInspectorTab: (tab) => set({ inspectorTab: tab }),
 
   setWaveformView: (open) => set({ waveformView: open }),
+  setSafeAreaView: (view) => set({ safeAreaView: view }),
   setBeatSnap: (on) => set({ beatSnap: on }),
 
   setAudioMonitor: (next) =>

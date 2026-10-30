@@ -311,6 +311,14 @@ pub struct EditorSetWaveformViewArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorSetSafeAreaViewArgs {
+    #[serde(default)]
+    pub preset: Option<String>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EditorGetWaveformArgs {
     #[serde(default)]
     pub frame: Option<i64>,
@@ -2108,6 +2116,10 @@ impl ApellesMcp {
     audio waveform strip under the picture. `editor_set_waveform_view` is that
     one's write half; `editor_get_waveform` reads the envelope itself.
 
+    Also reports `safeAreaView` (D-431) — which platform safe-area guide the
+    preview is drawing (`off` or a preset id). `editor_set_safe_area_view` is
+    its write half; `editor_get_safe_areas` reads the rectangles.
+
     Also reports `activeTimeline` (D-411) — `{id, name, output}` of the
     timeline every other `editor_*` tool acts on — and `timelineCount`. A
     project can hold several timelines (a long-form and its shorts);
@@ -2486,6 +2498,62 @@ impl ApellesMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new().set("open", p.open);
         let env = self.op("editor_set_waveform_view", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_get_safe_areas",
+        description = r#"The platform **safe areas** for the active timeline, as pixel rectangles
+    (D-431). A short is watched under YouTube Shorts', Instagram Reels' or
+    TikTok's own UI (caption, channel name, buttons, progress bar); anything you
+    place near an edge can be covered. Call this BEFORE placing titles,
+    captions or key visuals on a vertical timeline and keep them inside
+    `recommended.rect`.
+
+    Returns `frame` (the timeline's composition `{width, height}`), `active`
+    (the guide the preview is drawing, or `off`), `suggested` (preset ids that
+    fit this frame's shape, best first), `recommended` (`{preset, rect}` — for
+    a vertical timeline the union that is safe on every platform at once; for
+    landscape the title-safe rect) and `presets`: every preset with its
+    `regions`, each `{id, label, x, y, width, height, insets}` in composition
+    pixels, plus the `source` of its numbers. Presets: `broadcast` (action 90%
+    + title 80%), `youtube-shorts`, `instagram-reels`, `tiktok`,
+    `vertical-union`.
+
+    The platform figures are conservative ad-guidance values; none of the
+    platforms publishes an official organic-post spec. Needs an open timeline
+    with a resolvable size."#
+    )]
+    pub async fn editor_get_safe_areas(&self) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new();
+        let env = self.op("editor_get_safe_areas", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_set_safe_area_view",
+        description = r#"Show or hide the Edit preview's **safe-area guide** (D-431) — the
+    translucent tint over the margins a platform's UI covers, with the safe
+    rectangle outlined. The same state the preview toolbar's Safe Area menu
+    drives, not a parallel one; a view aid only, never part of an export.
+
+    `preset` picks a guide: `off`, `broadcast`, `youtube-shorts`,
+    `instagram-reels`, `tiktok` or `vertical-union`. `enabled=False` hides it;
+    `enabled=True` with no preset shows the one suggested for the active frame
+    (`vertical-union` on a 9:16 timeline). Pass at least one. Returns
+    `{ok, safeAreaView}`.
+
+    The rectangles themselves (to place text inside) come from
+    `editor_get_safe_areas`; this tool only changes what is on screen."#
+    )]
+    pub async fn editor_set_safe_area_view(
+        &self,
+        Parameters(p): Parameters<EditorSetSafeAreaViewArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .put("preset", p.preset)
+            .put("enabled", p.enabled);
+        let env = self.op("editor_set_safe_area_view", args).await?;
         Ok(render::json_text(&env))
     }
 

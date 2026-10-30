@@ -54,6 +54,7 @@ time.
   - no text overflowing its box (book spines, cards);
   - no text clipped at the frame edge;
   - no title colliding with the level or section tracker.
+  - on a vertical (9:16) timeline, titles, captions and key visuals sit inside `recommended.rect` from `editor_get_safe_areas` (D-431); landscape timelines keep titles inside the title-safe rect it also returns.
 - **Z-order:** a moving element never slides behind something it should be in front of.
 - **Layout:** two-column and card layouts are aligned (tops and bottoms) and vertically centred,
   never cramped.

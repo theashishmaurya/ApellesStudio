@@ -18,6 +18,7 @@ Owner: *"Lets do it bigger one with Motion, we will take some time to get the mo
 - [x] **Unsaved Motion edits survive a reload** (0g, D-415). Live check still to do; the in-memory "Untitled" session is not covered.
 - [x] Authoring as data, templates, custom components, rough.js/d3 (D-403..D-407, D-409, D-412); export matches the player (B-281/B-282).
 - [x] Music-driven motion (beat sync): on-device beat analysis, the Edit tab's beat grid + snapping + "snap cuts to beats", Motion's soundtrack + beat lines + key snapping + "time to music", seven MCP tools (D-413, 0j). Live check in the app still to do.
+- [x] Platform safe-area guides in the Edit preview (Title/Action safe, Shorts, Reels, TikTok, all-vertical union) + `editor_get_safe_areas` / `editor_set_safe_area_view`: D-431. Live check in the app and a Motion-player guide still to do.
 - [x] Brand kit (colours, fonts, motion style, references across all tabs): D-416, `docs/notes/brand-kit.md`; the explicit, user-authored sibling of 0d's learned `taste.md`. Live check in the app still to do (Brand panel, the three appliers, a brand font in the Edit preview/export).
 - [x] Automatic Clipper Phases 1-2 (shorts from one agent call; D-411). Built 2026-10-28 (D-411 Phases 1-2 build notes): `apelles-clipper`, the moment view + clean-cut gate, seven `editor_*clip*` tools (248), the Clipper panel, the `apelles-auto-clip` skill, `eval/clipper/`. Not yet verified live in the running app.
 - [ ] A full release-checklist run on the installed app (`docs/releases/README.md`), notes in `docs/releases/v0.4.0.md`.
