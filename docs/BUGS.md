@@ -4,6 +4,26 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-353 — a still-image clip on the timeline shows an empty band instead of its picture
+
+status: open (queued after D-437) · severity: minor · area: `packages/editor` clip block filmstrip (`ClipBlock` / `ClipBody`, the filmstrip tile source)
+
+- **Seen:** 2026-11-01, live after D-432 P5, on "Voiceover v2": the still "R08 Artificial Analysis" (a PNG) on V2 shows only its name strip over a flat colour band. Video clips show their filmstrip. Screenshot: `scratch/ui-redesign-p5/live-after-p5.png`.
+- **Expected:** a still repeats its own image across the filmstrip, as FCP does. Use the cached thumbnail (D-436's `MediaThumbnail` data path) rather than decoding per tile.
+- **Fix with:** D-437's lanes (S3a/S4 own the clip rendering), so it lands once instead of twice.
+
+## B-354 — D-432 P5 leftovers: the toolbar tools are not regrouped, the §4.13 empty states are not designed, and Cmd+4 / the volume popover are missing
+
+status: open (queued after D-437) · severity: minor · area: `TimelinePane.tsx` toolbar row, empty states, keymap, player transport
+
+- **From the P5 report (`docs/notes/ui-redesign.md` "P5 as built"):**
+  - The timeline toolbar's tools are not regrouped per the mockup (select/trim tools/blade | markers | snapping/skimming/linked | zoom). That code is inside `TimelinePane.tsx`, which D-437 rewrites, so it waits for S4.
+  - The §4.13 empty states are missing: an empty timeline, an empty media pool and no selection in the Inspector.
+  - Cmd+4 to toggle the Inspector is missing.
+  - The volume control has no popover.
+  - The toolbar centre is a flex item about 20 px off true centre.
+- **Queue:** after D-437 S4, as one Sonnet pass with a live screenshot compared against the mockup.
+
 ## B-352 — the UI harness reports "no frames sampled" instead of detecting a locked screen, and `debug_activate_app` reports success without bringing Apelles forward
 
 status: open · severity: minor (harness) · area: `packages/ui-harness` (CLI start), `app/src-tauri/src/chroma/debug_input.rs` (`debug_activate_app`)
