@@ -47,6 +47,8 @@ MCP as tools of the same name.
 | `debug_set_popover_open` | `{id, open: bool}` — any registered Edit-tab popover/dialog (D-252, `@apelles/editor`'s `panelRegistry.ts`): `caption-panel`, `canvas-settings`, `export-dialog` today. One op for every popover rather than a bespoke one per popover — see D-252 for why. |
 | `debug_dom_tree` | `{selector?, maxDepth?, maxNodes?, styles?, includeHidden?, text?}` → bounded JSON of the real DOM: hierarchy, semantic attributes, `getBoundingClientRect()`, chosen computed styles |
 | `debug_frame_timing` | `{limit?, reset?}` → the preview's real rAF/paint intervals (see `@apelles/editor`'s `previewTiming.ts`) |
+| `debug_pointer` | D-434 — real pointer input: `{action: move\|down\|up\|click\|doubleClick\|drag\|wheel\|pinch, target, to?, path?, button?, modifiers?, steps?, durationMs?, holdMs?, deltaX?, deltaY?, scale?, mode?, measure?, watch?, settleMs?}`. A target is CSS `{x, y}`, a `{byX, byY}` offset from the previous point, or an element by `selector` / `testid` / `nodeId` plus `at: {fx, fy, dx, dy}`. Replies with what was really under each point, what the page received (`observed`: counts, `isTrusted`, targets), and optionally `perf` and per-frame `watch` rects + cursor (`src/input/`) |
+| `debug_key` | D-434 — real key presses: `{keys?: ["meta+KeyZ"], text?, phase?: press\|down\|up, holdMs?, gapMs?, mode?, measure?, watch?, settleMs?}` (DOM `code` names — what the keymap matches on) |
 
 **Every write calls the same store action the human's own control calls** —
 `useShellStore.setActiveTab` is literally what the tab button's `onClick`
@@ -61,6 +63,21 @@ simulation works, a store action proves the app works (D-219).
 `debug_screenshot` pixels are **device pixels**. Multiply by the screenshot's
 `scaleFactor` (or the DOM result's `viewport.devicePixelRatio`) to cross
 between them.
+
+## Real input (D-434)
+
+`src/input/` is the UI harness's instrument. `plan.ts` turns a gesture into a timed list of
+primitive events (pure, unit-tested); `geometry.ts` resolves targets against the live DOM
+and reports what is really under each point; `observe.ts` records what the page received;
+`perf.ts` samples frames (and watched rects / the cursor) while the gesture runs; `stats.ts`
+is the shared percentile/dropped-frame arithmetic (also used by `packages/ui-harness`).
+Two dispatchers play the same plan: **native** (`dispatchNative.ts` → the debug-only Tauri
+command `chroma_debug_inject_input`, which delivers real `NSEvent`s into the WKWebView —
+trusted events, no macOS permission) and **synthetic** (`dispatchSynthetic.ts`, in-page DOM
+events, `isTrusted` false — jsdom and non-macOS only). `mode: "auto"` picks native inside
+the app and says so in the reply. This is the one place the package synthesises input: the
+state setters above still call store actions, for the reason given there. How the harness
+uses it: `docs/notes/ui-harness.md`.
 
 ## Boundary
 
@@ -89,7 +106,10 @@ validation — the parts that have correct answers. `src/debugOps.popover.dom
 .test.tsx` goes one level further for `debug_set_popover_open`: it mounts the
 real `CaptionPanel` and proves the op actually opens/closes its real popover
 (no synthesised click), and that an unknown id or a missing `open` is refused
-by name rather than silently accepted. The other ops are verified live
+by name rather than silently accepted. `src/input/*.test.ts` cover the gesture planner,
+target resolution and the perf arithmetic, and `inputOps.timeline.dom.test.tsx` drives the
+real `TimelinePane` through `debug_pointer` / `debug_key` (synthetic mode) and checks the
+app's own state moved. The other ops are verified live
 against a running app; the loop and its results are recorded in
 `docs/notes/debug-tooling.md`.
 

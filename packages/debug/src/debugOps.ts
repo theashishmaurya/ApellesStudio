@@ -11,11 +11,14 @@
  *   preview is actually painting.
  *
  * What it does NOT do: edit a timeline, a grade or a manifest — an op that
- *   changes the user's work belongs in its own tab's registry, not here. It
- *   also never synthesises a click, a keypress or a pointer event: every write
- *   below calls the SAME store action the human's own control calls, which is
- *   the whole point (a simulated click proves the simulation works; a store
- *   action proves the app works).
+ *   changes the user's work belongs in its own tab's registry, not here. Its
+ *   STATE setters never synthesise a click, a keypress or a pointer event:
+ *   each calls the SAME store action the human's own control calls, which is
+ *   the honest way to put the UI into a state. The one deliberate exception is
+ *   D-434's `debug_pointer` / `debug_key` (`input/inputOps.ts`), which exist to
+ *   test the INPUT HANDLING itself — hit zones, drag thresholds, the keymap —
+ *   that a store action skips; on the real app they deliver trusted native
+ *   events, not page-made ones.
  *
  * **This whole module is debug-only and never reaches a production build.**
  *   Nothing imports it statically: `useDebugControl.ts` reaches it through a
@@ -60,6 +63,13 @@
  *                                   optional `windowMs`, so the same numbers
  *                                   can be read over the same recent window
  *                                   the on-screen overlay displays.
+ *   `debug_pointer`               — D-434. Real pointer input (move / down /
+ *                                   up / click / double-click / drag along a
+ *                                   path / wheel / pinch) at a DOM target or
+ *                                   CSS point, with what was hit, what the page
+ *                                   received, and optional perf + per-frame
+ *                                   rects (`input/inputOps.ts`).
+ *   `debug_key`                   — D-434. Real key presses / combos / text.
  *   `debug_set_fps_overlay`       — D-330. Burn that live paint/raf readout
  *                                   into the window itself, so a screenshot
  *                                   or a `debug_record_video` recording
@@ -99,6 +109,7 @@ import {
   type OverlayCorner,
 } from './fpsOverlay';
 import { isParseError, parseBool, parseShellTab, SHELL_TABS } from './uiState';
+import { debugKey, debugPointer } from './input/inputOps';
 
 /** One op's arguments, straight off the untyped `chroma://request` payload —
  *  the same `any` every other registry in this repo uses for the same reason
@@ -107,7 +118,7 @@ import { isParseError, parseBool, parseShellTab, SHELL_TABS } from './uiState';
 export type OpArgs = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type OpResult = any;
-export type OpHandler = (args: OpArgs) => OpResult;
+export type OpHandler = (args: OpArgs) => OpResult | Promise<OpResult>;
 
 /** Everything `debug_get_ui_state` reports, and the shape every write op
  *  echoes back so a caller never needs a second round trip to confirm. */
@@ -290,6 +301,11 @@ export const DEBUG_OPS: Record<string, OpHandler> = {
     }
     return previewTimingReport(limit, windowMs);
   },
+
+  // D-434 — the UI harness's input tools. Async: they resolve once the
+  // gesture has been delivered and the page has settled.
+  debug_pointer: (a) => debugPointer(a),
+  debug_key: (a) => debugKey(a),
 
   debug_set_fps_overlay: (a) => {
     const enabled = parseBool(a?.enabled, 'enabled');
