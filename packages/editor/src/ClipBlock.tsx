@@ -32,11 +32,13 @@ import {
 } from '@phosphor-icons/react';
 import type { Icon as PhosphorIcon } from '@phosphor-icons/react';
 
+import { useMediaPoolStore } from '@apelles/bridge';
+
 import { adjustmentSummary } from './adjustment';
 import { captionLines } from './caption';
 import { CLIP_BAND_RATIO, clipAnatomy, clipChrome, type ClipKind } from './clipAnatomy';
 import { Filmstrip } from './Filmstrip';
-import type { Clip } from './timeline';
+import { isStillSource, type Clip } from './timeline';
 import { TIMELINE_TEST_IDS } from './timelineTestIds';
 import { Waveform } from './Waveform';
 
@@ -115,6 +117,13 @@ export function ClipBlock({
   showBadges: badgesOn = true,
 }: ClipBlockProps) {
   const a = clipAnatomy(trackHeight, kind, bandRatio);
+  // B-353 — a still repeats the pool's cached thumbnail across the filmstrip (no
+  // per-tile decode). The selector returns a string, so a pool change re-renders
+  // only a clip whose own thumbnail changed.
+  const still = isStillSource(clip.source_path);
+  const stillThumb = useMediaPoolStore((s) =>
+    still ? (s.items.find((m) => m.sourcePath === clip.source_path)?.thumb ?? null) : null,
+  );
   const chrome = clipChrome(widthPx);
   const colours = CLIP_KIND_CLASSES[kind];
   const KindIcon = KIND_ICONS[kind];
@@ -144,6 +153,8 @@ export function ClipBlock({
                 height={a.film}
                 visibleStartPx={visibleStartPx}
                 visibleEndPx={visibleEndPx}
+                still={still}
+                stillSrc={stillThumb}
               />
             </div>
           )}
@@ -158,16 +169,19 @@ export function ClipBlock({
               }
               style={{ height: kind === 'video' ? a.band : a.wave }}
             >
-              <Waveform
-                sourcePath={clip.source_path}
-                startSecs={startSecs}
-                durationSecs={durationSecs}
-                width={widthPx}
-                height={kind === 'video' ? a.band : a.wave}
-                visibleStartPx={visibleStartPx}
-                visibleEndPx={visibleEndPx}
-                variant="band"
-              />
+              {/* A still has no audio: no peaks request for it (B-353). */}
+              {!still && (
+                <Waveform
+                  sourcePath={clip.source_path}
+                  startSecs={startSecs}
+                  durationSecs={durationSecs}
+                  width={widthPx}
+                  height={kind === 'video' ? a.band : a.wave}
+                  visibleStartPx={visibleStartPx}
+                  visibleEndPx={visibleEndPx}
+                  variant="band"
+                />
+              )}
             </div>
           )}
         </div>

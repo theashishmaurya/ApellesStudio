@@ -16,7 +16,10 @@ const invoke = vi.hoisted(() => vi.fn());
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 
 import { actSync, mount, waitFrames, type MountedComponent } from './testUtils/pointerHarness';
-import { Filmstrip } from './Filmstrip';
+import { useMediaPoolStore, type MediaItem } from '@apelles/bridge';
+import { ClipBlock } from './ClipBlock';
+import { Filmstrip, STILL_TILE_ASPECT, stillTileRange } from './Filmstrip';
+import type { Clip } from './timeline';
 
 let mounted: MountedComponent | null = null;
 let sourceCounter = 0;
@@ -75,5 +78,66 @@ describe('Filmstrip tiles survive a width change (D-437 S7)', () => {
       expect(el.getAttribute('height')).toBe('25');
       expect(Number(el.getAttribute('width'))).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('B-353 - a still image repeats its cached thumbnail', () => {
+  const STILL = '/pics/R08 Artificial Analysis.png';
+  const THUMB = 'data:image/jpeg;base64,STILL';
+
+  it('stillTileRange covers exactly the visible slice, capped', () => {
+    expect(stillTileRange(0, 40, 0, 100)).toBeNull();
+    expect(stillTileRange(400, 40, 0, 400)).toEqual({ first: 0, last: 9 });
+    expect(stillTileRange(400, 40, 100, 210)).toEqual({ first: 2, last: 5 });
+    expect(stillTileRange(400, 40, 500, 600)).toBeNull();
+    expect(stillTileRange(1_000_000, 40, 0, 1_000_000)!.last).toBe(511);
+  });
+
+  it('draws the thumbnail across the whole strip, asks the backend for nothing', async () => {
+    mounted = mount(<Filmstrip sourcePath={STILL} startSecs={0} durationSecs={5} width={400} height={25} still stillSrc={THUMB} />, {
+      strictMode: false,
+    });
+    await waitFrames(3);
+    const tiles = imgs();
+    const tileW = 25 * STILL_TILE_ASPECT;
+    expect(tiles).toHaveLength(Math.ceil(400 / tileW));
+    expect(new Set(tiles.map((t) => t.getAttribute('src')))).toEqual(new Set([THUMB]));
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('draws nothing (and still decodes nothing) until the pool has a thumbnail', async () => {
+    mounted = mount(<Filmstrip sourcePath={STILL} startSecs={0} durationSecs={5} width={400} height={25} still stillSrc={null} />, {
+      strictMode: false,
+    });
+    await waitFrames(3);
+    expect(imgs()).toHaveLength(0);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("ClipBlock feeds a still its pool item's thumbnail, and a video clip still uses the backend", async () => {
+    const item = { id: 'm1', sourcePath: STILL, thumb: THUMB, offline: false } as unknown as MediaItem;
+    useMediaPoolStore.setState({ items: [item] });
+    const clip = {
+      id: 's1',
+      name: 'R08',
+      source_path: STILL,
+      source_start: 0,
+      duration: 120,
+      source_len: 120,
+      start_frame: 0,
+    } as unknown as Clip;
+    mounted = mount(<ClipBlock clip={clip} kind="video" trackHeight={52} widthPx={400} fps={24} />, { strictMode: false });
+    await waitFrames(3);
+    expect(mounted.container.querySelectorAll('img[data-chroma-still-tile]').length).toBeGreaterThan(5);
+    expect(invoke).not.toHaveBeenCalledWith('chroma_clip_thumbnails', expect.anything());
+    expect(invoke).not.toHaveBeenCalledWith('chroma_audio_waveform', expect.anything()); // a still has no audio
+    mounted.unmount();
+    mounted = mount(
+      <ClipBlock clip={{ ...clip, source_path: '/v/clip.mov' }} kind="video" trackHeight={52} widthPx={400} fps={24} />,
+      { strictMode: false },
+    );
+    await waitFrames(3);
+    expect(invoke).toHaveBeenCalledWith('chroma_clip_thumbnails', expect.objectContaining({ sourcePath: '/v/clip.mov' }));
+    useMediaPoolStore.setState({ items: [] });
   });
 });

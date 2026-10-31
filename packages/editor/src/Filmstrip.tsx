@@ -94,6 +94,30 @@ export function quantizeStepSecs(stepSecs: number): number {
   return chosen;
 }
 
+/** B-353 — a still image repeats its one picture at this aspect (width / height)
+ *  across the strip; the picture is `object-cover`, like the pool's thumbnail well. */
+export const STILL_TILE_ASPECT = 16 / 9;
+
+/**
+ * Where a still's repeated tiles go: the `[first, last]` tile indices covering
+ * `[visibleStartPx, visibleEndPx)` of a clip `width` px wide, each `tileWidth`
+ * px wide, capped at {@link MAX_TILES}. Pure and exported for its unit test.
+ */
+export function stillTileRange(
+  width: number,
+  tileWidth: number,
+  visibleStartPx: number,
+  visibleEndPx: number,
+): { first: number; last: number } | null {
+  if (!(width > 0) || !(tileWidth > 0)) return null;
+  const visLeft = Math.max(0, Math.min(width, visibleStartPx));
+  const visRight = Math.max(0, Math.min(width, visibleEndPx));
+  if (visRight <= visLeft) return null;
+  const first = Math.floor(visLeft / tileWidth);
+  const last = Math.min(Math.ceil(visRight / tileWidth) - 1, first + MAX_TILES - 1);
+  return last >= first ? { first, last } : null;
+}
+
 export interface RequestWindow {
   startSecs: number;
   durationSecs: number;
@@ -156,6 +180,12 @@ export interface FilmstripProps {
    *  whole clip is treated as visible. */
   visibleStartPx?: number;
   visibleEndPx?: number;
+  /** B-353 — the source is a still image. A still has no frames to decode, so the
+   *  strip repeats `stillSrc` (the pool's cached thumbnail, D-436's data path)
+   *  instead of asking `chroma_clip_thumbnails`; with no thumbnail yet it draws
+   *  nothing, and never decodes per tile. */
+  still?: boolean;
+  stillSrc?: string | null;
 }
 
 export function Filmstrip({
@@ -166,6 +196,8 @@ export function Filmstrip({
   height,
   visibleStartPx,
   visibleEndPx,
+  still = false,
+  stillSrc = null,
 }: FilmstripProps) {
   // Keeps the last good tiles on screen while a new window is in flight, so
   // a zoom or scroll never blanks the strip (D-124's own hard-won property).
@@ -192,11 +224,16 @@ export function Filmstrip({
       ),
     [startSecs, durationSecs, width, visibleStartPx, visibleEndPx],
   );
+  // A still is never windowed or fetched (B-353): its tiles are one repeated picture.
+  const stillRange = useMemo(
+    () => (still ? stillTileRange(width, height * STILL_TILE_ASPECT, visibleStartPx ?? 0, visibleEndPx ?? width) : null),
+    [still, width, height, visibleStartPx, visibleEndPx],
+  );
 
   // Depend on the *serialised* window, not the object — `requestWindow`
   // returns a fresh object every render, and the whole point of snapping it
   // is that an unchanged window must not re-fire this effect.
-  const windowKey = window_ ? thumbWindowKey(sourcePath, window_) : '';
+  const windowKey = window_ && !still ? thumbWindowKey(sourcePath, window_) : '';
 
   // D-201 — the effect below must fire on the SNAPPED window (`windowKey`),
   // never on `window_`'s object identity, for the reason stated just above.
@@ -218,7 +255,7 @@ export function Filmstrip({
   useEffect(() => {
     let cancelled = false;
     const w = windowRef.current;
-    if (!sourcePath || !w) return;
+    if (!sourcePath || !w || still) return;
     getThumbs(sourcePath, w).then((t) => {
       if (cancelled) return;
       if (t.length > 0) setThumbs(t);
@@ -226,7 +263,7 @@ export function Filmstrip({
     return () => {
       cancelled = true;
     };
-  }, [sourcePath, windowKey]);
+  }, [sourcePath, windowKey, still]);
 
   const pxPerSec = durationSecs > 0 ? width / durationSecs : 0;
   const shown = thumbs;
@@ -247,6 +284,33 @@ export function Filmstrip({
     }
     return out;
   }, [shown, pxPerSec, startSecs, width, window_?.stepSecs]);
+
+  if (still) {
+    if (!stillSrc || !stillRange || height <= 0) return null;
+    const tileWidth = height * STILL_TILE_ASPECT;
+    return (
+      <div className="absolute inset-0 overflow-hidden" style={{ width, height, pointerEvents: 'none' }}>
+        {Array.from({ length: stillRange.last - stillRange.first + 1 }, (_, n) => {
+          const i = stillRange.first + n;
+          return (
+            // The same data URL for every tile: one decode, repeated by the browser.
+            <img
+              key={i}
+              src={stillSrc}
+              alt=""
+              draggable={false}
+              decoding="async"
+              width={tileWidth}
+              height={height}
+              data-chroma-still-tile=""
+              className="absolute top-0 h-full object-cover"
+              style={{ left: i * tileWidth, width: tileWidth, opacity: 0.85 }}
+            />
+          );
+        })}
+      </div>
+    );
+  }
 
   if (tiles.length === 0 || width <= 0 || height <= 0) return null;
 

@@ -790,6 +790,8 @@ is paint)._
 
   - **Item 6, filmstrip tiles: verified, plus the cheap half built.** The audit found tiles already keyed by source frame and time (`${frame}-${secs}`), fetched per snapped window (`thumbWindowKey`), and the last good tiles kept on screen while a new window loads, so a trim inside one window rebuilds nothing. `Filmstrip.dom.test.tsx` pins it: a 700 -> 800 px sweep (20 widths, same 0.5 s rung) makes **1 `chroma_clip_thumbnails` request and keeps the identical `<img>` nodes** (only `left`/`width` change). A width change that crosses a rung (the density ladder, 700 -> 830 px at 8 s) is a new window by design and a second request. Built: tiles now carry `decoding="async"` and explicit `width`/`height` attributes. No before/after number: the reuse was already true, so the evidence is the pin, and the decode move is **verify live** (it only matters when a tile's pixels first arrive).
 
+  - **B-353, still-image filmstrip: fixed.** A still repeats the media pool item's cached thumbnail (the D-436 `thumb` data URL) across its filmstrip as 16:9 tiles, with no `chroma_clip_thumbnails` request, no per-tile decode and no waveform request. See BUGS.md B-353 and `Filmstrip.dom.test.tsx`. Look on a real still is **verify live**.
+
 ### S8 — scroll out of React (Opus)
 - §2.3 target. Overlays that become content-space are moved inside the scroller's content.
   The rest subscribe to `timelineScroll.ts`. `scrollRef`, `followGeomRef` and the drop math
