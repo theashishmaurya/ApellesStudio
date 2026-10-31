@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { BIG_300, BIG_BUTTED_RUN, bigClipName, bigFixtureClipCount, bigFixtureShape, bigFixtureSpec } from './bigFixture.ts';
+import { BIG_300, BIG_BUTTED_RUN, BIG_DURATIONS, bigClipName, bigFixtureClipCount, bigFixtureShape, bigFixtureSpec } from './bigFixture.ts';
 import type { OpClient } from './client.ts';
-import { buildFixture, type ScratchProject } from './fixture.ts';
+import { buildFixture, sourceFramesFor, type ScratchProject } from './fixture.ts';
 import { SCENARIOS } from './scenarios/index.ts';
 
 describe('bigFixtureSpec (D-437 S0c)', () => {
@@ -83,7 +83,7 @@ describe('buildFixture with transitions', () => {
         return {} as T;
       },
     };
-    const project: ScratchProject = { path: '/x/ui-harness-1.chroma', mediaIds: { video: 'v', av: 'a', tone: 't' }, originalProject: null };
+    const project: ScratchProject = { path: '/x/ui-harness-1.chroma', mediaIds: { video: 'v', av: 'a', tone: 't' }, mediaFps: { video: 30, av: 30, tone: 24 }, originalProject: null };
     await buildFixture(client, project, 'x', { tracks: [], transitions: [{ track: 1, atFrame: 90 }] });
     expect(calls.filter((c) => c.op === 'editor_add_transition')).toEqual([{ op: 'editor_add_transition', args: { track: 1, kind: 'cross_dissolve', atFrame: 90 } }]);
   });
@@ -112,5 +112,18 @@ describe('perf-300 scenarios', () => {
   it('ids are unique across the whole suite', () => {
     const ids = SCENARIOS.map((s) => s.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe('sourceFramesFor (the 2026-11-01 perf-300 overlap)', () => {
+  it('converts a timeline length to the source’s own frames', () => {
+    // A 24 fps audio source on a 30 fps timeline: 30 timeline frames are 24 source frames.
+    expect(sourceFramesFor(30, 24, 30)).toBe(24);
+    expect(sourceFramesFor(150, 24, 30)).toBe(120);
+    // Same rate: unchanged.
+    expect(sourceFramesFor(90, 30, 30)).toBe(90);
+  });
+  it('is exact for every BIG_DURATIONS length at the harness media rates', () => {
+    for (const d of BIG_DURATIONS) expect(Number.isInteger((d * 24) / 30)).toBe(true);
   });
 });

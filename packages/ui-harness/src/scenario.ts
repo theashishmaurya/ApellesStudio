@@ -23,8 +23,9 @@ export interface FixtureClip {
   name: string;
   /** Which generated test file. Default `video` (picture only — no linked audio is created). */
   media?: MediaKind;
+  /** Source frames (the source's own rate), as `editor_add_clip` takes it. */
   sourceStart?: number;
-  /** Timeline frames. */
+  /** Timeline frames: `buildFixture` converts it to the source's own frames. */
   duration: number;
   startFrame: number;
 }

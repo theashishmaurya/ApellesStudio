@@ -82,7 +82,23 @@ export interface ScratchProject {
   path: string;
   /** media kind → the pool item id the app gave it. */
   mediaIds: Record<MediaKind, string>;
+  /** media kind → the source's own frame rate, the unit `editor_add_clip`'s
+   *  `sourceStart` / `duration` are in ("the source's own frames"). */
+  mediaFps: Record<MediaKind, number>;
   originalProject: string | null;
+}
+
+/** The editor's fallback rate for a source that reports none (an audio-only
+ *  file): `@apelles/editor`'s `DEFAULT_FPS`, which `timelineFps` and a clip
+ *  without `source_fps` resolve to. Mirrored here rather than imported so the
+ *  harness stays a client of the app's ops, not of its internals. */
+export const EDITOR_DEFAULT_FPS = 24;
+
+/** A fixture clip's timeline length (`FixtureClip.duration`) in the source's own
+ *  frames, the unit `editor_add_clip` takes. Exact for every fixture length at
+ *  the 24/30 pair the harness media uses; rounded otherwise. */
+export function sourceFramesFor(timelineFrames: number, sourceFps: number, timelineFps: number): number {
+  return Math.round((timelineFrames * sourceFps) / timelineFps);
 }
 
 /** Create and open a fresh project holding the test media. */
@@ -105,15 +121,19 @@ export async function openScratchProject(client: OpClient, media: MediaFiles, st
   const imported = await client.op<{ added?: { id: string; sourcePath: string }[] }>('editor_import_media', {
     paths: Object.values(media),
   });
-  const pool = await client.op<{ items?: { id: string; sourcePath: string }[] }>('editor_list_media');
-  const items = [...(imported.added ?? []), ...(pool.items ?? [])];
+  type PoolItem = { id: string; sourcePath: string; fps?: number | null; video?: { fps?: number | null } | null };
+  const pool = await client.op<{ items?: PoolItem[] }>('editor_list_media');
+  const items: PoolItem[] = [...(pool.items ?? []), ...(imported.added ?? [])];
   const mediaIds = {} as Record<MediaKind, string>;
+  const mediaFps = {} as Record<MediaKind, number>;
   for (const kind of Object.keys(media) as MediaKind[]) {
     const item = items.find((m) => m.sourcePath === media[kind]);
     if (!item) throw new Error(`the scratch project's media pool has no item for ${media[kind]}`);
     mediaIds[kind] = item.id;
+    const fps = item.fps ?? item.video?.fps;
+    mediaFps[kind] = fps && fps > 0 ? fps : EDITOR_DEFAULT_FPS;
   }
-  return { path, mediaIds, originalProject: before.openProject };
+  return { path, mediaIds, mediaFps, originalProject: before.openProject };
 }
 
 /** Reopen what the app had before, and delete the scratch project folder. */
@@ -180,14 +200,20 @@ export async function buildFixture(client: OpClient, project: ScratchProject, sc
     const listed = await client.op<{ tracks: TrackDto[] }>('editor_list_tracks');
     if (listed.tracks[i]?.kind !== track.kind) await client.op('editor_add_track', { trackKind: track.kind, index: i });
   }
+  // `FixtureClip.duration` is a timeline length; `editor_add_clip` takes the
+  // source's own frames. Converting here is what keeps an audio clip (24 fps
+  // source on a 30 fps timeline) from landing 25 % longer than its spec and
+  // colliding with the next one (the first perf-300 baseline, 2026-11-01).
+  const tlFps = (await client.op<EditorState>('editor_get_state')).activeTimeline?.fps ?? EDITOR_DEFAULT_FPS;
   for (const [i, track] of spec.tracks.entries()) {
     for (const c of track.clips) {
+      const kind = c.media ?? 'video';
       await client.op('editor_add_clip', {
         track: i,
         ripple: false,
-        mediaId: project.mediaIds[c.media ?? 'video'],
+        mediaId: project.mediaIds[kind],
         sourceStart: c.sourceStart ?? 0,
-        duration: c.duration,
+        duration: sourceFramesFor(c.duration, project.mediaFps?.[kind] ?? tlFps, tlFps),
         startFrame: c.startFrame,
       });
     }

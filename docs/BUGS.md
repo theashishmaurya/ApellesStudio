@@ -4,6 +4,14 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-355 — the harness placed fixture clips with a timeline length as the source-frame `duration`, so audio clips landed 25 % long and the 300-clip fixture collided
+
+status: **fixed** (2026-11-01) · severity: minor (harness) · area: `packages/ui-harness/src/fixture.ts`, `scenario.ts`
+
+- **Seen:** the first `perf-300` baseline errored on all 12 scenarios: `editor_add_clip: frames 30-104 on track 6 are already covered by "harness-tone-30s.wav" (frames 0-37)`.
+- **Cause:** `FixtureClip.duration` was documented as timeline frames but passed straight to `editor_add_clip`, whose `duration` is "the source's own frames". The 30 fps test video matched by accident. The 24 fps (`DEFAULT_FPS`) audio-only tone did not: 30 frames became 37.5 on the timeline, overlapping the next butted clip. S0c's unit tests used a fake app, so they never saw it.
+- **Fix:** `openScratchProject` records each media kind's own rate from `editor_list_media` (falling back to the editor's `DEFAULT_FPS`). `buildFixture` converts with `sourceFramesFor(timelineFrames, sourceFps, timelineFps)`. Tests pin the conversion and its exactness for every `BIG_DURATIONS` length.
+
 ## B-353 — a still-image clip on the timeline shows an empty band instead of its picture
 
 status: open (queued after D-437) · severity: minor · area: `packages/editor` clip block filmstrip (`ClipBlock` / `ClipBody`, the filmstrip tile source)

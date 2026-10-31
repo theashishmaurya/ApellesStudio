@@ -188,7 +188,7 @@ class FakeApp implements OpClient {
   }
 }
 
-const project: ScratchProject = { path: '/tmp/ui-harness-x.chroma', mediaIds: { video: 'm1', av: 'm2', tone: 'm3' }, originalProject: null };
+const project: ScratchProject = { path: '/tmp/ui-harness-x.chroma', mediaIds: { video: 'm1', av: 'm2', tone: 'm3' }, mediaFps: { video: 30, av: 30, tone: 24 }, originalProject: null };
 const roll = EDIT_TOOL_SCENARIOS.find((s) => s.id === 'roll-edit-tool');
 if (!roll) throw new Error('roll-edit-tool scenario missing');
 
