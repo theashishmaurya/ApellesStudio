@@ -1451,6 +1451,17 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
         "structural risk of an uncaught crash elsewhere in that tree is "
         "not)."
     ),
+    "video_understanding": {
+        "rule": (
+            "D-432: editor_analyze_video (AI video understanding, Qwen3-VL) is "
+            "OFF by default -- a ~3 GB model download and up to ~9 GB of memory "
+            "per call. While off it returns an error telling the user to turn "
+            "it on. ai_env_status -> videoUnderstanding reports enabled, the "
+            "Mac's RAM and lowMemory (< 16 GB); ai_set_video_understanding "
+            "flips it. It is the USER's setting: ask before enabling it, "
+            "especially when lowMemory is true. Transcription is never gated."
+        ),
+    },
     "safe_areas": {
         "rule": (
             "D-431: a short (9:16) is watched under the platform's own UI -- "
@@ -5163,7 +5174,14 @@ def editor_analyze_video(
     similarly, a known and documented limit rather than a bug.
 
     Runs at roughly 4x realtime. Results are cached per file, so `state:
-    "done"` can come back on this first call; `force=True` re-runs anyway."""
+    "done"` can come back on this first call; `force=True` re-runs anyway.
+
+    **Opt-in (D-432).** This is OFF by default: it downloads a ~3 GB model and
+    uses up to ~9 GB of memory. While the user setting is off this returns an
+    `error` ("AI video understanding is turned off ...") instead of starting.
+    `ai_env_status` reports `videoUnderstanding.enabled`; `ai_set_video_understanding`
+    turns it on, but it is the USER's setting, so ask before enabling it on a Mac
+    with little memory (`lowMemory`). Transcription is never affected."""
     import json
 
     args = _media_args(path, media_id, source_path)
@@ -6929,7 +6947,12 @@ def ai_env_status() -> str:
 
     Nothing else is blocked: Edit, Motion, Colorist, grading and export all work
     throughout. A non-ready phase is a reason to route around the AI tools for
-    now, never a reason to stop working."""
+    now, never a reason to stop working.
+
+    Also returns `videoUnderstanding` {enabled, totalMemoryBytes, lowMemory,
+    refusal, howToEnable} (D-432): whether the opt-in AI video understanding
+    behind `editor_analyze_video` is turned on in the user's settings, and how
+    much RAM this Mac has. It is off by default."""
     import json
 
     return json.dumps(_op("ai_env_status"), indent=2, default=str)
@@ -6954,6 +6977,28 @@ def ai_env_retry() -> str:
     import json
 
     return json.dumps(_op("ai_env_retry"), indent=2, default=str)
+
+
+@mcp.tool()
+def ai_set_video_understanding(enabled: bool) -> str:
+    """Turn the opt-in AI video understanding (D-432) on or off — the same
+    "AI video understanding" switch as Settings → Processing in the app.
+
+    It is a USER setting, not a working parameter: turning it on makes
+    `editor_analyze_video` download a ~3 GB model and use up to ~9 GB of memory
+    while it runs. Do not enable it unprompted — only when the user asked for a
+    video analysis or told you to. Check `ai_env_status` -> `videoUnderstanding`
+    first: `lowMemory: true` means this Mac has under 16 GB, so say so before
+    enabling. The change is persisted and logged; the Settings toggle follows it
+    immediately. Transcription is never affected.
+
+    Returns the new `{enabled, totalMemoryBytes, lowMemory, refusal,
+    howToEnable}`."""
+    import json
+
+    return json.dumps(
+        _op("ai_set_video_understanding", enabled=enabled), indent=2, default=str
+    )
 
 
 @mcp.tool()

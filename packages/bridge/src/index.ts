@@ -44,6 +44,17 @@ export {
 export type { AiEnvPhase, AiEnvStatus } from './aiEnv';
 
 export {
+  LOW_MEMORY_GB,
+  VIDEO_UNDERSTANDING_STATUS_EVENT,
+  formatRam,
+  lowMemoryWarning,
+  useVideoUnderstanding,
+  useVideoUnderstandingStore,
+  watchVideoUnderstanding,
+} from './videoUnderstanding';
+export type { VideoUnderstandingStatus } from './videoUnderstanding';
+
+export {
   MOTION_RUNTIME_NOT_READY_CODE,
   MOTION_RUNTIME_STATUS_EVENT,
   MOTION_RUNTIME_UNKNOWN,

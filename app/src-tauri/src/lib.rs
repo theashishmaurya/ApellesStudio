@@ -2477,6 +2477,8 @@ pub fn run() {
             chroma::media_understanding::chroma_transcribe_status,
             chroma::media_understanding::chroma_analyze_video,
             chroma::media_understanding::chroma_analyze_video_status,
+            chroma::video_understanding::chroma_video_understanding_status,
+            chroma::video_understanding::chroma_set_video_understanding,
             chroma::media_understanding::chroma_media_understanding_load,
             chroma::media_understanding::chroma_media_understanding_save,
             chroma::speech::chroma_detect_silences,

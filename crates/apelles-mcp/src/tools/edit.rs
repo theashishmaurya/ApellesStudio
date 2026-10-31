@@ -6687,7 +6687,14 @@ impl ApellesMcp {
     similarly, a known and documented limit rather than a bug.
 
     Runs at roughly 4x realtime. Results are cached per file, so `state:
-    "done"` can come back on this first call; `force=True` re-runs anyway."#
+    "done"` can come back on this first call; `force=True` re-runs anyway.
+
+    **Opt-in (D-432).** This is OFF by default: it downloads a ~3 GB model and
+    uses up to ~9 GB of memory. While the user setting is off this returns an
+    `error` ("AI video understanding is turned off ...") instead of starting.
+    `ai_env_status` reports `videoUnderstanding.enabled`; `ai_set_video_understanding`
+    turns it on, but it is the USER's setting, so ask before enabling it on a Mac
+    with little memory (`lowMemory`). Transcription is never affected."#
     )]
     pub async fn editor_analyze_video(
         &self,

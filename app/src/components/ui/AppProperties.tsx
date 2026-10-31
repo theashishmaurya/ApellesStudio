@@ -164,6 +164,8 @@ export interface AppSettings {
   enableLivePreviews?: boolean;
   livePreviewQuality?: string;
   enableAiTagging?: boolean;
+  /** D-432 — AI video understanding is opt-in; absent/false means off. */
+  enableVideoUnderstanding?: boolean;
   aiTagCount?: number;
   customAiTags?: string[];
   filterCriteria?: FilterCriteria;

@@ -193,6 +193,7 @@ pub mod state;
 pub mod subtitles;
 pub mod text;
 pub mod video;
+pub mod video_understanding;
 pub mod webview_lifecycle;
 pub mod write_text_file;
 

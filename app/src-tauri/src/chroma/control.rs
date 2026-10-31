@@ -429,7 +429,28 @@ fn native_op(app: &tauri::AppHandle, op: &str, args: &serde_json::Value) -> Opti
         // D-315 — the AI-environment bootstrap. Shipped, not debug-gated: the
         // reason an AI feature is unavailable is a user-facing fact.
         "ai_env_status" => serde_json::to_value(apelles_ai::ai_env::status_snapshot())
-            .map_err(|e| format!("could not serialize the AI-env status: {e}")),
+            .map_err(|e| format!("could not serialize the AI-env status: {e}"))
+            .and_then(|mut v| {
+                // D-432 — whether the opt-in video-understanding feature is on
+                // rides along, so the one "what AI can I use?" answer is complete.
+                let flag = super::video_understanding::status(app)?;
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert(
+                        "videoUnderstanding".into(),
+                        serde_json::to_value(flag)
+                            .map_err(|e| format!("could not serialize the flag: {e}"))?,
+                    );
+                }
+                Ok(v)
+            }),
+        // D-432 — a USER setting, so it is set here (logged) and announced on
+        // `video-understanding-status` for the Settings card, not in the store.
+        "ai_set_video_understanding" => match args.get("enabled").and_then(|v| v.as_bool()) {
+            Some(enabled) => super::video_understanding::set_enabled(app, enabled).and_then(|s| {
+                serde_json::to_value(s).map_err(|e| format!("could not serialize the flag: {e}"))
+            }),
+            None => Err("ai_set_video_understanding needs `enabled` (true or false)".to_string()),
+        },
         "ai_env_retry" => {
             let started = apelles_ai::ai_env::retry_now();
             let status = apelles_ai::ai_env::status_snapshot();

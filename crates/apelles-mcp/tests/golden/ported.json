@@ -14,6 +14,7 @@
     "add_shots",
     "add_subject_mask",
     "ai_env_retry",
+    "ai_set_video_understanding",
     "ai_env_status",
     "apply_haze",
     "brand_add_reference",

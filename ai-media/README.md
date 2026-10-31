@@ -119,6 +119,11 @@ shape `ai/`'s `/track` and `/depth_track` already use.
 }
 ```
 
+**Opt-in (D-432).** The app only starts this sidecar job when the user has turned on
+Settings → Processing → "AI video understanding" (default off: ~3 GB model download, ~9 GB
+peak memory). The refusal is in the app's `chroma_analyze_video`, not here; run directly
+(`./run.sh`), the sidecar behaves as before. Transcription is never gated.
+
 `time_s` **always** comes from ffmpeg, never the model — see
 `video_understand.py`'s module doc for why that split is the whole design.
 `truncated: true` means candidates were dropped at the cap: raise

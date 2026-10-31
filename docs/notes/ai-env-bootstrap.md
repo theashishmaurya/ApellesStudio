@@ -392,6 +392,11 @@ twice over —
 
 The two ops therefore need **no frontend op-registry entry**, in either registry.
 
+**D-432 adds a third and a field.** `ai_env_status` also returns `videoUnderstanding`
+(whether the opt-in video-understanding feature is on, the Mac's RAM, `lowMemory`), and
+`ai_set_video_understanding(enabled)` flips it, natively and logged. A flag is a setting,
+not part of the environment build, so it never changes `phase`.
+
 ### The "still bootstrapping" contract
 
 Before D-315, calling `add_subject_mask`, `track_subject`, `depth_track`,

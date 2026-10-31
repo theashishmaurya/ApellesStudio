@@ -20,12 +20,20 @@
 //! Every description below is the Python tool's docstring, byte-for-byte, and
 //! `tests/parity.rs` compares them character by character (D-312).
 
+use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::{ErrorData, tool, tool_router};
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 use crate::args::WireArgs;
 use crate::render;
 use crate::server::ApellesMcp;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AiSetVideoUnderstandingArgs {
+    pub enabled: bool,
+}
 
 #[tool_router(router = ai_env_router, vis = "pub")]
 impl ApellesMcp {
@@ -61,7 +69,12 @@ impl ApellesMcp {
 
     Nothing else is blocked: Edit, Motion, Colorist, grading and export all work
     throughout. A non-ready phase is a reason to route around the AI tools for
-    now, never a reason to stop working."#
+    now, never a reason to stop working.
+
+    Also returns `videoUnderstanding` {enabled, totalMemoryBytes, lowMemory,
+    refusal, howToEnable} (D-432): whether the opt-in AI video understanding
+    behind `editor_analyze_video` is turned on in the user's settings, and how
+    much RAM this Mac has. It is off by default."#
     )]
     pub async fn ai_env_status(&self) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new();
@@ -89,6 +102,31 @@ impl ApellesMcp {
     pub async fn ai_env_retry(&self) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new();
         let env = self.op("ai_env_retry", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "ai_set_video_understanding",
+        description = r#"Turn the opt-in AI video understanding (D-432) on or off — the same
+    "AI video understanding" switch as Settings → Processing in the app.
+
+    It is a USER setting, not a working parameter: turning it on makes
+    `editor_analyze_video` download a ~3 GB model and use up to ~9 GB of memory
+    while it runs. Do not enable it unprompted — only when the user asked for a
+    video analysis or told you to. Check `ai_env_status` -> `videoUnderstanding`
+    first: `lowMemory: true` means this Mac has under 16 GB, so say so before
+    enabling. The change is persisted and logged; the Settings toggle follows it
+    immediately. Transcription is never affected.
+
+    Returns the new `{enabled, totalMemoryBytes, lowMemory, refusal,
+    howToEnable}`."#
+    )]
+    pub async fn ai_set_video_understanding(
+        &self,
+        Parameters(p): Parameters<AiSetVideoUnderstandingArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("enabled", p.enabled);
+        let env = self.op("ai_set_video_understanding", args).await?;
         Ok(render::json_text(&env))
     }
 }

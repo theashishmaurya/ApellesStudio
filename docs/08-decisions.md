@@ -20,6 +20,26 @@ Status: `open` · `decided` · `revisit`
 
 **Not done.** The Colorist's own single-clip view (`colorist_view.rs`) still sizes a clip at its native footprint and ignores `scaling` altogether (pre-existing, D-425 did not cover it).
 
+## D-432 — AI video understanding is an opt-in user setting, default OFF, gated once in Rust
+
+**decided (2026-10-31)** · code: `app/src-tauri/src/chroma/video_understanding.rs`, `AppSettings.enable_video_understanding`, `packages/bridge/src/videoUnderstanding.ts`, `app/src/components/panel/VideoUnderstandingCard.tsx`
+
+**Context.** Video understanding (`ai-media/video_understand.py`, Qwen3-VL 4B behind `editor_analyze_video`) downloads a ~2.9 GB model on first use and peaks near 9 GB of memory per call. Measured 2026-10-31: it has run 10 times ever, all in one old session; no skill calls it; when idle it costs no RAM (a subprocess per call). It is a rare, heavy feature, and a 16 GB Mac can stall under its peak. Transcription (Parakeet, `transcribe.py`) is a different, light, constantly used feature and is not affected.
+
+**Options.**
+1. **Always on.** Today's behaviour: any agent can trigger a 3 GB download and a 9 GB spike without the user knowing.
+2. **A user flag, default OFF.** The user opts in, knowing the cost.
+3. **A flag defaulting on by installed RAM** (e.g. on at 24 GB or more). Silent, machine-dependent behaviour: the same project behaves differently across Macs, and "why does this tool refuse here" has no visible cause.
+4. **Remove the feature.** Loses a real capability (screen-recording and ad analysis) for a cost that is only paid on use.
+
+**Choice: (2).** `enableVideoUnderstanding` lives in `settings.json` with every other preference (default `false`; an absent key reads as off). One gate: `chroma_analyze_video` calls `video_understanding::ensure_enabled` before the sidecar job starts, so the Edit tab's store and the `editor_analyze_video` MCP tool cannot drift. The refusal text is one constant: "AI video understanding is turned off. Turn it on in Settings → Processing → AI video understanding ...". The op layer asks the backend first, so the MCP gets that refusal on its first call instead of "running" and an error on the next poll. Settings → Processing has a card with the toggle, the one-line cost ("Describes what's on screen. Downloads a ~3 GB model; uses up to ~9 GB of memory while it runs. Recommended for Macs with 24 GB or more."), the Mac's installed RAM (`sysinfo`, a `sysctl hw.memsize` read), and a warning under 16 GB. The toggle stays usable on a small Mac: the warning is advice, the choice is the user's.
+
+**Human and AI parity.** `ai_env_status` gains `videoUnderstanding {enabled, totalMemoryBytes, lowMemory, refusal, howToEnable}`; one new tool, `ai_set_video_understanding(enabled)`, on both servers (257 to 258), answered natively in `control.rs` (it is a setting, not store state) and logged (`[video-understanding] ... turned ON/OFF`). Its description tells an agent that this is the user's setting and not to enable it unprompted. A `video_understanding` entry in `editor_get_capabilities` says the same. Because Rust writes the file directly, it emits `video-understanding-status`, and `useAppInitialization` mirrors it into the in-memory `appSettings`; otherwise the next whole-struct `SaveSettings` would write the old value back.
+
+**GUI entry points.** None exists: video analysis is reachable only from the MCP tool today (the Edit tab has no button that starts it), so there was nothing to hide. Any future one must read `useVideoUnderstanding()` to show its state; the Rust gate refuses regardless.
+
+**Not done.** No model unload (the sidecar is already one subprocess per call). Cached analyses in the store are not refused by the Rust gate, but the MCP op asks first, so the MCP gets the refusal even for a cached file.
+
 ## D-431 — Platform safe-area guides in the Edit preview: one preset table, a toolbar menu, two MCP tools
 
 **decided (2026-10-30)** · prompted by the owner catching that the 9:16 shorts ignored platform UI zones (captions, channel name, buttons and progress bar covering titles) · code: `packages/editor/src/safeAreas.ts`, `SafeAreaOverlay.tsx`, `SafeAreaMenu.tsx` · reference notes: `scratch/safe-area-reference/NOTES.md`
