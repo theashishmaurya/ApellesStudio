@@ -9,13 +9,14 @@
 //!  Internal debug tooling must be compiled OUT of a production build through a real
 //!  compile-time gate — never a runtime flag, never "just don't call it in prod."
 //!  That is the same gate `control.rs`'s `native_op` uses on its own side (B-100 /
-//!  D-219), and it is why a release build of this server publishes 165 tools where a
-//!  debug build publishes 176 (D-330 added the eleventh and tenth debug tools,
-//!  `debug_record_video` and `debug_set_fps_overlay`; the ELEVEN gated tools are the
-//!  whole difference, counted off the `#[tool(...)]` attributes in this module versus
-//!  the rest of `tools/`, not adjusted by arithmetic from a stale figure — the pair
-//!  said 160/171 until D-339 re-counted them, four tools after D-332 had moved them
-//!  — see `docs/notes/debug-tooling.md`'s gate verification).
+//!  D-219), and it is why a release build of this server publishes 246 tools where a
+//!  debug build publishes 261: the FIFTEEN gated tools here are the whole difference,
+//!  counted off the `name = "debug_…"` attributes in this module (D-434 added
+//!  `debug_pointer`, `debug_key` and `debug_set_occlusion_throttling`; the figures
+//!  quoted here before that — 165/176 after D-330 — had drifted as other tabs grew, so
+//!  they are now counted, not carried forward). `tests` below pins the gate itself: the
+//!  debug router has every one of them and a release router has none — see
+//!  `docs/notes/debug-tooling.md`'s gate verification.
 //!  The Python server had no equivalent gate at all: it
 //!  defined them all unconditionally and relied on the app-side half being absent,
 //!  which advertised tools a release build could never answer. Closing that is a
@@ -43,4 +44,38 @@ pub fn router() -> rmcp::handler::server::router::tool::ToolRouter<crate::Apelle
 #[cfg(not(debug_assertions))]
 pub fn router() -> rmcp::handler::server::router::tool::ToolRouter<crate::ApellesMcp> {
     rmcp::handler::server::router::tool::ToolRouter::new()
+}
+
+#[cfg(test)]
+mod tests {
+    /// The gate itself (B-100 / D-219 / D-434): in a debug build the router carries
+    /// every `debug_*` tool, including the UI harness's input tools; a release build's
+    /// twin carries none. The release half runs under `cargo test --release`.
+    #[test]
+    fn the_debug_router_exists_only_in_a_debug_build() {
+        let names: Vec<String> = super::router()
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect();
+        if cfg!(debug_assertions) {
+            assert_eq!(names.len(), 15, "{names:?}");
+            for tool in [
+                "debug_pointer",
+                "debug_key",
+                "debug_set_occlusion_throttling",
+            ] {
+                assert!(
+                    names.iter().any(|n| n == tool),
+                    "{tool} missing from {names:?}"
+                );
+            }
+            assert!(names.iter().all(|n| n.starts_with("debug_")), "{names:?}");
+        } else {
+            assert!(
+                names.is_empty(),
+                "a release build published debug tools: {names:?}"
+            );
+        }
+    }
 }

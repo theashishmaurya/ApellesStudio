@@ -1,0 +1,83 @@
+/**
+ * targets.ts — named places on the timeline, for scenarios (D-434).
+ *
+ * What it is: small builders over the timeline's stable test ids
+ *   (`TIMELINE_TEST_IDS`) and the library's own class names
+ *   (`TIMELINE_LIBRARY_SELECTORS`), so a scenario says `trimRight(id)` rather
+ *   than spelling a selector — and a renamed hook is one edit in
+ *   `@apelles/editor`, not a sweep through every scenario.
+ *
+ * What it does NOT do: resolve anything. These return target DESCRIPTIONS;
+ *   the app resolves them against its live DOM (`debug_pointer`), and the
+ *   frame-addressed ones (`atFrame`) are resolved by the runner from the view
+ *   readout.
+ */
+
+import { TIMELINE_LIBRARY_SELECTORS as LIB, TIMELINE_TEST_IDS as ID } from '@apelles/editor/src/timelineTestIds.ts';
+
+import type { Value } from './assertions.ts';
+import type { FrameOffset, FrameTarget, TargetRef } from './scenario.ts';
+
+/** How far inside a clip edge a trim press lands — the library's edge-trim
+ *  zone is 10 px wide, so 3 px is well inside it and clear of the neighbour. */
+export const EDGE_INSET_PX = 3;
+
+const q = (value: string) => value.replace(/["\\]/g, '\\$&');
+
+/** The placeholder a selector carries for a fixture clip's id, which only
+ *  exists once the fixture is built; the runner substitutes the real id
+ *  (`substituteIds`) just before the gesture is sent. */
+export const clipIdToken = (name: string) => `@clip:${name}`;
+export const markerIdToken = (name: string) => `@marker:${name}`;
+
+/** The selector for one fixture clip's body, by its fixture name. */
+export const clipSelector = (name: string) => `[data-testid="${ID.clip}"][data-chroma-clip-id="${clipIdToken(name)}"]`;
+
+/** The library's wrapper around that clip (the trim handles live inside it). */
+export const actionSelector = (name: string) => `${LIB.action}:has(${clipSelector(name)})`;
+
+export const testid = (id: string, at?: { fx?: number; fy?: number; dx?: number; dy?: number }, nth?: number): TargetRef => ({
+  testid: id,
+  ...(at ? { at } : {}),
+  ...(nth !== undefined ? { nth } : {}),
+});
+
+export const selector = (sel: string, at?: { fx?: number; fy?: number; dx?: number; dy?: number }): TargetRef => ({
+  selector: sel,
+  ...(at ? { at } : {}),
+});
+
+/** A clip body; `fx`/`fy` place the press (e.g. `fy: 0.2` = the slip band). */
+export const clip = (name: string, at?: { fx?: number; fy?: number; dx?: number; dy?: number }) => selector(clipSelector(name), at);
+
+/** A clip's left / right edge-trim zone. */
+export const trimLeft = (name: string): TargetRef => selector(`${actionSelector(name)} ${LIB.trimLeft}`);
+export const trimRight = (name: string): TargetRef => selector(`${actionSelector(name)} ${LIB.trimRight}`);
+
+/** A point inside a clip, `px` from its left/right edge (an edge trim aimed by
+ *  geometry rather than by the library's handle element). */
+export const clipEdge = (name: string, side: 'left' | 'right', px: number = EDGE_INSET_PX) =>
+  clip(name, side === 'left' ? { fx: 0, dx: px } : { fx: 1, dx: -px });
+
+/** The ruler at a fraction of its width. */
+export const ruler = (fx = 0.5): TargetRef => selector(LIB.ruler, { fx, fy: 0.5 });
+export const playheadHandle = (): TargetRef => selector(LIB.playheadHandle);
+
+export const trackHeader = (track: number, at?: { fx?: number; fy?: number }) =>
+  selector(`[data-testid="${ID.trackHeader}"][data-chroma-track="${track}"]`, at);
+
+export const trimTool = (tool: string) => selector(`[data-testid="${ID.trimTool}"][data-chroma-trim-tool="${q(tool)}"]`);
+export const marker = (name: string) => selector(`[data-testid="${ID.marker}"][data-chroma-marker="${markerIdToken(name)}"]`);
+export const editArea = (at?: { fx?: number; fy?: number; dx?: number; dy?: number }) => testid(ID.editArea, at);
+export const headerResize = () => testid(ID.headerResize);
+
+/** TIMELINE frame `frame` on `track` (resolved by the runner from the view readout). */
+export const atFrame = (frame: Value, track: number | 'ruler', fy?: number): FrameTarget => ({ frame, track, ...(fy !== undefined ? { fy } : {}) });
+
+/** `frames` timeline frames right (and `tracks` rows down) of the previous point. */
+export const byFrames = (frames: Value, tracks?: number): FrameOffset => ({ byFrames: frames, ...(tracks !== undefined ? { byTracks: tracks } : {}) });
+
+/** `{ref}` shorthand for a captured value, with optional arithmetic. */
+export const ref = (path: string, plus?: number): Value => ({ ref: path, ...(plus !== undefined ? { plus } : {}) });
+
+export { ID as TIMELINE_TEST_IDS, LIB as TIMELINE_LIBRARY_SELECTORS };

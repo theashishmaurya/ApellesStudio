@@ -88,6 +88,7 @@ import {
 } from './clipFade';
 import { DEFAULT_EASE_CURVE, type Clip } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
+import { TIMELINE_TEST_IDS } from './timelineTestIds';
 
 /** How opaque the wash over the attenuated part of the clip is. Painted in the
  *  `--color-bg-primary` token (via `currentColor`, the same trick
@@ -331,6 +332,7 @@ export function ClipFadeOverlay({
               // a fade grab the way `useCanvasClipPick` does for a transform
               // corner.
               data-chroma-fade-handle={side}
+              data-testid={side === 'in' ? TIMELINE_TEST_IDS.clipFadeIn : TIMELINE_TEST_IDS.clipFadeOut}
               // Visible at rest only once a fade actually exists; otherwise it
               // appears on hover, so an un-faded timeline has no permanent
               // grab targets sitting on its clips' trim corners. (Resolve and

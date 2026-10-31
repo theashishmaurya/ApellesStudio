@@ -239,6 +239,30 @@ several rounds of the owner's own screenshots before an agent could even confirm
      still holds the run, and not competing for the server keeps the
      measurement clean.
 
+7. **Real input + UI measurement — the timeline UI harness — DONE (D-434,
+   2026-10-31).** Pieces 1–6 could look at the app and set its state, but nothing
+   could PRESS anything: the setters above call store actions by design, which skip
+   exactly the input handling the owner's timeline reports are about. Added:
+   - **`debug_pointer` / `debug_key`** (`@apelles/debug` `src/input/`): move, press,
+     release, click, double-click, drag along a path, wheel, pinch, key combos and
+     text, at a CSS point, a `{byX, byY}` offset, or an element by selector /
+     `data-testid` / this doc's `debug_dom_tree` `nodeId` (now reported on every
+     node). The reply says what was really under each point, what the page received
+     (counts, `isTrusted`, targets), and on request frame times + input latency
+     (`measure`) and per-frame element rects + cursor (`watch`).
+   - **Native delivery** (`chroma::debug_input`, pure rules in crate
+     `apelles-ui-input`): genuine `NSEvent`s into the WKWebView's responder methods —
+     WebKitTestRunner's own pattern — so the page gets trusted events without any TCC
+     permission and without the window being frontmost. In-page synthetic dispatch is
+     the labelled fallback (jsdom, non-macOS).
+   - **`debug_set_occlusion_throttling`** (native control op): WebKit's
+     `_setWindowOcclusionDetectionEnabled:`, so a covered window keeps running rAF.
+     This is the first tool aimed at the throttling wall the sections below keep
+     hitting (B-124, D-217, D-330) rather than at diagnosing it — not yet verified
+     live.
+   - The scenario runner that uses them is its own package, `packages/ui-harness`;
+     how to run it, write scenarios and read the budgets: `docs/notes/ui-harness.md`.
+
 ## Two different levels — don't conflate them
 
 - **Component level** (a single component in isolation, e.g. `PreviewPane`/
@@ -447,6 +471,17 @@ project D-325 used as its own single-clip baseline.
   Restart the instance after editing that module rather than trusting a
   hot-reloaded reading.
 
+### D-434, what could not be verified here
+
+Built in an isolated worktree with the owner's app and its ports off limits, so nothing
+above was run against a live window. Verified: the pure rules (`apelles-ui-input`, 8
+tests), the frontend half against the real `TimelinePane` in jsdom (synthetic mode), the
+runner against a fake app, the MCP parity gate, and the compile/clippy of the native half.
+Phase 2's first live run must read the reply fields that exist to catch the unverified
+parts: `observed.trusted`, `native.mouseMovePath`, `native.wheelWindowMatched`,
+`native.magnifyBuilt`, `native.occlusionDetection`, and `perf.frames.samples` after
+`debug_set_occlusion_throttling(false)`.
+
 ## Running a second instance (for an agent, alongside the owner's own app)
 
 Recorded because two separate agents have now had to rediscover it. No committed file
@@ -523,12 +558,28 @@ checked is how B-100 happened in the first place.
   pins the debug-build count on purpose, and the same check on `main` before D-330 read
   152 against 169.)
 
+- **Re-run 2026-10-31 for D-434.** A real `npm run build --workspace app`, grepping
+  `app/dist/assets/`: `debug_pointer`, `debug_key`, `debug_set_occlusion_throttling`,
+  `chroma_debug_inject_input`, `dispatchSynthetic`, `startFrameSampler`,
+  `buildPointerPlan`, `describeElement` — **0 occurrences each**; `editor_set_selection`
+  **1** as the control (the grep read a real bundle). The timeline's test ids
+  (`timeline-zoom-in` **1**) and view readout (`data-chroma-px-per-sec` **1**) DO ship —
+  inert attributes, deliberately not gated (D-434). Rust: `chroma::debug_input`, its
+  `chroma_debug_inject_input` command and the `debug_set_occlusion_throttling` native op
+  are `#[cfg(debug_assertions)]` exactly as `debug_capture` is. MCP: a new
+  `apelles-mcp` unit test (`tools::debug::tests`) pins that the debug router holds all 15
+  `debug_*` tools in a debug build and that a release build's router is empty (that half
+  runs under `cargo test --release`; not run here for disk space). Counts: 261 debug,
+  246 release.
+
 ## Status
 
 Pieces 1–5 are all built as of 2026-09-08 (D-210 for 1 and 3; D-219 for 2, 4, 5; B-100
 for the gate; D-252 extending piece 2 with `debug_set_popover_open`). **Piece 6 landed
 2026-09-16 (D-330** — the live fps overlay and the window video recorder, plus `windowMs`
-on `debug_frame_timing`; **B-200** found and fixed in the same pass). Stated remaining
+on `debug_frame_timing`; **B-200** found and fixed in the same pass). **Piece 7 landed
+2026-10-31 (D-434** — real input, UI measurement, occlusion control and the timeline UI
+harness; live verification is phase 2). Stated remaining
 gaps: the **Colorist tab's** own panel/visibility/settings state, and `MarkerStrip`'s
 `editingId`-keyed marker editor — see piece 2 above for why each is a real design call
 rather than a missing line of code. (`EditLibraryRail`'s uncontrolled rail popovers

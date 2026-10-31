@@ -23,9 +23,41 @@
  * `debug_screenshot` is in DEVICE pixels: multiply by that result's
  * `scaleFactor` to go from a rect here to a pixel there.
  *
+ * Every node carries a `nodeId` (D-434): its position in the document as
+ * element-child indices from `<html>`, e.g. `"1.0.3"`. It is what
+ * `debug_pointer` accepts as a target, so "dump the panel, then click the
+ * third button in it" needs no selector. It is a POSITION, not an identity: it
+ * names whatever element sits there now, so it is meant to be used straight
+ * after the dump that produced it — see `elementByNodeId`.
+ *
  * Pure and injectable (`doc` is a parameter) so it is unit-testable under
  * jsdom without a Tauri window — see `domTree.test.ts`.
  */
+
+/** The `nodeId` of `el` — element-child indices from the document element,
+ *  dot-separated. The document element itself is `""`. */
+export function nodeIdOf(el: Element): string {
+  const parts: number[] = [];
+  let cur: Element = el;
+  while (cur.parentElement) {
+    parts.push(Array.prototype.indexOf.call(cur.parentElement.children, cur));
+    cur = cur.parentElement;
+  }
+  return parts.reverse().join('.');
+}
+
+/** The element a `nodeId` names in `doc` right now, or `null` when that
+ *  position no longer exists (the DOM changed since the dump). */
+export function elementByNodeId(nodeId: string, doc: Document = document): Element | null {
+  let cur: Element | null = doc.documentElement;
+  if (nodeId === '') return cur;
+  for (const part of nodeId.split('.')) {
+    const index = Number(part);
+    if (!cur || !Number.isInteger(index) || index < 0) return null;
+    cur = cur.children[index] ?? null;
+  }
+  return cur;
+}
 
 /** The computed properties reported when the caller names none. Small on
  *  purpose: these are the ones that answer the layout questions that actually
@@ -78,6 +110,9 @@ export interface DomRect {
 export interface DomNodeInfo {
   /** lowercased tag name, e.g. `div` */
   tag: string;
+  /** D-434 — this element's position in the document (see `nodeIdOf`); a
+   *  `debug_pointer` target as `{nodeId}` */
+  nodeId: string;
   id?: string;
   /** capped at {@link MAX_CLASSES}; `classesTruncated` says when it bit */
   classes?: string[];
@@ -203,10 +238,11 @@ export function serializeDomTree(options: DomTreeOptions = {}, doc: Document = d
 
   let budget = maxNodes;
 
-  const visit = (el: Element, depth: number): DomNodeInfo => {
+  const visit = (el: Element, depth: number, nodeId: string): DomNodeInfo => {
     budget -= 1;
     const info: DomNodeInfo = {
       tag: el.tagName.toLowerCase(),
+      nodeId,
       rect: roundRect(el.getBoundingClientRect()),
     };
 
@@ -260,19 +296,20 @@ export function serializeDomTree(options: DomTreeOptions = {}, doc: Document = d
     }
 
     const children: DomNodeInfo[] = [];
-    for (const child of Array.from(el.children)) {
+    const prefix = nodeId === '' ? '' : `${nodeId}.`;
+    for (const [index, child] of Array.from(el.children).entries()) {
       if (budget <= 0) {
         info.childrenTruncated = 'nodes';
         result.truncated = true;
         break;
       }
-      children.push(visit(child, depth + 1));
+      children.push(visit(child, depth + 1, `${prefix}${index}`));
     }
     if (children.length) info.children = children;
     return info;
   };
 
-  result.root = visit(root, 0);
+  result.root = visit(root, 0, nodeIdOf(root));
   result.nodeCount = maxNodes - budget;
   return result;
 }

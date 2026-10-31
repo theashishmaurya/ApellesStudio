@@ -80,7 +80,7 @@ function fixture(): Timeline {
 
 /** The one rect jsdom cannot supply; everything else below is real. */
 function stubEditAreaRect(): HTMLElement {
-  const el = document.querySelector<HTMLElement>('[data-bench-id="timeline-edit-area"]');
+  const el = document.querySelector<HTMLElement>('[data-testid="timeline-edit-area"]');
   if (!el) throw new Error('the timeline edit area is not mounted');
   el.getBoundingClientRect = () =>
     ({

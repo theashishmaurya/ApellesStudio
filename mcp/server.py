@@ -57,6 +57,8 @@ from schemas import (
     MotionKeyTarget,
     MotionSelection,
     MotionTarget,
+    PointerTarget,
+    PointerWatch,
     Roi,
     SpeedRampPoint,
     ThemeFields,
@@ -7924,6 +7926,234 @@ def debug_record_video(
     return json.dumps(
         _op("debug_record_video", timeout_ms=timeout_ms, **args), indent=2, default=str
     )
+
+
+# D-434 — the UI harness's input tools. A whole gesture plus its settle time
+# runs inside one op, and the app refuses any plan longer than 60 s, so one
+# fixed budget above that covers every legal call in both servers.
+INPUT_OP_TIMEOUT_MS = 90_000
+
+
+@mcp.tool()
+def debug_pointer(
+    action: str,
+    target: PointerTarget,
+    to: PointerTarget | None = None,
+    path: list[PointerTarget] | None = None,
+    button: str | None = None,
+    modifiers: list[str] | None = None,
+    steps: int | None = None,
+    duration_ms: int | None = None,
+    hold_ms: int | None = None,
+    delta_x: float | None = None,
+    delta_y: float | None = None,
+    scale: float | None = None,
+    mode: str | None = None,
+    measure: bool = False,
+    watch: PointerWatch | None = None,
+    settle_ms: int | None = None,
+) -> str:
+    """Drive the running app with REAL pointer input — move, press, release,
+    click, double-click, drag along a path, wheel, pinch — the way a hand on
+    the trackpad does, and get back what it hit and what the page received.
+
+    This is for testing the INPUT HANDLING itself (hit zones, drag thresholds,
+    trim handles, snapping, marquee, scrubbing). To merely put the UI into a
+    state, the `debug_set_*` and `editor_*` tools are the honest route.
+
+    HOW IT IS DELIVERED (`mode`):
+      * "native" — real NSEvents delivered to the window's WKWebView through
+        AppKit's own responder methods (WebKit's test-runner pattern). The page
+        sees `isTrusted` events with real hit-testing, pointer capture and
+        default actions. No macOS permission is needed, the real cursor does
+        not move, and the window need not be in front.
+      * "synthetic" — DOM events made inside the page. `isTrusted` is false
+        and the browser runs none of its own behaviour for them; a handler that
+        works this way can still be broken for a human.
+      * "auto" (default) — native inside the app, synthetic elsewhere. The
+        reply's `mode` says which ran, and `fallbackReason` why, if it fell back.
+
+    TARGETS never need hard-coded pixels: `{"testid": "timeline-clip"}`,
+    `{"selector": "[data-chroma-clip-id='c1']", "at": {"fx": 1, "dx": -3}}`
+    (3 px inside the right edge), `{"nodeId": "1.0.3"}` from debug_dom_tree,
+    raw `{"x": 400, "y": 300}` CSS px, or — for `to`/`path` — `{"byX": 40}`,
+    40 px right of the previous point. The timeline's stable test ids are
+    listed in docs/notes/ui-harness.md. A target that matches nothing, has no
+    box, or lies off-screen is refused with the reason and nothing is sent.
+
+    READ THE REPLY:
+      * `targets[]` — each resolved point, the element named, and `hit`: what
+        `elementFromPoint` reports there. `hitInside: false` means something
+        else (an overlay) is on top and will take the press.
+      * `observed` — what the page actually received: per-type `counts`,
+        `trusted`/`untrusted`, and each down/up/click/key with its target.
+        Zero `pointerdown`s after a click means the input never arrived.
+      * `native` — how delivery went (`windowKey`, `occlusionDetection`, the
+        mouse-move path, whether DOM `buttons` was made truthful).
+      * `perf` (with `measure`) — frame times p50/p95/max and dropped frames
+        against 16.7 ms, input-to-next-frame latency, and store commits after
+        the input. `frames.samples: 0` means rAF never ran: the window is
+        throttled — call debug_set_occlusion_throttling(enabled=False).
+      * `watch` (with `watch`) — per-frame rects of the watched elements and
+        the cursor under the pointer: whether the UI moved DURING the drag,
+        not just where it ended up.
+
+    Args:
+        action: move, down, up, click, doubleClick, drag, wheel or pinch.
+            `down` and `up` may be separate calls; the button stays held between.
+        target: where it starts (or, for click/wheel/pinch, where it happens).
+        to: where a drag ends.
+        path: waypoints a drag (or a move) passes through before `to`.
+        button: left (default), right or middle.
+        modifiers: held for the whole gesture, e.g. ["alt"], ["meta", "shift"]
+            (meta = Cmd). The modifier KEYS are pressed before and released
+            after, as a hand does it.
+        steps: interpolated moves per path segment (drag/move, default 12),
+            or events for a wheel (5) or pinch (8).
+        duration_ms: how long the moves take (drag default 300).
+        hold_ms: pause after pressing before moving (default 50), or how long
+            a click holds the button (default 40).
+        delta_x: wheel horizontal CSS px.
+        delta_y: wheel vertical CSS px; negative scrolls up. With
+            modifiers=["ctrl"] this is the timeline's zoom gesture.
+        scale: pinch zoom factor, e.g. 1.5 in, 0.5 out (native mode only
+            sends a real trackpad magnify).
+        mode: auto (default), native or synthetic.
+        measure: also return `perf`.
+        watch: {selectors, cursor, maxFrames} to sample every frame.
+        settle_ms: keep observing this long after the last event (default
+            120, max 5000)."""
+    import json
+
+    args: dict[str, Any] = {"action": action, "target": to_wire(target)}
+    if to is not None:
+        args["to"] = to_wire(to)
+    if path is not None:
+        args["path"] = to_wire(path)
+    if button is not None:
+        args["button"] = button
+    if modifiers is not None:
+        args["modifiers"] = modifiers
+    if steps is not None:
+        args["steps"] = steps
+    if duration_ms is not None:
+        args["durationMs"] = duration_ms
+    if hold_ms is not None:
+        args["holdMs"] = hold_ms
+    if delta_x is not None:
+        args["deltaX"] = delta_x
+    if delta_y is not None:
+        args["deltaY"] = delta_y
+    if scale is not None:
+        args["scale"] = scale
+    if mode is not None:
+        args["mode"] = mode
+    if measure:
+        args["measure"] = True
+    if watch is not None:
+        args["watch"] = to_wire(watch)
+    if settle_ms is not None:
+        args["settleMs"] = settle_ms
+    return json.dumps(
+        _op("debug_pointer", timeout_ms=INPUT_OP_TIMEOUT_MS, **args), indent=2, default=str
+    )
+
+
+@mcp.tool()
+def debug_key(
+    keys: list[str] | None = None,
+    text: str | None = None,
+    phase: str | None = None,
+    hold_ms: int | None = None,
+    gap_ms: int | None = None,
+    mode: str | None = None,
+    measure: bool = False,
+    watch: PointerWatch | None = None,
+    settle_ms: int | None = None,
+) -> str:
+    """Press real keys in the running app — shortcuts, combos, or typed text —
+    delivered the same way as debug_pointer (native NSEvents into the
+    WKWebView by default; see that tool for `mode`, `measure`, `watch` and
+    how to read `observed`).
+
+    Keys are DOM `KeyboardEvent.code` names, which is what the app's own
+    shortcuts match on: "Space", "KeyM", "ArrowLeft", "Delete", "Backspace",
+    "Enter", "Escape", "Digit1", "F5" ... A combo joins modifiers with "+":
+    "meta+KeyZ" (Cmd+Z), "meta+shift+KeyZ", "alt+ArrowRight". Each entry of
+    `keys` is pressed and released in turn, `gap_ms` apart.
+
+    The reply's `focused` names the element that had focus — key events go to
+    it, so a key that "does nothing" while an input field is focused is the
+    app's typing guard working, not a broken shortcut.
+
+    Args:
+        keys: combos pressed one after another, e.g. ["Space"], ["meta+KeyZ"].
+        text: text typed character by character (US layout), instead of keys.
+        phase: press (default) = down then up; down / up = only that half,
+            to hold a key across calls (e.g. hold K while tapping L).
+        hold_ms: how long each key is held (default 30).
+        gap_ms: pause between keys (default 50).
+        mode: auto (default), native or synthetic.
+        measure: also return `perf`.
+        watch: {selectors, cursor, maxFrames} to sample every frame.
+        settle_ms: keep observing this long after the last key (default 120)."""
+    import json
+
+    args: dict[str, Any] = {}
+    if keys is not None:
+        args["keys"] = keys
+    if text is not None:
+        args["text"] = text
+    if phase is not None:
+        args["phase"] = phase
+    if hold_ms is not None:
+        args["holdMs"] = hold_ms
+    if gap_ms is not None:
+        args["gapMs"] = gap_ms
+    if mode is not None:
+        args["mode"] = mode
+    if measure:
+        args["measure"] = True
+    if watch is not None:
+        args["watch"] = to_wire(watch)
+    if settle_ms is not None:
+        args["settleMs"] = settle_ms
+    return json.dumps(
+        _op("debug_key", timeout_ms=INPUT_OP_TIMEOUT_MS, **args), indent=2, default=str
+    )
+
+
+@mcp.tool()
+def debug_set_occlusion_throttling(enabled: bool, window: str | None = None) -> str:
+    """Turn WebKit's occlusion throttling for the app window on or off.
+
+    WebKit treats a covered window like a background tab and throttles its
+    `requestAnimationFrame` to a stop. The agent driving the app is almost
+    never the frontmost window, so with throttling on, playback does not tick,
+    `debug_frame_timing` reads `raf.samples: 0`, frame-time measurements from
+    debug_pointer/debug_key report no frames, and anything scheduled on a
+    frame (an unmount, an animation) never completes. Pass `enabled=False`
+    before measuring or screenshotting animated UI; pass `enabled=True` to
+    restore the normal, battery-friendly behaviour afterwards.
+
+    This is WebKit's own test-runner switch
+    (`_setWindowOcclusionDetectionEnabled:`), applied to this one webview.
+    It changes nothing about what is drawn — only whether a covered window
+    keeps drawing.
+
+    Args:
+        enabled: True = normal (covered window throttles), False = keep
+            running while covered.
+        window: which window by Tauri label. Default: the focused one, else main.
+
+    Returns {before, after, window}."""
+    import json
+
+    args: dict[str, Any] = {"enabled": enabled}
+    if window is not None:
+        args["window"] = window
+    return json.dumps(_op("debug_set_occlusion_throttling", **args), indent=2, default=str)
+
 
 
 

@@ -493,6 +493,52 @@ CaptionScope = Literal["file", "timeline"]
 
 
 # --------------------------------------------------------------------------- #
+# Debug tooling — the UI harness's input tools (D-434)
+# --------------------------------------------------------------------------- #
+
+
+class PointerAt(BaseModel):
+    """Where inside a target element's box a pointer lands (`debug_pointer`)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fx: float | None = Field(None, description="Fraction of the box width from its left edge. Default 0.5.")
+    fy: float | None = Field(None, description="Fraction of the box height from its top edge. Default 0.5.")
+    dx: float | None = Field(None, description="CSS-px offset added after the fraction. Default 0.")
+    dy: float | None = Field(None, description="CSS-px offset added after the fraction. Default 0.")
+
+
+class PointerTarget(BaseModel):
+    """A point to press (`debug_pointer`): raw CSS `x`/`y`, or an element named by
+    exactly one of `selector` / `testid` / `nodeId` plus a point inside its box.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    x: float | None = Field(None, description="Viewport CSS px. Give with `y` instead of naming an element.")
+    y: float | None = Field(None, description="Viewport CSS px. Give with `x` instead of naming an element.")
+    byX: float | None = Field(
+        None, description="CSS px from the gesture's previous point (for `to`/`path` only), instead of x/y."
+    )
+    byY: float | None = Field(None, description="CSS px from the gesture's previous point; goes with `byX`.")
+    selector: str | None = Field(None, description="CSS selector of the element.")
+    testid: str | None = Field(None, description='Shorthand for [data-testid="..."].')
+    nodeId: str | None = Field(None, description="A nodeId from debug_dom_tree.")
+    nth: int | None = Field(None, description="Which match, 0-based; negative counts from the end. Default 0.")
+    at: PointerAt | None = Field(None, description="The point inside the box. Default its centre.")
+
+
+class PointerWatch(BaseModel):
+    """What to sample on every frame while a gesture runs (`debug_pointer`, `debug_key`)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    selectors: list[str] | None = Field(None, description="CSS selectors whose elements' rects are sampled each frame.")
+    cursor: bool | None = Field(None, description="Also sample the CSS cursor under the pointer each frame.")
+    maxFrames: int | None = Field(None, description="Cap on sampled frames. Default 120.")
+
+
+# --------------------------------------------------------------------------- #
 # Motion tab
 # --------------------------------------------------------------------------- #
 

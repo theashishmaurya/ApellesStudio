@@ -162,7 +162,7 @@ beforeEach(async () => {
 
   mounted = mount(React.createElement(TimelinePane), { strictMode: true });
   await waitFrames(2);
-  const found = mounted.container.querySelector('[data-bench-id="timeline-edit-area"]');
+  const found = mounted.container.querySelector('[data-testid="timeline-edit-area"]');
   if (!found) throw new Error('timeline-edit-area never rendered — fixture/harness setup is broken');
   editArea = found as HTMLElement;
 });
@@ -206,7 +206,7 @@ describe('marquee-select — real DOM, real PointerEvents (D-137 via D-142 harne
       { x: 250, y: 130 },
     ]);
 
-    expect(mounted!.container.querySelector('[data-bench-id="timeline-marquee"]')).toBeNull();
+    expect(mounted!.container.querySelector('[data-testid="timeline-marquee"]')).toBeNull();
     expect(selection()).toEqual([
       { track: 0, id: 'a' },
       { track: 1, id: 'c' },
@@ -271,7 +271,7 @@ describe('marquee-select — real DOM, real PointerEvents (D-137 via D-142 harne
     actSync(() => editArea.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: x + 1, clientY: y + 1 })));
     await waitFrames();
 
-    expect(mounted!.container.querySelector('[data-bench-id="timeline-marquee"]')).toBeNull();
+    expect(mounted!.container.querySelector('[data-testid="timeline-marquee"]')).toBeNull();
     expect(selection()).toEqual([]);
   });
 
@@ -291,7 +291,7 @@ describe('marquee-select — real DOM, real PointerEvents (D-137 via D-142 harne
       { x: 250, y: 130 },
     ]);
 
-    expect(mounted!.container.querySelector('[data-bench-id="timeline-marquee"]')).toBeNull();
+    expect(mounted!.container.querySelector('[data-testid="timeline-marquee"]')).toBeNull();
     expect(selection()).toEqual([{ track: 2, id: 'd' }]); // untouched by marquee logic
   });
 
@@ -307,7 +307,7 @@ describe('marquee-select — real DOM, real PointerEvents (D-137 via D-142 harne
       { button: 2, buttons: 2 },
     );
 
-    expect(mounted!.container.querySelector('[data-bench-id="timeline-marquee"]')).toBeNull();
+    expect(mounted!.container.querySelector('[data-testid="timeline-marquee"]')).toBeNull();
     // A right-click never reaches the left-click `onClick` clear branch
     // either — real browsers don't fire `click` for a non-primary button.
     expect(selection()).toEqual([{ track: 2, id: 'd' }]);
@@ -320,12 +320,12 @@ describe('marquee-select — real DOM, real PointerEvents (D-137 via D-142 harne
     await waitFrames();
     firePointerEvent(window, 'pointermove', { x: 250, y: 130 });
     await waitFrames();
-    expect(mounted!.container.querySelector('[data-bench-id="timeline-marquee"]')).not.toBeNull(); // really activated
+    expect(mounted!.container.querySelector('[data-testid="timeline-marquee"]')).not.toBeNull(); // really activated
 
     // KeyboardEvent, not PointerEvent — dispatch directly.
     actSync(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
     await waitFrames();
-    expect(mounted!.container.querySelector('[data-bench-id="timeline-marquee"]')).toBeNull();
+    expect(mounted!.container.querySelector('[data-testid="timeline-marquee"]')).toBeNull();
 
     // The real `pointerup` that follows a real Escape (the button is still
     // physically down) must not run the edit area's own clear-on-click
@@ -369,7 +369,7 @@ describe('marquee-select — real DOM, real PointerEvents (D-137 via D-142 harne
     await waitFrames();
     firePointerEvent(window, 'pointermove', { x: xAtFrame(110), y: 130 });
     await waitFrames();
-    const bandBefore = mounted!.container.querySelector('[data-bench-id="timeline-marquee"]') as HTMLElement;
+    const bandBefore = mounted!.container.querySelector('[data-testid="timeline-marquee"]') as HTMLElement;
     expect(bandBefore).not.toBeNull();
     const widthBefore = parseFloat(bandBefore.style.width);
     expect(widthBefore).toBeCloseTo(xAtFrame(110) - xAtFrame(0), 0);
@@ -389,7 +389,7 @@ describe('marquee-select — real DOM, real PointerEvents (D-137 via D-142 harne
       await waitFrames();
     }
 
-    const bandAfter = mounted!.container.querySelector('[data-bench-id="timeline-marquee"]') as HTMLElement;
+    const bandAfter = mounted!.container.querySelector('[data-testid="timeline-marquee"]') as HTMLElement;
     expect(bandAfter).not.toBeNull();
     const widthAfter = parseFloat(bandAfter.style.width);
     expect(widthAfter).toBeCloseTo(widthBefore * ZOOM_STEP ** ticks, 0);

@@ -144,7 +144,7 @@ describe('B-291 — a zoom that lands while the previous zoom is still scrolling
     root.render(<TimelinePane />);
     await wait(SETTLE_MS * 2);
 
-    const area = document.querySelector<HTMLElement>('[data-bench-id="timeline-edit-area"]');
+    const area = document.querySelector<HTMLElement>('[data-testid="timeline-edit-area"]');
     const zoomIn = document.querySelector<HTMLElement>('[aria-label="Zoom in"]');
     expect(area, 'the edit area mounted').not.toBeNull();
     expect(zoomIn, 'the toolbar has a zoom-in button').not.toBeNull();

@@ -42,6 +42,9 @@ apelles-ai = { path = "../../crates/apelles-ai" }
 apelles-audio-library = { path = "../../crates/apelles-audio-library" }
 apelles-media = { path = "../../crates/apelles-media" }
 apelles-speech = { path = "../../crates/apelles-speech" }
+# D-434 — the UI harness native input's wire format and pure rules; used only
+# from the `#[cfg(debug_assertions)]` `chroma::debug_input` module.
+apelles-ui-input = { path = "../../crates/apelles-ui-input" }
 # D-411 — the Automatic Clipper's mechanics (sentences, topics, candidates, gate).
 apelles-clipper = { path = "../../crates/apelles-clipper" }
 apelles-beat = { path = "../../crates/apelles-beat" }
@@ -171,11 +174,23 @@ objc2-app-kit = { version = "0.3", features = [
     "NSGraphics",
     "NSImage",
     "NSImageRep",
+    # D-434 — native input (`chroma::debug_input`).
+    "NSApplication",
+    "NSEvent",
+    "NSGraphicsContext",
+    "NSResponder",
+    "NSScreen",
+    "NSView",
+    "NSWindow",
+    "objc2-core-graphics",
 ] }
 objc2-foundation = { version = "0.3", features = [
+    "NSArray",
     "NSData",
     "NSDictionary",
     "NSError",
+    "NSGeometry",
+    "NSProcessInfo",
     "NSString",
 ] }
 objc2-web-kit = { version = "0.3", features = [
@@ -183,6 +198,17 @@ objc2-web-kit = { version = "0.3", features = [
     "WKWebView",
     "block2",
     "objc2-app-kit",
+] }
+# Apelles: the UI harness's native input (D-434, debug-only code in
+# `chroma::debug_input`). Both already in the workspace lock as transitive deps
+# of tao/wry/the objc2-* crates above — a direct edge, not a new crate. `objc2`
+# for `msg_send!`/`sel!` and the method swizzle; `objc2-core-graphics` for the
+# scroll and gesture events AppKit only builds from a `CGEvent`.
+objc2 = "0.6"
+objc2-core-graphics = { version = "0.3", default-features = false, features = [
+    "std",
+    "CGEvent",
+    "CGEventTypes",
 ] }
 
 [target.'cfg(target_os = "android")'.dependencies]

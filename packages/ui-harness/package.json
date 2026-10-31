@@ -1,0 +1,19 @@
+{
+  "name": "@apelles/ui-harness",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "D-434 — the Edit-tab timeline UI test + measurement harness: runs scenarios against the LIVE app through its control server (real input via debug_pointer/debug_key, assertions on store/DOM state, frame-time and latency budgets) and writes a markdown report with screenshots. Dev tooling run from Node; nothing in the app imports it.",
+  "scripts": {
+    "test": "vitest run",
+    "harness": "node src/cli.ts"
+  },
+  "dependencies": {
+    "@apelles/debug": "*",
+    "@apelles/editor": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "vitest": "^3.2.4"
+  }
+}

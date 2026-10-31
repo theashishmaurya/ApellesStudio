@@ -216,13 +216,15 @@ chroma/
                           9 exist, 8 of them real+load-bearing: apelles-{types,gpu,media,
                           timeline,grade-model,project,motion,ai} (waves 1-3, 2026-09-05)
                           + apelles-mcp (D-312, the MCP tool surface — port complete, all
-                          258 tools pass the parity harness against mcp/server.py; the
+                          261 tools pass the parity harness against mcp/server.py; the
                           MIGRATION off Python is a separate, not-yet-made call, see
-                          docs/notes/mcp-rust-port.md). Still future: apelles-grade,
+                          docs/notes/mcp-rust-port.md), + apelles-ui-input (D-434, the UI
+                          harness's native-input rules; debug tooling). Still future: apelles-grade,
                           apelles-compositor, apelles-agent. Live table + per-crate
                           boundaries: crates/README.md
   packages/             ← Apelles' frontend workspace — @apelles/{tokens,ui,bridge,shell,
-                          editor,motion,motion-engine,player,inspector,history,debug}
+                          editor,motion,motion-engine,player,inspector,history,debug,
+                          ui-harness (D-434, the live-app timeline UI test harness)}
     motion-engine/      ← the Remotion motion engine, moved in from videoAgent/engine/motion/
   ai/  ai-media/  mcp/  eval/  docs/  scratch/
 ```

@@ -107,7 +107,7 @@ beforeEach(async () => {
   );
   mounted = mount(React.createElement(TimelinePane), { strictMode: true });
   await waitFrames(2);
-  const found = mounted.container.querySelector('[data-bench-id="timeline-edit-area"]');
+  const found = mounted.container.querySelector('[data-testid="timeline-edit-area"]');
   if (!found) throw new Error('timeline-edit-area never rendered — fixture/harness setup is broken');
   editArea = found as HTMLElement;
 });

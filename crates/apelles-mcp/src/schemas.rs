@@ -718,6 +718,145 @@ pub struct DynamicZoomFraming {
 }
 
 // --------------------------------------------------------------------------- #
+// Debug tooling — the UI harness's input tools (D-434)
+// --------------------------------------------------------------------------- #
+
+/// Where inside a target element's box a pointer lands (`debug_pointer`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PointerAt {
+    /// Fraction of the box width from its left edge. Default 0.5.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub fx: Maybe<f64>,
+    /// Fraction of the box height from its top edge. Default 0.5.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub fy: Maybe<f64>,
+    /// CSS-px offset added after the fraction. Default 0.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub dx: Maybe<f64>,
+    /// CSS-px offset added after the fraction. Default 0.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub dy: Maybe<f64>,
+}
+
+/// A point to press (`debug_pointer`): raw CSS `x`/`y`, or an element named by
+/// exactly one of `selector` / `testid` / `nodeId` plus a point inside its box.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PointerTarget {
+    /// Viewport CSS px. Give with `y` instead of naming an element.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub x: Maybe<f64>,
+    /// Viewport CSS px. Give with `x` instead of naming an element.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub y: Maybe<f64>,
+    /// CSS px from the gesture's previous point (for `to`/`path` only), instead of x/y.
+    #[serde(
+        rename = "byX",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub by_x: Maybe<f64>,
+    /// CSS px from the gesture's previous point; goes with `byX`.
+    #[serde(
+        rename = "byY",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub by_y: Maybe<f64>,
+    /// CSS selector of the element.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub selector: Maybe<String>,
+    /// Shorthand for [data-testid="..."].
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub testid: Maybe<String>,
+    /// A nodeId from debug_dom_tree.
+    #[serde(
+        rename = "nodeId",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub node_id: Maybe<String>,
+    /// Which match, 0-based; negative counts from the end. Default 0.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub nth: Maybe<i64>,
+    /// The point inside the box. Default its centre.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub at: Maybe<PointerAt>,
+}
+
+/// What to sample on every frame while a gesture runs (`debug_pointer`, `debug_key`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PointerWatch {
+    /// CSS selectors whose elements' rects are sampled each frame.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub selectors: Maybe<Vec<String>>,
+    /// Also sample the CSS cursor under the pointer each frame.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cursor: Maybe<bool>,
+    /// Cap on sampled frames. Default 120.
+    #[serde(
+        rename = "maxFrames",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_frames: Maybe<i64>,
+}
+
+// --------------------------------------------------------------------------- #
 // Motion tab
 // --------------------------------------------------------------------------- #
 

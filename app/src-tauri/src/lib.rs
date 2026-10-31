@@ -2425,6 +2425,9 @@ pub fn run() {
             // reason as the two above.
             #[cfg(debug_assertions)]
             chroma::debug_record::chroma_debug_record_video,
+            // D-434 — the UI harness's trusted native input, gated the same way.
+            #[cfg(debug_assertions)]
+            chroma::debug_input::chroma_debug_inject_input,
             chroma::grade::chroma_save_grade,
             chroma::grade::chroma_load_grade,
             chroma::grade::chroma_load_grades,
