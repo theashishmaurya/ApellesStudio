@@ -171,7 +171,7 @@ debug_set_occlusion_throttling(enabled=False)        # a covered window keeps re
 debug_dom_tree('[data-testid="timeline-edit-area"]', max_depth=0)   # zoom/scroll readout
 debug_pointer(action="click", target={"testid": "timeline-trim-tool", "nth": 2})
 debug_pointer(action="drag",
-              target={"selector": ".timeline-editor-action:has([data-chroma-clip-id='c1']) .timeline-editor-action-right-stretch"},
+              target={"selector": "[data-testid='timeline-clip'][data-chroma-clip-id='c1'] [data-testid='timeline-clip-trim-end']"},
               to={"byX": 45}, steps=15, measure=True,
               watch={"selectors": ["[data-chroma-clip-id='c2']"], "cursor": True})
 debug_key(keys=["meta+KeyZ"])
@@ -209,10 +209,11 @@ a repeated part carries one id on every instance and its identity in `data-chrom
 | `timeline-marquee`, `timeline-gap-selection`, `timeline-drag-ghost` | overlays | |
 | `timeline-edit-bracket`, `timeline-edit-readout`, `timeline-snap-guide`, `timeline-blade-line` | the edit-gesture feedback layer (D-432 P2) | bracket: `data-chroma-bracket-side` in/out, `data-chroma-limit` |
 
-Library-rendered parts by the library's own classes (`TIMELINE_LIBRARY_SELECTORS`, pinned by
-`timelineTestIds.test.ts` against the installed stylesheet): playhead `.timeline-editor-cursor` and its handle
-`.timeline-editor-cursor-top`, a clip's wrapper `.timeline-editor-action`, the scroll container
-`.timeline-editor-edit-area`. There is zoom slider only inside the Clip Appearance popover (D-432 P3; scenarios use the buttons, `=` / `-` or the wheel) and
+The lane renderer's parts (D-437 S6; until then the harness used the old library's class names, which are gone) carry
+test ids like everything else: `timeline-scroller` (the scroll container), `timeline-track-row` (`data-chroma-track`),
+`timeline-clip-slot` (a clip's positioning slot; the `timeline-clip` body is inside), `timeline-playhead` (the line;
+a `live` watch reads its rect), `timeline-playhead-head` and `timeline-playhead-band` (the grab parts). That every
+one is on a real render is pinned in `TimelinePane.testIds.dom.test.tsx`. There is zoom slider only inside the Clip Appearance popover (D-432 P3; scenarios use the buttons, `=` / `-` or the wheel) and
 no scrollbar element (native overflow scrolling) — scenarios scroll with the wheel.
 
 D-432 P3 scenarios (2026-11-01): `snapping-toggle-button`, `skimming-toggle-key`,

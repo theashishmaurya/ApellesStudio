@@ -79,10 +79,8 @@ import {
 import { formatTimecode, RULER_HEIGHT_PX } from './ruler';
 import { snapFrame } from './editGesture';
 
-/** Height of the marker strip, in px — and, because the strip lives in the
- *  gap the timeline library leaves between its ruler and its edit area, also
- *  the `margin-top` `timeline-overrides.css` gives `.timeline-editor-edit-area`
- *  (the library's own default is 10px, which is too short for a legible flag).
+/** Height of the marker strip, in px — the gap between the ruler and the lanes'
+ *  first row, which the lanes' scroller leaves for it (`TimelineLanes`' `topPx`).
  *  `TimelinePane`'s `RULER_AND_MARGIN_PX` is `RULER_HEIGHT_PX + this`; the two
  *  must move together, so this is the single definition and both sites derive
  *  from it. D-432 P3: 14 (spec §4.7), was 16. */

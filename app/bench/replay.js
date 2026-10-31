@@ -34,14 +34,11 @@
       new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, ...opts }),
     );
 
-  // `.timeline-editor-*` classes are @xzdarcy/react-timeline-editor's own
-  // bundled CSS class names (see TimelinePane.tsx's doc comment) -- stable
-  // across our own restyles since we don't own them, so used directly rather
-  // than adding app-side data-bench-id hooks for library-rendered elements.
-  // `[data-bench-id="timeline-edit-area"]` is the one app-owned hook (the
-  // wrapper div around <TimelineEditor>, added alongside this script).
+  // The clip slots are found by their stable test id (`TIMELINE_TEST_IDS.clipSlot`, D-437 S6).
+  // `[data-bench-id="timeline-edit-area"]` is the app-owned hook (the wrapper div around
+  // the lanes, added alongside this script).
   const EDIT_AREA_SELECTOR = '[data-bench-id="timeline-edit-area"]';
-  const ACTION_SELECTOR = '.timeline-editor-action';
+  const ACTION_SELECTOR = '[data-testid="timeline-clip-slot"]';
 
   // --- continuous frame-timing capture -------------------------------------------
   // One rAF loop runs for the whole benchmark; phase attribution happens

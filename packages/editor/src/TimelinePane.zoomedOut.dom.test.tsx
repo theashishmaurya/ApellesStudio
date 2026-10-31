@@ -135,7 +135,7 @@ describe('B-267 — a zoomed-out, many-clip timeline draws its clips', () => {
     expect(zoomedOut).toBe(CLIPS);
     // Each clip's host has a real, positive width and they run left to right
     // with no overlap: nothing the layout could collapse to nothing.
-    const hosts = [...document.querySelectorAll<HTMLElement>('.timeline-editor-action')];
+    const hosts = [...document.querySelectorAll<HTMLElement>('[data-testid="timeline-clip-slot"]')];
     expect(hosts).toHaveLength(CLIPS);
     let previousRight = -Infinity;
     for (const host of hosts) {

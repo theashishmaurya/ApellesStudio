@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * D-434 / H7 — the track-header divider reaches the DOM under its stable name.
+ * D-434 / H7 — the track-header divider reaches the DOM under its stable name; D-437 S6 — the lane parts carry their test ids.
  *
  * `react-resizable-panels` 4.x's `Separator` writes `data-testid` from its own
  * `id`, so a `data-testid` prop passed to `ResizableHandle` is overwritten by an
@@ -75,5 +75,29 @@ describe('the track-header divider (H7)', () => {
     expect(byId, 'no element has the divider id').not.toBeNull();
     expect(byId?.getAttribute('data-testid')).toBe(TIMELINE_TEST_IDS.headerResize);
     expect(document.querySelectorAll(`[data-testid="${TIMELINE_TEST_IDS.headerResize}"]`)).toHaveLength(1);
+  });
+});
+
+describe('the lane renderer\'s parts carry their own test ids (D-437 S6)', () => {
+  it('a real render has the scroller, a track row, a clip slot (inside the row) and the playhead line, head and band', async () => {
+    actSync(() =>
+      useEditorTimelineStore.setState({ timeline, openProjectKey: '/p/ids.chroma', status: 'ready', error: null, playhead: 0, selection: [] }),
+    );
+    ui = mount(React.createElement(TimelinePane));
+    await waitFrames(2);
+
+    const one = (id: string) => {
+      const found = document.querySelectorAll(`[data-testid="${id}"]`);
+      expect(found, id).toHaveLength(1);
+      return found[0]!;
+    };
+    one(TIMELINE_TEST_IDS.scroller);
+    const row = one(TIMELINE_TEST_IDS.trackRow);
+    const slot = one(TIMELINE_TEST_IDS.clipSlot);
+    expect(row.contains(slot)).toBe(true);
+    expect(slot.hasAttribute('data-chroma-clip-slot')).toBe(true);
+    const line = one(TIMELINE_TEST_IDS.playhead);
+    expect(line.contains(one(TIMELINE_TEST_IDS.playheadHead))).toBe(true);
+    expect(line.contains(one(TIMELINE_TEST_IDS.playheadBand))).toBe(true);
   });
 });

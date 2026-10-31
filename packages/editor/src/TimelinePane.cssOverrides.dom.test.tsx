@@ -3,7 +3,7 @@
  * @apelles/editor — the playhead is grabbed by its head only (B-349, B-346), and a
  * clip body shows the arrow (B-351).
  *
- * jsdom has no hit testing, so this applies the REAL `timeline-overrides.css` to
+ * jsdom has no hit testing, so this applies the REAL `timeline.css` to
  * the REAL rendered pane and asks what the pointer can reach: the 1 px line the
  * library makes its interact.js drag target must be pointer-transparent (a press
  * exactly on it falls through to the clip beneath), while the head and the band
@@ -75,7 +75,7 @@ beforeEach(async () => {
     }),
   );
   style = document.createElement('style');
-  style.textContent = readFileSync(join(import.meta.dirname, 'timeline-overrides.css'), 'utf8');
+  style.textContent = readFileSync(join(import.meta.dirname, 'timeline.css'), 'utf8');
   document.head.appendChild(style);
   mounted = mount(React.createElement(TimelinePane), { strictMode: true });
   await waitFrames(2);
@@ -97,14 +97,14 @@ function effectivePointerEvents(el: Element | null): string {
   for (let n = el; n; n = n.parentElement) {
     const v = getComputedStyle(n).pointerEvents;
     if (v && v !== 'auto' && v !== 'inherit') return v;
-    if (v === 'auto' && n.matches('.timeline-editor-cursor-top, .timeline-editor-cursor-area')) return 'auto';
+    if (v === 'auto' && n.matches('[data-testid="timeline-playhead-head"], [data-testid="timeline-playhead-band"]')) return 'auto';
   }
   return 'auto';
 }
 
 describe('the playhead line does not grab (B-349)', () => {
   it('the 1 px line is pointer-transparent, so a press on it reaches the clip under it', () => {
-    const line = mounted!.container.querySelector('.timeline-editor-cursor');
+    const line = mounted!.container.querySelector('[data-testid="timeline-playhead"]');
     const clip = mounted!.container.querySelector(`[data-testid="${TIMELINE_TEST_IDS.clip}"]`);
     expect(line).not.toBeNull();
     expect(clip).not.toBeNull();
@@ -113,9 +113,9 @@ describe('the playhead line does not grab (B-349)', () => {
   });
 
   it('the head and the band under the ruler still take the pointer and are inside the drag target', () => {
-    const line = mounted!.container.querySelector('.timeline-editor-cursor');
-    const head = line!.querySelector('.timeline-editor-cursor-top');
-    const band = line!.querySelector('.timeline-editor-cursor-area');
+    const line = mounted!.container.querySelector('[data-testid="timeline-playhead"]');
+    const head = line!.querySelector('[data-testid="timeline-playhead-head"]');
+    const band = line!.querySelector('[data-testid="timeline-playhead-band"]');
     expect(head).not.toBeNull();
     expect(band).not.toBeNull();
     expect(getComputedStyle(head!).pointerEvents).toBe('auto');

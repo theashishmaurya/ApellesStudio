@@ -8,7 +8,7 @@
  * run of butted clips at the start of every track (so every edit tool has neighbours in
  * the visible part of the timeline), `linkedPairs` linked A/V pairs on the first video
  * track (their audio halves land on the first audio track, which the spec leaves empty),
- * four markers and two transitions. `clips` counts every clip on the timeline, the
+ * four markers and two transitions (past that run, on cuts the edit tools do not touch). `clips` counts every clip on the timeline, the
  * linked audio halves included.
  *
  * Clip names are `t<track>c<index>` (track and per-track index in the spec), so a
@@ -74,7 +74,8 @@ export function bigFixtureSpec(options: BigFixtureOptions): FixtureSpec {
   const perTrack = holders.map((_, h) => Math.floor(explicit / holders.length) + (h < explicit % holders.length ? 1 : 0));
 
   const specTracks: FixtureSpec['tracks'] = Array.from({ length: tracks }, (_, t) => ({ kind: t < videoTracks ? 'video' : 'audio', clips: [] as FixtureClip[] }));
-  const cutFrames: Record<number, number[]> = {};
+  /** Per track, the start frame of every clip after the butted run that follows a clip with no gap (a cut a transition can sit on). */
+  const farCuts: Record<number, number[]> = {};
   let pairsLeft = linkedPairs;
   holders.forEach((t, h) => {
     let frame = 0;
@@ -91,15 +92,17 @@ export function bigFixtureSpec(options: BigFixtureOptions): FixtureSpec {
         duration,
         startFrame,
       });
-      (cutFrames[t] ??= []).push(startFrame);
+      if (i >= BIG_BUTTED_RUN && gap === 0) (farCuts[t] ??= []).push(startFrame);
       frame = startFrame + duration;
     }
   });
 
-  // Two transitions on butted cuts of video tracks 1 and 2 (clip 2 starts at a cut: the run is butted).
+  // Two transitions on butted cuts of video tracks 1 and 2, past the butted run at the start of the track: a
+  // transition's button sits over its cut, and the run is where the edit-tool scenarios press (D-437 S6: the
+  // first perf-300 run's trim scenarios pressed on a transitioned edge).
   const transitions = [1, 2]
-    .filter((t) => t < videoTracks && (cutFrames[t]?.length ?? 0) > 2)
-    .map((t) => ({ track: t, atFrame: cutFrames[t][2] }));
+    .filter((t) => t < videoTracks && (farCuts[t]?.length ?? 0) > 0)
+    .map((t) => ({ track: t, atFrame: farCuts[t][0] }));
 
   return {
     tracks: specTracks,

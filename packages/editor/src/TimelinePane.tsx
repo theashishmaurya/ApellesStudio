@@ -104,9 +104,8 @@
  *   - **Dropping a Sources-panel clip targets whichever lane the cursor is
  *     over** (D-046 pass 3's plain-HTML5-drag mechanism, now row-aware) —
  *     `dropTargetTrack` converts `e.clientY` into a row index using the
- *     library's own fixed layout constants (`.timeline-editor-time-area`'s
- *     32px ruler + `.timeline-editor-edit-area`'s 10px margin-top, read
- *     from the library's bundled CSS, not guessed) plus the tracked
+ *     layout constants (`RULER_AND_MARGIN_PX`: the ruler plus the marker
+ *     strip) plus the tracked
  *     `scrollTop`, clamped to a real track index. Falls back to the first
  *     video track if the drop lands above/below every row (e.g. on the
  *     ruler itself) — same default this file always had.
@@ -197,7 +196,7 @@
  * the first that lives in the ruler band rather than over the tracks:
  * `MarkerStrip` (`TimelineMarkers.tsx`) draws one coloured flag per
  * `Timeline.markers` entry in the gap between the library's 32px ruler and
- * track row 0, which `timeline-overrides.css` widens to `MARKER_STRIP_HEIGHT`
+ * track row 0 (the lanes leave `MARKER_STRIP_HEIGHT` of room for it)
  * for the purpose — so `RULER_AND_MARGIN_PX` is now derived from that
  * constant instead of being the library's own fixed 42. It cannot collide
  * with the marquee (D-137), the clip drag (D-098) or the fade handles
@@ -281,7 +280,7 @@ import {
   type ReactNode,
   type UIEvent,
 } from 'react';
-import './timeline-overrides.css';
+import './timeline.css';
 import {
   DndContext,
   DragOverlay,
@@ -488,6 +487,8 @@ const TICK_TARGET_PX = 70;
 // (18%), too tight to see a whole multi-minute project at once; it is 1 so a
 // long timeline can actually be zoomed out to fit the visible width.
 const ZOOM_STEP = 1.2;
+/** B-357 — px a `DOM_DELTA_LINE` wheel notch scrolls (a browser's own wheel line height). */
+const WHEEL_LINE_PX = 16;
 /** D-432 §4.3 — a clip that an edit shifted gets ONE opacity flash this long
  *  (ms), from `RIPPLE_FLASH_OPACITY` back to 1. No looping `animate-pulse`. */
 const RIPPLE_FLASH_MS = 160;
@@ -956,7 +957,19 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
     const el = editAreaRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return;
+      if (!e.ctrlKey) {
+        // B-357 — a plain wheel pans through the lanes' scroller natively, but
+        // only when the pointer is over it: the ruler and the lanes' own
+        // overlays (the bottom-edge height zones sit between two tracks) are
+        // siblings of the scroller, so a two-finger scroll over one of them
+        // went nowhere. Forward it.
+        const scroller = scrollerRef.current;
+        if (!scroller || scroller.contains(e.target as Node)) return;
+        e.preventDefault();
+        const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? WHEEL_LINE_PX : e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? scroller.clientHeight : 1;
+        scroller.scrollBy({ left: e.deltaX * unit, top: e.deltaY * unit });
+        return;
+      }
       e.preventDefault();
       const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
       zoomByRef.current(factor, e.clientX);
@@ -1014,6 +1027,22 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
     scrollRef.current = { left: scrollLeft, top: scrollTop };
   }, [scrollLeft, scrollTop]);
 
+  // B-357 — the scroll state outlives the scroller element. The pane renders
+  // nothing while no timeline is open (a switch or a project close), which
+  // unmounts the lanes' scroller; the next one mounts at 0 and fires no
+  // `scroll` event, so `scrollLeft`/`scrollTop` kept the OLD element's
+  // position: the ruler, the overlays and every drop/drag conversion read a
+  // position the lanes were not at (the harness's `byFrames` targets land
+  // hundreds of px off). Adopt the scroller's real position whenever the edit
+  // area (its parent) mounts.
+  useLayoutEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    playheadRef.current?.setScroll(scroller.scrollLeft);
+    setScrollLeft((prev) => (prev === scroller.scrollLeft ? prev : scroller.scrollLeft));
+    setScrollTop((prev) => (prev === scroller.scrollTop ? prev : scroller.scrollTop));
+  }, [editArea]);
+
 
   // D-128 — keep `viewportWidth` honest across window and panel resizes. The
   // edit area's width (the track-header column is a separate panel): the
@@ -1021,7 +1050,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
   // culling, so B-267's hidden-tab start needs no remount any more) and the
   // ruler, beat lane, follower and edit gesture all read it.
   // B-123 — `editArea`, not a ref: this node mounts late; see the `wheel` effect.
-  const { width: viewportWidth } = useViewportWidth(editArea);
+  const viewportWidth = useViewportWidth(editArea);
 
   // B-326 — what the playback follower (the store subscription above) needs
   // that lives in React state: kept in a ref so reading it costs no render.

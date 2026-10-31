@@ -238,8 +238,6 @@ describe('edge-trim zones and the bracket (§4.4)', () => {
     expect(zone('a', 'end').style.width).toBe('8px');
     expect(zone('b', 'start').style.width).toBe('8px');
     expect(zone('a', 'end').className).toMatch(/cursor-col-resize/);
-    // the library's translucent stretch triangles are not rendered at all
-    expect(q('.timeline-editor-action-left-stretch, .timeline-editor-action-right-stretch')).toBeNull();
   });
 
   it('shows ONE amber bracket on the hovered edge only, and none at rest', async () => {

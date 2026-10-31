@@ -32,7 +32,7 @@
  *      box (`HANDLE_HIT_SLOP`), so it can sit over a different clip's picture.
  *      Detected with `closest('[data-transform-handle]')` — the same "was this
  *      press on a real widget?" test `TimelinePane`'s own D-100 clear-selection
- *      branch makes with `closest('.timeline-editor-action')`.
+ *      branch makes with `closest('[data-chroma-clip-slot]')`.
  *   3. Hit-test the pointer against every visible CAPTION first (D-316), then
  *      against every visible video layer, each topmost first (`canvasPick.ts`,
  *      which mirrors the Rust compositor's own resolution and paint order

@@ -241,17 +241,24 @@ describe('B-116 — the timeline zooms around a point, not around nothing', () =
   it('6. a plain (non-ctrl) wheel is left alone — it pans, it does not zoom', async () => {
     const area = await mountPane();
     const before = probeLeft();
+    // jsdom has no layout, so no `scrollBy`: a stub records the pan the pane forwards (B-357).
+    const scroller = area.querySelector<HTMLElement>('[data-testid="timeline-scroller"]')!;
+    const scrollBy = vi.fn();
+    scroller.scrollBy = scrollBy as unknown as typeof scroller.scrollBy;
 
     actSync(() => {
       const e = new Event('wheel', { bubbles: true, cancelable: true });
       Object.defineProperty(e, 'ctrlKey', { value: false });
       Object.defineProperty(e, 'clientX', { value: 400 });
+      Object.defineProperty(e, 'deltaX', { value: 0 });
       Object.defineProperty(e, 'deltaY', { value: -120 });
+      Object.defineProperty(e, 'deltaMode', { value: 0 });
       area.dispatchEvent(e);
     });
     await waitFrames(2);
 
     expect(probeLeft()).toBeCloseTo(before, 6);
+    expect(scrollBy).toHaveBeenCalledWith({ left: 0, top: -120 });
   });
 
   it('7. the toolbar +/- anchor on the PLAYHEAD, so the frame you are looking at holds still', async () => {

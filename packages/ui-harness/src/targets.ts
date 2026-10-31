@@ -2,8 +2,7 @@
  * targets.ts — named places on the timeline, for scenarios (D-434).
  *
  * What it is: small builders over the timeline's stable test ids
- *   (`TIMELINE_TEST_IDS`) and the library's own class names
- *   (`TIMELINE_LIBRARY_SELECTORS`), so a scenario says `trimRight(id)` rather
+ *   (`TIMELINE_TEST_IDS`), so a scenario says `trimRight(id)` rather
  *   than spelling a selector — and a renamed hook is one edit in
  *   `@apelles/editor`, not a sweep through every scenario.
  *
@@ -13,7 +12,7 @@
  *   readout.
  */
 
-import { TIMELINE_LIBRARY_SELECTORS as LIB, TIMELINE_TEST_IDS as ID } from '@apelles/editor/src/timelineTestIds.ts';
+import { TIMELINE_TEST_IDS as ID } from '@apelles/editor/src/timelineTestIds.ts';
 
 import type { Value } from './assertions.ts';
 import type { FrameOffset, FrameTarget, TargetRef } from './scenario.ts';
@@ -64,12 +63,12 @@ export const ruler = (fx = 0.5): TargetRef => selector(`[data-testid="${ID.ruler
 export const trackHeightZone = (track: number) =>
   selector(`[data-testid="${ID.trackHeightResize}"][data-chroma-track="${track}"]`, { fy: 0.5 });
 /** Where a human grabs the playhead to scrub (H16): its head band, the strip
- *  under the ruler (`.timeline-editor-cursor-area`, B-346: the only part of the
+ *  under the ruler (`timeline-playhead-band`, B-346: the only part of the
  *  playhead that takes the pointer, B-349). A drag from there scrubs live (the
  *  ruler scrubs too since P3's own `TimelineRuler`, B-350, and has its own
  *  scenario, `scrub-ruler-drag`). The band is centred on the playhead wherever it is, so the
  *  press lands on it exactly and `expectHit` can stay on. */
-export const playheadGrab = (): TargetRef => selector(LIB.playheadBand, { fx: 0.5, fy: 0.5 });
+export const playheadGrab = (): TargetRef => selector(`[data-testid="${ID.playheadBand}"]`, { fx: 0.5, fy: 0.5 });
 
 export const trackHeader = (track: number, at?: { fx?: number; fy?: number }) =>
   selector(`[data-testid="${ID.trackHeader}"][data-chroma-track="${track}"]`, at);
@@ -89,4 +88,7 @@ export const byFrames = (frames: Value, tracks?: number): FrameOffset => ({ byFr
 /** `{ref}` shorthand for a captured value, with optional arithmetic. */
 export const ref = (path: string, plus?: number): Value => ({ ref: path, ...(plus !== undefined ? { plus } : {}) });
 
-export { ID as TIMELINE_TEST_IDS, LIB as TIMELINE_LIBRARY_SELECTORS };
+/** The playhead line, as a selector (a `live` watch reads its rect). */
+export const playheadLine = (): string => `[data-testid="${ID.playhead}"]`;
+
+export { ID as TIMELINE_TEST_IDS };

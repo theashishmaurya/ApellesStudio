@@ -41,8 +41,8 @@ import {
  *
  *  Deliberately kept SHORT vertically as well as narrow: it is anchored to the
  *  clip's top edge, so on a `ROW_HEIGHT` (52px) row it covers the top ~29% and
- *  leaves the remaining ~37px of each 10px edge zone to the timeline library's
- *  own `.timeline-editor-action-{left,right}-stretch` trim handles. A fade
+ *  leaves the remaining ~37px of each edge zone to the clip's own
+ *  `timeline-clip-trim-start/-end` trim zones (`lanes/LaneClip.tsx`). A fade
  *  handle at rest sits exactly ON that trim zone (a zero fade is at the clip's
  *  own corner), so the two gestures are separated by WHERE IN THE ROW the
  *  press lands — which is what Resolve does too — not by z-order alone. See
