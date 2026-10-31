@@ -44,6 +44,7 @@ import {
   WarningIcon,
   CheckIcon,
   CheckSquareIcon,
+  CaretDownIcon,
   CaretRightIcon,
   FilmStripIcon,
   FolderIcon,
@@ -69,14 +70,25 @@ import {
   DialogHeader,
   DialogTitle,
   Input,
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
   cn,
 } from '@apelles/ui';
+import { useShellStore } from '@apelles/shell';
 import { useMediaPoolStore } from '@apelles/bridge';
 import { CHROMA_MEDIA_DRAG_MIME } from '@apelles/editor';
 
 import { useSessionStore, type ProjectOpenDto } from '../../store/useSessionStore';
 import { pickClips } from './ProjectLauncher';
 import { MediaTileThumb } from './MediaTileThumb';
+
+// D-436 — the folder list / media grid split (`@apelles/ui` resizable, the
+// standing resizable-panes rule). Percentages of the height under the folder
+// header: the list needs room for a few rows, the grid never less than ~30%.
+const FOLDERS_PANE_DEFAULT = '28%';
+const FOLDERS_PANE_MIN = '8%';
+const FOLDERS_PANE_MAX = '70%';
 
 // --- bin tree, built from the known folder-path strings (D-059) ------------
 
@@ -205,6 +217,8 @@ function FolderRow({
   depth,
   activeFolder,
   setActiveFolder,
+  closedFolders,
+  toggleFolder,
   onDropMedia,
   onNewFolder,
 }: {
@@ -212,10 +226,12 @@ function FolderRow({
   depth: number;
   activeFolder: string | null;
   setActiveFolder: (p: string | null) => void;
+  closedFolders: ReadonlySet<string>;
+  toggleFolder: (path: string, open: boolean) => void;
   onDropMedia: (mediaId: string, folder: string) => void;
   onNewFolder: (parentPath: string) => void;
 }) {
-  const [open, setOpen] = useState(true);
+  const open = !closedFolders.has(node.path);
   const [dragOver, setDragOver] = useState(false);
   const hasChildren = node.children.length > 0;
 
@@ -226,7 +242,22 @@ function FolderRow({
           <div
             role="button"
             tabIndex={0}
+            aria-expanded={hasChildren ? open : undefined}
             onClick={() => setActiveFolder(activeFolder === node.path ? null : node.path)}
+            onKeyDown={(e) => {
+              // Tree-view keys: Left collapses an open folder, Right expands
+              // a closed one; Enter / Space select, as a click does.
+              if (e.key === 'ArrowLeft' && hasChildren && open) {
+                e.preventDefault();
+                toggleFolder(node.path, false);
+              } else if (e.key === 'ArrowRight' && hasChildren && !open) {
+                e.preventDefault();
+                toggleFolder(node.path, true);
+              } else if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setActiveFolder(activeFolder === node.path ? null : node.path);
+              }
+            }}
             onDragOver={(e) => {
               if (!isMediaDrag(e)) return;
               e.preventDefault();
@@ -258,7 +289,7 @@ function FolderRow({
               onClick={(e) => {
                 if (!hasChildren) return;
                 e.stopPropagation();
-                setOpen((o) => !o);
+                toggleFolder(node.path, !open);
               }}
               className={cn('shrink-0', !hasChildren && 'opacity-0')}
             >
@@ -287,6 +318,8 @@ function FolderRow({
               depth={depth + 1}
               activeFolder={activeFolder}
               setActiveFolder={setActiveFolder}
+              closedFolders={closedFolders}
+              toggleFolder={toggleFolder}
               onDropMedia={onDropMedia}
               onNewFolder={onNewFolder}
             />
@@ -313,6 +346,22 @@ export function SourcesPanel() {
 
   const [search, setSearch] = useState('');
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
+  // D-436 — whether the bin list is expanded lives in the shell store (session
+  // only, like every other piece of panel chrome there) so `debug_ui_state` /
+  // `debug_set_popover_open {id: 'sources-folders'}` see and drive the very
+  // flag the caret writes. Nested folders the user collapsed are panel-local
+  // (reset per project below): lifted out of `FolderRow` so collapsing and
+  // re-expanding the whole list does not forget them.
+  const foldersOpen = useShellStore((s) => s.sourcesFoldersOpen);
+  const setFoldersOpen = useShellStore((s) => s.setSourcesFoldersOpen);
+  const [closedFolders, setClosedFolders] = useState<ReadonlySet<string>>(new Set());
+  const toggleFolder = (path: string, open: boolean) =>
+    setClosedFolders((prev) => {
+      const next = new Set(prev);
+      if (open) next.delete(path);
+      else next.add(path);
+      return next;
+    });
   const [importing, setImporting] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
   // B-073 — which row is mid-re-probe, so its action can show it is working.
@@ -340,6 +389,7 @@ export function SourcesPanel() {
   const openProjectKey = useMediaPoolStore((s) => s.openProjectKey);
   useEffect(() => {
     setActiveFolder(null);
+    setClosedFolders(new Set());
     setSelecting(false);
     setSelectedIds(new Set());
   }, [openProjectKey]);
@@ -471,135 +521,8 @@ export function SourcesPanel() {
 
   if (!projectOpen) return null;
 
-  return (
-    <div className="h-full w-full flex flex-col bg-surface text-text-primary">
-      <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-2 border-b border-border-color">
-        <span className="text-[11px] font-semibold tracking-wide text-text-secondary flex-1">
-          SOURCES
-        </span>
-        <Button
-          variant={selecting ? 'secondary' : 'ghost'}
-          size="xs"
-          onClick={toggleSelecting}
-          disabled={items.length === 0}
-          className="h-6 gap-1"
-        >
-          <CheckSquareIcon className="size-3" /> Select
-        </Button>
-        <Button variant="ghost" size="xs" onClick={doImport} disabled={importing} className="h-6 gap-1">
-          <PlusIcon className="size-3" /> Import
-        </Button>
-      </div>
-
-      {selecting ? (
-        // D-061: the bulk-action bar replaces the search box while
-        // selecting — searching and multi-selecting-across-a-filter at the
-        // same time is a real feature (D-062 candidate) this pass doesn't
-        // build; simplest correct scope is "Select all" means all of
-        // `filtered`, so hiding search here avoids the confusing case of a
-        // stale selection referencing items the current filter now hides.
-        <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 border-b border-border-color bg-accent/5">
-          <button
-            onClick={toggleSelectAll}
-            className="flex items-center gap-1.5 text-[11px] text-text-secondary hover:text-text-primary"
-          >
-            {allVisibleSelected ? (
-              <CheckSquareIcon className="size-3.5 text-accent" />
-            ) : (
-              <SquareIcon className="size-3.5" />
-            )}
-            Select all
-          </button>
-          <span className="flex-1 text-[11px] text-text-secondary">
-            {selectedIds.size} selected
-          </span>
-          <Button
-            variant="destructive"
-            size="xs"
-            onClick={() => void doDeleteSelected()}
-            disabled={selectedIds.size === 0}
-            className="h-6 gap-1"
-          >
-            <TrashIcon className="size-3" /> Delete{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
-          </Button>
-          <button
-            onClick={toggleSelecting}
-            title="Cancel"
-            aria-label="Cancel selection"
-            className="shrink-0 size-5 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover"
-          >
-            <XIcon className="size-3.5" />
-          </button>
-        </div>
-      ) : (
-        <div className="shrink-0 px-2.5 py-1.5 border-b border-border-color">
-          <div className="relative">
-            <MagnifyingGlassIcon className="size-3 absolute left-2 top-1/2 -translate-y-1/2 text-text-secondary/60" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search media…"
-              className="h-6 pl-6 text-[11px]"
-            />
-          </div>
-        </div>
-      )}
-
-      <ContextMenu>
-        <ContextMenuTrigger>
-          <div className="shrink-0 max-h-32 overflow-y-auto px-1 py-1 border-b border-border-color">
-            <div className="flex items-center">
-              <div
-                role="button"
-                tabIndex={0}
-                onClick={() => setActiveFolder(null)}
-                className={cn(
-                  'flex-1 flex items-center gap-1 py-1 pl-1.5 pr-2 rounded text-[11px] cursor-pointer select-none',
-                  activeFolder === null
-                    ? 'bg-accent/15 text-text-primary'
-                    : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
-                )}
-              >
-                <FilmStripIcon className="size-3" /> All media
-              </div>
-              <button
-                onClick={() => setNewFolderParent(null)}
-                title="New folder"
-                aria-label="New folder"
-                className="shrink-0 size-5 mr-1 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover"
-              >
-                <FolderPlusIcon className="size-3" />
-              </button>
-            </div>
-            {tree.map((n) => (
-              <FolderRow
-                key={n.path}
-                node={n}
-                depth={0}
-                activeFolder={activeFolder}
-                setActiveFolder={setActiveFolder}
-                onDropMedia={doMove}
-                onNewFolder={setNewFolderParent}
-              />
-            ))}
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onClick={() => setNewFolderParent(null)}>
-            <FolderPlusIcon className="size-3.5" /> New folder
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-
-      {newFolderParent !== undefined && (
-        <NewFolderDialog
-          parentPath={newFolderParent}
-          onClose={() => setNewFolderParent(undefined)}
-          onCreate={doCreateFolder}
-        />
-      )}
-
-      <div className="flex-1 min-h-0 overflow-y-auto p-2">
+  const mediaGrid = (
+      <div className="h-full min-h-0 overflow-y-auto p-2" data-chroma-media-grid>
         {loading && items.length === 0 ? (
           <p className="text-[11px] text-text-secondary p-2">Loading…</p>
         ) : filtered.length === 0 ? (
@@ -747,6 +670,198 @@ export function SourcesPanel() {
           </div>
         )}
       </div>
+  );
+
+  return (
+    <div className="h-full w-full flex flex-col bg-surface text-text-primary">
+      <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-2 border-b border-border-color">
+        <span className="text-[11px] font-semibold tracking-wide text-text-secondary flex-1">
+          SOURCES
+        </span>
+        <Button
+          variant={selecting ? 'secondary' : 'ghost'}
+          size="xs"
+          onClick={toggleSelecting}
+          disabled={items.length === 0}
+          className="h-6 gap-1"
+        >
+          <CheckSquareIcon className="size-3" /> Select
+        </Button>
+        <Button variant="ghost" size="xs" onClick={doImport} disabled={importing} className="h-6 gap-1">
+          <PlusIcon className="size-3" /> Import
+        </Button>
+      </div>
+
+      {selecting ? (
+        // D-061: the bulk-action bar replaces the search box while
+        // selecting — searching and multi-selecting-across-a-filter at the
+        // same time is a real feature (D-062 candidate) this pass doesn't
+        // build; simplest correct scope is "Select all" means all of
+        // `filtered`, so hiding search here avoids the confusing case of a
+        // stale selection referencing items the current filter now hides.
+        <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 border-b border-border-color bg-accent/5">
+          <button
+            onClick={toggleSelectAll}
+            className="flex items-center gap-1.5 text-[11px] text-text-secondary hover:text-text-primary"
+          >
+            {allVisibleSelected ? (
+              <CheckSquareIcon className="size-3.5 text-accent" />
+            ) : (
+              <SquareIcon className="size-3.5" />
+            )}
+            Select all
+          </button>
+          <span className="flex-1 text-[11px] text-text-secondary">
+            {selectedIds.size} selected
+          </span>
+          <Button
+            variant="destructive"
+            size="xs"
+            onClick={() => void doDeleteSelected()}
+            disabled={selectedIds.size === 0}
+            className="h-6 gap-1"
+          >
+            <TrashIcon className="size-3" /> Delete{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+          </Button>
+          <button
+            onClick={toggleSelecting}
+            title="Cancel"
+            aria-label="Cancel selection"
+            className="shrink-0 size-5 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover"
+          >
+            <XIcon className="size-3.5" />
+          </button>
+        </div>
+      ) : (
+        <div className="shrink-0 px-2.5 py-1.5 border-b border-border-color">
+          <div className="relative">
+            <MagnifyingGlassIcon className="size-3 absolute left-2 top-1/2 -translate-y-1/2 text-text-secondary/60" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search media…"
+              className="h-6 pl-6 text-[11px]"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* D-436 — the folder header row is always visible: a disclosure caret
+          (collapses the whole bin list, FCP's Libraries sidebar / Resolve's
+          Media Pool bin list), the "All media" root (selects), and — while the
+          list is collapsed — the selected folder's name, so the grid is never
+          unexplained. */}
+      <div
+        className="shrink-0 flex items-center px-1 py-1 border-b border-border-color"
+        data-chroma-folders-header
+      >
+        <button
+          type="button"
+          onClick={() => setFoldersOpen(!foldersOpen)}
+          aria-expanded={foldersOpen}
+          aria-label={foldersOpen ? 'Collapse folders' : 'Expand folders'}
+          title={foldersOpen ? 'Collapse folders' : 'Expand folders'}
+          className="shrink-0 size-5 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover"
+        >
+          {foldersOpen ? <CaretDownIcon className="size-3" /> : <CaretRightIcon className="size-3" />}
+        </button>
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => setActiveFolder(null)}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowLeft') {
+              e.preventDefault();
+              setFoldersOpen(false);
+            } else if (e.key === 'ArrowRight') {
+              e.preventDefault();
+              setFoldersOpen(true);
+            } else if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              setActiveFolder(null);
+            }
+          }}
+          className={cn(
+            'flex items-center gap-1 py-1 pl-1 pr-2 rounded text-[11px] cursor-pointer select-none',
+            activeFolder === null
+              ? 'bg-accent/15 text-text-primary'
+              : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
+          )}
+        >
+          <FilmStripIcon className="size-3" /> All media
+        </div>
+        {!foldersOpen && activeFolder !== null && (
+          <span
+            data-chroma-active-folder
+            className="flex min-w-0 items-center gap-1 text-[11px] text-text-primary"
+            title={activeFolder}
+          >
+            <CaretRightIcon className="size-2.5 shrink-0 text-text-secondary" />
+            <FolderOpenIcon className="size-3 shrink-0" />
+            <span className="truncate">{activeFolder.split('/').pop()}</span>
+          </span>
+        )}
+        <span className="flex-1" />
+        <button
+          onClick={() => setNewFolderParent(null)}
+          title="New folder"
+          aria-label="New folder"
+          className="shrink-0 size-5 mr-1 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover"
+        >
+          <FolderPlusIcon className="size-3" />
+        </button>
+      </div>
+
+      {newFolderParent !== undefined && (
+        <NewFolderDialog
+          parentPath={newFolderParent}
+          onClose={() => setNewFolderParent(undefined)}
+          onCreate={doCreateFolder}
+        />
+      )}
+
+      {foldersOpen ? (
+        <ResizablePanelGroup orientation="vertical" className="flex-1 min-h-0">
+          <ResizablePanel
+            data-chroma-folders-pane
+            defaultSize={FOLDERS_PANE_DEFAULT}
+            minSize={FOLDERS_PANE_MIN}
+            maxSize={FOLDERS_PANE_MAX}
+          >
+            <ContextMenu>
+              <ContextMenuTrigger>
+                <div className="h-full min-h-8 overflow-y-auto px-1 py-1">
+                  {tree.map((n) => (
+                    <FolderRow
+                      key={n.path}
+                      node={n}
+                      depth={0}
+                      activeFolder={activeFolder}
+                      setActiveFolder={setActiveFolder}
+                      closedFolders={closedFolders}
+                      toggleFolder={toggleFolder}
+                      onDropMedia={doMove}
+                      onNewFolder={setNewFolderParent}
+                    />
+                  ))}
+                  {tree.length === 0 && (
+                    <p className="px-2 py-1 text-[11px] text-text-secondary">No folders yet.</p>
+                  )}
+                </div>
+              </ContextMenuTrigger>
+              <ContextMenuContent>
+                <ContextMenuItem onClick={() => setNewFolderParent(null)}>
+                  <FolderPlusIcon className="size-3.5" /> New folder
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
+          </ResizablePanel>
+          <ResizableHandle />
+          <ResizablePanel>{mediaGrid}</ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        <div className="flex-1 min-h-0">{mediaGrid}</div>
+      )}
     </div>
   );
 }

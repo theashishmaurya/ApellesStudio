@@ -199,7 +199,7 @@ describe('debug_set_popover_open', () => {
     const result = await DEBUG_OPS.debug_set_popover_open({ id: 'no-such-panel', open: true });
 
     expect(result).toEqual({
-      error: `unknown panel "no-such-panel" — expected one of export-dialog, agent-activity`,
+      error: `unknown panel "no-such-panel" — expected one of export-dialog, agent-activity, sources-folders`,
     });
     expect(popoverInDom(), 'a refused op must not have opened anything').toBe(false);
   });
@@ -212,6 +212,16 @@ describe('debug_set_popover_open', () => {
     const closed = await DEBUG_OPS.debug_set_popover_open({ id: 'agent-activity', open: false });
     expect(closed).toEqual({ ok: true, id: 'agent-activity', open: false });
     expect((await DEBUG_OPS.debug_get_ui_state({})).shell.agentActivityOpen).toBe(false);
+  });
+
+  it('drives the Sources panel folder-list flag (D-436) and reports it in debug_get_ui_state', async () => {
+    const closed = await DEBUG_OPS.debug_set_popover_open({ id: 'sources-folders', open: false });
+    expect(closed).toEqual({ ok: true, id: 'sources-folders', open: false });
+    expect((await DEBUG_OPS.debug_get_ui_state({})).shell.sourcesFoldersOpen).toBe(false);
+
+    const opened = await DEBUG_OPS.debug_set_popover_open({ id: 'sources-folders', open: true });
+    expect(opened).toEqual({ ok: true, id: 'sources-folders', open: true });
+    expect((await DEBUG_OPS.debug_get_ui_state({})).shell.sourcesFoldersOpen).toBe(true);
   });
 
   it('refuses a missing `open` argument', async () => {

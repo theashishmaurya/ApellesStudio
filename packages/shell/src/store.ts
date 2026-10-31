@@ -51,6 +51,13 @@ interface ShellStore {
   setWgpuSurfaceActive: (active: boolean) => void;
   sourcesPanelOpen: boolean;
   setSourcesPanelOpen: (open: boolean) => void;
+  /** D-436 — whether the Sources panel's folder (bin) list is expanded.
+   *  Session-only like the rest of the panel chrome here; lives in the shell
+   *  store so `@apelles/debug` can read and drive the flag the caret writes
+   *  (`debug_set_popover_open {id: 'sources-folders'}`). Defaults open: the
+   *  list was always shown before D-436. */
+  sourcesFoldersOpen: boolean;
+  setSourcesFoldersOpen: (open: boolean) => void;
   /** B-341 — whether the chrome bar's Agent activity popover is open.
    *  Session-only. Lives here, not in the app's agent store, so that
    *  `debug_ui_state` / `debug_set_popover_open` (which depend on the shell
@@ -68,6 +75,8 @@ export const useShellStore = create<ShellStore>((set) => ({
   setWgpuSurfaceActive: (active) => set({ wgpuSurfaceActive: active }),
   sourcesPanelOpen: false,
   setSourcesPanelOpen: (open) => set({ sourcesPanelOpen: open }),
+  sourcesFoldersOpen: true,
+  setSourcesFoldersOpen: (open) => set({ sourcesFoldersOpen: open }),
   agentActivityOpen: false,
   setAgentActivityOpen: (open) => set({ agentActivityOpen: open }),
 }));

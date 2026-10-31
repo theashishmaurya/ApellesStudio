@@ -447,6 +447,8 @@ Rule: strip = 14 px below 76, 16 px at 76 and up. The band is `round((H − stri
 
 - **Header** (36 px). A segmented control of icons: Media `FilmStrip`, Titles `TextT`, Effects `MagicWand`, Captions `ClosedCaptioning`. It replaces the left rail. Import (`Plus` + "Import", ghost) sits on the right.
 - **Search** (28 px field, `MagnifyingGlass`), then the folder/collection row.
+  - **Built (D-436, 2026-11-01).** The folder row is a header with a disclosure caret (collapses the whole list; Left/Right keys), "All media", the selected folder's name while collapsed, and New folder. The list sits in its own resizable pane above the grid.
+  - **Built (2026-11-01).** Audio tiles draw the file's waveform in the `clip-audio` tokens with a `MusicNotes` glyph (glyph centred while peaks load); every probed tile has the duration pill.
 - **Grid.** 2 columns at 280 px, more when wider; a tile size slider sits in the header menu.
   - Thumbnail 16:9, `--radius-sm`. Duration as a 10 px mono pill bottom-right on the thumb (`rgba(0,0,0,.6)`).
   - Name below, `--text-xs`, one line with ellipsis.

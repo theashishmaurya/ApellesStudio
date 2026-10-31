@@ -613,7 +613,9 @@ Why it is a real gap rather than an annoyance:
 **Resolved 2026-10-31 (B-341, D-435).** The dock became a top-bar button + popover, so it no
 longer occludes anything while closed, and its open flag is in the shell store:
 `debug_set_popover_open {id: 'agent-activity', open}` opens or closes it and
-`debug_get_ui_state` reports `shell.agentActivityOpen`. No separate op was added. The original
+`debug_get_ui_state` reports `shell.agentActivityOpen`. No separate op was added.
+
+`debug_set_popover_open {id: 'sources-folders', open}` (D-436) likewise drives the Sources panel's folder-list disclosure; `debug_get_ui_state` reports `shell.sourcesFoldersOpen`. The original
 analysis follows.
 
 The missing piece was a `debug_set_agent_dock(false)` in the same family as the
