@@ -1,12 +1,10 @@
 /**
- * @apelles/tokens — design tokens + theme (D-039).
+ * @apelles/tokens — the single source of the Apelles design-token VALUES (D-039, D-432).
  *
- * Will hold: colour / spacing / radius / typography tokens and the light/dark
- * theme, extracted from RapidRAW's (`app/src/`) CSS variables. Consumed by
- * `@apelles/ui` and every tab package.
- *
- * Status: D-039 migration step 1 stub — placeholder export only. Nothing is
- * wired to import from here yet.
+ * Colour values per theme and the UI font stacks. The CSS side (Tailwind `@theme`
+ * aliases, the type scale, radii, shadows) lives in `app/src/styles.css`; the app
+ * writes these values onto `:root` at runtime. See README.md.
  */
 
-export const CHROMA_TOKENS_STUB = "@apelles/tokens" as const;
+export * from './themes';
+export * from './fonts';

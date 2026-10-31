@@ -41,6 +41,7 @@ import { TextColors, TextVariants, TextWeights } from '../../types/typography';
 import { useOsPlatform } from '../../hooks/useOsPlatform';
 import { open } from '@tauri-apps/plugin-shell';
 import { ArrowCounterClockwiseIcon } from '@phosphor-icons/react';
+import { DEFAULT_UI_FONT } from '@apelles/tokens';
 import { useUIStore } from '../../store/useUIStore';
 import {
   aiEnvHeadline,
@@ -1405,7 +1406,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                         <Dropdown
                           onChange={(value: any) => onSettingsChange({ ...appSettings, fontFamily: value })}
                           options={fontOptions}
-                          value={appSettings?.fontFamily || 'poppins'}
+                          value={appSettings?.fontFamily || DEFAULT_UI_FONT}
                           triggerClassName="bg-bg-primary"
                         />
                       </SettingItem>

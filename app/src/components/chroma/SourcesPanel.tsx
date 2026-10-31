@@ -708,7 +708,7 @@ export function SourcesPanel() {
                           className={cn(
                             'absolute top-1 left-1 size-5 rounded flex items-center justify-center border',
                             isSelected
-                              ? 'bg-accent border-accent text-white'
+                              ? 'bg-accent border-accent text-button-text'
                               : 'bg-bg-primary/90 border-border-color text-transparent',
                           )}
                         >

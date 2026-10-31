@@ -1,6 +1,6 @@
 # UI redesign: an FCP-style Edit tab (research + spec)
 
-**Status: proposed, awaiting owner approval (D-432).** No app code has changed for this.
+**Status: accepted (D-432). P1 (tokens and type) done 2026-10-31; P2 to P5 not started.**
 This note is the research trail, the design system, the per-component spec, the list of
 concrete CSS defects in today's components, and the phased plan. The look is shown in
 the static mockup `scratch/ui-redesign-mockup.html` (not app code; `scratch/` is
@@ -609,6 +609,28 @@ Line numbers are as of `main` at `c90569f`. Each one is fixed by the phase in br
 19. **`packages/inspector/src/InspectorSection.tsx:13`** — the section header is `text-[10px] font-semibold uppercase tracking-wide` → §4.10. **[P4]**
 20. Arbitrary text-size literals throughout the editor: `text-[10px]` and `text-[11px]` at **`TimelinePane.tsx:737, 766, 818, 939, 2738, 2754, 2774, 2780, 4136, 4145, 4319, 4329, 4392`** and more, plus `ClipInspectorPanel.tsx:658, 781, 819, 904` → the §3.4 scale. **[P1 scale, each phase migrates its own files]**
 21. **`packages/editor/src/EditorTab.tsx:152–278`** — the timeline sits *inside* the centre column, so Sources and the Inspector take full height and the timeline loses ~600 px of width at 1440 → §4.1. **[P5]**
+
+## 6a. P1 as built (2026-10-31)
+
+Values live in `packages/tokens/src/themes.ts` (`THEME_VALUES`, `cssVariablesFor`); `app/src/utils/themes.ts` imports them. The CSS side is in `app/src/styles.css` `@theme`. Differences from the spec above:
+
+- **Accent is terracotta, not blue (owner answer, D-432).** Dark `accent` and `focus-ring` are `#c4502f`. The brand `#a6432c` was too dark for the dark UI: 2.49:1 against `surface`, under the 3:1 a focus ring or active control needs. `#c4502f` is the same hue, lifted, and measures:
+  - `button-text` (white) on it: **4.63:1** (AA for text).
+  - on `surface`: **3.26:1**; on `bg-primary`: 3.59:1 (AA for UI components).
+  - Terracotta used as text on dark is too dim at that value, so a separate `accent-text` `#e8896b` is added: 5.91:1 on `surface`.
+- **`destructive` is `#ff5a50`, not `#ff453a`.** The spec value gives 4.43:1 on `surface`; the tweak gives 4.91:1, so it passes as text.
+- `hover-color` stays `#ebebf0`. The fork's `bg-accent-hover` class has no definition anywhere (it never resolved), so nothing changes there.
+- New names beyond the spec: `accent-text`, `focus-ring`. `--color-ring` (shadcn) now points at `focus-ring`; `--color-destructive` points at `--app-destructive` (the literal left `packages/ui/src/styles.css`).
+- The type scale (`--text-2xs..lg`), `--font-mono`, radii `xs/sm/md/lg`, and `--shadow-popover` / `--shadow-dialog` are in `@theme`. The scale changes `text-xs/sm/base/lg` app-wide on purpose.
+- The system font is the default: `resolveUiFontStack` falls back to it; `fontFamily: 'poppins'` saved in settings still gets Poppins.
+- `text-white` on `bg-accent` fixed to `text-button-text` in `SourcesPanel.tsx` and `LensCorrectionModal.tsx`.
+- Light and grey have values for every new name, not redesigned.
+
+Defects closed: 15, 16, 17 and the token half of 4 and 20. Left for later phases: the migration of `text-[10px]` literals and the use of `clip-*` in `TimelinePane` (P2 to P4).
+
+**Tests.** `packages/tokens/src/tokens.test.ts`: every token present in every theme with a parseable colour, no duplicates, each name aliased in CSS, clip colours theme-independent, and computed WCAG contrast (text >= 4.5, UI >= 3, `clip-label` on every `clip-*-strip` >= 4.5).
+
+**Not verified.** No screenshot pass: the app was not run (a running dev instance was off limits) and no visual harness exists for the three tabs. The first look at it on screen is the owner's or the P2 harness.
 
 ## 7. Human + AI parity
 

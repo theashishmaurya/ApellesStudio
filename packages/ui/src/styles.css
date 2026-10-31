@@ -45,12 +45,10 @@
   /* lines + fields + focus ring */
   --color-border: var(--app-border-color);
   --color-input: var(--app-border-color);
-  --color-ring: var(--app-accent);
+  --color-ring: var(--app-focus-ring);
 
-  /* destructive — the one place a colour value is pinned; it is a token here,
-     never a literal in a component. A red that reads on the dark theme and is
-     close to the fork's existing `text-red-400` error colour. */
-  --color-destructive: rgb(229, 72, 77);
+  /* destructive: its value now lives in @apelles/tokens (D-432 P1) like every other colour. */
+  --color-destructive: var(--app-destructive);
   --color-destructive-foreground: var(--app-text-primary);
 
   /* radius: reuse the fork's existing scale, don't add a third one */

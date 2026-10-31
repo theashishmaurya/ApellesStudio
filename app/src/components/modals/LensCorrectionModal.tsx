@@ -942,7 +942,7 @@ export default function LensCorrectionModal({
               onMouseLeave={() => toggleCompare(false)}
               className={clsx(
                 'p-2 rounded-full transition-colors select-none',
-                isCompareActive ? 'bg-accent text-white' : 'text-white/60 hover:bg-white/10 hover:text-white',
+                isCompareActive ? 'bg-accent text-button-text' : 'text-white/60 hover:bg-white/10 hover:text-white',
               )}
               data-tooltip={t('modals.lensCorrection.compareTooltip')}
             >
