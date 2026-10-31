@@ -2168,33 +2168,77 @@ def editor_set_preview_zoom(
 
 
 @mcp.tool()
-def editor_set_timeline_view(zoom: float | str) -> str:
-    """Set the Edit tab's TIMELINE zoom: how many pixels one second of timeline
-    spans (D-434, the AI half of the timeline toolbar's `-  100%  +` buttons and
-    ctrl/pinch-scroll over the lanes; D-432 plans the Clip Appearance view
-    settings to join it on this tool).
+def editor_set_timeline_view(
+    zoom: float | str | None = None,
+    clip_height: float | str | None = None,
+    band_ratio: float | None = None,
+    show_names: bool | None = None,
+    show_badges: bool | None = None,
+    snapping: bool | None = None,
+    skimming: bool | None = None,
+) -> str:
+    """Set how the Edit tab's TIMELINE is drawn and how it behaves under the
+    pointer: its zoom, its Clip Appearance, and the snapping and skimming
+    toggles (D-434 zoom; D-432 P3 the rest — the AI half of the toolbar's zoom
+    buttons, its Clip Appearance popover, and its Snapping (N) and Skimming (S)
+    buttons). Pass any subset; at least one.
 
     **Display-only. It changes no clip, no timing, and nothing that renders or
-    exports** — only how wide the timeline is drawn, so a frame number maps to a
-    different screen x. Why you would call it: to read fine detail (zoom in
-    before a `debug_pointer` drag that has to land on an exact frame), to see a
-    whole long timeline in one screenshot (zoom out), and to put the view back
-    to a known state — the default — after something else changed it.
+    exports.** Why you would call it: to read fine detail (zoom in before a
+    `debug_pointer` drag that has to land on an exact frame), to see a whole
+    long timeline in one screenshot (zoom out), to make clips tall enough to
+    read their waveforms, and to put the view back to a known state.
 
     `zoom`: a multiplier of the default, where **1 = the default** (the
     toolbar's 100 %, 90 px per second), 2 = twice as wide, 0.5 = half. Range
     about 0.01-5.3; outside it the value is clamped and the response says so in
-    `note`. Pass the string `"default"` for 1. A zoom set here does NOT anchor
-    on the playhead the way the toolbar buttons do; the scroll position is left
-    as it is.
+    `note`. Pass the string `"default"` for 1. It does NOT anchor on the
+    playhead the way the toolbar buttons do; the scroll position is left as it
+    is.
+
+    `clip_height`: the default height of every track that has no height of its
+    own — `"S"` (32 px), `"M"` (52, the default), `"L"` (76), `"XL"` (108), a
+    number of px (32-200), or `"default"`. A track dragged to its own height
+    (`editor_set_track_height`) keeps it.
+
+    `band_ratio`: how a clip's body below its name strip is shared between the
+    filmstrip and the waveform band, 0 (filmstrip only) to 1 (waveform only);
+    0.3 is the default.
+
+    `show_names` / `show_badges`: the clip name and the speed / keyframe badges
+    in each clip's name strip.
+
+    `snapping`: whether drags, trims, drops and the playhead snap to clip
+    edges, the playhead and markers (on by default; N in the GUI). Beat
+    snapping also needs this on.
+
+    `skimming`: whether hovering the timeline previews the frame under the
+    pointer in the viewer without moving the playhead (off by default; S in the
+    GUI).
 
     Not undoable, by design (same reasoning as `editor_set_preview_zoom`, D-216):
-    a view setting is UI state, not part of the `Timeline` document. The current
-    value is reported by `editor_get_state` as `timelineView`
-    (`{zoom, pct, pxPerSec}`)."""
+    view settings are UI state, not part of the `Timeline` document. The current
+    values are reported by `editor_get_state` as `timelineView` (`{zoom, pct,
+    pxPerSec, clipHeight, clipHeightPreset, bandRatio, showNames, showBadges,
+    snapping, skimming}`)."""
     import json
 
-    return json.dumps(_op("editor_set_timeline_view", zoom=zoom), indent=2, default=str)
+    args: dict = {}
+    if zoom is not None:
+        args["zoom"] = zoom
+    if clip_height is not None:
+        args["clipHeight"] = clip_height
+    if band_ratio is not None:
+        args["bandRatio"] = band_ratio
+    if show_names is not None:
+        args["showNames"] = show_names
+    if show_badges is not None:
+        args["showBadges"] = show_badges
+    if snapping is not None:
+        args["snapping"] = snapping
+    if skimming is not None:
+        args["skimming"] = skimming
+    return json.dumps(_op("editor_set_timeline_view", **args), indent=2, default=str)
 
 
 @mcp.tool()
@@ -3768,6 +3812,41 @@ def editor_set_track_sync_locked(track: int, sync_locked: bool) -> str:
 
 
 @mcp.tool()
+def editor_rename_track(track: int, name: str | None) -> str:
+    """Rename a track — the track header's double-click rename (D-432 P3). The
+    name is what the header and `editor_list_tracks` show ("Music", "VO"); the
+    header's `V1` / `A1` ID pill is unchanged. An empty string or null resets
+    the track to its default label ("Audio 2"). At most 64 characters. One undo
+    step.
+
+    Returns {ok, track, name (the label now shown), renamed}; `track` is the
+    0-based index from `editor_list_tracks`."""
+    import json
+
+    return json.dumps(_op("editor_rename_track", track=track, name=name), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_track_height(track: int, height: float | str) -> str:
+    """Set one track's height in the timeline — the track's bottom-edge drag and
+    its header menu's S / M / L / XL (D-432 P3). `height`: `"S"` (32 px), `"M"`
+    (52), `"L"` (76), `"XL"` (108), a number of px (clamped to 32-200), or
+    `"default"` to drop the track's own height and follow the timeline's clip
+    height (`editor_set_timeline_view(clip_height=...)`).
+
+    A taller track shows more of each clip: a larger filmstrip and a waveform
+    band you can read (the split by height is fixed: the name strip, then the
+    picture, then the waveform). Display-only: nothing renders or exports
+    differently. Stored with the track, so it follows the track when tracks are
+    reordered and is kept when the project reopens. One undo step.
+
+    Returns {ok, track, height (px, or null for the default), drawnHeight}."""
+    import json
+
+    return json.dumps(_op("editor_set_track_height", track=track, height=height), indent=2, default=str)
+
+
+@mcp.tool()
 def editor_list_tracks() -> str:
     """The active timeline's tracks, compactly and WITHOUT their clips (B-318)
     — read this first to find which track holds the voice-over, the music, the
@@ -3775,7 +3854,10 @@ def editor_list_tracks() -> str:
 
     Returns {ok, timelineId, durationFrames, trackCount, tracks: [{index,
     kind: "video"|"audio"|"subtitle", name ("Video 1", "Audio 2", ...: numbered
-    per kind, the label the track header shows), gain, muted (gain is 0),
+    per kind, the label the track header shows, or the name given with
+    `editor_rename_track`), badge (the header's ID pill: V1, A1, C1), renamed,
+    height (px; only when the track has its own, `editor_set_track_height`),
+    gain, muted (gain is 0),
     hidden, locked, syncLocked, duckFrom (the track whose clips duck this one,
     or null) and, when ducked, duckDb / duckAttackMs / duckReleaseMs, beatGrid
     (only on the track whose beats are shown), clipCount, sourceCount, sources

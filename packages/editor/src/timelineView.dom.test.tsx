@@ -92,7 +92,7 @@ describe('editor_set_timeline_view (H2)', () => {
   it('sets the timeline zoom as a multiplier of the default and reports it', async () => {
     const res = await callOp('editor_set_timeline_view', { zoom: 2 });
     expect(res.ok).toBe(true);
-    expect(res.result.timelineView).toEqual({ zoom: 2, pct: 200, pxPerSec: 180 });
+    expect(res.result.timelineView).toMatchObject({ zoom: 2, pct: 200, pxPerSec: 180 });
     expect(useTimelineViewStore.getState().pxPerSec).toBe(180);
   });
 
@@ -101,7 +101,7 @@ describe('editor_set_timeline_view (H2)', () => {
     expect(useTimelineViewStore.getState().pxPerSec).toBe(450);
     await callOp('editor_set_timeline_view', { zoom: 'default' });
     const state = await callOp('editor_get_state', {});
-    expect(state.result.timelineView).toEqual({ zoom: 1, pct: 100, pxPerSec: 90 });
+    expect(state.result.timelineView).toMatchObject({ zoom: 1, pct: 100, pxPerSec: 90 });
   });
 
   it('clamps to the ruler ladder and says so; refuses nonsense by name', async () => {
@@ -116,6 +116,73 @@ describe('editor_set_timeline_view (H2)', () => {
   it('is display-only: it never lands on the undo stack', async () => {
     await callOp('editor_set_timeline_view', { zoom: 3 });
     expect(useHistoryStore.getState().undoStack).toHaveLength(0);
+  });
+
+  it('D-432 P3: sets the Clip Appearance and the snapping / skimming toggles, alone or together', async () => {
+    const res = await callOp('editor_set_timeline_view', {
+      clipHeight: 'L',
+      bandRatio: 0.6,
+      showNames: false,
+      showBadges: false,
+      snapping: false,
+      skimming: true,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.result.timelineView).toMatchObject({
+      clipHeight: 76,
+      clipHeightPreset: 'L',
+      bandRatio: 0.6,
+      showNames: false,
+      showBadges: false,
+      snapping: false,
+      skimming: true,
+      zoom: 1,
+    });
+    // a px clip height is a custom one, clamped into 32..200
+    const custom = await callOp('editor_set_timeline_view', { clipHeight: 300 });
+    expect(custom.result.timelineView).toMatchObject({ clipHeight: 200, clipHeightPreset: null });
+    expect(custom.result.note).toMatch(/clamped/);
+    // only what was passed changes
+    expect(useTimelineViewStore.getState()).toMatchObject({ snapping: false, skimming: true, bandRatio: 0.6 });
+    const state = await callOp('editor_get_state', {});
+    expect(state.result.timelineView).toMatchObject({ clipHeight: 200, snapping: false, skimming: true });
+    expect(useHistoryStore.getState().undoStack).toHaveLength(0);
+  });
+
+  it('D-432 P3: refuses a bad toggle or appearance value by name', async () => {
+    expect((await callOp('editor_set_timeline_view', { snapping: 'yes' })).result.error).toMatch(/snapping/);
+    expect((await callOp('editor_set_timeline_view', { clipHeight: 'huge' })).result.error).toMatch(/clip_height/);
+    expect((await callOp('editor_set_timeline_view', { bandRatio: 'x' })).result.error).toMatch(/band_ratio/);
+  });
+});
+
+describe('editor_rename_track / editor_set_track_height (D-432 P3)', () => {
+  it('renames a track (one undo step) and an empty name resets it to its derived label', async () => {
+    const res = await callOp('editor_rename_track', { track: 0, name: '  B-roll ' });
+    expect(res.result).toMatchObject({ ok: true, track: 0, name: 'B-roll', renamed: true });
+    expect(useEditorTimelineStore.getState().timeline?.tracks[0].name).toBe('B-roll');
+    expect(useHistoryStore.getState().undoStack).toHaveLength(1);
+    const list = await callOp('editor_list_tracks', {});
+    expect(list.result.tracks[0]).toMatchObject({ name: 'B-roll', badge: 'V1', renamed: true });
+    const reset = await callOp('editor_rename_track', { track: 0, name: '' });
+    expect(reset.result).toMatchObject({ name: 'Video 1', renamed: false });
+    expect(useEditorTimelineStore.getState().timeline?.tracks[0].name).toBeUndefined();
+    expect((await callOp('editor_rename_track', { track: 4, name: 'x' })).result.error).toMatch(/track/);
+  });
+
+  it('sets a track height by preset or px (clamped), and "default" drops it', async () => {
+    const l = await callOp('editor_set_track_height', { track: 0, height: 'XL' });
+    expect(l.result).toMatchObject({ ok: true, height: 108, drawnHeight: 108 });
+    expect(useEditorTimelineStore.getState().timeline?.tracks[0].height).toBe(108);
+    const px = await callOp('editor_set_track_height', { track: 0, height: 999 });
+    expect(px.result.height).toBe(200);
+    const list = await callOp('editor_list_tracks', {});
+    expect(list.result.tracks[0].height).toBe(200);
+    const def = await callOp('editor_set_track_height', { track: 0, height: 'default' });
+    expect(def.result).toMatchObject({ height: null, drawnHeight: 52 });
+    expect(useEditorTimelineStore.getState().timeline?.tracks[0].height).toBeUndefined();
+    expect((await callOp('editor_set_track_height', { track: 0 })).result.error).toMatch(/height/);
+    expect((await callOp('editor_set_track_height', { track: 0, height: 'tall' })).result.error).toMatch(/S \/ M \/ L \/ XL/);
   });
 });
 
