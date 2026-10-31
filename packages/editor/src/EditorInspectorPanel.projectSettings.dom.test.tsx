@@ -159,8 +159,8 @@ describe('EditorInspectorPanel — Project Settings (D-274)', () => {
     await render();
     expect(text()).toContain('Project Settings');
     expect(text()).toContain('Resolution');
-    expect(text()).toContain('Frame Rate');
-    expect(text()).toContain('Colour Space');
+    expect(text()).toContain('Frame rate');
+    expect(text()).toContain('Colour space');
     // The generic clip-Inspector empty state is gone from this branch.
     expect(text()).not.toContain('Select a clip to edit its properties.');
   });
@@ -201,7 +201,7 @@ describe('EditorInspectorPanel — Project Settings (D-274)', () => {
     expect(backend.settings.fps).toBe(24);
 
     function fpsField(): HTMLInputElement {
-      const input = mounted?.container.querySelector('input[type="number"]') as HTMLInputElement | null;
+      const input = mounted?.container.querySelector('input[aria-label="Frame rate"]') as HTMLInputElement | null;
       if (!input) throw new Error('no custom fps field on screen');
       return input;
     }

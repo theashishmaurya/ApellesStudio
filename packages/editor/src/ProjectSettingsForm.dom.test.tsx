@@ -34,6 +34,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 const { ProjectSettingsForm } = await import('./ProjectSettingsForm');
 import type { ProjectSettingsValue } from './ProjectSettingsForm';
+import { typeNumber } from './testUtils/numberField';
 
 let mounted: MountedComponent | null = null;
 
@@ -65,23 +66,16 @@ async function click(el: HTMLElement) {
   await waitFrames(1);
 }
 
-// Same helpers `ClipInspectorPanel.tabs.dom.test.tsx` uses for its own
-// ratio-lock coverage — this form's Width/Height fields are the identical
-// pattern (a `<label>` wrapping a caption `<span>` and a `ScrubbableNumberInput`).
+// D-432 — Width / Height are `InspectorNumber`s on one "Size" `InspectorRow`
+// (labelled by `aria-label`), committing on Enter like every Inspector number.
 function field(label: string): HTMLInputElement {
-  const labels = [...(mounted?.container.querySelectorAll('label') ?? [])];
-  const hit = labels.find((l) => l.querySelector('span')?.textContent === label);
-  const input = hit?.querySelector('input');
+  const input = mounted?.container.querySelector(`input[aria-label="${label}"]`);
   if (!input) throw new Error(`no field labelled "${label}"`);
   return input as HTMLInputElement;
 }
 
 function type(input: HTMLInputElement, value: number) {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-  actSync(() => {
-    setter?.call(input, String(value));
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
+  typeNumber(input, value);
 }
 
 describe('ProjectSettingsForm', () => {
@@ -140,7 +134,7 @@ describe('ProjectSettingsForm', () => {
   // branch of its own to get wrong.
   it('renders a Colour Space control whatever the incoming value', async () => {
     await renderForm({});
-    expect(mounted?.container.textContent).toContain('Colour Space');
+    expect(mounted?.container.textContent).toContain('Colour space');
     expect(mounted?.container.querySelector('[data-slot="select-trigger"]')).toBeTruthy();
 
     mounted?.unmount();
@@ -169,7 +163,7 @@ describe('ProjectSettingsForm', () => {
   it('unlocked: editing Width leaves the current Height untouched', async () => {
     const onChange = await renderForm({ width: 1920, height: 1080 });
     await click(button('Custom', 0));
-    const lockBtn = mounted?.container.querySelector('button[title="Unlock aspect ratio"]') as HTMLButtonElement;
+    const lockBtn = mounted?.container.querySelector('button[aria-label="Link width and height"]') as HTMLButtonElement;
     await click(lockBtn);
     type(field('Width'), 3840);
     expect(onChange).toHaveBeenLastCalledWith({ width: 3840, height: 1080 });

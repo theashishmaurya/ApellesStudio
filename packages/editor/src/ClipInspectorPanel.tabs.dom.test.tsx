@@ -53,6 +53,8 @@ const { useEditorTimelineStore } = await import('./timelineStore');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
 const { useHistoryStore } = await import('@apelles/history');
 import { DEFAULT_TEXT_FONT, type Clip, type Timeline } from './timeline';
+import { typeNumber } from './testUtils/numberField';
+import { fieldByLabel, sectionTitles, tabByLabel, tabLabels as tabLabelsOf } from './testUtils/inspectorDom';
 
 const CLIP_ID = 'clip-1';
 const TEXT_CLIP_ID = 'title-1';
@@ -60,8 +62,8 @@ const TEXT_CLIP_ID = 'title-1';
 /** Every section the pre-D-246 Inspector rendered for an ordinary media clip,
  *  by its own heading. The point of the list is completeness: the union of the
  *  two tabs has to be exactly this, or the reorganisation dropped something. */
-const ALL_SECTIONS = ['Transform', 'Crop', 'Dynamic Zoom', 'Highlights', 'Speed', 'Fade', 'Audio', 'EQ', 'Keyframes'];
-const VIDEO_SECTIONS = ['Transform', 'Crop', 'Dynamic Zoom', 'Highlights', 'Speed', 'Fade', 'Keyframes'];
+const ALL_SECTIONS = ['Transform', 'Compositing', 'Crop', 'Dynamic zoom', 'Highlights', 'Speed', 'Fade', 'Keyframes', 'Audio', 'EQ'];
+const VIDEO_SECTIONS = ['Transform', 'Compositing', 'Crop', 'Dynamic zoom', 'Highlights', 'Speed', 'Fade', 'Keyframes'];
 const AUDIO_SECTIONS = ['Audio', 'EQ'];
 
 function fixture(): Timeline {
@@ -133,21 +135,17 @@ async function render() {
 
 /** The section headings currently on screen, in render order. */
 function sections(): string[] {
-  return [...(mounted?.container.querySelectorAll('h3') ?? [])].map((h) => h.textContent ?? '');
+  return sectionTitles(mounted?.container);
 }
 
 function tab(label: string): HTMLElement {
-  const el = [...(mounted?.container.querySelectorAll('[role="tab"]') ?? [])].find(
-    (t) => t.textContent === label,
-  );
+  const el = tabByLabel(mounted?.container, label);
   if (!el) throw new Error(`no ${label} tab — tabs are ${tabLabels().join(', ') || '(none)'}`);
   return el as HTMLElement;
 }
 
 function tabLabels(): string[] {
-  return [...(mounted?.container.querySelectorAll('[role="tab"]') ?? [])].map(
-    (t) => t.textContent ?? '',
-  );
+  return tabLabelsOf(mounted?.container);
 }
 
 async function clickTab(label: string) {
@@ -157,19 +155,13 @@ async function clickTab(label: string) {
 }
 
 function field(label: string): HTMLInputElement {
-  const labels = [...(mounted?.container.querySelectorAll('label') ?? [])];
-  const hit = labels.find((l) => l.querySelector('span')?.textContent === label);
-  const input = hit?.querySelector('input');
+  const input = fieldByLabel(mounted?.container, label);
   if (!input) throw new Error(`no field labelled "${label}"`);
   return input as HTMLInputElement;
 }
 
 function type(input: HTMLInputElement, value: number) {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-  actSync(() => {
-    setter?.call(input, String(value));
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
+  typeNumber(input, value);
 }
 
 function currentClip(): Clip {
@@ -277,22 +269,19 @@ describe('the clip Inspector’s Video / Audio tabs (D-246)', () => {
 
   it('the panel’s own local UI state survives a tab round trip', async () => {
     await render();
-    const lock = [...(mounted?.container.querySelectorAll('button') ?? [])].find(
-      (b) => b.getAttribute('title') === 'Unlock aspect ratio',
-    );
-    expect(lock).toBeTruthy();
-    actSync(() => (lock as HTMLElement).click());
+    const link = () =>
+      mounted?.container.querySelector('button[aria-label="Link width and height"]') as HTMLElement | null;
+    expect(link()?.getAttribute('aria-pressed')).toBe('true');
+    actSync(() => link()?.click());
     await waitFrames(1);
+    expect(link()?.getAttribute('aria-pressed')).toBe('false');
 
     await clickTab('Audio');
     await clickTab('Video');
-    // The ratio lock (D-193) is component-local, ephemeral state; a tab switch
+    // The ratio link (D-193) is component-local, ephemeral state; a tab switch
     // is not a new selection, so it must not reset the way `key={clip.id}`
     // resets it when the user really does pick a different clip.
-    const after = [...(mounted?.container.querySelectorAll('button') ?? [])].find(
-      (b) => b.getAttribute('title')?.includes('aspect ratio'),
-    );
-    expect(after?.getAttribute('title')).toBe('Lock aspect ratio');
+    expect(link()?.getAttribute('aria-pressed')).toBe('false');
   });
 
   it('the chosen tab is sticky across selections, and a title falls back without forgetting it', async () => {

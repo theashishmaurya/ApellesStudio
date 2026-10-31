@@ -5,8 +5,9 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "description": "Apelles Global Inspector shared chrome (D-103, Phase 4 of docs/notes/global-inspector.md). Tiny, presentation-only primitives (empty state, section heading) shared between @apelles/motion's InspectorPanel and @apelles/editor's ClipInspectorPanel — no @apelles/ui dependency (packages/motion can't use that barrel, see Button.tsx's doc comment), no Tauri, no tab-specific imports, so neither tab package depends on the other.",
+  "description": "Apelles Global Inspector shared chrome (D-103, Phase 4 of docs/notes/global-inspector.md). Tiny, presentation-only primitives (empty state, collapsible section) shared between @apelles/motion's InspectorPanel and @apelles/editor's ClipInspectorPanel — no @apelles/ui dependency (packages/motion can't use that barrel, see Button.tsx's doc comment), no Tauri, no tab-specific imports, so neither tab package depends on the other.",
   "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
     "react": "^19.2.8"
   }
 }

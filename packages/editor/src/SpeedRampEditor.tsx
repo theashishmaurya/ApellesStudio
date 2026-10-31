@@ -44,7 +44,7 @@
  */
 
 import { Button, ScrubbableNumberInput } from '@apelles/ui';
-import { InspectorSection } from '@apelles/inspector';
+import { EditorSection } from './EditorSection';
 
 import {
   clampSpeed,
@@ -172,7 +172,7 @@ export function SpeedRampEditor({
   };
 
   return (
-    <InspectorSection label="Speed">
+    <EditorSection id="speed" label="Speed">
       <div className="flex flex-col gap-1.5">
         {segments.map((seg) => {
           // Only a segment that a real point starts can be removed — the head
@@ -261,6 +261,6 @@ export function SpeedRampEditor({
             : `${Math.round(outFrames)} of ${clip.duration} frames long after retiming. Retimes the picture and its sound together.`}
         </p>
       </div>
-    </InspectorSection>
+    </EditorSection>
   );
 }

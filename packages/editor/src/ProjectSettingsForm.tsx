@@ -35,8 +35,10 @@
  * than the rare staleness.
  */
 import { useState } from 'react';
-import { LockIcon, LockOpenIcon } from '@phosphor-icons/react';
-import { Button, ScrubbableNumberInput, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@apelles/ui';
+import { LinkSimpleBreakIcon, LinkSimpleIcon } from '@phosphor-icons/react';
+import { InspectorRow, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@apelles/ui';
+
+import { InspectorNumber } from './InspectorNumber';
 
 /** Mirrors `crate::apelles_project::ProjectSettings` (`crates/apelles-project/
  *  src/manifest.rs`) and its own `merge_patch` contract exactly: every field
@@ -91,7 +93,7 @@ const MODE_LABEL: Readonly<Record<Mode, string>> = {
 };
 
 const pillClass = (active: boolean): string =>
-  `px-2 py-1 rounded-md border text-[11px] ${
+  `px-1.5 py-0.5 rounded-sm border text-2xs ${
     active
       ? 'border-accent text-text-primary bg-accent/10'
       : 'border-border-color text-text-secondary hover:text-text-primary'
@@ -149,29 +151,28 @@ export function ProjectSettingsForm({
   };
 
   return (
-    <div className="flex flex-col gap-4 text-xs">
-      <div className="flex flex-col gap-1.5">
-        <span className="text-text-secondary">Resolution</span>
-        <div className="flex flex-wrap gap-1.5">
-          {MODES.map((m) => (
-            <button
-              key={m}
-              type="button"
-              disabled={disabled}
-              className={pillClass(resMode === m)}
-              onClick={() => {
-                setResMode(m);
-                if (m === 'match') onChange({ width: null, height: null });
-                else if (m === 'custom' && settings.width == null) {
-                  onChange({ width: customWidth, height: customHeight });
-                }
-              }}
-            >
-              {MODE_LABEL[m]}
-            </button>
-          ))}
-        </div>
-        {resMode === 'preset' && (
+    <div className="flex flex-col gap-0.5 text-xs">
+      <InspectorRow label="Resolution" controlClassName="flex-wrap">
+        {MODES.map((m) => (
+          <button
+            key={m}
+            type="button"
+            disabled={disabled}
+            className={pillClass(resMode === m)}
+            onClick={() => {
+              setResMode(m);
+              if (m === 'match') onChange({ width: null, height: null });
+              else if (m === 'custom' && settings.width == null) {
+                onChange({ width: customWidth, height: customHeight });
+              }
+            }}
+          >
+            {MODE_LABEL[m]}
+          </button>
+        ))}
+      </InspectorRow>
+      {resMode === 'preset' && (
+        <InspectorRow label="Preset">
           <Select
             value={
               matchesResPreset(settings.width, settings.height) >= 0
@@ -185,7 +186,7 @@ export function ProjectSettingsForm({
             }}
             disabled={disabled}
           >
-            <SelectTrigger className="mt-1 h-7 w-full text-xs" data-chroma-field="resolution-preset">
+            <SelectTrigger className="data-[size=default]:h-[22px] w-full text-xs" data-chroma-field="resolution-preset">
               <SelectValue placeholder="Resolution" />
             </SelectTrigger>
             <SelectContent>
@@ -196,73 +197,69 @@ export function ProjectSettingsForm({
               ))}
             </SelectContent>
           </Select>
-        )}
-        {resMode === 'custom' && (
-          <div className="mt-1 flex w-full items-end gap-2">
-            <label className="flex min-w-0 flex-1 flex-col gap-1">
-              <span className="text-text-secondary/70 text-[10px]">Width</span>
-              <ScrubbableNumberInput
-                step={1}
-                min={1}
-                disabled={disabled}
-                className="h-7 w-full"
-                value={settings.width ?? null}
-                onValueChange={handleCustomWidthChange}
-              />
-            </label>
-            <span className="text-text-secondary pb-1.5">×</span>
-            <label className="flex min-w-0 flex-1 flex-col gap-1">
-              <span className="text-text-secondary/70 text-[10px]">Height</span>
-              <ScrubbableNumberInput
-                step={1}
-                min={1}
-                disabled={disabled}
-                className="h-7 w-full"
-                value={settings.height ?? null}
-                onValueChange={handleCustomHeightChange}
-              />
-            </label>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              disabled={disabled}
-              className="mb-0.5"
-              onClick={() => setRatioLocked((v) => !v)}
-              title={ratioLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
-            >
-              {ratioLocked ? <LockIcon size={12} /> : <LockOpenIcon size={12} />}
-            </Button>
-          </div>
-        )}
-      </div>
+        </InspectorRow>
+      )}
+      {resMode === 'custom' && (
+        <InspectorRow label="Size">
+          <InspectorNumber
+            aria-label="Width"
+            prefix="W"
+            step={1}
+            min={1}
+            disabled={disabled}
+            className="min-w-0 flex-1"
+            value={settings.width ?? customWidth}
+            onChange={handleCustomWidthChange}
+          />
+          <button
+            type="button"
+            className="text-text-secondary hover:text-text-primary aria-pressed:text-accent-text flex size-4 shrink-0 items-center justify-center rounded-sm disabled:opacity-40"
+            disabled={disabled}
+            aria-pressed={ratioLocked}
+            aria-label="Link width and height"
+            onClick={() => setRatioLocked((v) => !v)}
+            title={ratioLocked ? 'Aspect ratio linked — click to unlink' : 'Aspect ratio unlinked — click to link'}
+          >
+            {ratioLocked ? <LinkSimpleIcon size={12} /> : <LinkSimpleBreakIcon size={12} />}
+          </button>
+          <InspectorNumber
+            aria-label="Height"
+            prefix="H"
+            step={1}
+            min={1}
+            disabled={disabled}
+            className="min-w-0 flex-1"
+            value={settings.height ?? customHeight}
+            onChange={handleCustomHeightChange}
+          />
+        </InspectorRow>
+      )}
 
-      <div className="flex flex-col gap-1.5">
-        <span className="text-text-secondary">Frame Rate</span>
-        <div className="flex flex-wrap gap-1.5">
-          {MODES.map((m) => (
-            <button
-              key={m}
-              type="button"
-              disabled={disabled}
-              className={pillClass(fpsMode === m)}
-              onClick={() => {
-                setFpsMode(m);
-                if (m === 'match') onChange({ fps: null });
-                else if (m === 'custom' && settings.fps == null) onChange({ fps: customFps });
-              }}
-            >
-              {MODE_LABEL[m]}
-            </button>
-          ))}
-        </div>
-        {fpsMode === 'preset' && (
+      <InspectorRow label="Frame rate" controlClassName="flex-wrap">
+        {MODES.map((m) => (
+          <button
+            key={m}
+            type="button"
+            disabled={disabled}
+            className={pillClass(fpsMode === m)}
+            onClick={() => {
+              setFpsMode(m);
+              if (m === 'match') onChange({ fps: null });
+              else if (m === 'custom' && settings.fps == null) onChange({ fps: customFps });
+            }}
+          >
+            {MODE_LABEL[m]}
+          </button>
+        ))}
+      </InspectorRow>
+      {fpsMode === 'preset' && (
+        <InspectorRow label="Preset">
           <Select
             value={settings.fps != null && FPS_PRESETS.includes(settings.fps) ? String(settings.fps) : undefined}
             onValueChange={(v) => onChange({ fps: Number(v) })}
             disabled={disabled}
           >
-            <SelectTrigger className="mt-1 h-7 w-full text-xs">
+            <SelectTrigger className="data-[size=default]:h-[22px] w-full text-xs">
               <SelectValue placeholder="fps" />
             </SelectTrigger>
             <SelectContent>
@@ -273,27 +270,30 @@ export function ProjectSettingsForm({
               ))}
             </SelectContent>
           </Select>
-        )}
-        {fpsMode === 'custom' && (
-          <ScrubbableNumberInput
+        </InspectorRow>
+      )}
+      {fpsMode === 'custom' && (
+        <InspectorRow label="Rate">
+          <InspectorNumber
+            aria-label="Frame rate"
             step={0.001}
             min={1}
+            unit="fps"
             disabled={disabled}
-            className="mt-1 h-7 w-full"
-            value={settings.fps ?? null}
-            onValueChange={(f) => onChange({ fps: f })}
+            className="min-w-0 flex-1"
+            value={settings.fps ?? customFps}
+            onChange={(f) => onChange({ fps: f })}
           />
-        )}
-      </div>
+        </InspectorRow>
+      )}
 
-      <div className="flex flex-col gap-1.5">
-        <span className="text-text-secondary">Colour Space</span>
+      <InspectorRow label="Colour space">
         <Select
           value={settings.colorSpace ?? 'rec709'}
           onValueChange={(v) => onChange({ colorSpace: v })}
           disabled={disabled}
         >
-          <SelectTrigger className="h-7 w-full text-xs">
+          <SelectTrigger className="data-[size=default]:h-[22px] w-full text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -304,10 +304,10 @@ export function ProjectSettingsForm({
             ))}
           </SelectContent>
         </Select>
-        <p className="text-text-secondary/60 text-[10px] leading-snug">
-          Display / metadata only for now — the grade still renders display-referred Rec.709 (D-004).
-        </p>
-      </div>
+      </InspectorRow>
+      <p className="text-text-tertiary pt-1 text-2xs leading-snug">
+        Display / metadata only for now — the grade still renders display-referred Rec.709 (D-004).
+      </p>
     </div>
   );
 }

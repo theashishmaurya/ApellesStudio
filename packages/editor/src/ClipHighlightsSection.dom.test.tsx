@@ -84,6 +84,8 @@ function setup(withHighlight = false) {
     selection: [{ track: 0, id: CLIP_ID }],
     selectedGap: null,
     inspectorTab: 'video',
+    // D-432 — Highlights starts collapsed; these tests drive its rows.
+    inspectorSections: { highlights: true },
   });
 }
 

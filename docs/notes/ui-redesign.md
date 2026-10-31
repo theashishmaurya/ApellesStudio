@@ -1,6 +1,6 @@
 # UI redesign: an FCP-style Edit tab (research + spec)
 
-**Status: accepted (D-432). P1 (tokens and type) and P2 (clip block, handles, edit-tool feedback, playhead, layer scale) done 2026-10-31; P3 (track headers, per-track height, ruler, markers, snapping / skimming, two-up viewer) done 2026-11-01; P4 and P5 not started.**
+**Status: accepted (D-432). P1 (tokens and type) and P2 (clip block, handles, edit-tool feedback, playhead, layer scale) done 2026-10-31; P3 (track headers, per-track height, ruler, markers, snapping / skimming, two-up viewer) done 2026-11-01; P4 (Inspector) done 2026-11-01; P5 not started.**
 This note is the research trail, the design system, the per-component spec, the list of
 concrete CSS defects in today's components, and the phased plan. The look is shown in
 the static mockup `scratch/ui-redesign-mockup.html` (not app code; `scratch/` is
@@ -812,6 +812,17 @@ M, `editor_set_track_height` round trip, the new scenarios
 `track-height-drag`, `track-header-quiet`, the updated
 `move-snapping-toggle` / `trim-tool-shortcuts` / `trim-two-up-viewer`), and
 the two-up decode cadence on real 4K footage.
+
+## 6d. P4 as built (2026-11-01)
+
+- **`NumberScrubber`** (`packages/ui/src/components/ui/number-scrubber.tsx`, tests `packages/editor/src/NumberScrubber.dom.test.tsx`): a `role="spinbutton"` text field. 1 px = 1 `step` (callers pick steps so a pixel is a useful nudge: Scale / Opacity / Volume 0.01), Shift x10, Alt x0.1, 3 px click slop, Esc mid-drag restores. Typed text goes through `lib/number-expression.ts` (closed grammar, no `eval`): `+ * /` lead = relative to the current value, `-` lead = a negative number, `-=` subtracts, the field's own unit is accepted. Open question 7 is answered: arithmetic = yes.
+- **Perf.** The field renders its live value locally during a scrub; `onChange` is coalesced to one call per `requestAnimationFrame`, the final value flushed on release. `InspectorNumber` (editor) brackets the gesture with `beginHistoryGroup` / `endHistoryGroup`; `applyOp` pushes entries with a shared `coalesceKey`, which `@apelles/history` folds into one entry (first `undo`, last `redo`).
+- **No pointer lock.** B-136 / D-271 found Pointer Lock's mandatory banner unusable in WKWebView. The pointer is captured on the field with window listeners as backup; the cursor is a static `ew-resize`.
+- **Rows / sections.** `InspectorRow` (`@apelles/ui`): 92 px label (ellipsis + full-text tooltip), control, optional fixed 80 px slot (‹ ◇ › ∿ ↺ at 16 px; ‹ › are `invisible` until animated, diamond / reset fade in on row hover or focus: opacity only, no layout). The slot is 80 px, not the spec's 36, because it holds nav arrows and the curve button too. `InspectorSection` (`@apelles/inspector`) is collapsible when given `onOpenChange` (28 px header, caret, `meta`, `actions`, lazy body); `EditorSection` binds it to `timelineStore.inspectorSections`. Dynamic zoom and Highlights start closed. Labels are full ("Crop left"), Opacity moved into a new Compositing section, Width / Height became one Size row with a real link toggle (`aria-pressed`).
+- **Tabs / header.** Icon tabs (`FilmStrip`, `SpeakerHigh`, 28 x 22, accent icon on `bg-secondary`, `aria-label` = name); a 44 px header (kind icon + name). The no-selection view uses the same header and rows ("Project", "This timeline" sections).
+- **AI parity.** Every op, MCP tool and debug op is unchanged (`debug_set_editor_inspector`, `debug_set_inspector_tab`); `debug_get_ui_state` gained `editor.inspectorSections`. There is no new MCP surface: nothing here adds a capability, only presentation and gesture.
+- **Not done (deviations).** No inline sliders (mockup rows with a range); no Speed / Info icon tabs (Speed stays a section); no duration in the header (the panel has no fps); the Text / Caption / Adjustment inspectors keep their own rows (they get the new heading type only); the section open state has a read (`debug_get_ui_state`) but no debug write op, to avoid touching `mcp/server.py` during the drag-perf work. Live-harness numbers (scrub latency, swap time, hover CLS) are not yet measured.
+- **Evidence.** `scratch/ui-redesign-p4/after-*.png`: the Inspector rendered in `app/harness.html?mode=inspector` (headless Chromium, 380 px wide); the "before" is the owner's `scratch/bug-refs/2026-11-01-after-p2.png`.
 
 ## 7. Human + AI parity
 

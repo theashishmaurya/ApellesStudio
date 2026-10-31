@@ -59,6 +59,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 const { useEditorTimelineStore } = await import('./timelineStore');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
 import type { Clip, Timeline } from './timeline';
+import { typeNumber } from './testUtils/numberField';
 
 const CLIP_ID = 'clip-1';
 
@@ -153,11 +154,7 @@ function click(el: HTMLElement) {
  *  the only one that works without a testing-library dependency this package
  *  does not have. */
 function type(input: HTMLInputElement, value: number) {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-  actSync(() => {
-    setter?.call(input, String(value));
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
+  typeNumber(input, value);
 }
 
 async function render() {
@@ -168,7 +165,7 @@ async function render() {
 describe('per-property keyframing (D-208)', () => {
   it('the diamond starts hollow for every property on an un-keyframed clip', async () => {
     await render();
-    for (const label of ['Opacity', 'Position X', 'Position Y', 'Scale', 'Rotation', 'Left', 'Top']) {
+    for (const label of ['Opacity', 'Position X', 'Position Y', 'Scale', 'Rotation', 'Crop left', 'Crop top']) {
       expect(button(`Toggle ${label} keyframes`).getAttribute('aria-pressed')).toBe('false');
     }
     expect(keys()).toEqual([]);
@@ -188,7 +185,7 @@ describe('per-property keyframing (D-208)', () => {
     expect(animatedParams()).toEqual(['scale']);
     expect(button('Toggle Scale keyframes').getAttribute('aria-pressed')).toBe('true');
     // …and no other property became animated as a side effect.
-    for (const label of ['Opacity', 'Position X', 'Position Y', 'Rotation', 'Left']) {
+    for (const label of ['Opacity', 'Position X', 'Position Y', 'Rotation', 'Crop left']) {
       expect(button(`Toggle ${label} keyframes`).getAttribute('aria-pressed')).toBe('false');
     }
 
@@ -359,12 +356,12 @@ describe('per-property reset (D-208)', () => {
     await render();
     type(field('Scale'), 2.5);
     await waitFrames(1);
-    type(field('Left'), 0.3);
+    type(field('Crop left'), 0.3);
     await waitFrames(1);
 
     click(button('Reset Scale'));
     await waitFrames(1);
-    click(button('Reset Left'));
+    click(button('Reset Crop left'));
     await waitFrames(1);
 
     expect(currentClip().scale).toBe(1);
@@ -422,7 +419,7 @@ describe('the whole-clip Keyframes section (D-208 — kept, and now merging)', (
       'rotation',
       'scale',
     ]);
-    for (const label of ['Opacity', 'Position X', 'Scale', 'Rotation', 'Corner Radius', 'Left', 'Bottom']) {
+    for (const label of ['Opacity', 'Position X', 'Scale', 'Rotation', 'Corner radius', 'Crop left', 'Crop bottom']) {
       expect(button(`Toggle ${label} keyframes`).getAttribute('aria-pressed')).toBe('true');
     }
   });

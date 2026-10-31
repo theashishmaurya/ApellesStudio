@@ -161,6 +161,11 @@ function uiStateSnapshot() {
       // `[data-chroma-panel="clip-inspector"]` is what answers the latter.
       inspectorTab: editor.inspectorTab,
       inspectorTabs: CLIP_INSPECTOR_TABS,
+      // D-432 (P4) — the sections the user has deliberately opened or closed,
+      // by id; a section with no entry is showing its own default. The DOM
+      // (`[data-chroma-section]` + `aria-expanded`) is what answers "what is
+      // open right now", this is the remembered choice.
+      inspectorSections: editor.inspectorSections,
       // D-252 — every registered popover/dialog's open flag; a panel with no
       // entry yet is closed (see `usePanelOpen`'s `?? false`), so this is
       // filled in lazily and `panelIds` is the reference for what CAN appear.

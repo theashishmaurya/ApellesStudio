@@ -46,6 +46,7 @@ const { useEditorTimelineStore } = await import('./timelineStore');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
 import { endFrame } from './timeline';
 import type { Clip, Timeline } from './timeline';
+import { typeNumber } from './testUtils/numberField';
 
 const CLIP_ID = 'clip-1';
 
@@ -139,11 +140,7 @@ function click(el: HTMLElement) {
 }
 
 function type(input: HTMLInputElement, value: number) {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-  actSync(() => {
-    setter?.call(input, String(value));
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
+  typeNumber(input, value);
 }
 
 async function render() {

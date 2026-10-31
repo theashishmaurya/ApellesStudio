@@ -35,19 +35,18 @@
  * — TypeScript infers `TParam` from the `state`/callbacks passed in, so
  * nothing at either existing call site changed shape.
  *
- * **B-113 / D-253 — the field itself is `@apelles/ui`'s
- * `ScrubbableNumberInput`.** The crop rows showed values like `0.0` with the
- * spinner arrows painted over the digits that did not fit; the field was
- * `w-16` with no room for WebKit's inner-spin-button, and `0.052212` (a real
- * value from an on-canvas crop drag) is eight characters. B-113 widened the
- * row to `w-20` with `shrink-0` so a narrow Inspector cannot squeeze it back,
- * and rounded what is shown at rest — both still true, and both now the shared
- * component's job. D-253 finished the other half: the spinner is gone app-wide
- * (padding could never have cleared it) and the field is dragged horizontally
- * to change its value, Resolve-style. The row's own geometry stays in
- * `numericField.ts`.
+ * **D-432 (P4) — the row is `InspectorRow` + `InspectorNumber`.** The label
+ * column (92 px, full text, ellipsis only past that), the value control and a
+ * **fixed 80 px keyframe slot** come from `@apelles/ui`'s `InspectorRow`, so no
+ * row carries its own widths and nothing shifts on hover or when a property
+ * becomes animated: the slot always takes its width and its buttons fade with
+ * `opacity`. The value is a `NumberScrubber` (drag to scrub, click to type,
+ * arithmetic) through `InspectorNumber`, which folds a scrub's per-frame ops
+ * into one undo step. B-113 / D-253's concerns (digits fitting, no native
+ * spinner) are the scrubber's own now; `numericField.ts` keeps their history.
  *
- * Pure presentation, like the panel it came from: no store access, no
+ * Pure presentation, like the panel it came from: no store access (the
+ * scrub's undo bracket lives in `InspectorNumber`), no
  * `Clip` knowledge, nothing beyond the props below.
  */
 import {
@@ -57,11 +56,16 @@ import {
   ArrowCounterClockwiseIcon,
   BezierCurveIcon,
 } from '@phosphor-icons/react';
-import { Button, ScrubbableNumberInput, displayNumber } from '@apelles/ui';
+import { InspectorRow } from '@apelles/ui';
 
-import { NUM_FIELD } from './numericField';
+import { InspectorNumber } from './InspectorNumber';
 
-const row = 'flex items-center justify-between gap-2';
+/** One keyframe-slot button: 16 px, so ‹ ◇ › ∿ ↺ fit the 80 px slot. */
+const SLOT_BUTTON =
+  'flex size-4 shrink-0 items-center justify-center rounded-sm text-text-tertiary hover:bg-card-active hover:text-text-primary disabled:pointer-events-none disabled:opacity-30';
+/** Shown on row hover / keyboard focus inside the row, otherwise transparent —
+ *  `opacity` costs no layout, so the slot never shifts (D-432). */
+const ON_ROW_ACTIVE = 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100';
 
 /** One keyframeable property's live state, as a `PropertyRow` needs it —
  *  generic over nothing (a value is always a plain number here; a
@@ -104,9 +108,8 @@ export function staticPropertyState(value: number): PropertyState {
   return { value, animated: false, keyedHere: false, prevFrame: null, nextFrame: null };
 }
 
-/** One Transform/Crop-shaped row: label, value field, that property's own
- *  keyframe nav + stopwatch diamond, its own reset (D-208), and — when it is
- *  animated — the button that opens its ease curve on the timeline (D-233).
+/** One Transform/Crop-shaped row: label, value, and a fixed keyframe slot
+ *  (‹ prev, ◇ toggle, › next, ∿ curve, ↺ reset — D-208, D-233, D-432).
  *
  *  `TParam` is whatever the caller's own property-name type is
  *  (`ClipTransformParam` for the Transform/Crop/Audio rows, an EQ band's own
@@ -115,11 +118,11 @@ export function staticPropertyState(value: number): PropertyState {
  *  has never seen.
  *
  *  **The keyframe controls are optional** (D-224): pass neither
- *  `onKeyframeToggle` nor `onKeyframeNav` and the `<`/diamond/`>` trio is not
- *  rendered at all, leaving a plain label + field + reset row. That is for a
- *  property that genuinely cannot be animated — three permanently-disabled
- *  buttons would advertise an affordance that does not exist. `onReset` stays
- *  required either way: every property here has a rest value. */
+ *  `onKeyframeToggle` nor `onKeyframeNav` and the ‹ ◇ › trio is not rendered
+ *  at all (the slot still holds the reset). That is for a property that
+ *  genuinely cannot be animated — three permanently-disabled buttons would
+ *  advertise an affordance that does not exist. `onReset` stays required
+ *  either way: every property here has a rest value. */
 export function PropertyRow<TParam extends string>({
   label,
   param,
@@ -127,6 +130,7 @@ export function PropertyRow<TParam extends string>({
   step,
   min,
   max,
+  unit,
   disabled,
   onChange,
   onKeyframeToggle,
@@ -141,6 +145,8 @@ export function PropertyRow<TParam extends string>({
   step: number;
   min?: number;
   max?: number;
+  /** Suffix shown after the value (`°`, `px`). */
+  unit?: string;
   disabled: boolean;
   onChange: (value: number) => void;
   onKeyframeToggle?: (param: TParam) => void;
@@ -158,124 +164,102 @@ export function PropertyRow<TParam extends string>({
   curveOpen?: boolean;
 }) {
   // Both together or neither — a row with nav arrows but no diamond (or the
-  // reverse) is not a state any caller wants, and this keeps the three buttons
-  // one render decision rather than three independent ones.
+  // reverse) is not a state any caller wants.
   const keyframeable = !!onKeyframeToggle && !!onKeyframeNav;
 
-  /** B-113 — what the row shows at rest, which is what the `title` below is
-   *  comparing against. The focused/exact half of that split lives in
-   *  `ScrubbableNumberInput`. */
-  const shown = displayNumber(state.value, step);
-  return (
-    <div className={row}>
-      {/* The label still really labels the input (clicking it focuses the
-          field) — which is why the buttons live OUTSIDE this element: a
-          <label> wrapping them would make every icon click also hit the
-          input. */}
-      <label className="flex min-w-0 flex-1 items-center justify-between gap-2">
-        <span className="text-text-secondary truncate">{label}</span>
-        <ScrubbableNumberInput
-          step={step}
-          min={min}
-          max={max}
-          disabled={disabled}
-          className={NUM_FIELD.className}
-          value={state.value}
-          // Nothing is hidden by the rounding: the full-precision value is one
-          // hover (or one click into the field) away, and the attribute is
-          // omitted entirely when the two already agree so the tooltip only
-          // ever appears when it has something to add.
-          title={shown === state.value ? undefined : `${label}: ${state.value}`}
-          onValueChange={onChange}
-        />
-      </label>
-      <div className="flex shrink-0 items-center">
-        {keyframeable && (
-          <>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              disabled={disabled || state.prevFrame === null}
-              onClick={() => onKeyframeNav?.(param, -1)}
-              title={`Go to the previous ${label} keyframe`}
-              aria-label={`Previous ${label} keyframe`}
-            >
-              <CaretLeftIcon size={12} />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              disabled={disabled}
-              // Animated AND a key right here reads at full strength; animated
-              // but between keys is dimmed. That is the whole reason `<`/`>`
-              // mean anything — without it there is no way to tell, from the
-              // row, whether the playhead is sitting on one of this property's
-              // keys or between two of them.
-              className={
-                state.animated ? (state.keyedHere ? 'text-accent' : 'text-accent/50') : 'text-text-secondary'
-              }
-              onClick={() => onKeyframeToggle?.(param)}
-              title={
-                state.animated
-                  ? `Stop animating ${label} (removes its keyframes, holds its current value)` +
-                    (state.keyedHere ? ' — keyframed at the playhead' : ' — no keyframe at the playhead')
-                  : `Animate ${label} (keyframes it at the playhead)`
-              }
-              aria-label={`Toggle ${label} keyframes`}
-              aria-pressed={state.animated}
-            >
-              {/* Filled = this property is animated, hollow = static — the same
-                  Diamond-plus-fill convention `RelightPanel.tsx` and this
-                  panel's own Keyframes section already use. */}
-              {/* D-300 — solid = Phosphor's `fill` weight. */}
-              <DiamondIcon size={11} weight={state.animated ? 'fill' : 'regular'} />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              disabled={disabled || state.nextFrame === null}
-              onClick={() => onKeyframeNav?.(param, 1)}
-              title={`Go to the next ${label} keyframe`}
-              aria-label={`Next ${label} keyframe`}
-            >
-              <CaretRightIcon size={12} />
-            </Button>
-          </>
-        )}
-        {/* D-233 — only on an ANIMATED property. An ease curve is the shape
-            BETWEEN two keyframes, so a static property has nothing to shape;
-            showing the button anyway would open an empty lane. The row's own
-            diamond is how you get from static to animated, and it is
-            immediately to the left. */}
-        {onOpenCurve && state.animated && (
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            disabled={disabled}
-            className={curveOpen ? 'text-accent' : undefined}
-            onClick={() => onOpenCurve(param)}
-            title={
-              curveOpen
-                ? `Close ${label}'s ease curve`
-                : `Edit ${label}'s ease curves on the timeline`
-            }
-            aria-label={`Edit ${label} ease curve`}
-            aria-pressed={curveOpen}
+  const slot = (
+    <>
+      {keyframeable && (
+        <>
+          <button
+            type="button"
+            className={`${SLOT_BUTTON} ${state.animated ? '' : 'invisible'}`}
+            disabled={disabled || state.prevFrame === null}
+            onClick={() => onKeyframeNav?.(param, -1)}
+            title={`Go to the previous ${label} keyframe`}
+            aria-label={`Previous ${label} keyframe`}
           >
-            <BezierCurveIcon size={11} />
-          </Button>
-        )}
-        <Button
-          variant="ghost"
-          size="icon-xs"
+            <CaretLeftIcon size={11} />
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            // Keyed at the playhead reads in the selection colour; animated but
+            // between keys is the same hue dimmed; static is hidden until the
+            // row is hovered or focused. That is the whole reason ‹ › mean
+            // anything — the row says whether the playhead sits on a key.
+            className={`${SLOT_BUTTON} ${
+              state.animated ? (state.keyedHere ? 'text-selection' : 'text-selection/60') : ON_ROW_ACTIVE
+            }`}
+            onClick={() => onKeyframeToggle?.(param)}
+            title={
+              state.animated
+                ? `Stop animating ${label} (removes its keyframes, holds its current value)` +
+                  (state.keyedHere ? ' — keyframed at the playhead' : ' — no keyframe at the playhead')
+                : `Animate ${label} (keyframes it at the playhead)`
+            }
+            aria-label={`Toggle ${label} keyframes`}
+            aria-pressed={state.animated}
+          >
+            {/* D-300 — solid = Phosphor's `fill` weight. */}
+            <DiamondIcon size={11} weight={state.animated ? 'fill' : 'regular'} />
+          </button>
+          <button
+            type="button"
+            className={`${SLOT_BUTTON} ${state.animated ? '' : 'invisible'}`}
+            disabled={disabled || state.nextFrame === null}
+            onClick={() => onKeyframeNav?.(param, 1)}
+            title={`Go to the next ${label} keyframe`}
+            aria-label={`Next ${label} keyframe`}
+          >
+            <CaretRightIcon size={11} />
+          </button>
+        </>
+      )}
+      {/* D-233 — only on an ANIMATED property: an ease curve is the shape
+          BETWEEN two keyframes, so a static property has nothing to shape. */}
+      {onOpenCurve && state.animated && (
+        <button
+          type="button"
           disabled={disabled}
-          onClick={() => onReset(param)}
-          title={`Reset ${label} to its default`}
-          aria-label={`Reset ${label}`}
+          className={`${SLOT_BUTTON} ${curveOpen ? 'text-accent-text' : ''}`}
+          onClick={() => onOpenCurve(param)}
+          title={curveOpen ? `Close ${label}'s ease curve` : `Edit ${label}'s ease curves on the timeline`}
+          aria-label={`Edit ${label} ease curve`}
+          aria-pressed={curveOpen}
         >
-          <ArrowCounterClockwiseIcon size={11} />
-        </Button>
-      </div>
-    </div>
+          <BezierCurveIcon size={11} />
+        </button>
+      )}
+      <button
+        type="button"
+        disabled={disabled}
+        className={`${SLOT_BUTTON} ${ON_ROW_ACTIVE}`}
+        onClick={() => onReset(param)}
+        title={`Reset ${label} to its default`}
+        aria-label={`Reset ${label}`}
+      >
+        <ArrowCounterClockwiseIcon size={11} />
+      </button>
+    </>
+  );
+
+  return (
+    <InspectorRow label={label} disabled={disabled} slot={slot}>
+      <InspectorNumber
+        aria-label={label}
+        className="min-w-0 flex-1"
+        value={state.value}
+        step={step}
+        min={min}
+        max={max}
+        unit={unit}
+        disabled={disabled}
+        // The field rounds what it SHOWS; the exact stored value is one
+        // hover (or one click into the field) away.
+        title={`${label}: ${state.value}`}
+        onChange={onChange}
+      />
+    </InspectorRow>
   );
 }

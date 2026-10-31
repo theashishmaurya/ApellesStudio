@@ -28,8 +28,8 @@
  * simply measured against the new frame (reframing to the subject is D-411
  * Phase 3).
  */
-import { useState } from 'react';
-import { Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@apelles/ui';
+import { useRef, useState } from 'react';
+import { InspectorRow, NumberScrubber, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@apelles/ui';
 
 import { useEditorTimelineStore } from './timelineStore';
 import { checkTimelineOutput, timelineFps, TIMELINE_OUTPUT_PRESETS, type OutputSpec } from './timeline';
@@ -61,7 +61,7 @@ function inferMode(output: OutputSpec | null | undefined): Mode {
 }
 
 const pillClass = (active: boolean): string =>
-  `px-2 py-1 rounded-md border text-[11px] ${
+  `px-1.5 py-0.5 rounded-sm border text-2xs ${
     active
       ? 'border-accent text-text-primary bg-accent/10'
       : 'border-border-color text-text-secondary hover:text-text-primary'
@@ -87,6 +87,11 @@ export function TimelineOutputForm() {
   const [draftW, setDraftW] = useState(String(output?.width ?? FIRST_PRESET.width));
   const [draftH, setDraftH] = useState(String(output?.height ?? FIRST_PRESET.height));
   const [error, setError] = useState<string | null>(null);
+  // A custom-size scrub applies once, on release (see `commitSize`); the refs
+  // hold the latest draft for that release handler.
+  const sizeScrubbing = useRef(false);
+  const draftWRef = useRef(String(output?.width ?? FIRST_PRESET.width));
+  const draftHRef = useRef(String(output?.height ?? FIRST_PRESET.height));
 
   if (!timeline) return null;
 
@@ -112,19 +117,47 @@ export function TimelineOutputForm() {
     if (!res.ok) setError(res.error ?? 'the scaling could not be set');
   };
 
-  const commitCustom = () => {
-    const checked = checkTimelineOutput(Number(draftW), Number(draftH));
+  /** The custom size is committed when a typed value lands or a scrub ENDS —
+   *  never per scrub tick: changing a timeline's output size is a document
+   *  write, not a live preview. */
+  const commitSize = (w: number, h: number) => {
+    const checked = checkTimelineOutput(w, h);
     if (!checked.ok) {
       setError(checked.error);
       return;
     }
     void apply(checked.output);
   };
+  const sizeField = (axis: 'w' | 'h') => (
+    <NumberScrubber
+      aria-label={axis === 'w' ? 'Width' : 'Height'}
+      prefix={axis === 'w' ? 'W' : 'H'}
+      step={2}
+      min={1}
+      className="min-w-0 flex-1"
+      value={Number(axis === 'w' ? draftW : draftH) || 0}
+      onScrubStart={() => {
+        sizeScrubbing.current = true;
+      }}
+      onScrubEnd={() => {
+        sizeScrubbing.current = false;
+        commitSize(Number(draftWRef.current), Number(draftHRef.current));
+      }}
+      onChange={(v) => {
+        const nextW = axis === 'w' ? v : Number(draftW);
+        const nextH = axis === 'h' ? v : Number(draftH);
+        draftWRef.current = String(nextW);
+        draftHRef.current = String(nextH);
+        setDraftW(String(nextW));
+        setDraftH(String(nextH));
+        if (!sizeScrubbing.current) commitSize(nextW, nextH);
+      }}
+    />
+  );
 
   return (
-    <div className="flex flex-col gap-1.5 text-xs" data-chroma-panel="timeline-output">
-      <span className="text-text-secondary">Resolution</span>
-      <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-col gap-0.5 text-xs" data-chroma-panel="timeline-output">
+      <InspectorRow label="Resolution" controlClassName="flex-wrap">
         {MODES.map((m) => (
           <button
             key={m}
@@ -141,103 +174,81 @@ export function TimelineOutputForm() {
             {MODE_LABEL[m]}
           </button>
         ))}
-      </div>
+      </InspectorRow>
       {mode === 'preset' && (
+        <InspectorRow label="Preset">
+          <Select
+            value={presetIndex(output) >= 0 ? `${output?.width}x${output?.height}` : undefined}
+            onValueChange={(v) => {
+              const preset = TIMELINE_OUTPUT_PRESETS.find((p) => `${p.width}x${p.height}` === v);
+              if (preset) void apply({ width: preset.width, height: preset.height });
+            }}
+          >
+            <SelectTrigger className="data-[size=default]:h-[22px] w-full text-xs" data-chroma-field="timeline-output-preset">
+              <SelectValue placeholder="Size" />
+            </SelectTrigger>
+            <SelectContent>
+              {TIMELINE_OUTPUT_PRESETS.map((p) => (
+                <SelectItem key={p.label} value={`${p.width}x${p.height}`}>
+                  {p.aspect} · {p.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </InspectorRow>
+      )}
+      {mode === 'custom' && (
+        <InspectorRow label="Size">
+          {sizeField('w')}
+          <span className="text-text-tertiary shrink-0 text-xs">×</span>
+          {sizeField('h')}
+        </InspectorRow>
+      )}
+      <InspectorRow label="Frame rate">
         <Select
-          value={presetIndex(output) >= 0 ? `${output?.width}x${output?.height}` : undefined}
+          value={String(presetFps ?? currentFps)}
           onValueChange={(v) => {
-            const preset = TIMELINE_OUTPUT_PRESETS.find((p) => `${p.width}x${p.height}` === v);
-            if (preset) void apply({ width: preset.width, height: preset.height });
+            void applyRate(Number(v));
           }}
         >
-          <SelectTrigger className="mt-1 h-7 w-full text-xs" data-chroma-field="timeline-output-preset">
-            <SelectValue placeholder="Size" />
+          <SelectTrigger className="data-[size=default]:h-[22px] w-full text-xs" data-chroma-field="timeline-fps">
+            <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {TIMELINE_OUTPUT_PRESETS.map((p) => (
-              <SelectItem key={p.label} value={`${p.width}x${p.height}`}>
-                {p.aspect} · {p.label}
+            {presetFps === undefined && <SelectItem value={String(currentFps)}>{+currentFps.toFixed(3)} fps</SelectItem>}
+            {FPS_PRESETS.map((f) => (
+              <SelectItem key={f} value={String(f)}>
+                {f} fps
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
-      )}
-      {mode === 'custom' && (
-        <div className="mt-1 flex w-full items-end gap-2">
-          <label className="flex min-w-0 flex-1 flex-col gap-1">
-            <span className="text-text-secondary/70 text-[10px]">Width</span>
-            <Input
-              type="number"
-              step={2}
-              className="h-7 w-full text-xs"
-              value={draftW}
-              onChange={(e) => setDraftW(e.target.value)}
-              onBlur={commitCustom}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitCustom();
-              }}
-            />
-          </label>
-          <span className="text-text-secondary pb-1.5">×</span>
-          <label className="flex min-w-0 flex-1 flex-col gap-1">
-            <span className="text-text-secondary/70 text-[10px]">Height</span>
-            <Input
-              type="number"
-              step={2}
-              className="h-7 w-full text-xs"
-              value={draftH}
-              onChange={(e) => setDraftH(e.target.value)}
-              onBlur={commitCustom}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitCustom();
-              }}
-            />
-          </label>
-        </div>
-      )}
-      <span className="text-text-secondary mt-1">Frame rate</span>
-      <Select
-        value={String(presetFps ?? currentFps)}
-        onValueChange={(v) => {
-          void applyRate(Number(v));
-        }}
-      >
-        <SelectTrigger className="h-7 w-full text-xs" data-chroma-field="timeline-fps">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {presetFps === undefined && <SelectItem value={String(currentFps)}>{+currentFps.toFixed(3)} fps</SelectItem>}
-          {FPS_PRESETS.map((f) => (
-            <SelectItem key={f} value={String(f)}>
-              {f} fps
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      </InspectorRow>
       {/* D-425 / B-325 — Resolve's project-level "Input Scaling": how a clip is
           sized into this frame when it is PLACED. It never moves a clip that is
           already on the timeline; each clip's own mode is in its Inspector. */}
-      <span className="text-text-secondary mt-1">New clips</span>
-      <Select
-        value={timeline.default_scaling ?? TIMELINE_DEFAULT_SCALING}
-        onValueChange={(v) => {
-          const hit = CLIP_SCALING_MODES.find((m) => m === v);
-          if (hit) void applyScaling(hit);
-        }}
-      >
-        <SelectTrigger className="h-7 w-full text-xs" data-chroma-field="timeline-default-scaling">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {CLIP_SCALING_MODES.map((m) => (
-            <SelectItem key={m} value={m}>
-              {CLIP_SCALING_LABELS[m]}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      {error && <p className="text-[11px] text-red-400">{error}</p>}
-      <p className="text-text-secondary/60 text-[10px] leading-snug">
+      <InspectorRow label="New clips" labelTitle="How new clips are sized into this frame">
+        <Select
+          value={timeline.default_scaling ?? TIMELINE_DEFAULT_SCALING}
+          onValueChange={(v) => {
+            const hit = CLIP_SCALING_MODES.find((m) => m === v);
+            if (hit) void applyScaling(hit);
+          }}
+        >
+          <SelectTrigger className="data-[size=default]:h-[22px] w-full text-xs" data-chroma-field="timeline-default-scaling">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {CLIP_SCALING_MODES.map((m) => (
+              <SelectItem key={m} value={m}>
+                {CLIP_SCALING_LABELS[m]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </InspectorRow>
+      {error && <p className="text-destructive text-2xs">{error}</p>}
+      <p className="text-text-tertiary pt-1 text-2xs leading-snug">
         {output
           ? `This timeline renders at ${output.width}×${output.height}, whatever the project size is.`
           : 'This timeline follows the project size above.'}{' '}

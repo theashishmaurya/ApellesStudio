@@ -149,6 +149,11 @@ export type {
 export { Textarea } from './components/ui/textarea';
 export { Label } from './components/ui/label';
 export { Collapsible, CollapsibleTrigger, CollapsibleContent } from './components/ui/collapsible';
+export { NumberScrubber, NUMBER_SCRUBBER, scrubberFactor, scrubberValue } from './components/ui/number-scrubber';
+export type { NumberScrubberProps } from './components/ui/number-scrubber';
+export { InspectorRow, INSPECTOR_ROW } from './components/ui/inspector-row';
+export type { InspectorRowProps } from './components/ui/inspector-row';
+export { evaluateNumberExpression } from './lib/number-expression';
 export { TreeView, TreeItem } from './tree-view';
 export type { TreeItemProps } from './tree-view';
 export { Toaster } from './components/ui/sonner';

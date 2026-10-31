@@ -184,12 +184,27 @@
  * `TimelineSwitcher`, and `INSPECTOR_SECTION_DIVIDERS` below. jsdom cannot see
  * B-124 — that is stated, with the reason, in B-124's own entry and in
  * `ClipInspectorPanel.tabChrome.dom.test.tsx`'s header.
+ *
+ * **D-432 (P4) — the whole panel moved to the row system.** Sections are
+ * `EditorSection`s (collapsible, state in the store), rows are `InspectorRow`s
+ * with `NumberScrubber` values and a fixed keyframe slot, the tabs are icons, and
+ * Width / Height is one linked Size row. Opacity is its own Compositing section.
+ * The D-254 `INSPECTOR_SECTION_DIVIDERS` and accent-underline tabs are gone: each
+ * section owns its divider. See `docs/notes/ui-redesign.md` "P4 as built".
  */
 import { useState } from 'react';
-import { DiamondIcon, LockIcon, ArrowCounterClockwiseIcon, LockOpenIcon, XIcon } from '@phosphor-icons/react';
+import {
+  DiamondIcon,
+  ArrowCounterClockwiseIcon,
+  FilmStripIcon,
+  LinkSimpleBreakIcon,
+  LinkSimpleIcon,
+  SpeakerHighIcon,
+  XIcon,
+} from '@phosphor-icons/react';
 import {
   Button,
-  ScrubbableNumberInput,
+  InspectorRow,
   Select,
   SelectContent,
   SelectItem,
@@ -200,7 +215,11 @@ import {
   TabsList,
   TabsTrigger,
 } from '@apelles/ui';
-import { InspectorEmptyState, InspectorSection } from '@apelles/inspector';
+import { InspectorEmptyState } from '@apelles/inspector';
+// D-432 (P4) — collapsible sections (open state in the store) and the number
+// field with its scrub-undo bracket.
+import { EditorSection } from './EditorSection';
+import { InspectorNumber } from './InspectorNumber';
 // D-246 — the tab model (which tabs a clip has, and which one resolves as
 // active) is pure and lives on its own so it can be unit-tested and so the
 // store, the debug op and this panel all read one definition.
@@ -210,8 +229,6 @@ import {
   resolveClipInspectorTab,
   type ClipInspectorTab,
 } from './clipInspectorTabs';
-// B-113 — the numeric field's own geometry, shared with `PropertyRow`.
-import { NUM_FIELD } from './numericField';
 // D-236 — the Speed (Retime) section, in its own file for the reason every
 // other non-trivial section here is not: it owns real derived state (the
 // resolved segments, the retime curve) rather than being a row of inputs.
@@ -297,11 +314,6 @@ const FADE_FIELDS: Array<{
  *  can do about a curve it has no editor for (D-147's known gap). */
 const CUSTOM_CURVE = 'custom';
 
-const row = 'flex items-center justify-between gap-2';
-/** B-113 — the same field `PropertyRow` uses, so the two kinds of numeric row
- *  on this panel cannot drift apart in width, padding or spinner clearance.
- *  See `numericField.ts` for what each part of it is for. */
-const numInput = NUM_FIELD.className;
 
 /** D-132 — the four crop rows, in Resolve's own Left/Right/Top/Bottom order
  *  (its Crop palette's own control order, not alphabetical), each a
@@ -310,10 +322,10 @@ const numInput = NUM_FIELD.className;
  *  `applyOp` clamps again on the way into the timeline for the values a
  *  keyboard can still type past them. */
 const CROP_FIELDS: Array<{ key: ClipTransformParam; label: string }> = [
-  { key: 'crop_left', label: 'Left' },
-  { key: 'crop_right', label: 'Right' },
-  { key: 'crop_top', label: 'Top' },
-  { key: 'crop_bottom', label: 'Bottom' },
+  { key: 'crop_left', label: 'Crop left' },
+  { key: 'crop_right', label: 'Crop right' },
+  { key: 'crop_top', label: 'Crop top' },
+  { key: 'crop_bottom', label: 'Crop bottom' },
 ];
 const CROP_STEP = 0.01;
 
@@ -332,12 +344,12 @@ const TRANSFORM_FIELDS: Array<{
   step: number;
   min?: number;
   max?: number;
+  unit?: string;
 }> = [
-  { param: 'opacity', label: 'Opacity', step: 0.05, min: 0, max: 1 },
   { param: 'position_x', label: 'Position X', step: CROP_STEP },
   { param: 'position_y', label: 'Position Y', step: CROP_STEP },
-  { param: 'scale', label: 'Scale', step: 0.05, min: 0 },
-  { param: 'rotation', label: 'Rotation', step: 1 },
+  { param: 'scale', label: 'Scale', step: 0.01, min: 0 },
+  { param: 'rotation', label: 'Rotation', step: 1, unit: '°' },
   // D-344 — output-composition PIXELS, so it steps by 1 like `rotation`'s
   // degrees and unlike the fraction-valued rows above it. `min: 0` and no
   // `max`: the real upper bound is half the clip's resolved on-canvas box,
@@ -346,7 +358,7 @@ const TRANSFORM_FIELDS: Array<{
   // here would only invent a second, wronger limit. Hidden for a text clip by
   // `TEXT_CLIP_TRANSFORM_PARAMS` like `scale`/`rotation` already are — the
   // export compiles a title to `drawtext`, which cannot mask its corners.
-  { param: 'corner_radius', label: 'Corner Radius', step: 1, min: 0 },
+  { param: 'corner_radius', label: 'Corner radius', step: 1, min: 0, unit: 'px' },
 ];
 
 /** D-223 — the per-clip audio rows, in Resolve's own order (Clip Volume above
@@ -370,8 +382,8 @@ const AUDIO_FIELDS: Array<{
   min?: number;
   max?: number;
 }> = [
-  { param: 'volume', label: 'Volume', step: 0.05, min: 0 },
-  { param: 'pan', label: 'Pan', step: 0.1, min: -1, max: 1 },
+  { param: 'volume', label: 'Volume', step: 0.01, min: 0 },
+  { param: 'pan', label: 'Pan', step: 0.01, min: -1, max: 1 },
 ];
 
 /** D-211 follow-up — a TEXT clip's own `resolve_text_clip_transform` (Rust)
@@ -419,31 +431,6 @@ const DEFAULT_EQ_BAND_VALUES: Readonly<Record<'freq_hz' | 'gain_db' | 'q', numbe
   gain_db: 0,
   q: EQ_DEFAULT_Q,
 };
-
-/** D-254 — a real hairline between adjacent Inspector sections, on BOTH tabs.
- *
- *  The owner drew a line on a screenshot of the Crop → Dynamic Zoom seam and
- *  asked for a divider there. Every other seam had the same gap and the same
- *  absence — Transform → Crop, Dynamic Zoom → Speed, Speed → Fade, Fade →
- *  Keyframes, and Audio → EQ on the other tab — so all of them get it, rather
- *  than the one that happened to be screenshotted; a rule in exactly one of
- *  six identical seams is worse than none.
- *
- *  Expressed as a between-children rule (`* + *`) on the tab panel rather
- *  than a `<Separator />` interleaved six times, or a border baked into
- *  `@apelles/inspector`'s shared `InspectorSection`. The first is six edits to
- *  keep in sync and one more thing to forget when a seventh section lands;
- *  the second would reach into Motion's Inspector too, where the same
- *  component is returned as the root of a dozen different subcomponents and
- *  `:first-child` means something different in each. `* + *` is inherently
- *  correct as sections come and go — never above the first, never below the
- *  last, no per-section bookkeeping.
- *
- *  `border-border-color` is the fork's own line token (what this panel's
- *  header, the Inspector column and `TimelineSwitcher` already use); `pt-4`
- *  balances the `gap-4` the panel already sets, so the rule sits centred in
- *  16px of air on each side rather than crowding the heading under it. */
-const INSPECTOR_SECTION_DIVIDERS = '[&>*+*]:border-t [&>*+*]:border-border-color [&>*+*]:pt-4';
 
 export function ClipInspectorPanel({
   clip,
@@ -638,58 +625,88 @@ export function ClipInspectorPanel({
   const tabs = clipInspectorTabs(clip, audioClip);
   const activeTab = resolveClipInspectorTab(tab, tabs);
 
+  /** One keyframeable row: every Transform / Compositing / Crop / Audio row
+   *  routes through the same props, so they are stated once here. */
+  const propertyRow = (
+    param: ClipTransformParam | ClipAudioParam,
+    label: string,
+    step: number,
+    opts: { min?: number; max?: number; unit?: string; locked: boolean },
+  ) => (
+    <PropertyRow
+      key={param}
+      label={label}
+      param={param}
+      state={paramStates[param]}
+      step={step}
+      min={opts.min}
+      max={opts.max}
+      unit={opts.unit}
+      disabled={opts.locked}
+      onChange={(v) => onParamChange(param, v)}
+      onKeyframeToggle={onKeyframeToggle}
+      onKeyframeNav={onKeyframeNav}
+      onReset={onResetParam}
+      onOpenCurve={onOpenCurve}
+      curveOpen={openCurveParam === param}
+    />
+  );
+
   return (
     <Tabs
       value={activeTab}
       onValueChange={(value) => onTabChange(value as ClipInspectorTab)}
       // `gap-0` because this panel supplies its own spacing: the header block
-      // below is padded and bordered, and the scroller under it is padded.
+      // below is padded and bordered, and the sections are full-bleed.
       className="flex h-full min-h-0 w-full flex-col gap-0 text-xs"
       data-chroma-panel="clip-inspector"
     >
-      {/* D-246 — the clip's name, its locked note and the tab bar stay put
-          while the properties scroll. That is the whole point of a tab bar: a
-          navigation control you have to scroll to find is not one. */}
-      <div className="flex shrink-0 flex-col gap-2 border-b border-border-color p-3 pb-2">
-        <div className="text-text-primary font-medium truncate" title={clip.name}>
-          {clip.name}
+      {/* D-246 / D-432 — the clip's name, its locked note and the icon tab bar
+          stay put while the properties scroll: a navigation control you have to
+          scroll to find is not one. The header is 44 px: kind icon, the name. */}
+      <div className="flex shrink-0 flex-col">
+        <div className="border-border-color flex h-11 items-center gap-2 border-b px-3">
+          {clip.text || clip.caption || clip.adjustment ? null : (
+            <FilmStripIcon size={14} className="text-text-secondary shrink-0" aria-hidden />
+          )}
+          <div className="text-text-primary min-w-0 flex-1 truncate text-base font-semibold" title={clip.name}>
+            {clip.name}
+          </div>
         </div>
         {trackLocked && (
-          <div className="text-[10px] text-text-secondary/60 rounded bg-surface px-2 py-1.5">
+          <div className="text-text-secondary border-border-color border-b px-3 py-1.5 text-2xs">
             This clip's track is locked — unlock it to edit transform or keyframes.
           </div>
         )}
         {/* One tab is not a tab bar: a text clip has no audio, so its
             Inspector renders exactly the single scrolling column it always
-            did, with no chrome that does nothing. */}
-        {/* D-254 — the app's OWN tab language, not shadcn's default pill.
-            Apelles draws a selected tab as an accent underline under a
-            full-strength label, in both places it already had tabs: the
-            shell's Edit/Motion/Colorist switcher (`Shell.tsx` — a `bg-accent`
-            2px bar plus `text-text-primary`) and this same tab's own
-            `TimelineSwitcher` (`data-active:border-b-accent`). The pill this
-            bar shipped with was the shadcn kit's untouched `default` variant,
-            which is why it read as borrowed; `line` is the kit's own
-            no-pill variant, and the accent underline below is the same
-            `border-b-2` idiom `TimelineSwitcher` uses, stated at the call
-            site (the `editor` layer) rather than pushed into `@apelles/ui`,
-            so the generic kit stays generic. */}
+            did, with no chrome that does nothing.
+
+            D-432 — icon tabs, 28 × 22, centred (FCP / Resolve): the active tab
+            is an `accent` icon on `bg-secondary`, the name is a tooltip and
+            the accessible name. D-254's accent underline is gone with the
+            full-width line tabs it belonged to. */}
         {tabs.length > 1 && (
-          <TabsList variant="line" className="w-full gap-0 p-0">
+          <TabsList
+            variant="line"
+            className="border-border-color h-8 w-full justify-center gap-1 rounded-none border-b p-0"
+          >
             {tabs.map((id) => (
               <TabsTrigger
                 key={id}
                 value={id}
-                className="flex-1 rounded-none border-b-2 border-b-transparent py-1.5 text-xs data-active:border-b-accent data-active:text-text-primary"
+                aria-label={CLIP_INSPECTOR_TAB_LABELS[id]}
+                title={CLIP_INSPECTOR_TAB_LABELS[id]}
+                className="text-text-secondary data-active:bg-bg-secondary data-active:text-accent-text h-[22px] w-7 flex-none rounded-sm px-0"
               >
-                {CLIP_INSPECTOR_TAB_LABELS[id]}
+                {id === 'video' ? <FilmStripIcon size={15} /> : <SpeakerHighIcon size={15} />}
               </TabsTrigger>
             ))}
           </TabsList>
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {/* D-246 — the VIDEO tab: this clip's picture, its geometry, and
             everything measured against its extent. Resolve's own Inspector
             puts Transform, Cropping, Dynamic Zoom and Speed Change on its
@@ -697,10 +714,13 @@ export function ClipInspectorPanel({
             them because they are properties of the clip's extent rather than
             of its sound (a fade drives picture AND sound together — the
             section's own note says so — and "Key all properties" keys
-            transform and crop). See `clipInspectorTabs.ts` for the split. */}
-        <TabsContent value="video" className={`flex flex-col gap-4 ${INSPECTOR_SECTION_DIVIDERS}`}>
-          <InspectorSection label="Transform">
-            {/* D-208 — the five transform properties, each its own independently
+            transform and crop). See `clipInspectorTabs.ts` for the split.
+
+            D-432 — every section is a collapsible `EditorSection` (open state
+            remembered in the store); rows are `InspectorRow`s. */}
+        <TabsContent value="video" className="flex flex-col">
+          <EditorSection id="transform" label="Transform">
+            {/* D-208 — the transform properties, each its own independently
                 keyframeable/resettable row. `TRANSFORM_FIELDS` carries only the
                 per-field numbers (label/step/bounds); everything behavioural is
                 identical across rows and lives in `PropertyRow`.
@@ -710,53 +730,35 @@ export function ClipInspectorPanel({
                 independent Width/Height override) belongs to the caller, not
                 here: only the caller knows whether the property is currently
                 animated, and an edit to an animated `Scale` has to land on its
-                keyframe. Special-casing it in this file instead made typing in
-                `Scale` silently not key at all while animated — caught by
-                `EditorInspectorPanel.keyframes.dom.test.tsx`. */}
-            {transformFields.map(({ param, label, step, min, max }) => (
-              <PropertyRow
-                key={param}
-                label={label}
-                param={param}
-                state={paramStates[param]}
-                step={step}
-                min={min}
-                max={max}
-                disabled={trackLocked}
-                onChange={(v) => onParamChange(param, v)}
-                onKeyframeToggle={onKeyframeToggle}
-                onKeyframeNav={onKeyframeNav}
-                onReset={onResetParam}
-                onOpenCurve={onOpenCurve}
-                curveOpen={openCurveParam === param}
-              />
-            ))}
+                keyframe. */}
+            {transformFields.map(({ param, label, step, min, max, unit }) =>
+              propertyRow(param, label, step, { min, max, unit, locked: trackLocked }),
+            )}
 
             {/* D-193 — independent Width/Height, in pixels of the project's
-                own known composition (`geometry`), with a ratio-lock toggle.
-                See this file's own module doc for the full "why" this exists
-                alongside `Scale` rather than replacing it.
+                own known composition (`geometry`), with a ratio link. See this
+                file's own module doc for the full "why" this exists alongside
+                `Scale` rather than replacing it.
 
-                D-208 moved these BELOW Rotation (they used to sit between Scale
-                and Rotation) so the five per-property-keyframeable rows stay
-                contiguous and this ratio-locked, deliberately un-keyframeable
-                pair reads as the separate thing it is.
+                D-208 moved these BELOW Rotation so the per-property-keyframeable
+                rows stay contiguous and this ratio-linked, deliberately
+                un-keyframeable pair reads as the separate thing it is.
 
-                D-211 follow-up — a text clip has no box to size: Rust's
-                `resolve_text_clip_transform` pins `box_width`/`box_height` to
-                `None` regardless of what's stored, and a title's own size is
-                its Title section's `size` field (a font-size fraction), not a
-                bounding box. Hidden rather than shown-and-disabled, matching
-                how the Crop section below is hidden entirely rather than
-                rendered inert. */}
+                D-432 — one "Size" row, W and H either side of a real link
+                toggle (`aria-pressed`), no longer a lone floating lock between
+                two full-width rows.
+
+                D-211 follow-up — a text clip has no box to size (Rust's
+                `resolve_text_clip_transform` pins it), and a title's own size is
+                its Title section's `size`. Hidden rather than shown-and-disabled,
+                matching how Crop is hidden entirely. */}
             {!clip.text && (
               <>
-                {/* D-425 / B-325 — Resolve's per-clip "Input Scaling" / Premiere's
-                    "Set to Frame Size": what `Scale` 1 means. A clip with no
-                    stored mode (saved before D-425) shows Native, the reading
-                    it renders under. A Width/Height override beats it. */}
-                <label className={row}>
-                  <span className="text-text-secondary">Scaling</span>
+                {/* D-425 / B-325 — Resolve's per-clip "Input Scaling" /
+                    Premiere's "Set to Frame Size": what `Scale` 1 means. A clip
+                    with no stored mode (saved before D-425) shows Native, the
+                    reading it renders under. A Width/Height override beats it. */}
+                <InspectorRow label="Scaling">
                   <Select
                     value={effectiveClipScaling(clip)}
                     onValueChange={(v) => {
@@ -765,7 +767,7 @@ export function ClipInspectorPanel({
                     }}
                     disabled={trackLocked}
                   >
-                    <SelectTrigger className="h-7 w-36 text-xs" data-chroma-field="clip-scaling">
+                    <SelectTrigger className="data-[size=default]:h-[22px] w-full text-xs" data-chroma-field="clip-scaling">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -776,122 +778,88 @@ export function ClipInspectorPanel({
                       ))}
                     </SelectContent>
                   </Select>
-                </label>
+                </InspectorRow>
                 {(clip.box_width != null || clip.box_height != null) && (
-                  <p className="text-text-secondary/60 text-[10px] leading-snug">
+                  <p className="text-text-tertiary pb-1 text-2xs leading-snug">
                     A Width/Height override is set, so Scaling has no effect until it is reset (change Scale).
                   </p>
                 )}
-                <label className={row}>
-                  <span className="text-text-secondary">Width</span>
-                  <ScrubbableNumberInput
+                <InspectorRow label="Size">
+                  <InspectorNumber
+                    aria-label="Width"
+                    prefix="W"
                     step={1}
                     min={0}
                     disabled={trackLocked || !geometry}
-                    className={numInput}
-                    value={widthPx != null ? Math.round(widthPx) : null}
-                    onValueChange={handleWidthPxChange}
+                    className="min-w-0 flex-1"
+                    value={widthPx != null ? Math.round(widthPx) : 0}
+                    onChange={handleWidthPxChange}
                   />
-                </label>
-                <div className="flex items-center justify-center py-0.5">
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
+                  <button
+                    type="button"
+                    className="text-text-secondary hover:text-text-primary aria-pressed:text-accent-text flex size-4 shrink-0 items-center justify-center rounded-sm disabled:opacity-40"
                     disabled={trackLocked || !geometry}
+                    aria-pressed={ratioLocked}
+                    aria-label="Link width and height"
                     onClick={() => setRatioLocked((v) => !v)}
-                    title={ratioLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
+                    title={ratioLocked ? 'Aspect ratio linked — click to unlink' : 'Aspect ratio unlinked — click to link'}
                   >
-                    {ratioLocked ? <LockIcon size={12} /> : <LockOpenIcon size={12} />}
-                  </Button>
-                </div>
-                <label className={row}>
-                  <span className="text-text-secondary">Height</span>
-                  <ScrubbableNumberInput
+                    {ratioLocked ? <LinkSimpleIcon size={12} /> : <LinkSimpleBreakIcon size={12} />}
+                  </button>
+                  <InspectorNumber
+                    aria-label="Height"
+                    prefix="H"
                     step={1}
                     min={0}
                     disabled={trackLocked || !geometry}
-                    className={numInput}
-                    value={heightPx != null ? Math.round(heightPx) : null}
-                    onValueChange={handleHeightPxChange}
+                    className="min-w-0 flex-1"
+                    value={heightPx != null ? Math.round(heightPx) : 0}
+                    onChange={handleHeightPxChange}
                   />
-                </label>
-                {!geometry && (
-                  <p className="text-text-secondary/60 text-[10px] leading-snug">
-                    Measuring source resolution…
-                  </p>
-                )}
+                </InspectorRow>
+                {!geometry && <p className="text-text-tertiary text-2xs leading-snug">Measuring source resolution…</p>}
               </>
             )}
-          </InspectorSection>
+          </EditorSection>
 
-          {/* D-132 — Crop, the Edit tab's first (D-127 Finding 3: the concept
-              was absent here entirely, while Colorist had its own unrelated
-              pixel-space one). Its own section rather than four more Transform
-              rows, because both references treat crop as a separate thing from
-              the motion/transform controls — Premiere splits it into its own
-              Crop effect, Resolve into its own viewer mode. Values are the
-              stored unit itself (a 0–1 fraction of the source), not a
-              percentage: this panel already shows Opacity as 0–1 rather than
-              0–100, and a display-only unit conversion is a rounding-bug
-              surface for no real gain at this size.
+          {/* D-432 — Compositing: opacity today (Resolve / FCP group it apart
+              from Transform; blend modes would join it). Always present — a
+              title has opacity too. */}
+          <EditorSection id="compositing" label="Compositing">
+            {propertyRow('opacity', 'Opacity', 0.01, { min: 0, max: 1, locked: trackLocked })}
+          </EditorSection>
+
+          {/* D-132 — Crop, the Edit tab's first (D-127 Finding 3). Its own
+              section because both references treat crop as separate from the
+              motion/transform controls. Values are the stored unit itself (a
+              0–1 fraction of the source), not a percentage.
 
               D-211 follow-up — hidden entirely for a text clip: `drawtext`
               has no crop concept and `resolve_text_clip_transform` pins all
-              four insets to 0, so a rendered-but-inert Crop section would be
-              four rows that visibly do nothing when dragged. */}
+              four insets to 0. */}
           {!clip.text && (
-            <InspectorSection label="Crop">
-              {/* D-208 — the same `PropertyRow` the Transform section uses: each
-                  inset is independently keyframeable and independently
-                  resettable, exactly like every other transform field. */}
-              {CROP_FIELDS.map(({ key, label }) => (
-                <PropertyRow
-                  key={key}
-                  label={label}
-                  param={key}
-                  state={paramStates[key]}
-                  step={CROP_STEP}
-                  min={0}
-                  max={1}
-                  disabled={trackLocked}
-                  onChange={(v) => onParamChange(key, v)}
-                  onKeyframeToggle={onKeyframeToggle}
-                  onKeyframeNav={onKeyframeNav}
-                  onReset={onResetParam}
-                  onOpenCurve={onOpenCurve}
-                  curveOpen={openCurveParam === key}
-                />
-              ))}
-            </InspectorSection>
+            <EditorSection id="crop" label="Crop">
+              {CROP_FIELDS.map(({ key, label }) =>
+                propertyRow(key, label, CROP_STEP, { min: 0, max: 1, locked: trackLocked }),
+              )}
+            </EditorSection>
           )}
 
           {/* D-234 — Dynamic Zoom. **In the Inspector because that is where
-              Resolve puts it** — its own Edit-page copy is explicit ("select a
-              clip in the timeline, then turn on dynamic zoom in the inspector"),
-              and it sits next to Crop for the same reason Crop sits where it
-              does: both are viewer MODES that replace the on-canvas controls,
-              which is exactly how Resolve's own viewer mode selector groups
-              them. See `DynamicZoomOverlay.tsx` for the reference itself.
+              Resolve puts it**. The toggle arms the two boxes and writes
+              NOTHING; the keyframes are written by dragging a box (or by
+              `editor_set_dynamic_zoom`), so arming and disarming are both free.
 
-              The toggle arms the two boxes and writes NOTHING. The keyframes are
-              written by dragging a box (or by `editor_set_dynamic_zoom`), so
-              arming and disarming are both free and the section never has a
-              pending, unapplied state to reconcile.
-
-              Hidden for a text clip and an adjustment clip, matching Crop above
-              and the overlay's own guards: a title's `scale` is pinned
-              server-side and an adjustment clip's correction is full-frame, so
-              for both the animation this section writes would be one neither
-              renderer reads. */}
+              Hidden for a text clip and an adjustment clip, matching Crop and
+              the overlay's own guards. */}
           {!clip.text && !clip.adjustment && (
-            <InspectorSection label="Dynamic Zoom">
-              <label className={row}>
-                <span className="text-text-secondary">Show start/end boxes</span>
+            <EditorSection id="dynamic-zoom" label="Dynamic zoom">
+              <InspectorRow label="Show boxes" labelTitle="Show start/end boxes in the viewer">
                 <Button
                   type="button"
                   size="sm"
                   variant={dynamicZoomArmed ? 'default' : 'outline'}
-                  className="h-7 px-2 text-xs"
+                  className="h-[22px] px-2 text-xs"
                   disabled={trackLocked}
                   aria-pressed={dynamicZoomArmed}
                   onClick={() => onDynamicZoomArm(!dynamicZoomArmed)}
@@ -899,9 +867,8 @@ export function ClipInspectorPanel({
                 >
                   {dynamicZoomArmed ? 'On' : 'Off'}
                 </Button>
-              </label>
-              <label className={row}>
-                <span className="text-text-secondary/70 pl-2 text-[11px]">Ease</span>
+              </InspectorRow>
+              <InspectorRow label="Ease">
                 <Select
                   value={dynamicZoomEasePreset}
                   onValueChange={(v) => {
@@ -910,7 +877,7 @@ export function ClipInspectorPanel({
                   }}
                   disabled={trackLocked || !dynamicZoomArmed}
                 >
-                  <SelectTrigger className="h-7 w-28 text-xs">
+                  <SelectTrigger className="data-[size=default]:h-[22px] w-full text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -921,14 +888,14 @@ export function ClipInspectorPanel({
                     ))}
                   </SelectContent>
                 </Select>
-              </label>
+              </InspectorRow>
               {dynamicZoomArmed && (
                 <div className="flex justify-end pt-1">
                   <Button
                     type="button"
                     size="sm"
                     variant="outline"
-                    className="h-7 px-2 text-xs"
+                    className="h-[22px] px-2 text-xs"
                     disabled={trackLocked}
                     onClick={onDynamicZoomSwap}
                     title="Swap the start and end framings — turns a push-in into a pull-out"
@@ -938,40 +905,35 @@ export function ClipInspectorPanel({
                   </Button>
                 </div>
               )}
-              <p className="text-text-secondary/60 pt-1 text-[10px] leading-snug">
+              <p className="text-text-tertiary pt-1 text-2xs leading-snug">
                 {dynamicZoomArmed
-                  ? 'Drag the green (start) and red (end) boxes in the viewer. Releasing either one writes the clip’s position and scale keyframes across its whole length.'
+                  ? 'Drag the green (start) and red (end) boxes in the viewer. Releasing either one writes the clip’s position and scale keyframes.'
                   : 'Animate a push-in or pull-out by dragging two boxes in the viewer instead of keying by hand.'}
               </p>
               {/* Not decoration: a dynamic zoom spans the WHOLE clip, so it
                   replaces any position/scale animation already there. Saying so
                   before the drag is the difference between an informed
                   replacement and B-067's shape (a field that silently destroys
-                  work). Everything else the clip has keyed — opacity, rotation,
-                  crop, volume, pan — survives untouched. */}
+                  work). */}
               {dynamicZoomArmed && dynamicZoomWouldReplace && (
-                <p className="pt-1 text-[10px] leading-snug text-red-400">
+                <p className="text-destructive pt-1 text-2xs leading-snug">
                   This clip already has position or scale keyframes. Dragging a box replaces them
                   (one undo step); its other animated properties are left alone.
                 </p>
               )}
-            </InspectorSection>
+            </EditorSection>
           )}
 
           {/* D-396 — Highlights: the highlighter-pen sweeps drawn on this clip's
               own picture. Hidden for a title, caption or adjustment clip, which
               have no decoded picture to draw on. Self-contained (reads the
-              stores itself) because it needs the playhead, the selection and an
-              async suggestion, none of which this presentational panel threads. */}
+              stores itself). */}
           {!clip.text && !clip.adjustment && !clip.caption && <ClipHighlightsSection />}
 
           {/* D-236 — Speed (retime). Placed above Fade because a retime changes
               the clip's LENGTH, which is what every duration below it is
-              measured against — the reference (Resolve's own Retime Controls)
-              likewise presents speed as a property of the clip's extent rather
-              than of its picture. Not offered on a generated layer: a title or
-              an adjustment clip has no source footage to retime, and its
-              timeline footprint is simply its own duration. */}
+              measured against. Not offered on a generated layer: a title or an
+              adjustment clip has no source footage to retime. */}
           {!clip.text && !clip.adjustment && (
             <SpeedRampEditor
               clip={clip}
@@ -981,55 +943,44 @@ export function ClipInspectorPanel({
             />
           )}
 
-          {/* D-147 — Fade in / out. Its own section rather than more Transform
-              rows, for the same reason Crop got one: a fade is not part of a
+          {/* D-147 — Fade in / out. Its own section: a fade is not part of a
               clip's geometry, it is a time-domain envelope over whatever that
               geometry produces, and it applies to audio-track clips that have
-              no transform at all. Both references present it separately too.
+              no transform at all.
 
               **Durations are frames**, matching every other number the Edit tab
-              speaks (`start_frame`, `duration`, `source_start`) — not seconds,
-              which would need the clip's fps here and would be the only unit on
-              this panel that isn't the stored one.
+              speaks (`start_frame`, `duration`, `source_start`).
 
               The note below is not decoration: one fade drives BOTH picture and
               sound on a video clip, and a user who does not know that will read
-              a silent picture fade as a bug. See the plan doc §2. */}
-          <InspectorSection label="Fade">
+              a silent picture fade as a bug. */}
+          <EditorSection id="fade" label="Fade">
             {FADE_FIELDS.map(({ label, durationKey, curveKey }) => {
               const preset = easePresetName(clip[curveKey]);
               return (
-                <div className="flex flex-col gap-1" key={durationKey}>
-                  <label className={row}>
-                    <span className="text-text-secondary">{label}</span>
-                    <ScrubbableNumberInput
-                      // Whole frames, never negative. Not capped at the clip's
-                      // own `duration`: a fade longer than the clip is
-                      // legitimate (the two windows overlap and multiply), and
-                      // capping would silently move a handle the user placed.
+                <div className="flex flex-col" key={durationKey}>
+                  <InspectorRow label={label} labelTitle={`${label} duration, in frames`}>
+                    <InspectorNumber
+                      aria-label={label}
                       step={1}
                       min={0}
+                      unit="f"
                       disabled={trackLocked}
-                      className={numInput}
+                      className="min-w-0 flex-1"
                       value={clip[durationKey] ?? 0}
-                      onValueChange={(frames) => onFadeChange({ [durationKey]: frames })}
+                      onChange={(frames) => onFadeChange({ [durationKey]: frames })}
                     />
-                  </label>
-                  <label className={row}>
-                    <span className="text-text-secondary/70 pl-2 text-[11px]">Curve</span>
+                  </InspectorRow>
+                  <InspectorRow label={`${label} curve`} labelTitle={`${label} curve`}>
                     <Select
                       value={preset ?? CUSTOM_CURVE}
                       onValueChange={(v) => {
                         const hit = EASE_PRESETS.find((p) => p.name === v);
-                        // `custom` is display-only — it names a curve MCP
-                        // authored that this panel has no editor for, so
-                        // selecting it must not overwrite that curve with
-                        // anything.
                         if (hit) onFadeChange({ [curveKey]: hit.curve });
                       }}
                       disabled={trackLocked}
                     >
-                      <SelectTrigger className="h-7 w-28 text-xs">
+                      <SelectTrigger className="data-[size=default]:h-[22px] w-full text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -1043,48 +994,33 @@ export function ClipInspectorPanel({
                         {preset === null && <SelectItem value={CUSTOM_CURVE}>custom</SelectItem>}
                       </SelectContent>
                     </Select>
-                  </label>
+                  </InspectorRow>
                 </div>
               );
             })}
-            <p className="text-text-secondary/60 pt-1 text-[10px] leading-snug">
+            <p className="text-text-tertiary pt-1 text-2xs leading-snug">
               Fades this clip's picture and its sound together. Unlink its audio to fade them
               separately.
             </p>
-          </InspectorSection>
+          </EditorSection>
 
-          {/* the exact interaction `RelightPanel.tsx` uses for relight-light
+          {/* The exact interaction `RelightPanel.tsx` uses for relight-light
               keyframes (Diamond icon, `keyedHere` highlight, add/update/
-              delete-here/clear-all) — see `clipKeyframes.ts`'s doc for why
-              this is a small local mirror rather than a cross-package import
-              of `app/src/utils/maskKeyframes.ts`.
+              delete-here/clear-all) — see `clipKeyframes.ts`'s doc.
 
-              **D-208 — KEPT, deliberately, not left as redundant UI.** The
-              per-property diamonds above subsume "which properties are
-              animated", so this section stops being the only keyframe control
-              and becomes what it is actually good at: whole-clip batch actions
-              that have no single-property equivalent.
-              - "Key all properties" is a real batch shortcut — nine diamond
-                clicks in one, and the standard NLE "pin everything as it is
-                right now, then animate from here" gesture. It is no longer
-                confusing the way it was as the ONLY control, because its
-                effect is now fully visible in the nine diamonds it lights up.
-                It MERGES now (D-208's `mergeClipKeyframeParams`) rather than
-                replacing the frame's whole entry, so it can never clobber a
-                key a single property's diamond already put there.
-              - Delete-here / Clear-all are pure housekeeping over the raw
-                array, which matters precisely because MCP agents
-                (`editor_set_clip_keyframes`) and older sessions can leave
-                keyframe data no per-property control would fully explain.
-              The label says "all properties" rather than "clip" so it can't be
-              misread as "the one thing that turns keyframing on." */}
-          <InspectorSection label="Keyframes">
-            <div className="flex items-center gap-2 text-[11px] text-text-secondary select-none">
+              **D-208 — KEPT, deliberately.** The per-property diamonds above
+              subsume "which properties are animated", so this section becomes
+              what it is actually good at: whole-clip batch actions that have no
+              single-property equivalent ("Key all properties", delete-here,
+              clear-all). The label says "all properties" so it can't be misread
+              as "the one thing that turns keyframing on." */}
+          <EditorSection id="keyframes" label="Keyframes">
+            <div className="text-text-secondary flex items-center gap-2 text-xs select-none">
               <Button
                 variant="ghost"
                 size="xs"
                 disabled={trackLocked}
-                className={`gap-1 px-1.5 ${keyedHere ? 'text-accent' : 'text-text-primary'}`}
+                className={`gap-1 px-1.5 ${keyedHere ? 'text-selection' : 'text-text-primary'}`}
                 onClick={onUpsertKeyframe}
                 title="Keyframe every transform and crop property at the current frame"
               >
@@ -1114,7 +1050,7 @@ export function ClipInspectorPanel({
                 </>
               )}
             </div>
-          </InspectorSection>
+          </EditorSection>
         </TabsContent>
 
         {/* D-246 — the AUDIO tab: this clip's own sound, and nothing else.
@@ -1122,161 +1058,116 @@ export function ClipInspectorPanel({
             which is exactly the `!clip.text` gate these two sections used to
             carry individually — now stated once, in `clipInspectorTabs`. */}
         {tabs.includes('audio') && (
-          <TabsContent value="audio" className={`flex flex-col gap-4 ${INSPECTOR_SECTION_DIVIDERS}`}>
-          {/* D-223 — this clip's OWN level and stereo position, independent of
-              its track's fader. Its own section rather than more Fade rows for
-              the same reason Crop got one: the reference NLE presents them as a
-              separate group (Resolve's Inspector: "Clip Volume" / "Clip Pan" on
-              its own Audio tab, `scratch/resolve-reference/soundtrack.jpg`),
-              and a level is a different kind of thing from a fade envelope.
+          <TabsContent value="audio" className="flex flex-col">
+            {/* D-223 — this clip's OWN level and stereo position, independent of
+                its track's fader (Resolve's "Clip Volume" / "Clip Pan" on its
+                Audio tab). Both rows are `PropertyRow`s, so both are
+                keyframeable, navigable and resettable exactly like every
+                Transform/Crop row — a volume automation ramp is the same
+                machinery an animated Opacity uses (D-208/D-220). */}
+            <EditorSection id="audio" label="Audio">
+              {AUDIO_FIELDS.map(({ param, label, step, min, max }) =>
+                propertyRow(param, label, step, { min, max, locked: audioTrackLocked }),
+              )}
+              {/* Not decoration: the first is what stops "I turned the track
+                  down and this clip is still loud" being read as a bug, and the
+                  second is the real, stated cost of this app's own pan law (a
+                  0 dB centre means the boost lands at the extremes — see
+                  `apelles_types::pan`). */}
+              <p className="text-text-tertiary pt-1 text-2xs leading-snug">
+                This clip's own level, multiplied with its track's gain — not a replacement for it.
+                Hard panning boosts the destination channel by 3 dB, so lower Volume if the source is
+                already close to full scale.
+              </p>
+            </EditorSection>
 
-              Both rows are `PropertyRow`s, so both are keyframeable, navigable
-              and resettable exactly like every Transform/Crop row — a volume
-              automation ramp is the same machinery an animated Opacity uses
-              (D-208/D-220), not a parallel one.
+            {/* D-224 — this clip's own multi-band parametric EQ, under Audio as
+                in Resolve (Clip Volume, Clip Pan, Clip Pitch, Clip Equalizer).
+                Four bands over a ±24 dB response graph (D-237's
+                `EqResponseGraph`, rendered first). Each band's Freq/Gain/Q are
+                still real `PropertyRow`s, so the numbers are authorable and the
+                graph is an ADDITIONAL affordance over the same `onEqBandChange`.
 
-              Hidden entirely for a TEXT clip, matching how Crop is: a generated
-              title has no audio stream at all, so a rendered-but-inert Audio
-              section would be two rows that visibly do nothing. */}
-          <InspectorSection label="Audio">
-            {AUDIO_FIELDS.map(({ param, label, step, min, max }) => (
-              <PropertyRow
-                key={param}
-                label={label}
-                param={param}
-                state={paramStates[param]}
-                step={step}
-                min={min}
-                max={max}
-                disabled={audioTrackLocked}
-                onChange={(v) => onParamChange(param, v)}
-                onKeyframeToggle={onKeyframeToggle}
-                onKeyframeNav={onKeyframeNav}
-                onReset={onResetParam}
-                onOpenCurve={onOpenCurve}
-                curveOpen={openCurveParam === param}
-              />
-            ))}
-            {/* Not decoration, for the same reason the Fade note isn't: the
-                first is what stops "I turned the track down and this clip is
-                still loud" being read as a bug, and the second is the real,
-                stated cost of this app's own pan law (a 0 dB centre means the
-                boost lands at the extremes — see `apelles_types::pan`). */}
-            <p className="text-text-secondary/60 pt-1 text-[10px] leading-snug">
-              This clip's own level, multiplied with its track's gain — not a replacement for it.
-              Hard panning boosts the destination channel by 3 dB, so lower Volume if the source is
-              already close to full scale.
-            </p>
-          </InspectorSection>
-
-          {/* D-224 — this clip's own multi-band parametric EQ. Its own section
-              under Audio, matching where Resolve puts its Clip Equalizer
-              (`scratch/resolve-reference/soundtrack.jpg`: Clip Volume, Clip Pan,
-              Clip Pitch, then Clip Equalizer, in that order down the Inspector's
-              Audio tab).
-
-              **Four bands, laid out as Resolve lays them out**: that reference
-              shows `Band 1`…`Band 4`, each a name button that doubles as the
-              band's enable toggle plus a shape dropdown, over a ±24 dB response
-              graph. The four bands and the ±24 dB range are matched exactly, and
-              (D-237) so is the graph itself now — `EqResponseGraph` below,
-              rendered first so the section reads graph-then-bands exactly as the
-              reference does. Each band's Freq/Gain/Q are still real
-              `PropertyRow`s underneath it, so the numbers are all authorable and
-              every row gets the same field layout and reset the Transform rows
-              have — the graph is an ADDITIONAL affordance over the same
-              `onEqBandChange`, not a replacement for typing an exact value.
-
-              The rows carry NO keyframe diamond, and that is a decision rather
-              than an oversight: an EQ here is static (see `Clip.eq_bands` and
-              D-224 — ffmpeg's biquad filters parse their parameters once, so an
-              animated EQ cannot be exported at all). `PropertyRow` renders no
-              keyframe controls when it is handed none, rather than three dead
-              buttons.
-
-              Hidden for a TEXT clip, exactly as Audio and Crop are. */}
-          <InspectorSection label="EQ">
-            <EqResponseGraph bands={eqBands} disabled={audioTrackLocked} onBandChange={onEqBandChange} />
-            {eqBands.map((band, index) => (
-              <div className="flex flex-col gap-1.5 border-l border-border-color pl-2" key={index}>
-                <div className={row}>
-                  {/* The band number IS the enable toggle — Resolve's own
-                      affordance, where `Band N` reads coloured when on. Accent
-                      when enabled, muted when bypassed, so a band that has
-                      been switched off is visibly off rather than silently
-                      inert. */}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={audioTrackLocked}
-                    className={`h-7 px-1.5 text-[11px] ${band.enabled ? 'text-accent' : 'text-text-secondary/50'}`}
-                    onClick={() => onEqBandChange(index, { enabled: !band.enabled })}
-                    title={
-                      band.enabled
-                        ? `Bypass band ${index + 1} (keeps its settings)`
-                        : `Enable band ${index + 1}`
-                    }
-                    aria-pressed={band.enabled}
-                  >
-                    Band {index + 1}
-                  </Button>
-                  <Select
-                    value={band.kind}
-                    onValueChange={(v) => onEqBandChange(index, { kind: v as EqBandKind })}
-                    disabled={audioTrackLocked}
-                  >
-                    <SelectTrigger className="h-7 w-28 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {EQ_BAND_KINDS.map((k) => (
-                        <SelectItem key={k} value={k}>
-                          {EQ_BAND_KIND_LABELS[k]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                The rows carry NO keyframe diamond, and that is a decision: an
+                EQ here is static (see `Clip.eq_bands` and D-224 — ffmpeg's
+                biquad filters parse their parameters once). */}
+            <EditorSection
+              id="eq"
+              label="EQ"
+              actions={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="size-5"
+                  disabled={audioTrackLocked || !audioClip?.eq_bands || audioClip.eq_bands.length === 0}
+                  onClick={onEqClear}
+                  title="Remove this clip's EQ entirely"
+                  aria-label="Reset EQ"
+                >
+                  <ArrowCounterClockwiseIcon size={11} />
+                </Button>
+              }
+            >
+              <EqResponseGraph bands={eqBands} disabled={audioTrackLocked} onBandChange={onEqBandChange} />
+              {eqBands.map((band, index) => (
+                <div className="border-border-color mt-1 flex flex-col border-l pl-2" key={index}>
+                  <div className="flex items-center justify-between gap-2 pb-0.5">
+                    {/* The band number IS the enable toggle — Resolve's own
+                        affordance, where `Band N` reads coloured when on. */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={audioTrackLocked}
+                      className={`h-[22px] px-1.5 text-xs ${band.enabled ? 'text-accent-text' : 'text-text-tertiary'}`}
+                      onClick={() => onEqBandChange(index, { enabled: !band.enabled })}
+                      title={
+                        band.enabled
+                          ? `Bypass band ${index + 1} (keeps its settings)`
+                          : `Enable band ${index + 1}`
+                      }
+                      aria-pressed={band.enabled}
+                    >
+                      Band {index + 1}
+                    </Button>
+                    <Select
+                      value={band.kind}
+                      onValueChange={(v) => onEqBandChange(index, { kind: v as EqBandKind })}
+                      disabled={audioTrackLocked}
+                    >
+                      <SelectTrigger className="data-[size=default]:h-[22px] w-28 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {EQ_BAND_KINDS.map((k) => (
+                          <SelectItem key={k} value={k}>
+                            {EQ_BAND_KIND_LABELS[k]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {EQ_BAND_FIELDS.map(({ key, label, step, min, max }) => (
+                    <PropertyRow
+                      key={key}
+                      label={label}
+                      param={key}
+                      state={staticPropertyState(band[key])}
+                      step={step}
+                      min={min}
+                      max={max}
+                      disabled={audioTrackLocked || (key === 'gain_db' && !eqKindUsesGain(band.kind))}
+                      onChange={(v) => onEqBandChange(index, { [key]: v })}
+                      onReset={() => onEqBandChange(index, { [key]: DEFAULT_EQ_BAND_VALUES[key] })}
+                    />
+                  ))}
                 </div>
-                {EQ_BAND_FIELDS.map(({ key, label, step, min, max }) => (
-                  <PropertyRow
-                    key={key}
-                    label={label}
-                    param={key}
-                    // Static: no keyframe callbacks passed, so no diamond and
-                    // no nav arrows render at all (see `PropertyRow`).
-                    state={staticPropertyState(band[key])}
-                    step={step}
-                    min={min}
-                    max={max}
-                    // A pass filter has no gain — the row would be editable and
-                    // do nothing, so it is disabled rather than hidden (hiding
-                    // it would make the three bands' rows jump around as kinds
-                    // change).
-                    disabled={audioTrackLocked || (key === 'gain_db' && !eqKindUsesGain(band.kind))}
-                    onChange={(v) => onEqBandChange(index, { [key]: v })}
-                    onReset={() => onEqBandChange(index, { [key]: DEFAULT_EQ_BAND_VALUES[key] })}
-                  />
-                ))}
-              </div>
-            ))}
-            <div className="flex items-center justify-between pt-0.5">
-              <p className="text-text-secondary/60 text-[10px] leading-snug">
+              ))}
+              <p className="text-text-tertiary pt-1 text-2xs leading-snug">
                 {eqActive
                   ? 'Applied before the clip’s volume, fade and duck — in the preview and the render alike.'
                   : 'Every band is flat, so this clip is unfiltered. Set a Gain, or pick a High Pass, to hear it.'}
               </p>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                disabled={audioTrackLocked || !audioClip?.eq_bands || audioClip.eq_bands.length === 0}
-                onClick={onEqClear}
-                title="Remove this clip's EQ entirely"
-                aria-label="Reset EQ"
-              >
-                <ArrowCounterClockwiseIcon size={11} />
-              </Button>
-            </div>
-          </InspectorSection>
+            </EditorSection>
           </TabsContent>
         )}
       </div>

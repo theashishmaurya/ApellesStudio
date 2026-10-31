@@ -58,6 +58,11 @@ export interface HistoryEntry {
   ts: number;
   undo: () => void;
   redo: () => void;
+  /** D-432 (P4) — entries pushed back to back with the SAME key (and source)
+   *  fold into one: the first entry's `undo` is kept, the latest `redo` and
+   *  label win. This is how a scrub gesture that applies an op per frame
+   *  stays ONE undo step. The caller owns key uniqueness per gesture. */
+  coalesceKey?: string;
 }
 
 /** Who caused an entry — see `HistoryEntry.source`. */
@@ -165,7 +170,13 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
         source: scopes[scopes.length - 1] ?? 'user',
         undo: entry.undo,
         redo: entry.redo,
+        coalesceKey: entry.coalesceKey,
       };
+      const last = s.undoStack[s.undoStack.length - 1];
+      if (full.coalesceKey !== undefined && last?.coalesceKey === full.coalesceKey && last.source === full.source) {
+        const folded: HistoryEntry = { ...last, redo: full.redo, label: full.label, ts: full.ts };
+        return { undoStack: [...s.undoStack.slice(0, -1), folded], redoStack: [] };
+      }
       const undoStack = [...s.undoStack, full];
       if (undoStack.length > MAX_HISTORY_ENTRIES) undoStack.shift();
       return { undoStack, redoStack: [] };

@@ -411,10 +411,7 @@ Two things changed here in the same pass as the owner's live Edit-tab review:
   over the digits, and B-113's `pr-5` reserve could never have cleared them —
   the widget is laid out inside the padding box), and horizontal drag on the
   field in their place — 8px per declared `step`, Shift ×10, Cmd ÷10, 4px
-  before a press counts as a drag rather than a click. `numericField.ts` is now
-  only the Inspector row's *geometry* (`NUM_FIELD`, the fit budget); the
-  display-rounding helpers it used to own are `@apelles/ui`'s, next to the
-  component that needs them. The gesture's behavioural tests live in this
+  before a press counts as a drag rather than a click. (D-432 P4 then moved the Inspector's rows to `NumberScrubber` + `InspectorRow`; `numericField.ts` is deleted.) The display-rounding helpers are `@apelles/ui`'s. The gesture's behavioural tests live in this
   package (`ScrubbableNumberInput.dom.test.tsx`) because `@apelles/ui` has no
   test tier and this one owns the real-`PointerEvent` harness.
 
