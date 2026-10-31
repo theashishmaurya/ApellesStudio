@@ -61,7 +61,13 @@ export const clipEdge = (name: string, side: 'left' | 'right', px: number = EDGE
 
 /** The ruler at a fraction of its width. */
 export const ruler = (fx = 0.5): TargetRef => selector(LIB.ruler, { fx, fy: 0.5 });
-export const playheadHandle = (): TargetRef => selector(LIB.playheadHandle);
+/** Where a human grabs the playhead to scrub (H4): the ruler at the playhead's
+ *  own frame. The library's head `svg` sits UNDER its 16 px hit strip, so aiming
+ *  at the svg always reports "the press lands on the strip"; and the redesign
+ *  (B-346) is shrinking that strip to the ruler. A press in the ruler at the
+ *  playhead's x reaches the scrub handler in both layouts, so callers pass
+ *  `expectHit: false` (the press may land on the ruler or on the strip). */
+export const playheadGrab = (frame: Value): TargetRef => atFrame(frame, 'ruler');
 
 export const trackHeader = (track: number, at?: { fx?: number; fy?: number }) =>
   selector(`[data-testid="${ID.trackHeader}"][data-chroma-track="${track}"]`, at);
@@ -69,7 +75,8 @@ export const trackHeader = (track: number, at?: { fx?: number; fy?: number }) =>
 export const trimTool = (tool: string) => selector(`[data-testid="${ID.trimTool}"][data-chroma-trim-tool="${q(tool)}"]`);
 export const marker = (name: string) => selector(`[data-testid="${ID.marker}"][data-chroma-marker="${markerIdToken(name)}"]`);
 export const editArea = (at?: { fx?: number; fy?: number; dx?: number; dy?: number }) => testid(ID.editArea, at);
-export const headerResize = () => testid(ID.headerResize);
+/** By `id` (H7): react-resizable-panels 4.x derives `data-testid` from it. */
+export const headerResize = (): TargetRef => selector(`#${ID.headerResize}`);
 
 /** TIMELINE frame `frame` on `track` (resolved by the runner from the view readout). */
 export const atFrame = (frame: Value, track: number | 'ruler', fy?: number): FrameTarget => ({ frame, track, ...(fy !== undefined ? { fy } : {}) });

@@ -3,7 +3,7 @@
 // real correct/incorrect answer, so these run for real rather than being
 // eyeballed.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MAX_HISTORY_ENTRIES, isAgentScope, runAsAgent, useHistoryStore } from './store';
+import { MAX_HISTORY_ENTRIES, isAgentScope, runAsAgent, runForRequest, useHistoryStore } from './store';
 
 function reset() {
   useHistoryStore.setState({ undoStack: [], redoStack: [] });
@@ -198,5 +198,31 @@ describe('agent scope (D-298)', () => {
     expect(isAgentScope()).toBe(false);
     useHistoryStore.getState().push({ tab: 'edit', label: 'after the throw', undo: vi.fn(), redo: vi.fn() });
     expect(useHistoryStore.getState().undoStack[0].source).toBe('user');
+  });
+});
+
+// D-434 / H1 — the UI harness's fixture ops must not read as the agent's work.
+describe('request source (D-434)', () => {
+  const entry = (label: string) => ({ tab: 'edit', label, undo: vi.fn(), redo: vi.fn() });
+
+  it('stamps a request that names the harness as harness, any other as agent', async () => {
+    await runForRequest({ source: 'harness' }, () => useHistoryStore.getState().push(entry('fixture')));
+    await runForRequest({ source: null }, () => useHistoryStore.getState().push(entry('mcp')));
+    await runForRequest({ source: 'user' }, () => useHistoryStore.getState().push(entry('forged')));
+    await runForRequest({}, () => useHistoryStore.getState().push(entry('plain')));
+    expect(useHistoryStore.getState().undoStack.map((e) => e.source)).toEqual(['harness', 'agent', 'agent', 'agent']);
+  });
+
+  it('clearSource drops only that source, from both stacks, keeping the order of the rest', async () => {
+    const s = useHistoryStore.getState();
+    s.push(entry('mine 1'));
+    await runForRequest({ source: 'harness' }, () => useHistoryStore.getState().push(entry('fixture 1')));
+    s.push(entry('mine 2'));
+    await runForRequest({ source: 'harness' }, () => useHistoryStore.getState().push(entry('fixture 2')));
+    useHistoryStore.getState().undo(); // fixture 2 moves to the redo stack
+    useHistoryStore.getState().clearSource('harness');
+    const after = useHistoryStore.getState();
+    expect(after.undoStack.map((e) => e.label)).toEqual(['mine 1', 'mine 2']);
+    expect(after.redoStack).toEqual([]);
   });
 });

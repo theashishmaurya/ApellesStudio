@@ -48,7 +48,7 @@ status: **open** · severity: **major** (every edge drag that starts at a butted
 
 ## B-343 — the shared undo stack is not cleared or scoped on a project switch: another project's entries sit on top and can evict this project's whole history
 
-status: **open** · severity: **major** · area: `@apelles/history` (`packages/history/src/store.ts`, `MAX_HISTORY_ENTRIES = 100`), project open path (`timelineStore` `openProjectKey`)
+status: **fixed 2026-10-31** (`useProjectScopedHistory`, called once from `app/src/Root.tsx` beside every other store that follows `selectProjectKey`; it empties `@apelles/history` when the project key changes - open, new, close, Save-as. Undo does not persist across opens, as in Final Cut Pro and DaVinci Resolve; Cmd+Z and the MCP `undo` / `redo` both read that one stack through `stepHistory`. Tests: `app/src/hooks/useProjectScopedHistory.dom.test.ts`) · severity: **major** · area: `@apelles/history` (`packages/history/src/store.ts`, `MAX_HISTORY_ENTRIES = 100`), project open path (`timelineStore` `openProjectKey`)
 
 - **found:** 2026-10-31, after the first harness run reopened the owner's project "Nemotron Transcribe", the Agent activity dock (which lists `source: 'agent'` entries of the shared undo stack) still showed 100 `Add "harness-video-30s.mp4"` / `Add video track` rows from the deleted scratch project (owner screenshot `scratch/bug-refs/2026-10-31-marker-above-agent-activity.png`; live screenshot the same).
 - **cause:** nothing calls `useHistoryStore.clear()` (grep: no caller); entries survive `open_project`. The stack is capped at 100, so a session with 100+ edits in project A followed by a switch to B leaves B's undo stack full of A's entries and B's own earlier history evicted. Cmd+Z in B then pops A's entries one by one: `restoreSnapshot` (`timelineStore.ts:1121`) tries to switch to A's timeline id, fails, and sets "could not undo/redo on timeline … no longer in this project" (no write, so no damage, but each press is wasted and the real history is gone).
@@ -101,7 +101,7 @@ status: **open** · severity: **minor** · area: caption clips (D-228/D-229) und
 
 ## B-337 — `editor_trim_clip`'s docstring has the sign of `delta` backwards for `edge="end"`
 
-status: **open** · severity: **minor** · area: `editor_trim_clip` contract (`mcp/server.py`, `crates/apelles-mcp/src/tools/edit.rs`) vs `checkTrim` (`packages/editor/src/timeline.ts`)
+status: **fixed 2026-10-31** (the docstring now states that `delta` moves the edge: positive = later, so `end` + extends and `start` + shortens; fixed identically in `mcp/server.py` and `crates/apelles-mcp/src/tools/edit.rs`, corpus re-captured, and the harness replays use the reducer's sign) · severity: **minor** · area: `editor_trim_clip` contract (`mcp/server.py`, `crates/apelles-mcp/src/tools/edit.rs`) vs `checkTrim` (`packages/editor/src/timeline.ts`)
 
 - **found:** 2026-10-30, Nemotron shorts. `editor_trim_clip(edge="end", delta=-85)` on a 222-frame still SHORTENED it to 137; `delta=+170` then extended it to 307.
 - **what happens:** the reducer treats `delta` as a signed move of the edge (end edge: + is later, so longer; start edge: + is later, so shorter). The docstring says "positive shortens the clip, negative extends it" for both edges, which is only true of `start`.

@@ -113,7 +113,7 @@ import {
   useVideoUnderstandingStore,
   type MediaItem,
 } from '@apelles/bridge';
-import { runAsAgent } from '@apelles/history';
+import { runForRequest } from '@apelles/history';
 // B-217/D-358 — the cross-store project-identity guard; see the dispatcher below.
 import { assertProjectIdentity } from '@apelles/store';
 // D-280 — the transport's own rate bounds, from the package that owns the
@@ -350,6 +350,9 @@ import {
   panLimit,
   previewZoomPct,
 } from './previewZoom';
+// D-434 / H2 — the timeline's own zoom, settable over MCP like the preview's.
+import { clampPxPerSec, timelineZoomPct, useTimelineViewStore } from './timelineView';
+import { DEFAULT_PX_PER_SEC, MAX_PX_PER_SEC, MIN_PX_PER_SEC } from './ruler';
 
 const EDITOR_OP_PREFIX = 'editor_';
 
@@ -953,6 +956,14 @@ function parseCurve(v: unknown, which: string): EaseCurve | { error: string } | 
  *  See `docs/notes/react-compiler-coverage.md`. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirrors the untyped `chroma://request` payload these replace
 const opArgs = (args: any): any => args || {};
+
+/** D-434 / H2 — the timeline's horizontal zoom as `editor_get_state` and
+ *  `editor_set_timeline_view` report it: `zoom` is a multiplier of the default
+ *  (1 = the toolbar's 100 %), `pxPerSec` the raw value frame-to-pixel maths uses. */
+function timelineViewReport() {
+  const { pxPerSec } = useTimelineViewStore.getState();
+  return { zoom: pxPerSec / DEFAULT_PX_PER_SEC, pct: timelineZoomPct(pxPerSec), pxPerSec };
+}
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ditto: an op handler's result is an open record by contract
 const opError = (result: any): string | null => result?.error ?? null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ditto: a thrown value is `unknown` in practice
@@ -2262,6 +2273,11 @@ export function useEditorControl(): void {
           // so "the clip is off the left edge" may mean the clip moved or may
           // mean the viewport is panned. Display-only — it is not any clip's
           // `scale`/`position_*` and changes nothing about what renders.
+          // D-434 / H2 — the TIMELINE's horizontal zoom (the toolbar's +/-
+          // readout), the read half of `editor_set_timeline_view`. Without it
+          // a frame number cannot be turned into a screen position, and a
+          // harness run could not tell a leaked zoom from a layout bug.
+          timelineView: timelineViewReport(),
           previewZoom: {
             zoom: s.previewView.zoom,
             pct: previewZoomPct(s.previewView.zoom),
@@ -2875,6 +2891,29 @@ export function useEditorControl(): void {
       // whole-`Timeline` undo snapshots have never carried it. A zoom that
       // sat on the undo stack would put itself between the user and their
       // last real edit on the next cmd-Z.
+      // D-434 / H2 — the timeline's horizontal zoom: the AI half of the
+      // toolbar's +/- buttons and ctrl/pinch-scroll. D-432 plans this tool to
+      // carry the Clip Appearance view settings too; zoom is its first field.
+      // Display-only and NOT undoable (D-216's reasoning, as for
+      // `editor_set_preview_zoom`): a view setting, never in `Timeline`.
+      editor_set_timeline_view: (a) => {
+        const raw = a?.zoom;
+        if (raw === undefined) return { error: 'pass zoom (a multiplier, 1 = the default 100 %) or zoom="default"' };
+        const zoom = raw === 'default' || raw === null ? 1 : Number(raw);
+        if (!Number.isFinite(zoom) || zoom <= 0) {
+          return { error: 'zoom must be a positive multiplier (1 = the default 100 %) or "default"' };
+        }
+        const wanted = zoom * DEFAULT_PX_PER_SEC;
+        const applied = clampPxPerSec(wanted);
+        useTimelineViewStore.getState().setPxPerSec(applied);
+        return {
+          ok: true,
+          timelineView: timelineViewReport(),
+          ...(applied !== wanted
+            ? { note: `zoom ${zoom} is outside ${(MIN_PX_PER_SEC / DEFAULT_PX_PER_SEC).toFixed(2)}..${(MAX_PX_PER_SEC / DEFAULT_PX_PER_SEC).toFixed(1)} and was clamped` }
+            : {}),
+        };
+      },
       editor_set_preview_zoom: (a) => {
         const raw = a?.zoom;
         // `"fit"` is accepted as a name for the default view because that is
@@ -6273,7 +6312,7 @@ export function useEditorControl(): void {
         // instrumentation: one wrapper at the dispatcher, not a line in each
         // of the ~90 handlers. The shell-level feed reads those entries, so
         // work an agent does here is finally visible from any tab.
-        const result = await runAsAgent(() => fn(opArgs(args)));
+        const result = await runForRequest(payload, () => fn(opArgs(args)));
         const error = opError(result);
         respond({ ok: !error, error, result });
       } catch (e) {

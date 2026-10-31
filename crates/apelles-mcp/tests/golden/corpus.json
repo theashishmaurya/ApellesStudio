@@ -7920,6 +7920,30 @@
       }
     },
     {
+      "name": "editor_set_timeline_view",
+      "description": "Set the Edit tab's TIMELINE zoom: how many pixels one second of timeline\n    spans (D-434, the AI half of the timeline toolbar's `-  100%  +` buttons and\n    ctrl/pinch-scroll over the lanes; D-432 plans the Clip Appearance view\n    settings to join it on this tool).\n\n    **Display-only. It changes no clip, no timing, and nothing that renders or\n    exports** \u2014 only how wide the timeline is drawn, so a frame number maps to a\n    different screen x. Why you would call it: to read fine detail (zoom in\n    before a `debug_pointer` drag that has to land on an exact frame), to see a\n    whole long timeline in one screenshot (zoom out), and to put the view back\n    to a known state \u2014 the default \u2014 after something else changed it.\n\n    `zoom`: a multiplier of the default, where **1 = the default** (the\n    toolbar's 100 %, 90 px per second), 2 = twice as wide, 0.5 = half. Range\n    about 0.01-5.3; outside it the value is clamped and the response says so in\n    `note`. Pass the string `\"default\"` for 1. A zoom set here does NOT anchor\n    on the playhead the way the toolbar buttons do; the scroll position is left\n    as it is.\n\n    Not undoable, by design (same reasoning as `editor_set_preview_zoom`, D-216):\n    a view setting is UI state, not part of the `Timeline` document. The current\n    value is reported by `editor_get_state` as `timelineView`\n    (`{zoom, pct, pxPerSec}`).",
+      "inputSchema": {
+        "properties": {
+          "zoom": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Zoom"
+          }
+        },
+        "required": [
+          "zoom"
+        ],
+        "type": "object",
+        "title": "editor_set_timeline_viewArguments"
+      }
+    },
+    {
       "name": "editor_set_track_gain",
       "description": "Set an audio track's linear gain multiplier (1.0 = unity, 0.0 = muted).",
       "inputSchema": {
@@ -8315,7 +8339,7 @@
     },
     {
       "name": "editor_trim_clip",
-      "description": "Trim a clip's `edge` (\"start\" or \"end\") by `delta` frames \u2014 positive\n    shortens the clip, negative extends it back into previously-trimmed\n    source material (up to the source's own bounds).\n\n    `ripple=False` (the default, and the behaviour this tool has always had):\n    only this clip changes. Shortening leaves a real gap; extending is refused\n    outright if the neighbour is in the way.\n\n    `ripple=True` (D-235): everything after this clip on the SAME track shifts\n    to follow the new out point, so no gap is opened and a neighbour no longer\n    blocks the trim \u2014 it gets pushed instead. A head ripple leaves the clip's\n    `start_frame` where it is and pulls the rest of the track in behind it.\n    Sync-locked tracks ripple with it; a clip straddling the ripple point on\n    one of them refuses the whole op rather than being split (B-033).\n\n    This is the same edit the GUI's Alt/Option-drag on a clip edge performs\n    (D-235's context-sensitive trim tool).",
+      "description": "Trim a clip's `edge` (\"start\" or \"end\") by `delta` frames. `delta`\n    MOVES THAT EDGE along the timeline: positive = the edge moves LATER,\n    negative = EARLIER. So for `edge=\"end\"` a positive delta EXTENDS the\n    clip and a negative one shortens it; for `edge=\"start\"` a positive delta\n    shortens it (the head moves later) and a negative one extends it back\n    into previously-trimmed source material (B-337). Extending is bounded by\n    the source's own length.\n\n    `ripple=False` (the default, and the behaviour this tool has always had):\n    only this clip changes. Shortening leaves a real gap; extending is refused\n    outright if the neighbour is in the way.\n\n    `ripple=True` (D-235): everything after this clip on the SAME track shifts\n    to follow the new out point, so no gap is opened and a neighbour no longer\n    blocks the trim \u2014 it gets pushed instead. A head ripple leaves the clip's\n    `start_frame` where it is and pulls the rest of the track in behind it.\n    Sync-locked tracks ripple with it; a clip straddling the ripple point on\n    one of them refuses the whole op rather than being split (B-033).\n\n    This is the same edit the GUI's Alt/Option-drag on a clip edge performs\n    (D-235's context-sensitive trim tool).",
       "inputSchema": {
         "properties": {
           "track": {
@@ -21142,6 +21166,29 @@
             "height": 45,
             "fps": -34.72,
             "default_scaling": "v_editor_set_timeline_output.default_scaling"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_set_timeline_view",
+      "case": "minimal",
+      "arguments": {
+        "zoom": 5.35
+      },
+      "requests": [
+        {
+          "op": "editor_set_timeline_view",
+          "args": {
+            "zoom": 5.35
           },
           "timeout_ms": 20000
         }

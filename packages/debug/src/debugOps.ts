@@ -73,6 +73,8 @@
  *                                   received, and optional perf + per-frame
  *                                   rects (`input/inputOps.ts`).
  *   `debug_key`                   — D-434. Real key presses / combos / text.
+ *   `debug_overlay_check`         — D-434. Is a fixed overlay over these parts?
+ *   `debug_clear_harness_history` — D-434. Drop the harness's own undo entries.
  *   `debug_set_fps_overlay`       — D-330. Burn that live paint/raf readout
  *                                   into the window itself, so a screenshot
  *                                   or a `debug_record_video` recording
@@ -88,6 +90,7 @@
  * piece-2 gap in `docs/notes/debug-tooling.md`.
  */
 
+import { useHistoryStore } from '@apelles/history';
 import { useShellStore } from '@apelles/shell';
 import { getPanelCrashes } from '@apelles/ui';
 import {
@@ -113,6 +116,7 @@ import {
 } from './fpsOverlay';
 import { isParseError, parseBool, parseShellTab, SHELL_TABS } from './uiState';
 import { debugKey, debugPointer } from './input/inputOps';
+import { findOverlays } from './input/overlay';
 
 /** One op's arguments, straight off the untyped `chroma://request` payload —
  *  the same `any` every other registry in this repo uses for the same reason
@@ -328,6 +332,27 @@ export const DEBUG_OPS: Record<string, OpHandler> = {
   // gesture has been delivered and the page has settled.
   debug_pointer: (a) => debugPointer(a),
   debug_key: (a) => debugKey(a),
+
+  // D-434 / H1 — the UI harness's fixture ops are stamped `source: 'harness'`
+  // (so the Agent activity dock never lists them); this drops what they left
+  // on the shared undo/redo stacks once a scenario is torn down. Harness-only:
+  // no MCP tool, because an agent has no reason to call it.
+  // D-434 / H1 — pre-flight: does a `position: fixed` overlay sit over any of
+  // the given parts (CSS selectors)? Reads only; the harness fails a scenario
+  // up front, naming the overlay, instead of three presses in.
+  debug_overlay_check: (a) => {
+    const parts = Array.isArray(a?.parts) ? a.parts.map(String) : null;
+    if (!parts?.length) return { error: "'parts' must be a non-empty list of CSS selectors" };
+    const overlays = findOverlays(parts);
+    return { ok: overlays.length === 0, overlays };
+  },
+
+  debug_clear_harness_history: () => {
+    const before = useHistoryStore.getState();
+    const cleared = [...before.undoStack, ...before.redoStack].filter((e) => e.source === 'harness').length;
+    before.clearSource('harness');
+    return { ok: true, cleared };
+  },
 
   debug_set_fps_overlay: (a) => {
     const enabled = parseBool(a?.enabled, 'enabled');

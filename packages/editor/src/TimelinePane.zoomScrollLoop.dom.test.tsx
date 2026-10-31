@@ -56,6 +56,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import { useEditorTimelineStore } from './timelineStore';
 import { TimelinePane } from './TimelinePane';
+import { useTimelineViewStore } from './timelineView';
 import type { Clip, Timeline } from './timeline';
 
 const FPS = 24;
@@ -112,6 +113,8 @@ let restores: Array<() => void> = [];
 const originalSetState = React.PureComponent.prototype.setState;
 
 beforeEach(() => {
+  // D-434 — the zoom is a store now, so it outlives a mounted pane: start each test at the default.
+  useTimelineViewStore.setState(useTimelineViewStore.getInitialState());
   // A real scheduler, not `act`: the defect is about WHEN React runs work.
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   restores = [stubOffsetMetrics(AREA.width, AREA.height), installResizeObserverStub(), installPointerCaptureStub()];

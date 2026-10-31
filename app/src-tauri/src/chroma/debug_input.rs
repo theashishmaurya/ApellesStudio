@@ -101,8 +101,8 @@ mod mac {
     use crate::chroma::debug_capture::resolve_capturable_window;
     use apelles_ui_input::{
         InjectReport, KeyPhase, LowEvent, MagnifyPhase, MouseButton, MouseKind, OcclusionReport,
-        Viewport, css_to_view, key_characters, modifier_bits, mouse_kind, validate, view_scale,
-        virtual_key,
+        Viewport, css_to_view, key_characters, modifier_bits, mouse_kind, move_needs_key_window,
+        override_in_effect, validate, view_scale, virtual_key, windowless_event_location,
     };
 
     /// How long one event may take to be delivered on the main thread before
@@ -235,13 +235,18 @@ mod mac {
         validate(events)?;
         let window = resolve_capturable_window(app, window_label)?;
 
+        let held_at_start = PRESSED.load(Ordering::SeqCst) != 0;
+        let events_for_report = events.to_vec();
         let (geometry, mut report) = on_webview(&window, move |webview, _mtm| {
             let bounds = webview.bounds();
             let scale = view_scale(bounds.size.width, viewport)?;
-            let override_ok = install_pressed_override();
+            let override_installed = install_pressed_override();
             let window_key = webview.window().is_some_and(|w| w.isKeyWindow());
             let report = InjectReport {
-                pressed_buttons_override: override_ok,
+                // H10 — true only when a button is held in this call (or was
+                // when it began), not merely because the override is installed.
+                pressed_buttons_override: override_installed
+                    && override_in_effect(&events_for_report, held_at_start),
                 window_key,
                 occlusion_detection: occlusion_enabled(webview),
                 view_scale: scale,
@@ -280,6 +285,12 @@ mod mac {
                     if let Some(m) = flags.magnify_built {
                         report.magnify_built = Some(m);
                     }
+                    if let Some(c) = flags.wheel_location_corrected {
+                        report.wheel_location_corrected = Some(c);
+                    }
+                    if let Some(k) = flags.made_key_for_move {
+                        report.made_key_for_move = Some(k);
+                    }
                 }
                 Err(e) => {
                     outcome = Err(format!("event {i}: {e}"));
@@ -304,6 +315,8 @@ mod mac {
     #[derive(Default)]
     struct DeliveryFlags {
         wheel_window_matched: Option<bool>,
+        wheel_location_corrected: Option<bool>,
+        made_key_for_move: Option<bool>,
         magnify_built: Option<bool>,
     }
 
@@ -399,6 +412,20 @@ mod mac {
                     pressure,
                 )
                 .ok_or("AppKit refused to build the mouse event")?;
+                // H5 — WebKit drops a buttonless move for a window that is not
+                // key (a drag is delivered either way, `mouseDragged:`). The
+                // test-runner pattern is a key window, so make it key for the
+                // move; this changes the window's key state inside the app only
+                // and does not activate the app or take focus from another one.
+                if move_needs_key_window(
+                    *phase,
+                    *buttons,
+                    window.as_ref().is_some_and(|w| w.isKeyWindow()),
+                ) && let Some(w) = window.as_deref()
+                {
+                    w.makeKeyWindow();
+                    flags.made_key_for_move = Some(w.isKeyWindow());
+                }
                 with_current_event(mtm, &event, || match kind {
                     MouseKind::Down(MouseButton::Left) => webview.mouseDown(&event),
                     MouseKind::Down(MouseButton::Right) => webview.rightMouseDown(&event),
@@ -428,32 +455,49 @@ mod mac {
                 modifiers,
                 ..
             } => {
-                let screen_point = global_point(mtm, window.as_deref(), to_window(*x, *y));
-                // CG's wheel axis is the opposite sign of DOM `deltaY`.
-                let cg = CGEvent::new_scroll_wheel_event2(
-                    None,
-                    CGScrollEventUnit::Pixel,
-                    2,
-                    (-delta_y).round() as i32,
-                    (-delta_x).round() as i32,
-                    0,
-                )
-                .ok_or("CoreGraphics refused to build the scroll event")?;
-                CGEvent::set_location(Some(&cg), screen_point);
-                CGEvent::set_flags(Some(&cg), CGEventFlags(modifier_bits(*modifiers)));
-                CGEvent::set_integer_value_field(
-                    Some(&cg),
-                    CGEventField::MouseEventWindowUnderMousePointer,
-                    window_number as i64,
-                );
-                CGEvent::set_integer_value_field(
-                    Some(&cg),
-                    CGEventField::MouseEventWindowUnderMousePointerThatCanHandleThisEvent,
-                    window_number as i64,
-                );
-                let event =
-                    NSEvent::eventWithCGEvent(&cg).ok_or("AppKit refused the scroll event")?;
-                flags.wheel_window_matched = Some(event.windowNumber() == window_number);
+                let window_point = to_window(*x, *y);
+                // The wheel `NSEvent` is built from a `CGEvent` at a global
+                // location. CG's wheel axis is the opposite sign of DOM `deltaY`.
+                let build = |location: NSPoint| -> Result<Retained<NSEvent>, String> {
+                    let cg = CGEvent::new_scroll_wheel_event2(
+                        None,
+                        CGScrollEventUnit::Pixel,
+                        2,
+                        (-delta_y).round() as i32,
+                        (-delta_x).round() as i32,
+                        0,
+                    )
+                    .ok_or("CoreGraphics refused to build the scroll event")?;
+                    CGEvent::set_location(Some(&cg), location);
+                    CGEvent::set_flags(Some(&cg), CGEventFlags(modifier_bits(*modifiers)));
+                    CGEvent::set_integer_value_field(
+                        Some(&cg),
+                        CGEventField::MouseEventWindowUnderMousePointer,
+                        window_number as i64,
+                    );
+                    CGEvent::set_integer_value_field(
+                        Some(&cg),
+                        CGEventField::MouseEventWindowUnderMousePointerThatCanHandleThisEvent,
+                        window_number as i64,
+                    );
+                    Ok(NSEvent::eventWithCGEvent(&cg).ok_or("AppKit refused the scroll event")?)
+                };
+                let mut event = build(global_point(mtm, window.as_deref(), window_point))?;
+                let matched = event.windowNumber() == window_number;
+                flags.wheel_window_matched = Some(matched);
+                // H8 — an event that did not pick up the window reports its
+                // SCREEN position as `locationInWindow`, and WebKit converts
+                // that as window space: the wheel lands offset by the window's
+                // origin (invisible while the window sits at screen 0,0). Hand
+                // it the window-space point instead, so the conversion is exact.
+                flags.wheel_location_corrected = Some(!matched);
+                if !matched {
+                    let (cx, cy) = windowless_event_location(
+                        (window_point.x, window_point.y),
+                        primary_screen_height(mtm),
+                    );
+                    event = build(NSPoint::new(cx, cy))?;
+                }
                 with_current_event(mtm, &event, || webview.scrollWheel(&event));
             }
             LowEvent::Magnify {
@@ -570,10 +614,14 @@ mod mac {
             return p;
         };
         let screen = window.convertPointToScreen(p);
-        let primary_height = NSScreen::screens(mtm)
+        NSPoint::new(screen.x, primary_screen_height(mtm) - screen.y)
+    }
+
+    /// The primary display's height: CoreGraphics' global origin is its top-left.
+    fn primary_screen_height(mtm: MainThreadMarker) -> f64 {
+        NSScreen::screens(mtm)
             .firstObject()
-            .map_or(0.0, |s| s.frame().size.height);
-        NSPoint::new(screen.x, primary_height - screen.y)
+            .map_or(0.0, |s| s.frame().size.height)
     }
 
     pub fn set_occlusion_detection<R: Runtime>(

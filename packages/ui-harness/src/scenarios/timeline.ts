@@ -23,7 +23,7 @@ import {
   editArea,
   headerResize,
   marker,
-  playheadHandle,
+  playheadGrab,
   TIMELINE_LIBRARY_SELECTORS,
   TIMELINE_TEST_IDS,
   trackHeader,
@@ -64,7 +64,7 @@ export const TIMELINE_SCENARIOS: Scenario[] = [
   },
   {
     id: 'scrub-playhead-drag',
-    title: 'Dragging the playhead scrubs: it follows the pointer on every move',
+    title: 'Dragging from the playhead scrubs: it follows the pointer on every move',
     area: 'seek',
     reference: 'Resolve "tape-style scrub" (scrubbing.jpg) / Premiere: drag the playhead head to scrub',
     fixture: THREE_CLIPS,
@@ -74,12 +74,14 @@ export const TIMELINE_SCENARIOS: Scenario[] = [
       {
         pointer: {
           action: 'drag',
-          target: playheadHandle(),
+          target: playheadGrab(30),
           to: atFrame(200, 'ruler'),
           steps: 20,
           durationMs: 600,
           watch: { selectors: [TIMELINE_LIBRARY_SELECTORS.playhead] },
         },
+        // H4: the press may land on the ruler or on the playhead's hit strip.
+        expectHit: false,
         measure: true,
       },
       { expect: { live: { selector: TIMELINE_LIBRARY_SELECTORS.playhead, prop: 'x', minDistinct: 6, label: 'the playhead line moves during the scrub' } } },
@@ -95,8 +97,10 @@ export const TIMELINE_SCENARIOS: Scenario[] = [
     steps: [
       FPS_GUARD,
       { pointer: { action: 'click', target: clip('a') }, label: 'select a' },
-      { pointer: { action: 'click', target: atFrame(200, 1) }, label: 'click empty space on track 1', expectHit: false },
-      { waitFor: playheadNear(200) },
+      // GAPPED is 180 frames long and `setPlayhead` clamps to the last frame, so
+      // the empty space must be INSIDE the timeline: track 1 is empty from 90.
+      { pointer: { action: 'click', target: atFrame(150, 1) }, label: 'click empty space on track 1', expectHit: false },
+      { waitFor: playheadNear(150) },
       { expect: { path: 'state.selection.length', op: 'eq', value: 0 } },
     ],
   },
@@ -116,16 +120,33 @@ export const TIMELINE_SCENARIOS: Scenario[] = [
     ],
   },
   {
-    id: 'select-shift-multi',
-    title: 'Shift-click adds a clip to the selection',
+    id: 'select-cmd-click-toggles',
+    title: 'Cmd-click adds a clip to the selection (and takes it out again)',
     area: 'selection',
-    reference: 'Premiere / Resolve: Shift(-click) extends the selection',
+    reference: 'Premiere / Resolve / FCP: Cmd-click toggles one clip in the selection (D-107: `onClickAction`)',
+    fixture: THREE_CLIPS,
+    steps: [
+      FPS_GUARD,
+      { pointer: { action: 'click', target: clip('a', { fy: 0.8 }) } },
+      { pointer: { action: 'click', target: clip('c', { fy: 0.8 }), modifiers: ['meta'] } },
+      { waitFor: { path: 'state.selection.length', op: 'eq', value: 2 } },
+      { expect: [{ path: 'state.selection.0.id', op: 'eq', value: '@clip:a' }, { path: 'state.selection.1.id', op: 'eq', value: '@clip:c' }] },
+      { pointer: { action: 'click', target: clip('c', { fy: 0.8 }), modifiers: ['meta'] } },
+      { waitFor: { path: 'state.selection.length', op: 'eq', value: 1 } },
+    ],
+  },
+  {
+    id: 'select-shift-click-range',
+    title: 'Shift-click selects the range from the last selected clip to the clicked one',
+    area: 'selection',
+    reference: 'Resolve / Premiere range selection; D-107 chose a same-track range for Shift (Cmd toggles)',
     fixture: THREE_CLIPS,
     steps: [
       FPS_GUARD,
       { pointer: { action: 'click', target: clip('a', { fy: 0.8 }) } },
       { pointer: { action: 'click', target: clip('c', { fy: 0.8 }), modifiers: ['shift'] } },
-      { waitFor: { path: 'state.selection.length', op: 'eq', value: 2 } },
+      // a..c on one track is a, b and c: the range includes the clip in between.
+      { waitFor: { path: 'state.selection.length', op: 'eq', value: 3 } },
     ],
   },
   {
@@ -223,16 +244,27 @@ export const TIMELINE_SCENARIOS: Scenario[] = [
     ],
   },
   {
-    id: 'linked-av-select-together',
-    title: 'Clicking the picture of a linked A/V clip selects its audio too',
+    id: 'linked-av-select-one-half',
+    title: 'Clicking the picture of a linked A/V clip selects that half, outlines its partner, and Delete takes both',
     area: 'linked A/V',
-    reference: 'Premiere linked selection / Resolve linked clips: both halves select together',
+    reference: 'D-129 option (b): one half selects, the partner gets a dashed outline, and edits act on the whole group (Premiere linked selection / Resolve linked clips)',
     fixture: { tracks: [{ kind: 'video', clips: [{ name: 'v', media: 'av', duration: 90, startFrame: 0 }] }, { kind: 'audio', clips: [] }] },
     steps: [
       FPS_GUARD,
       { require: { path: 'timeline.clips.v.linkGroup', op: 'truthy' }, reason: 'the A/V fixture clip came without a linked audio half' },
       { pointer: { action: 'click', target: clip('v', { fy: 0.3 }) } },
-      { waitFor: { path: 'state.selection.length', op: 'eq', value: 2 } },
+      { waitFor: { path: 'state.selection.length', op: 'eq', value: 1 } },
+      { expect: { path: 'state.selection.0.id', op: 'eq', value: '@clip:v' } },
+      {
+        reachable: {
+          selector: `[data-testid="${TIMELINE_TEST_IDS.clip}"][class*="outline-dashed"]`,
+          reason: 'the linked partner of the selected half has no dashed outline',
+        },
+      },
+      { key: { keys: ['Delete'] } },
+      // D-129: delete removes the whole group and prunes a track it empties, so
+      // count clips rather than index a track that may be gone.
+      { waitFor: { path: 'timeline.clipCount', op: 'eq', value: 0, label: 'Delete took the picture and its linked audio half' } },
     ],
   },
   {

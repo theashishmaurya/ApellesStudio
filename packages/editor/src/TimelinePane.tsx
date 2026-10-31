@@ -392,11 +392,11 @@ import { TIMELINE_TEST_IDS, TIMELINE_VIEW_ATTRS } from './timelineTestIds';
 import {
   niceTickIntervalSeconds,
   formatTimecode,
-  MIN_PX_PER_SEC,
-  MAX_PX_PER_SEC,
   DEFAULT_PX_PER_SEC,
   RULER_HEIGHT_PX,
 } from './ruler';
+// D-434 / H2 — the zoom lives in a store so MCP can set and read it.
+import { clampPxPerSec, useTimelineViewStore } from './timelineView';
 // B-116 — anchored zoom: keep whatever is under the cursor (wheel) or the
 // playhead (buttons) under it across a zoom step.
 import { buttonZoomAnchorX, frameAtViewportX, scrollLeftForAnchor } from './timelineZoom';
@@ -597,10 +597,6 @@ const INSERT_SNAP_PX = 28;
  *  much of each row that an ordinary same-track drop near an edge
  *  accidentally triggers it." */
 const TRACK_INSERT_BAND_PX = Math.round(ROW_HEIGHT * 0.22);
-
-function clampPxPerSec(w: number): number {
-  return Math.min(MAX_PX_PER_SEC, Math.max(MIN_PX_PER_SEC, w));
-}
 
 /** One `TimelineRow` per track (D-080) — `row.id` is the track's own index
  *  (stringified), the stable key every callback below maps back to
@@ -1277,7 +1273,8 @@ export function TimelinePane() {
   // `editor_set_curve_editor` over MCP.
   const curveEditor = useEditorTimelineStore((s) => s.curveEditor);
   const setCurveEditor = useEditorTimelineStore((s) => s.setCurveEditor);
-  const [pxPerSec, setPxPerSec] = useState(DEFAULT_PX_PER_SEC);
+  const pxPerSec = useTimelineViewStore((s) => s.pxPerSec);
+  const setPxPerSec = useTimelineViewStore((s) => s.setPxPerSec);
   const [rippled, setRippled] = useState<Set<string>>(new Set());
   const [scrollTop, setScrollTop] = useState(0);
   // D-095 — horizontal scroll, needed alongside `scrollTop` to convert a
@@ -4520,7 +4517,7 @@ export function TimelinePane() {
           </div>
         </ResizablePanel>
 
-        <ResizableHandle data-testid={TIMELINE_TEST_IDS.headerResize} />
+        <ResizableHandle id={TIMELINE_TEST_IDS.headerResize} />
 
         <ResizablePanel className="relative min-h-0 overflow-hidden">
           {/* D-233 — the edit area and the curve lane are a real vertical
@@ -4863,7 +4860,7 @@ export function TimelinePane() {
 
             {curveEditorClip && (
               <>
-                <ResizableHandle data-testid={TIMELINE_TEST_IDS.curveResize} />
+                <ResizableHandle id={TIMELINE_TEST_IDS.curveResize} />
                 <ResizablePanel
                   defaultSize={CURVE_LANE_HEIGHT}
                   minSize={CURVE_LANE_MIN_HEIGHT}

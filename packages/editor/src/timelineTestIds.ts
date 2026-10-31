@@ -49,7 +49,9 @@ export const TIMELINE_TEST_IDS = {
   trackMute: 'timeline-track-mute',
   trackBeats: 'timeline-track-beats',
   trackRemove: 'timeline-track-remove',
-  /** The divider between the track-header column and the edit area. */
+  /** The divider between the track-header column and the edit area. Passed as
+   *  the handle's `id`, NOT `data-testid`: react-resizable-panels 4.x writes
+   *  `data-testid` from its `id`, overwriting any prop (H7). */
   headerResize: 'timeline-header-resize',
   /** The divider above the curve-editor lane (present only while it is open). */
   curveResize: 'timeline-curve-resize',
@@ -96,7 +98,7 @@ export const TIMELINE_LIBRARY_SELECTORS = {
 } as const;
 
 /** The view readout on the edit area (D-434) — the zoom and scroll that live
- *  in `TimelinePane`'s own React state rather than a store, plus the layout
+ *  in `useTimelineViewStore` (zoom) and `TimelinePane`'s own React state (scroll), plus the layout
  *  constants that turn a frame into a pixel, written as data attributes so a
  *  test can assert on them — and aim at "frame 90 on track 1" — without
  *  reaching into a component. Read with `Number(el.getAttribute(...))`.

@@ -24,6 +24,7 @@ import { useBrandStore } from '@apelles/brand';
 import { BrandKitButton } from '@apelles/brand/ui';
 import App from './App';
 import { MOTION_TAB_ENABLED } from './buildFeatures';
+import { useProjectScopedHistory } from './hooks/useProjectScopedHistory';
 import AgentActivityDock from './components/chroma/AgentActivityDock';
 import ProjectLauncher from './components/chroma/ProjectLauncher';
 import { SourcesPanel } from './components/chroma/SourcesPanel';
@@ -151,6 +152,10 @@ export function Root() {
   useEffect(() => {
     useEditorTimelineStore.getState().setOpenProject(projectKey);
   }, [projectKey]);
+
+  // B-343 — and the shared undo/redo history, which belongs to one project:
+  // its entries close over the project they were made in, so a switch empties it.
+  useProjectScopedHistory(projectKey);
 
   // B-058/D-150 — the same bridge for the Motion tab, which never had one: it
   // mounts at boot like every other tab (see this file's B-007 note), read its

@@ -41,8 +41,13 @@ What a run does, and undoes:
    `testsrc2` picture only, the same with a 440 Hz tone, and the tone alone;
 3. creates and opens a **new** project `ui-harness-<stamp>` holding that media, and waits
    until the Edit tab has switched to it — the owner's projects are never edited;
-4. per scenario: creates a fresh timeline `ui-harness <id>`, lays out its fixture through
-   `editor_*` ops, runs its steps, screenshots it on failure, deletes the timeline;
+4. per scenario: creates a fresh timeline `ui-harness <id>`, resets the timeline zoom to the
+   default (`editor_set_timeline_view`), lays out its fixture through `editor_*` ops, checks
+   (`debug_overlay_check`) that no `position: fixed` overlay covers the timeline's lanes,
+   header column or toolbar buttons (fails fast, naming the overlay), runs its steps,
+   screenshots it on failure, deletes the timeline and drops the undo entries its ops left.
+   Every harness request carries `source: "harness"`, so the Agent activity dock and a
+   person's undo history never see the fixture ops as agent work;
 5. restores throttling, reopens the project the app had open, deletes the scratch project
    folder (only a `ui-harness-*.chroma` folder this run created).
 
@@ -195,7 +200,8 @@ no scrollbar element (native overflow scrolling) — scenarios scroll with the w
 
 - Native delivery was checked live on 2026-10-31: see "First live run" below for the answers
   (trusted events yes; keys while not key yes; hover moves while not key **no**; the wheel is
-  **not** attributed to the window).
+  **not** attributed to the window). The 2026-10-31 fix wave addresses the last two (H5, H8);
+  both are **unverified** until the next live run, see "Fix wave" below.
 - **Real input leaks into the observer.** The capture-phase observer counts every event the page
   gets, including the owner's real mouse and keyboard; a live check saw a real Shift keydown
   and stray pointermoves in an injected call's `observed`. Run with nobody at the machine, or
@@ -272,6 +278,24 @@ an agent working hits the same dock: B-341 (fixed afterwards by D-435: the dock 
 | H8 | `native.wheelWindowMatched` is **false**: the wheel `NSEvent` built from the `CGEvent` is not attributed to the window, so WebKit reads its location as screen coordinates. Scroll/zoom scenarios passed only because the window spans the screen from x = 0 (y is off by the menu bar); the observer does not record wheel coordinates, so this was invisible | verify with a window moved away from the origin; fix the attribution (or convert the location for a windowless event); record `clientX/Y` of wheel events in `observe.ts` |
 | H9 | `slip-tool` has no live-feedback check, so it passes while slip shows nothing during the drag (B-345) | add a `live` check on what slip should animate (the filmstrip offset / a two-up frame) once P2 builds it |
 | H10 | `native.pressedButtonsOverride` reads `true` on calls with no button (a move, a key, a wheel) | report it only when a button is held, or rename it to what it means |
+
+### Fix wave, 2026-10-31: status of H1-H10
+
+Code and unit tests for all ten. "Fixed" = verified by tests that run without the app;
+**unverified** = needs the live app (the owner's instance was off limits for this wave).
+
+| # | status | what changed | how to confirm live |
+|---|---|---|---|
+| H1 | **fixed** | `ControlClient` stamps `source: "harness"`; `control.rs` forwards only that value; the dispatchers use `runForRequest` (`@apelles/history` gains an `EntrySource` `'harness'`, which the dock ignores); `teardownFixture` calls `debug_clear_harness_history`; `debug_overlay_check` + `assertNothingCoversTheTimeline` fail fast. | a run no longer opens the dock |
+| H2 | **fixed** | zoom moved from `TimelinePane` state into `useTimelineViewStore`; `editor_set_timeline_view({zoom})` (D-432's planned name, zoom is its first field) sets it and `editor_get_state.timelineView` reads it; `buildFixture` resets it. Both MCP servers, corpus, 261 -> 262. | `zoom-trackpad-pinch` followed by any frame-addressed scenario |
+| H3 | **fixed** | B-337 docstring corrected in both servers (`delta` moves the edge; `end` + extends); the replay steps use -15 | `trim-right-edge-select-tool`, `ripple-trim-tool` MCP replays |
+| H4 | **fixed** | `playheadGrab(frame)` = the ruler at the playhead's frame, `expectHit: false`, so it holds both before and after B-346 shrinks the strip | `scrub-playhead-drag` |
+| H5 | **fixed in code, unverified** | a buttonless move into a non-key window calls `makeKeyWindow` first (WebKitTestRunner's pattern; `native.madeKeyForMove`); if no `pointermove` still arrives in a non-key window the runner SKIPs the scenario with "hover needs a key window" instead of the generic failure. It is not known that WebKit honours a window made key while the app is inactive. | `clip-body-hover-cursor`, `track-header-present`: `observed.counts.pointermove` > 0 with `native.windowKey` false |
+| H6 | **fixed** | `select-shift-multi` -> `select-cmd-click-toggles` + `select-shift-click-range` (D-107); `linked-av-select-together` -> `linked-av-select-one-half` (D-129 option b: one half selected, partner dashed, Delete takes both); empty-lane seek at frame 150 inside the 180-frame timeline; `GAPPED`'s track-1 clip no longer straddles the gap end (B-033) | the four scenarios |
+| H7 | **fixed** | `ResizableHandle id={…}` for `timeline-header-resize` and `timeline-curve-resize` (the library derives `data-testid` from `id`); the scenario targets `#timeline-header-resize`; `TimelinePane.testIds.dom.test.tsx` pins it on a real render | `track-header-resize` |
+| H8 | **fixed in code, unverified** | an unmatched wheel `NSEvent` is rebuilt at `windowless_event_location` so its `locationInWindow` is the window-space point (`native.wheelLocationCorrected`); the observer records `observed.lastWheel`; the runner FAILS a wheel that lands more than 3 px from its aim. The check, not the fix, is what the next run proves. | any wheel scenario with the window moved off screen (0,0) |
+| H9 | **fixed** | `slip-tool` watches the clip's filmstrip tiles (`<clip> img`) and expects their `x` to change during the drag; it FAILS today by design (B-345) | `slip-tool` fails on that one check |
+| H10 | **fixed** | `pressedButtonsOverride` is true only when a button is held when the call begins or an event in it holds one (`override_in_effect`) | a `move` / `key` / `wheel` reply says false |
 
 ### D-434's "verify live first" answers
 

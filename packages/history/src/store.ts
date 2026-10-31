@@ -21,7 +21,8 @@
  * close — deliberate for this pass, see D-051).
  *
  * **Who did it (D-298).** Every entry carries a `source`: `'user'` (the
- * default) or `'agent'`. An MCP op dispatcher wraps its handler in
+ * default), `'agent'`, or `'harness'` (D-434 — the UI test harness's own
+ * fixture ops; the activity feed lists only `'agent'`, so they never show). An MCP op dispatcher wraps its handler in
  * [`runAsAgent`], and every `push` that happens inside that window is stamped
  * `'agent'` — so the Edit and Motion tabs need no per-op instrumentation at
  * all, only one wrapper each at the point where an MCP request is dispatched.
@@ -60,7 +61,7 @@ export interface HistoryEntry {
 }
 
 /** Who caused an entry — see `HistoryEntry.source`. */
-export type EntrySource = 'user' | 'agent';
+export type EntrySource = 'user' | 'agent' | 'harness';
 
 /** What a caller passes to `push()` — `id`/`ts` are optional and auto-filled,
  *  `source` is not passed at all (it comes from [`runAsAgent`]'s scope). */
@@ -71,30 +72,44 @@ export type PushableEntry = Omit<HistoryEntry, 'id' | 'ts' | 'source'> &
 // D-298 — the agent scope
 // --------------------------------------------------------------------------- //
 
-let agentDepth = 0;
+/** The attribution scopes currently open, innermost last. Empty = a person. */
+const scopes: Exclude<EntrySource, 'user'>[] = [];
+
+async function runInScope<T>(source: Exclude<EntrySource, 'user'>, fn: () => T | Promise<T>): Promise<T> {
+  scopes.push(source);
+  try {
+    return await fn();
+  } finally {
+    scopes.pop();
+  }
+}
 
 /** Run `fn` with every [`useHistoryStore`] `push` inside it stamped
  *  `source: 'agent'`. Re-entrant (a nested call keeps the stamp), and the
- *  counter is unwound in a `finally` so a throwing handler cannot leave the
+ *  scope is unwound in a `finally` so a throwing handler cannot leave the
  *  whole app permanently attributing edits to an agent.
  *
  *  Wrap the **dispatcher**, not each op: one call site per tab's MCP bridge is
  *  the whole instrumentation, which is exactly why this shape was chosen over
  *  threading a flag through every op handler. */
-export async function runAsAgent<T>(fn: () => T | Promise<T>): Promise<T> {
-  agentDepth += 1;
-  try {
-    return await fn();
-  } finally {
-    agentDepth -= 1;
-  }
+export function runAsAgent<T>(fn: () => T | Promise<T>): Promise<T> {
+  return runInScope('agent', fn);
 }
 
-/** Whether a `push` right now would be attributed to an agent. Exported for
- *  tests and for a caller that needs to make the same distinction without
- *  pushing (nothing does today). */
+/** D-434 / H1 — the dispatcher entry point: run `fn` as the agent, unless the
+ *  request itself says (`source: 'harness'`, set by the control server only for
+ *  the UI harness's own fixture ops) that it is the test harness's. Anything
+ *  else a request carries in `source` is ignored, so only the harness can
+ *  name itself, and an unknown value is an agent request as before. */
+export function runForRequest<T>(request: object | null | undefined, fn: () => T | Promise<T>): Promise<T> {
+  return runInScope((request as { source?: unknown } | null | undefined)?.source === 'harness' ? 'harness' : 'agent', fn);
+}
+
+/** Whether a `push` right now would be attributed to an agent (or the test
+ *  harness — anything that is not a person). Exported for tests and for a
+ *  caller that needs to make the same distinction without pushing. */
 export function isAgentScope(): boolean {
-  return agentDepth > 0;
+  return scopes.length > 0;
 }
 
 /** Cap on each stack, mirroring the Colorist's own 50-deep `useEditorStore`
@@ -121,9 +136,13 @@ interface HistoryState {
   /** Redo the most recently undone action. Returns the entry redone, or
    *  `null` if the redo stack is empty. */
   redo: () => HistoryEntry | null;
-  /** Drop everything — both stacks. Not currently called by app code (no
-   *  "clear history" UI this pass); exposed for tests and future use. */
+  /** Drop everything — both stacks. Called when a project opens, is created
+   *  or closes (B-343: an undo must never reach across projects). */
   clear: () => void;
+  /** Drop every entry a given source pushed, from both stacks, leaving the
+   *  rest in order. The UI harness calls it with `'harness'` after each
+   *  scenario so its fixture ops never linger in a person's undo history. */
+  clearSource: (source: EntrySource) => void;
   canUndo: () => boolean;
   canRedo: () => boolean;
   /** Top of each stack without popping — for a future "Undo <label>" menu
@@ -143,7 +162,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
         ts: entry.ts ?? Date.now(),
         tab: entry.tab,
         label: entry.label,
-        source: agentDepth > 0 ? 'agent' : 'user',
+        source: scopes[scopes.length - 1] ?? 'user',
         undo: entry.undo,
         redo: entry.redo,
       };
@@ -171,6 +190,11 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   },
 
   clear: () => set({ undoStack: [], redoStack: [] }),
+  clearSource: (source) =>
+    set((s) => ({
+      undoStack: s.undoStack.filter((e) => e.source !== source),
+      redoStack: s.redoStack.filter((e) => e.source !== source),
+    })),
   canUndo: () => get().undoStack.length > 0,
   canRedo: () => get().redoStack.length > 0,
   peekUndo: () => get().undoStack[get().undoStack.length - 1] ?? null,

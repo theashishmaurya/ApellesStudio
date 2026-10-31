@@ -29,9 +29,18 @@ export interface NativeReport {
   dispatched: number;
   /** How a plain mouse move was delivered (`simulateMouseMove` SPI or `mouseMoved:`). */
   mouseMovePath: string;
-  /** Whether `+[NSEvent pressedMouseButtons]` was overridden for the gesture, so
-   *  DOM `buttons` reports the injected button rather than the physical mouse. */
+  /** Whether `+[NSEvent pressedMouseButtons]` was reporting an injected button
+   *  during the call (H10) — false on a hover, a key or a wheel, where nothing
+   *  is held — so DOM `buttons` reflects the injected button, not the physical mouse. */
   pressedButtonsOverride: boolean;
+  /** Wheel only (H8): the `NSEvent` built from the `CGEvent` was attributed to the window. */
+  wheelWindowMatched?: boolean;
+  /** Wheel only (H8): the location was rewritten into window space because it was not. */
+  wheelLocationCorrected?: boolean;
+  /** A buttonless move into a non-key window (H5): the window was made key first. */
+  madeKeyForMove?: boolean;
+  /** Pinch only: the built event really is a Magnify event. */
+  magnifyBuilt?: boolean;
   /** Whether the window was key while events were delivered. */
   windowKey: boolean;
   /** WebKit's own occlusion detection (`_windowOcclusionDetectionEnabled`) —

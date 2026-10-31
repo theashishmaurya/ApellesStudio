@@ -357,6 +357,11 @@ pub struct EditorSetPreviewZoomArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorSetTimelineViewArgs {
+    pub zoom: ZoomSpec,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EditorImportMediaArgs {
     pub paths: Vec<String>,
     #[serde(default)]
@@ -2748,6 +2753,41 @@ impl ApellesMcp {
     }
 
     #[tool(
+        name = "editor_set_timeline_view",
+        description = r#"Set the Edit tab's TIMELINE zoom: how many pixels one second of timeline
+    spans (D-434, the AI half of the timeline toolbar's `-  100%  +` buttons and
+    ctrl/pinch-scroll over the lanes; D-432 plans the Clip Appearance view
+    settings to join it on this tool).
+
+    **Display-only. It changes no clip, no timing, and nothing that renders or
+    exports** — only how wide the timeline is drawn, so a frame number maps to a
+    different screen x. Why you would call it: to read fine detail (zoom in
+    before a `debug_pointer` drag that has to land on an exact frame), to see a
+    whole long timeline in one screenshot (zoom out), and to put the view back
+    to a known state — the default — after something else changed it.
+
+    `zoom`: a multiplier of the default, where **1 = the default** (the
+    toolbar's 100 %, 90 px per second), 2 = twice as wide, 0.5 = half. Range
+    about 0.01-5.3; outside it the value is clamped and the response says so in
+    `note`. Pass the string `"default"` for 1. A zoom set here does NOT anchor
+    on the playhead the way the toolbar buttons do; the scroll position is left
+    as it is.
+
+    Not undoable, by design (same reasoning as `editor_set_preview_zoom`, D-216):
+    a view setting is UI state, not part of the `Timeline` document. The current
+    value is reported by `editor_get_state` as `timelineView`
+    (`{zoom, pct, pxPerSec}`)."#
+    )]
+    pub async fn editor_set_timeline_view(
+        &self,
+        Parameters(p): Parameters<EditorSetTimelineViewArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("zoom", p.zoom);
+        let env = self.op("editor_set_timeline_view", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
         name = "editor_import_media",
         description = r#"Import one or more absolute file paths into the project's shared media
     pool. Required before `editor_add_clip` can place them — that tool looks
@@ -3857,9 +3897,13 @@ impl ApellesMcp {
 
     #[tool(
         name = "editor_trim_clip",
-        description = r#"Trim a clip's `edge` ("start" or "end") by `delta` frames — positive
-    shortens the clip, negative extends it back into previously-trimmed
-    source material (up to the source's own bounds).
+        description = r#"Trim a clip's `edge` ("start" or "end") by `delta` frames. `delta`
+    MOVES THAT EDGE along the timeline: positive = the edge moves LATER,
+    negative = EARLIER. So for `edge="end"` a positive delta EXTENDS the
+    clip and a negative one shortens it; for `edge="start"` a positive delta
+    shortens it (the head moves later) and a negative one extends it back
+    into previously-trimmed source material (B-337). Extending is bounded by
+    the source's own length.
 
     `ripple=False` (the default, and the behaviour this tool has always had):
     only this clip changes. Shortening leaves a real gap; extending is refused

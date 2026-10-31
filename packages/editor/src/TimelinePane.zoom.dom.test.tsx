@@ -51,6 +51,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import { useEditorTimelineStore } from './timelineStore';
 import { TimelinePane } from './TimelinePane';
+import { useTimelineViewStore } from './timelineView';
 import { DEFAULT_MARKER_COLOR, type Timeline } from './timeline';
 
 const FPS = 24;
@@ -137,6 +138,8 @@ async function mountPane(): Promise<HTMLElement> {
 }
 
 beforeEach(() => {
+  // D-434 — the zoom is a store now, so it outlives a mounted pane: start each test at the default.
+  useTimelineViewStore.setState(useTimelineViewStore.getInitialState());
   restoreOffsets = stubOffsetMetrics(AREA.width, AREA.height);
   restoreResizeObserver = installResizeObserverStub();
   restorePointerCapture = installPointerCaptureStub();
