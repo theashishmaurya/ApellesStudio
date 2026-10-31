@@ -14,8 +14,9 @@
 /** Ops answered with their own result only — and never logged to the agent
  *  activity feed. `undo` / `redo` (B-248: cross-tab, they step the shared
  *  history); `save_project` (B-296: writes the project to disk, touches no
- *  grade). */
-export const RESULT_ONLY_OPS: ReadonlySet<string> = new Set(['undo', 'redo', 'save_project']);
+ *  grade); `close_project` (B-356: leaves the project, so there is no frame or
+ *  grade to attach). */
+export const RESULT_ONLY_OPS: ReadonlySet<string> = new Set(['undo', 'redo', 'save_project', 'close_project']);
 
 export function isResultOnlyOp(op: string): boolean {
   return RESULT_ONLY_OPS.has(op);

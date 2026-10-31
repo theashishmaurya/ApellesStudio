@@ -9,7 +9,7 @@
  * it at the start of a run and, at the end, calls it again with `restorePid` so
  * the app that had the front gets it back and the owner's desktop is as they left it.
  *
- * What it does NOT do: fail a run. An app that cannot be activated leaves hover
+ * What it does NOT do: fail a run itself (it reports `locked`; the CLI stops, B-352). An app that cannot be activated leaves hover
  * scenarios to skip themselves (H5's key-window check), and says so in the report.
  */
 
@@ -31,6 +31,14 @@ export interface FrontState {
   /** The app to give the front back to; `null` when Apelles was already in front or activation failed. */
   restorePid: number | null;
   notes: string[];
+  /** The Mac's screen is locked or asleep (the frontmost app is `loginwindow`):
+   *  no window can become key and rAF never fires, so a run cannot measure (B-352). */
+  locked: boolean;
+}
+
+/** The message `debug_activate_app` fails with when the front is the login window. */
+export function isScreenLockedError(message: string): boolean {
+  return /frontmost app is loginwindow/.test(message);
 }
 
 /** Bring Apelles to the front; report who had it. */
@@ -43,10 +51,11 @@ export async function activateApp(client: OpClient): Promise<FrontState> {
     }
     const handBack = r.previous && r.now && r.previous.pid !== r.now.pid ? r.previous : null;
     if (handBack) notes.push(`Apelles was brought to the front (it was behind ${handBack.name ?? `pid ${handBack.pid}`}); the front is handed back at the end`);
-    return { restorePid: handBack?.pid ?? null, notes };
+    return { restorePid: handBack?.pid ?? null, notes, locked: false };
   } catch (e) {
-    notes.push(`could not bring Apelles to the front (${String((e as Error).message)}); hover scenarios may skip`);
-    return { restorePid: null, notes };
+    const message = String((e as Error).message);
+    notes.push(`could not bring Apelles to the front (${message}); hover scenarios may skip`);
+    return { restorePid: null, notes, locked: isScreenLockedError(message) };
   }
 }
 

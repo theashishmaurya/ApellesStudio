@@ -91,6 +91,8 @@ pub struct ActivationReport {
     /// The app in front when the call returned.
     pub now: Option<AppRef>,
     /// Whether the app asked for (this one, or `restorePid`) is now in front.
+    /// Always `true` in an `Ok` answer: an activation that did not take is an
+    /// error naming the frontmost app (B-352).
     pub active: bool,
     /// Whether this app's window is key after the call (hover needs it).
     pub window_key: bool,
@@ -769,6 +771,20 @@ mod mac {
             // Handing the front back needs no key window; taking it does.
             let settled = active && (restore_pid.is_some() || window_key);
             if settled || std::time::Instant::now() >= deadline {
+                // B-352: activation that did not take is an ERROR, not an `ok`
+                // report with `active: false` — a locked screen (front app
+                // `loginwindow`) used to read as success and the run measured
+                // zero frames. The message names who has the front.
+                if !active {
+                    let front = now
+                        .as_ref()
+                        .map(|a| a.name.clone().unwrap_or_else(|| format!("pid {}", a.pid)))
+                        .unwrap_or_else(|| "unknown".into());
+                    return Err(format!(
+                        "activation did not take: the frontmost app is {front} \
+                         (loginwindow means the Mac is locked or asleep)"
+                    ));
+                }
                 return Ok(ActivationReport {
                     previous,
                     now,

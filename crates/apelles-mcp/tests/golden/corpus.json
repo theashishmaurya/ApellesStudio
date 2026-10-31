@@ -778,6 +778,15 @@
       }
     },
     {
+      "name": "close_project",
+      "description": "Close the open project and return the app to the Projects launcher \u2014 what\n    the app's \"\u2039 Projects\" button does, by the same code. Returns {closed: path},\n    or {closed: null} (a no-op) when nothing is open.\n\n    Unsaved work is handled exactly as the button handles it, with no prompt and\n    no parameter: the Edit tab's pending timeline save is flushed, a changed\n    named project is saved, and an unsaved \"Untitled\" session is discarded.\n    Nothing on disk is deleted. After it, every project-bound tool (editor_*,\n    motion_*, grade ops) has no project to act on until open_project /\n    new_project.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+        "title": "close_projectArguments"
+      }
+    },
+    {
       "name": "debug_dom_tree",
       "description": "Dump the real DOM under `selector`: element hierarchy, ids/classes,\n    data-*/aria-*/role attributes, each element's `getBoundingClientRect()`,\n    and a chosen set of computed styles.\n\n    This answers WHY, where a screenshot only answers WHAT. \"The panel looks\n    too narrow\" -> dump it and read the real width, its parent's width, and\n    which one is `position:absolute`. \"The button isn't visible\" -> the node is\n    flagged `invisible` (display:none/visibility:hidden) or `zeroArea`, with\n    the styles that caused it right there.\n\n    ALWAYS pass a `selector` when you know the region you care about \u2014 Apelles'\n    full page is thousands of nodes and the default bounds will truncate it\n    into uselessness. Stable hooks exist for the big panels:\n    `[data-chroma-panel=\"editor-inspector\"]`, `[data-chroma-panel=\"sources\"]`.\n\n    Coordinates are CSS pixels; `debug_screenshot` pixels are DEVICE pixels.\n    Multiply by the screenshot's `scaleFactor` (== `viewport.devicePixelRatio`\n    here) to point `debug_sample_pixel` at a rect from this dump.\n\n    Args:\n        selector: CSS selector for the root. Default \"body\". No match returns\n            root=null (not an error); a malformed selector IS an error.\n        max_depth: how deep to walk. Default 12.\n        max_nodes: total node budget. Default 300, max 5000.\n        styles: computed properties to report, e.g. [\"display\",\"width\",\n            \"position\"]. Default a small layout/colour set; [] for none.\n        include_hidden: walk into display:none subtrees too. Default false.\n        text: include each element's own direct text. Default true.\n\n    Every bound REPORTS itself: `truncated` on the result, and\n    `childrenTruncated: \"depth\"|\"nodes\"|\"invisible\"` on the node where it bit,\n    so you can always tell \"that's all there is\" from \"there was more\".",
       "inputSchema": {
@@ -15959,6 +15968,25 @@
         {
           "type": "text",
           "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  }\n}"
+        }
+      ]
+    },
+    {
+      "tool": "close_project",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "close_project",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
         }
       ]
     },

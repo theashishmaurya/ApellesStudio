@@ -176,9 +176,9 @@ describe('activation (H15)', () => {
 
   it('hands the front back with the remembered pid, and only then', async () => {
     const c = new Stub({});
-    expect(await restoreFront(c, { restorePid: null, notes: [] })).toEqual([]);
+    expect(await restoreFront(c, { restorePid: null, notes: [], locked: false })).toEqual([]);
     expect(c.calls).toEqual([]);
-    expect(await restoreFront(c, { restorePid: 501, notes: [] })).toEqual([]);
+    expect(await restoreFront(c, { restorePid: 501, notes: [], locked: false })).toEqual([]);
     expect(c.calls).toEqual([{ op: 'debug_activate_app', args: { restorePid: 501 } }]);
   });
 
@@ -198,6 +198,6 @@ describe('activation (H15)', () => {
     const state = await activateApp(c);
     expect(state.restorePid).toBeNull();
     expect(state.notes[0]).toMatch(/could not bring Apelles to the front/);
-    expect(await restoreFront(c, { restorePid: 7, notes: [] })).toEqual([expect.stringMatching(/could not hand the front back to pid 7/)]);
+    expect(await restoreFront(c, { restorePid: 7, notes: [], locked: false })).toEqual([expect.stringMatching(/could not hand the front back to pid 7/)]);
   });
 });

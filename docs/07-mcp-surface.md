@@ -36,6 +36,7 @@ Status: **draft**. The v1 subset ships via the in-app control server (D-020,
 | `seek` | `frame` | `{frame, scopes}` |
 | `list_projects` ✅ (D-037) | — | saved `<name>.chroma` projects in the projects folder, newest first — `{projects:[{name,path,modified,shotCount}], folder}` |
 | `open_project` ✅ (D-037) | `name_or_path` | load a project's shots + per-shot grades into the session, enter the editor; a missing source is flagged "media offline" |
+| `close_project` ✅ (B-356) | — | close the open project and return to the launcher, as the "‹ Projects" button does (same store action; flushes pending saves and saves a changed named project, no prompt) → `{closed: path\|null}`, `null` when nothing was open |
 | `new_project` ✅ (D-037) | `name`, `media_paths?` | scaffold `<name>.chroma` (media referenced in place) + open it |
 | `save_project` ✅ (D-037) | — | force-write `project.json` + the active shot's grade + `thumb.jpg` (autosave does this on a debounce) |
 | `set_project_settings` ✅ (D-038) | `width?`, `height?`, `fps?`, `color_space?` | partial-merge the open project's output spec → the merged `{width,height,fps,colorSpace}`. Export resizes the graded composite to `width×height` (final step) + uses `fps`; `color_space` (`rec709`/`rec2020`/`dci-p3`/`srgb`) is stored + surfaced only pending colour management (D-004). Needs a saved project loaded. |

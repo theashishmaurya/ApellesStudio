@@ -19,6 +19,7 @@ import { useEditorStore } from '../store/useEditorStore';
 import { useChromaStore } from '../store/useChromaStore';
 import { useAgentStore } from '../store/useAgentStore';
 import { useSessionStore } from '../store/useSessionStore';
+import { closeProjectOp } from './projectOps';
 import { useEditorActions, debouncedSetHistory } from './useEditorActions';
 import { useAiMasking } from './useAiMasking';
 import { diffAdjustments, summarizeActivity } from '../utils/agentActivity';
@@ -473,6 +474,10 @@ export function useChromaControl() {
         if (!res.ok) return { error: res.error };
         return { created: await invoke('chroma_project_current') };
       },
+
+      // B-356 — the GUI's "‹ Projects" button as an op (same store action; see
+      // projectOps.ts for the unsaved-work behaviour).
+      close_project: async () => closeProjectOp(),
 
       save_project: async () => {
         const ss = useSessionStore.getState();

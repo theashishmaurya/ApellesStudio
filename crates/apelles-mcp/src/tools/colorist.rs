@@ -778,6 +778,24 @@ impl ApellesMcp {
     }
 
     #[tool(
+        name = "close_project",
+        description = r#"Close the open project and return the app to the Projects launcher — what
+    the app's "‹ Projects" button does, by the same code. Returns {closed: path},
+    or {closed: null} (a no-op) when nothing is open.
+
+    Unsaved work is handled exactly as the button handles it, with no prompt and
+    no parameter: the Edit tab's pending timeline save is flushed, a changed
+    named project is saved, and an unsaved "Untitled" session is discarded.
+    Nothing on disk is deleted. After it, every project-bound tool (editor_*,
+    motion_*, grade ops) has no project to act on until open_project /
+    new_project."#
+    )]
+    pub async fn close_project(&self) -> Result<CallToolResult, ErrorData> {
+        let env = self.op("close_project", WireArgs::new()).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
         name = "new_project",
         description = r#"Create a new `<name>.chroma` project in the projects folder from the given
     media (absolute paths; may be empty and added later), then open it in the

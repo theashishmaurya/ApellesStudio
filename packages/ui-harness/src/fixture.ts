@@ -9,7 +9,10 @@
  *     brand-new `ui-harness-<stamp>` project from that media, and waits until
  *     the Edit tab has really switched to it; `restore` reopens the original
  *     and deletes the scratch project's folder (only a folder this run created,
- *     named `ui-harness-*.chroma`).
+ *     named `ui-harness-*.chroma`). With nothing open before the run it calls
+ *     `close_project` first, and it never deletes a folder the app still has
+ *     open (B-356). `readStartState` is the run's first read and recovers from
+ *     a project whose folder is already gone.
  *   - `buildFixture` creates one fresh timeline per scenario inside the scratch
  *     project, lays out the scenario's tracks / clips / markers through the
  *     same `editor_*` ops an agent uses, and maps the fixture's clip NAMES to
@@ -136,24 +139,66 @@ export async function openScratchProject(client: OpClient, media: MediaFiles, st
   return { path, mediaIds, mediaFps, originalProject: before.openProject };
 }
 
-/** Reopen what the app had before, and delete the scratch project folder. */
+/** Reopen what the app had before (or, when it had nothing open, close the
+ *  scratch project with `close_project`), then delete the scratch folder.
+ *  The folder is deleted only once the app has left it: a project the app still
+ *  has open must not lose its folder (B-356), so a failed reopen / close is
+ *  reported and the folder kept. */
 export async function restore(client: OpClient, project: ScratchProject, opts: { keep: boolean }): Promise<string[]> {
   const notes: string[] = [];
+  let appLeftScratch = true;
   if (project.originalProject) {
     try {
       await client.op('open_project', { path: project.originalProject });
     } catch (e) {
+      appLeftScratch = false;
       notes.push(`could not reopen ${project.originalProject}: ${String((e as Error).message)}`);
+    }
+  } else {
+    try {
+      await client.op('close_project');
+    } catch (e) {
+      appLeftScratch = false;
+      notes.push(`could not close the scratch project (the app had nothing open before the run): ${String((e as Error).message)}`);
     }
   }
   const name = basename(project.path);
   if (!opts.keep && /^ui-harness-.*\.chroma$/.test(name) && existsSync(project.path)) {
-    rmSync(project.path, { recursive: true, force: true });
-    notes.push(`deleted the scratch project ${project.path}`);
+    if (appLeftScratch) {
+      rmSync(project.path, { recursive: true, force: true });
+      notes.push(`deleted the scratch project ${project.path}`);
+    } else {
+      notes.push(`did NOT delete the scratch project ${project.path}: the app still has it open (delete it by hand once the app has left it)`);
+    }
   } else if (opts.keep) {
     notes.push(`kept the scratch project ${project.path}`);
   }
   return notes;
+}
+
+/** The message `editor_get_state` fails with when the open project's folder has
+ *  been deleted underneath the app (what a harness run that did not close its
+ *  scratch project used to leave behind, B-356). */
+export function isMissingProjectError(message: string): boolean {
+  return /read .*project\.json/.test(message) && /No such file/i.test(message);
+}
+
+/** The run's first `editor_get_state`. If the app's open project has no folder
+ *  any more, close it (`close_project`) and carry on, saying so; any other
+ *  failure (the app is not running, ...) is thrown as it came. */
+export async function readStartState(client: OpClient): Promise<{ state: EditorState; notes: string[] }> {
+  try {
+    return { state: await client.op<EditorState>('editor_get_state'), notes: [] };
+  } catch (e) {
+    const message = String((e as Error).message);
+    if (!isMissingProjectError(message)) throw e;
+    const closed = await client.op<{ closed: string | null }>('close_project');
+    const state = await client.op<EditorState>('editor_get_state');
+    return {
+      state,
+      notes: [`the app had a project open whose folder is gone (${closed.closed ?? 'unknown path'}); closed it before the run (${message})`],
+    };
+  }
 }
 
 export interface BuiltFixture {

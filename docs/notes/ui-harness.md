@@ -53,8 +53,16 @@ What a run does, and undoes:
    screenshots it on failure, deletes the timeline and drops the undo entries its ops left.
    Every harness request carries `source: "harness"`, so the Agent activity dock and a
    person's undo history never see the fixture ops as agent work;
-5. restores throttling, reopens the project the app had open, deletes the scratch project
-   folder (only a `ui-harness-*.chroma` folder this run created).
+5. restores throttling, reopens the project the app had open (or, when none was open,
+   calls `close_project`), then deletes the scratch project folder (only a
+   `ui-harness-*.chroma` folder this run created, and only once the app has left it: a
+   failed reopen/close keeps the folder and says so, B-356).
+
+At start the CLI recovers from a previous run's leftover: if `editor_get_state` fails
+because the open project's folder is gone (`read …/project.json: No such file`), it calls
+`close_project`, notes it in the report, and carries on. If `debug_activate_app` fails
+because the frontmost app is `loginwindow` (the Mac is locked or asleep), it stops with
+"unlock the Mac and keep Apelles visible" instead of measuring zero frames (B-352).
 
 Output: `scratch/ui-harness/runs/<stamp>/report.md`, `report.json`, `shots/*.png`. Exit
 code 0 = all passed, 1 = any FAIL/ERROR, 2 = could not start.
@@ -410,7 +418,7 @@ B-346 fix, and B-351 is a P2 spec item not reached.
 | H12 | The trim tool leaks between scenarios (`TimelinePane`'s `useState` outlives timeline and project switches): Roll stayed active from `trim-two-up-viewer` to the end of the run | `buildFixture` resets the tool: press V, or a new `editor_set_tool` MCP op (already a parity gap in `ui-redesign.md` §7) **Status 2026-11-01: done.** `editor_set_tool` (both MCP servers, parity corpus, tool count 264 on its branch, 266 once merged with D-432 P3's two) reads or sets the tool through `useTimelineViewStore.trimTool`, the store the toolbar and the V/B/T/Y/U/C shortcuts now use (Roll is T since D-432 P3); `buildFixture` also resets zoom, clip height, balance, names, badges, snapping and skimming through `editor_set_timeline_view`. ; `buildFixture` sets Select through it for every scenario. |
 | H13 | `linked-av-select-one-half` matches a class substring that P2 changed | a stable hook on the partner (`data-chroma-link-partner` on `ClipBody`, an app change) and target that **Status 2026-11-01: done.** `ClipBody` carries `data-chroma-link-partner` on the selected clip's linked A/V partner (4 lines in `TimelinePane.tsx`); the scenario targets it. |
 | H14 | The separator press check cannot pass for `react-resizable-panels` (proximity hit) | `expectHit: false` on that drag; keep the width assertion **Status 2026-11-01: done.** The drag sets `expectHit: false`; the width assertion stays. |
-| H15 | H5's `makeKeyWindow` does not take while Apelles is not the active app (`madeKeyForMove: false`); with Apelles frontmost the moves arrive | the CLI activates the app at start and restores the previous front app at the end, through a debug-gated op (`NSApp activate` + `makeKeyAndOrderFront`) **Status 2026-11-01: done in code, not run live.** `debug_activate_app` (native, `chroma::debug_input`, compile-gated like the rest; control op only, no MCP tool, like `debug_clear_harness_history`) activates the app and makes its window key and reports the previous front app; the CLI calls it after switching to the Edit tab and again with `restorePid` at the end (`--no-activate` skips it). `activation.ts`. |
+| H15 | H5's `makeKeyWindow` does not take while Apelles is not the active app (`madeKeyForMove: false`); with Apelles frontmost the moves arrive | the CLI activates the app at start and restores the previous front app at the end, through a debug-gated op (`NSApp activate` + `makeKeyAndOrderFront`) **Status 2026-11-01: done in code, not run live.** `debug_activate_app` (native, `chroma::debug_input`, compile-gated like the rest; control op only, no MCP tool, like `debug_clear_harness_history`) activates the app and makes its window key and reports the previous front app; the CLI calls it after switching to the Edit tab and again with `restorePid` at the end (`--no-activate` skips it). `activation.ts`. **2026-11-01 (B-352):** `debug_activate_app` now answers an error, naming the frontmost app, when activation did not take; the CLI stops early on `loginwindow`. |
 | H16 | `playheadGrab` aims at the ruler, which only seeks on release | aim at `.timeline-editor-cursor-area` (the head band) until B-350 / P3's ruler scrubs **Status 2026-11-01: done.** `playheadGrab()` is `.timeline-editor-cursor-area` (new `TIMELINE_LIBRARY_SELECTORS.playheadBand`); the scrub scenario no longer sets `expectHit: false`. B-350 (ruler drag does not scrub) is still open. |
 | H17 | Perf method: the rect `watch` forces a layout per frame (+5–25 ms p95); ~40 frames per gesture makes p95 the second-worst frame; no wait for idle after a big fixture; dev build | `docs/notes/timeline-drag-perf.md` F6 **Status 2026-11-01: done.** See "Perf method" below. |
 

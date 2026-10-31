@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest';
 import { isResultOnlyOp } from './bridgeOpClasses';
 
 describe('isResultOnlyOp', () => {
+  it('covers close_project, which leaves the project and has no frame to return (B-356)', () => {
+    expect(isResultOnlyOp('close_project')).toBe(true);
+  });
+
   it('covers save_project, which writes the project and touches no grade (B-296)', () => {
     expect(isResultOnlyOp('save_project')).toBe(true);
   });
