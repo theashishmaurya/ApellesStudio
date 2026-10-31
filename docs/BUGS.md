@@ -4,6 +4,73 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-348 — standard NLE timeline affordances the harness found missing (one entry for the group, not a defect list)
+
+status: **open, feature gap: for the roadmap, not a bug fix** · severity: medium (editing speed) · area: `@apelles/keymap` (`packages/keymap/src/shortcuts.ts`), `TimelinePane.tsx`, `TimelineMarkers.tsx`
+
+- **found:** 2026-10-31, the first live run of the D-434 harness (`docs/notes/ui-harness.md` § "First live run"). Each one FAILs by design until built; absence confirmed by reading the code, not just by the failing scenario.
+- **missing:** a Blade/Razor tool (`razor-blade-tool`: the trim palette is select/ripple/roll/slip/slide only); a two-up trim viewer during roll/slip (`trim-two-up-viewer`, D-432 P2 §5.1 plans it); J/K/L shuttle, I/O in/out marks, ↑/↓ edit-point navigation, Shift+Delete ripple delete, `=`/`-` keyboard zoom, a snapping toggle (`key-jkl-shuttle`, `key-in-out-marks`, `key-edit-point-navigation`, `ripple-delete-shortcut`, `zoom-keyboard`, `move-snapping-toggle`: none of these ids exist in `SHORTCUTS`; D-432 puts snapping on N and skimming on S); dragging a marker flag (`marker-drag-move`: the flag only stops propagation, `TimelineMarkers.tsx:252`, no drag handler).
+- **parity note:** each needs its MCP side in the same pass (CLAUDE.md human + AI rule). Timeline zoom already has a GUI and no MCP tool at all; `editor_set_snapping` / `editor_set_tool` are named in `ui-redesign.md` §7 and do not exist yet.
+
+## B-347 — edit-tool drags and zoom gestures miss the frame budget (worst frames 53–90 ms, 12–20 % dropped)
+
+status: **open** · severity: medium (CLAUDE.md: a janky drag is a real defect) · area: `TimelinePane.tsx`, `@xzdarcy/react-timeline-editor`, dnd-kit clip drags
+
+- **found:** 2026-10-31 by the D-434 harness, 13 of 23 measured steps over budget on the first run (`scratch/ui-harness/runs/2026-10-31T17-37-31-132Z/`), reproduced on the rerun (`…/2026-10-31T17-42-35-009Z/`). Numbers per gesture are in `docs/notes/ui-harness.md` § "Perf picture".
+- **worst:** slide (worst frame 76–90 ms, 15–20 % dropped, input→frame p95 68–79 ms), slip (65–75 ms, 12–17 %, 58–72 ms), ripple (67–72 ms, input→frame 60–62 ms), roll (72 ms on the rerun), plain edge trims (53 ms), cross-track move (57 ms), linked A/V move (p95 44 ms, 18 %), marquee (18 % dropped), ctrl+wheel / pinch zoom (p95 46–48 ms, 63–64 % of a short window dropped). Median frames are a steady 16–17 ms: the misses are spikes, not a slow steady state.
+- **suspected cause (code read, not yet profiled):** (1) the commit at release: `applyOp` re-renders the whole 4.9k-line `TimelinePane` (its D-201 notes say the compiler bails out of the component) and starts the debounced save; the spike lands at drop. (2) During a trim the library's interact.js handler writes `left`/`width` on the clip per move (layout per move; `ui-redesign.md` §8 already flags this). (3) dnd-kit move/slip/slide re-render every `useDraggable` consumer per pointer move. (4) zoom changes every clip width and re-requests filmstrip thumbnails in one frame.
+- **next:** profile one slide drag with a Performance trace before fixing; redesign P2's own targets (frame p95 ≤ 8 ms, zero layout during `pointermove`, two renders per edit gesture) are the acceptance bar, measured by these same scenarios.
+
+## B-346 — the playhead's 16 px drag strip covers every track, so a click or trim within 8 px of the playhead grabs the playhead instead of the clip
+
+status: **open — fix in redesign P2** (§4.6 playhead) · severity: medium · area: `@xzdarcy/react-timeline-editor` CSS (`.timeline-editor-cursor-area { width: 16px; height: 100% }`), `packages/editor/src/timeline-overrides.css`
+
+- **found:** 2026-10-31, harness `split-at-playhead-shortcut`: with the playhead parked mid-clip, the click meant to select `b` resolves (`elementFromPoint`) to `div.timeline-editor-cursor-area`, so nothing is selected and Cmd+K has nothing to split. The same click 20 % into the clip (off the playhead) selects it and Cmd+K splits it (verified live in a scratch project).
+- **why it hurts:** right after a split at the playhead the new cut sits under the playhead, so the edit point you just made cannot be selected or trimmed until you move the playhead away. Resolve and Premiere do not hit-test the playhead line over the tracks; only its head in the ruler is a handle.
+- **suspected cause:** the library's playhead hit area spans the full timeline height (`top: 0; height: 100%`) above the clip layer. Fix: confine the drag hit area to the ruler head (or `pointer-events: none` below the ruler), keep the line visual.
+
+## B-345 — ripple, roll, slip and slide show no live result while dragging: only the dragged edge moves, the rest jumps at release
+
+status: **open — fix in redesign P2** (§5.1 edit tools) · severity: **major** (the owner's "roll etc. don't show the change / animate properly") · area: `packages/editor/src/TimelinePane.tsx`
+
+- **found:** 2026-10-31, harness live-feedback checks (rects sampled every frame during the gesture): `ripple-trim-tool` (downstream `c` takes 1–2 distinct x values over 44 frames; it should follow the edge), `roll-edit-tool` and `roll-smart-trim-alt` (`b`'s head 1–2 values while `a` resizes), `slide-tool` (`b` and `a` 2 values each). Store results after release are right; only the feedback is missing.
+- **cause:** edge drags go through the library's resize, which moves only the dragged clip's own DOM; `TimelinePane` passes no `onActionResizing` (only `onActionResizeEnd` → `resizeEndOp`, `:3039`/`:4672`), so neighbours never preview. Slip and slide go through the dnd-kit body drag, and `onDndDragMove` deliberately suppresses all preview for them (`:3558–3575`, B-144), so nothing moves at all until drop.
+- **fix (P2):** a per-gesture draft that renders the computed edit (downstream shift for ripple, partner head for roll, neighbours for slide, source offset for slip) in the same frame as the pointer, `transform`-only, with the trim bracket and two-up viewer of `ui-redesign.md` §5.1.
+
+## B-344 — trims, rolls and ripples land up to ~2 frames short of where the pointer was released (the library's snap eats pointer travel)
+
+status: **open** · severity: **major** (every edge drag that starts at a butted cut, i.e. most of them) · area: `@xzdarcy/react-timeline-editor` `RowDnd` resize `onmove` (`node_modules/@xzdarcy/react-timeline-editor/dist/index.es.js`, the `dir === "left" / "right"` handler; `adsorptionDistance` default `rr = 8` px), enabled by `TimelinePane.tsx`'s `dragLine`
+
+- **found:** 2026-10-31, harness: a 15-frame drag of `b`'s right edge commits 13 frames (`b.duration` 77, expected 75); left edge 193 vs 195; roll 103 vs 105; Alt smart-trim the same.
+- **isolated:** same 15-frame drag, varied step size (scratch-project experiment, native AND synthetic input agree, so not a harness artefact): 45 steps of 1 px → 1 frame short; 15 steps of 3 px → 2 frames short; 3 steps of 15 px → exact; a 30-frame drag in 6 px steps → exact. Loss grows as each move gets smaller, i.e. the slower and finer a human drags, the worse it gets.
+- **cause:** the library accumulates `deltaRect` into `I.current`; while the edge is within 8 px of an adsorption position (the neighbour's edge it started on) it snaps to it and keeps only `I.current % ne`, so the travel spent stuck at the snap point is thrown away and the edge never re-syncs to the pointer. The edge then lags the cursor by that amount for the rest of the drag and commits there.
+- **fix:** compute the edge from the pointer's absolute offset since press (snapping applied to that, not accumulated), either by owning the trim gesture (P2's trim bracket) or with an `onActionResizing` override. Move (dnd-kit, absolute delta) is not affected: `move-clip-same-track` lands exactly.
+
+## B-343 — the shared undo stack is not cleared or scoped on a project switch: another project's entries sit on top and can evict this project's whole history
+
+status: **open** · severity: **major** · area: `@apelles/history` (`packages/history/src/store.ts`, `MAX_HISTORY_ENTRIES = 100`), project open path (`timelineStore` `openProjectKey`)
+
+- **found:** 2026-10-31, after the first harness run reopened the owner's project "Nemotron Transcribe", the Agent activity dock (which lists `source: 'agent'` entries of the shared undo stack) still showed 100 `Add "harness-video-30s.mp4"` / `Add video track` rows from the deleted scratch project (owner screenshot `scratch/bug-refs/2026-10-31-marker-above-agent-activity.png`; live screenshot the same).
+- **cause:** nothing calls `useHistoryStore.clear()` (grep: no caller); entries survive `open_project`. The stack is capped at 100, so a session with 100+ edits in project A followed by a switch to B leaves B's undo stack full of A's entries and B's own earlier history evicted. Cmd+Z in B then pops A's entries one by one: `restoreSnapshot` (`timelineStore.ts:1121`) tries to switch to A's timeline id, fails, and sets "could not undo/redo on timeline … no longer in this project" (no write, so no damage, but each press is wasted and the real history is gone).
+- **expected:** undo history belongs to one project: cleared (or swapped per project) when a project opens, as Resolve and Premiere do per project/sequence.
+- **note:** the owner's own Edit undo stack in Nemotron Transcribe currently holds only harness entries from today's runs.
+
+## B-342 — a timeline marker flag draws on top of the Agent activity dock
+
+status: **open — fix in redesign P2** (with a z-index layer scale in `@apelles/tokens`) · severity: minor · area: `packages/editor/src/TimelineMarkers.tsx:185` (`z-40`), `app/src/components/chroma/AgentActivityDock.tsx:221` (`fixed … z-40`)
+
+- **found:** 2026-10-31, owner screenshot `scratch/bug-refs/2026-10-31-marker-above-agent-activity.png`: the amber marker flag paints over the dock's rows.
+- **cause:** both use `z-40` in the root stacking context, so DOM order decides and the timeline comes later. There is no layer scale: z-indexes are ad-hoc literals across the app (`z-10` ×53, `z-50` ×43, `z-20` ×33, `z-30` ×14, `z-40` ×12, plus `z-100`, `z-[9999]`, `z-9999`, `z-101`, `z-[15]`).
+- **fix (P2):** named layers (content < timeline overlays < docks < popovers < dialogs < toasts) as tokens, used everywhere instead of literals.
+
+## B-341 — the Agent activity dock covers the Edit timeline's toolbar, track headers and the start of the lanes, and comes back on every agent action
+
+status: **open** · severity: **major** for the AI-native workflow (a human editing while an agent works) · area: `app/src/components/chroma/AgentActivityDock.tsx:221` (`fixed left-3 bottom-3 z-40 w-[340px]`, list `max-h-[45vh]`)
+
+- **found:** 2026-10-31, the first harness run: every press aimed at the trim-tool buttons, the Split and Add-marker buttons, the playhead head and track headers resolved (`elementFromPoint`) to the dock's rows (`div.flex.items-center.gap-2`, `div.px-2.5.py-2.border-b`, `span.text-[10px]`): 10 scenarios failed on it. Collapsing the dock's list and rerunning: the Split button, the toolbar marker button and the slip tool all pass. A 1470×923 window puts the dock at x 12–352, y ≈ 496–911, over the toolbar (y 643–675) and the header column.
+- **why a human hits it:** the dock opens whenever an agent edits, covers controls a human needs at that moment, and its X only hides it until the next agent action (B-159's design). This was not the toolbar's own layout: the trim buttons are where they should be; P1's type scale did not move them.
+- **fix direction:** the dock must not overlap the timeline's interactive area in the Edit tab: dock it inside a panel (the Inspector column or a collapsible strip), or anchor it to the viewer area, or collapse to a badge by default in the Edit tab. Decide with the owner (it is a layout call; P5 "chrome and layout" is the natural home if it waits).
+
 ## B-340 — the segmented export picks its parallel-chunk count from CPU cores only, not memory, so a 4K export can over-commit RAM on a 16 GB Mac
 
 status: **open, deferred** (owner, 2026-10-31: "log it, we will do it later") · severity: medium · area: `app/src-tauri/src/chroma/edit_render.rs` (`MAX_SEGMENTS`, the segment-count function)

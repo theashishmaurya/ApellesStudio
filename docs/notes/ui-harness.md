@@ -193,12 +193,13 @@ no scrollbar element (native overflow scrolling) — scenarios scroll with the w
 
 ## Known limits (phase 2 checks these first)
 
-- Native delivery is verified by unit tests of its rules and a compile, **not yet live**.
-  The first run should look at `observed.trusted` (expect every event), `native.wheelWindowMatched`
-  (if false, wheel events land at the wrong place — WebKit reads a windowless event's
-  location as screen coordinates), `native.magnifyBuilt` (pinch is built from undocumented
-  `CGEvent` gesture fields; refused loudly if AppKit does not produce a Magnify event), and
-  whether keys reach the page while the window is not key.
+- Native delivery was checked live on 2026-10-31: see "First live run" below for the answers
+  (trusted events yes; keys while not key yes; hover moves while not key **no**; the wheel is
+  **not** attributed to the window).
+- **Real input leaks into the observer.** The capture-phase observer counts every event the page
+  gets, including the owner's real mouse and keyboard; a live check saw a real Shift keydown
+  and stray pointermoves in an injected call's `observed`. Run with nobody at the machine, or
+  read `observed.lastPointer` against the target.
 - `+[NSEvent pressedMouseButtons]` is overridden while an injected button is held; a real
   mouse press during that window reports the injected state. It is restored when a call
   ends with no button held (a `down` in one call and `up` in the next keeps it in between).
@@ -206,3 +207,123 @@ no scrollbar element (native overflow scrolling) — scenarios scroll with the w
   skips otherwise) and that the ruler starts at the edit area's left edge.
 - Synthetic mode cannot judge WebKit behaviour (no default actions, no real capture, a
   pinch is played as Chromium's ctrl+wheel); its results are labelled `mode: synthetic`.
+
+## First live run (2026-10-31)
+
+Run `scratch/ui-harness/runs/2026-10-31T17-37-31-132Z/` (all 49, mode auto = native): **18 pass,
+30 fail, 1 error**, perf over budget in 13 of 23 measured steps. Triage then reran the blocked
+scenarios with the Agent activity dock's list collapsed (`…/2026-10-31T17-42-35-009Z/`, 22
+scenarios: 7 pass) and ran one-off experiments in a throwaway project from a scratchpad script
+that imports the runner (step-size sweep for trims, hover delivery, scrub from the hit strip,
+Cmd+K with an off-playhead select; native and synthetic). The owner's project was reopened by
+each run's restore and verified open afterwards.
+
+### Classification of the 31 non-passes
+
+Primary class first; a scenario blocked by a harness defect was rerun to find what lies
+behind it.
+
+| scenario | class | evidence → finding |
+|---|---|---|
+| `trim-right-edge-select-tool` (ERROR) | real | 77 vs 75: B-344 (snap eats travel). ERROR itself is harness H3 (MCP sign) |
+| `trim-left-edge-select-tool` | real | 193 vs 195: B-344 |
+| `ripple-trim-tool` | real | B-344 (77) + B-345 (`c` does not follow live). Run 1 also H1 (dock) and H3 (MCP step made `b` 105) |
+| `roll-edit-tool` | real | B-344 (103) + B-345 (`b`'s head static). Run 1 H1 |
+| `roll-smart-trim-alt` | real | B-344 + B-345 |
+| `slide-tool` | real | B-345 (no slide preview). Store result right on rerun. Run 1 H1 (tool click missed, so the drag was a Select-tool move) |
+| `split-at-playhead-shortcut` | real | B-346: the select click lands on `.timeline-editor-cursor-area`; off the playhead the select + Cmd+K split works |
+| `slip-tool` | harness | H1 only; PASS on rerun. But H9: it has no live check, and B-345 says slip shows nothing while dragging |
+| `split-toolbar-button` | harness | H1; PASS on rerun |
+| `scrub-playhead-drag` | harness | H1 then H4 (the head `svg` sits under the 16 px hit strip); a drag from the strip scrubs to 200 exactly |
+| `seek-empty-lane-click` | harness | H6: frame 200 is past the 180-frame GAPPED timeline; `setPlayhead` clamps to the last frame (179) by design |
+| `select-shift-multi` | harness | H6: Shift-click is a RANGE by design (D-107, `onClickAction`), so a..c selects 3. Cmd-click toggles |
+| `linked-av-select-together` | harness | H6: D-129 chose option (b): one half selects, the partner gets a dashed outline, ops act on the group |
+| `gap-select-and-close` | harness | H6: GAPPED's track-1 clip `c` (30–150) straddles the gap's end (120), so `checkRemoveGap` refuses (B-033), correctly |
+| `track-header-resize` | harness | H7: the divider exists (D-094) but `react-resizable-panels` 4.12.3 overwrites `data-testid` with its own id |
+| `marker-add-key-m`, `marker-click-jumps`, `key-space-play-pause`, `key-arrows-frame-step` | harness | H2 (zoom leaked from the pinch scenario put targets at x 6633); all PASS on rerun |
+| `marker-add-button` | harness | H1; PASS on rerun |
+| `clip-body-hover-cursor`, `track-header-present` | harness | H5: a plain move is not delivered while the window is not key (synthetic delivers it and shows `grab`) |
+| `trim-two-up-viewer`, `razor-blade-tool`, `move-snapping-toggle`, `ripple-delete-shortcut`, `zoom-keyboard`, `marker-drag-move`, `key-jkl-shuttle`, `key-in-out-marks`, `key-edit-point-navigation` | missing | B-348 (one grouped entry); absence confirmed in `@apelles/keymap` `SHORTCUTS` and `TimelineMarkers.tsx` |
+
+**Counts:** real 7 · missing feature 9 · harness 15. Real bugs logged: **B-341** (dock covers the
+timeline toolbar/headers), **B-342** (marker flag over the dock, P2), **B-343** (undo stack
+crosses projects), **B-344** (snap eats trim travel), **B-345** (no live preview for
+ripple/roll/slip/slide, P2), **B-346** (playhead strip eats clip clicks, P2), **B-347** (perf).
+
+**The toolbar hit failure** ("aimed at the Roll tool button but the press lands on
+`div.flex.items-center.gap-2`") was a real element on top, not a coordinate mismatch: the hit
+is `elementFromPoint` at resolve time, before any event is sent, and that element is a row of
+the Agent activity dock (`fixed left-3 bottom-3 z-40 w-[340px]`, up to 45 vh tall), which the
+harness's own setup ops had filled. The trim buttons sit where the layout puts them
+(x 104–240, y 643–675 at 1470×923); P1's type scale did not move or overlap them. A human with
+an agent working hits the same dock: B-341.
+
+### Harness defects and the fix each needs
+
+| # | defect | fix |
+|---|---|---|
+| H1 | Every fixture op runs through the control server as `source: 'agent'`, so the Agent activity dock opens and fills (100+ rows: "Add harness-video-30s.mp4", "Add video track") and covers the bottom-left of the timeline | mark harness ops as their own source (`'harness'` / debug) that the dock and the user's history ignore, or run them outside `runAsAgent`; clear what the run pushed on teardown (B-343's fix makes the project switch do it); and assert no fixed overlay intersects the timeline before a scenario starts |
+| H2 | View state leaks between scenarios: `zoom-trackpad-pinch` left 480 px/s and every later frame-addressed target went off screen | reset zoom and scroll in `buildFixture`. No MCP or debug op sets timeline zoom today (a parity gap too), so add one (`editor_set_timeline_zoom`, or a debug setter) rather than clicking the buttons N times |
+| H3 | The MCP parity steps send `editor_trim_clip(edge: 'end', delta: 15)` believing the docstring ("positive shortens"), which is backwards for the end edge (B-337): the plain trim refuses to grow into `c` (the ERROR), the ripple makes `b` 105 | use the reducer's real sign (end edge: negative shortens) until B-337 settles the contract, then follow it |
+| H4 | `playheadHandle()` aims at `svg.timeline-editor-cursor-top`, which sits under the library's 16 px `.timeline-editor-cursor-area` | aim at the hit strip's top (or the `.timeline-editor-cursor` container); if B-346 confines the strip to the ruler, aim at whatever the handle becomes |
+| H5 | Native `move` (no button) uses `_simulateMouseMove:`, which WebKit drops while the window is not key: `windowKey: true` → 1 pointermove, `false` → 0 (checked live on the same button). Drags (`mouseDragged:`) are delivered either way | in `debug_input.rs`, deliver a buttonless move another way when not key (try `mouseMoved:` on the view), and if nothing arrives, fail with "hover needs a key window" rather than the generic "input never arrived"; the runner can then SKIP hover checks with that reason |
+| H6 | Expectations that contradict decided behaviour or the fixture: shift-click (D-107 range), linked selection (D-129 option b), seek past the timeline end (clamp), gap close with a straddling sync-locked clip (B-033) | shift test → Cmd-click to add (keep a range test for Shift); linked test → assert the partner's outline and that a move/delete takes both; empty-lane seek → a frame inside the timeline; gap fixture → keep track 1 clear of the gap's end |
+| H7 | `data-testid="timeline-header-resize"` never reaches the DOM: `react-resizable-panels` 4.x's `Separator` writes `data-testid` from its `id` | pass `id="timeline-header-resize"` (and the same for `timeline-curve-resize`), and pin it in `timelineTestIds.test.ts` against a real render |
+| H8 | `native.wheelWindowMatched` is **false**: the wheel `NSEvent` built from the `CGEvent` is not attributed to the window, so WebKit reads its location as screen coordinates. Scroll/zoom scenarios passed only because the window spans the screen from x = 0 (y is off by the menu bar); the observer does not record wheel coordinates, so this was invisible | verify with a window moved away from the origin; fix the attribution (or convert the location for a windowless event); record `clientX/Y` of wheel events in `observe.ts` |
+| H9 | `slip-tool` has no live-feedback check, so it passes while slip shows nothing during the drag (B-345) | add a `live` check on what slip should animate (the filmstrip offset / a two-up frame) once P2 builds it |
+| H10 | `native.pressedButtonsOverride` reads `true` on calls with no button (a move, a key, a wheel) | report it only when a button is held, or rename it to what it means |
+
+### D-434's "verify live first" answers
+
+| item | answer |
+|---|---|
+| trusted events | yes: `observed.trusted` equals every event, `untrusted` 0, for pointer, key and wheel in native mode |
+| `native.mouseMovePath` | `simulateMouseMove` (the SPI exists in the shipped WebKit), but a buttonless move only arrives while the window is key (H5) |
+| `native.wheelWindowMatched` | **false** (H8); events arrive and x is right only because the window starts at screen x 0 |
+| `native.magnifyBuilt` | built: `zoom-trackpad-pinch` zoomed 155 → 480 px/s (a non-built gesture is refused loudly) |
+| keys while not key | yes: `debug_key` Escape with `windowKey: false` gave a trusted keydown + keyup, focus on `body`; `trim-tool-shortcuts`, Space, arrows and M all pass |
+| occlusion throttling | with `_setWindowOcclusionDetectionEnabled:NO` the window kept running rAF while not key: 40–53 frames per 450–600 ms gesture, p50 16–17 ms. A fully covered window was not separately tested |
+
+### Perf picture
+
+All numbers native, first run unless marked "rerun". Budget: p95 ≤ 33.3 ms, worst ≤ 50 ms,
+dropped ≤ 10 %, input→frame p95 ≤ 50 ms.
+
+| gesture | p95 | worst | dropped | input→frame p95 |
+|---|---|---|---|---|
+| slide b 15 frames | 27 / **37** (rerun) | **90** / **76** | **20 %** / **15 %** | **79** / **68** |
+| slip b 15 frames | 27 / **35** | **75** / **65** | **17 %** / **12 %** | **72** / **58** |
+| ripple trim | 21 / 22 | **72** / **67** | 9 % / 7 % | **62** / **60** |
+| roll | 21 / 27 | 38 / **72** | 2 % / **12 %** | 37 / **57** |
+| Alt smart trim | 27 | 44 | **12 %** | 38 |
+| plain trim, right / left | 27 / 21 | **53** / **53** | 10 % / 5 % | 47 / 41 |
+| move across tracks | 28 | **57** | 8 % | **52** |
+| linked A/V move | **44** | 45 | **18 %** | 44 |
+| marquee | 28 | 30 | **18 %** | 18 |
+| scrub (rerun) | 30 | 33 | **12 %** | 21 |
+| zoom buttons / ctrl+wheel / pinch | **38** / **48** / **46** | 38–48 | 29–64 % of 7–14 frames | 7–33 |
+| within budget | same-track move, clicks, ruler seek, scrolls, keys, playback (28.8 paint fps, 50 rAF fps) | | | |
+
+Medians are 16–17 ms everywhere: the misses are spikes, mostly at release (commit) and on the
+first moves. Likely causes from the code (B-347): the commit re-renders the whole
+`TimelinePane` (no memo boundary; D-201's notes say the compiler bails out); the library's
+interact.js resize writes `left`/`width` per move; dnd-kit re-renders `useDraggable` consumers
+per move; zoom re-lays out every clip and its filmstrip in one frame. Not profiled yet: a
+Performance trace of one slide drag is the first step of the fix.
+
+### Fix-wave proposal
+
+- **Harness wave (Sonnet, small):** H1–H10. H1 and H2 first, they masked 13 scenarios. H5 and
+  H8 touch `debug_input.rs` (Rust/AppKit, worth Opus if the `mouseMoved:` route does not work).
+- **Wave A, trim correctness (Opus):** B-344. Owning the edge position from the absolute pointer
+  offset is the same machinery P2's trim bracket needs, so do it as P2's first slice rather than
+  patching the library.
+- **Redesign P2 (Opus, sequential with P3 on `TimelinePane.tsx`):** B-345 (live edit preview +
+  two-up), B-346 (playhead hit strip), B-342 (z-index layer tokens), and the B-347 measurements
+  as its acceptance bar.
+- **Standalone, now (Sonnet):** B-343 (clear or scope `@apelles/history` per project: one hook at
+  project open, plus a test). Needs no design.
+- **Owner call, then Sonnet:** B-341 (where the Agent activity dock lives in the Edit tab), unless
+  it waits for P5.
+- **Roadmap (B-348):** keymap additions (J/K/L, I/O, ↑/↓, Shift+Delete, `=`/`-`, N snapping) are
+  one Sonnet wave with their MCP tools; blade tool and marker drag are P2/P3-sized.
