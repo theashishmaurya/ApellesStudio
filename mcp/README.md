@@ -134,6 +134,7 @@ debug-build-only and documented in `../docs/notes/debug-screenshot-tool.md` and
 | `get_state` | loaded image/video, primary adjustments, mask summary, **the multi-shot `session`**, **the loaded `project`** (`{name, path, dirty, settings}` or null for an Untitled session) — reflects manual edits |
 | `list_projects` | every saved `<name>.chroma` project in the projects folder (`~/Movies/Chroma` default), newest first — `{projects: [{name, path, modified, shotCount}], folder}` (D-037) |
 | `open_project(name_or_path)` | open a project — loads its shots + per-shot grades into the session, enters the editor; a missing source file is flagged "media offline" (D-037) |
+| `close_project()` | close the open project and return to the Projects launcher — the "‹ Projects" button's own action (saves a changed named project first, no prompt); returns `{closed: path\|null}`, a no-op when nothing is open (B-356) |
 | `new_project(name, media_paths?)` | scaffold `<name>.chroma` from the given media (referenced in place, never copied) + open it (D-037) |
 | `save_project()` | force an immediate write of project.json + the active shot's grade.json + the launcher thumb (autosave does this on a debounce otherwise) (D-037) |
 | `set_project_settings(width?, height?, fps?, color_space?)` | partial-merge the open project's output spec — resolution + timebase + colour space. Export resizes the graded composite to width×height and uses fps; `color_space` is stored + surfaced only pending colour management (D-038) |

@@ -28,7 +28,7 @@ import { parseArgs } from 'node:util';
 
 import { activateApp, restoreFront } from './activation.ts';
 import { ControlClient, DEFAULT_CONTROL_PORT } from './client.ts';
-import { ensureMedia, openScratchProject, restore, runDirs } from './fixture.ts';
+import { ensureMedia, openScratchProject, readStartState, restore, runDirs } from './fixture.ts';
 import { renderReport, summarize } from './report.ts';
 import { ScenarioRunner, type ScenarioResult } from './runner.ts';
 import { SCENARIOS } from './scenarios/index.ts';
@@ -89,15 +89,19 @@ async function main(): Promise<number> {
   const notes: string[] = [];
 
   try {
-    await client.op('editor_get_state');
+    notes.push(...(await readStartState(client)).notes);
   } catch (e) {
     console.error(String((e as Error).message));
     return 2;
   }
 
   await client.op('debug_set_active_tab', { tab: 'edit' });
-  const front = values['no-activate'] ? { restorePid: null, notes: [] as string[] } : await activateApp(client);
+  const front = values['no-activate'] ? { restorePid: null, notes: [] as string[], locked: false } : await activateApp(client);
   notes.push(...front.notes);
+  if (front.locked) {
+    console.error('The Mac is locked or asleep (the frontmost app is loginwindow): unlock the Mac and keep Apelles visible, then rerun.');
+    return 2;
+  }
   notes.push(await describeBuild(client, values.evidence === true));
   let throttlingBefore: boolean | null = null;
   try {

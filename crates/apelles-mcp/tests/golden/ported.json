@@ -29,6 +29,7 @@
     "brand_update_kit",
     "clear_mask_keyframe",
     "clear_mask_keyframes",
+    "close_project",
     "debug_dom_tree",
     "debug_frame_timing",
     "debug_key",

@@ -4,6 +4,14 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-356 — a harness run that started with no project open deleted the scratch project while the app still had it open, and there was no MCP tool to close a project
+
+status: **fixed** (2026-11-01) · severity: minor (harness) with a real parity gap · area: `packages/ui-harness/src/fixture.ts` (`restore`), `app/src/hooks/projectOps.ts` + `useChromaControl.ts`, `mcp/server.py`, `crates/apelles-mcp`
+
+- **Seen:** twice live on 2026-11-01. With no project open at the start (`originalProject === null`), `restore()` had nothing to reopen and went straight to deleting `ui-harness-*.chroma`; the app still had it open, so the next run's first `editor_get_state` failed with `read …/project.json: No such file or directory`.
+- **Root cause:** the GUI can leave a project ("‹ Projects", `useSessionStore.closeProject`) but no MCP tool could: a human-AI parity gap, so the harness had no way to leave the scratch project.
+- **Fix:** new `close_project` MCP tool (both servers, op in `useChromaControl.ts` via `closeProjectOp`) running the same store action as the button. It returns `{closed: path | null}` (`null` = nothing open, a no-op). Unsaved work: the button never prompts (it flushes the Edit tab's pending save and saves a changed named project, best effort; an unsaved Untitled session is discarded), so the tool takes no `save` parameter and does exactly that. `restore()` calls it when nothing was open before, and never deletes a folder the app still has open (a failed reopen/close is reported). The CLI's first read recovers from an already-gone project folder by calling `close_project`. Tests: `projectOps.test.ts`, `fixture.test.ts`. Tool count 269 debug / 251 release.
+
 ## B-355 — the harness placed fixture clips with a timeline length as the source-frame `duration`, so audio clips landed 25 % long and the 300-clip fixture collided
 
 status: **fixed** (2026-11-01) · severity: minor (harness) · area: `packages/ui-harness/src/fixture.ts`, `scenario.ts`
@@ -34,11 +42,11 @@ status: open (queued after D-437) · severity: minor · area: `TimelinePane.tsx`
 
 ## B-352 — the UI harness reports "no frames sampled" instead of detecting a locked screen, and `debug_activate_app` reports success without bringing Apelles forward
 
-status: open · severity: minor (harness) · area: `packages/ui-harness` (CLI start), `app/src-tauri/src/chroma/debug_input.rs` (`debug_activate_app`)
+status: **fixed 2026-11-01** (not re-run live) · severity: minor (harness) · area: `packages/ui-harness` (CLI start), `app/src-tauri/src/chroma/debug_input.rs` (`debug_activate_app`)
 
 - **Seen:** third live run (2026-11-01, `scratch/ui-harness/runs/2026-10-31T20-38-35-053Z`). Every measured step reported `frames 0` ("the window is throttled or rAF is stalled"), playback and Space failed, and 4 hover scenarios skipped. The run was functionally fine (45/55 pass), and the `apelles:edit:*` marks still recorded (preview p95 1–4 ms, `commitRenderedMs` 60–101 ms).
 - **Cause found afterwards:** the Mac's screen was locked. `debug_activate_app` answered `ok: true` with `active: false` and the frontmost app `loginwindow`. While the session is locked, macOS stops display updates, so rAF never fires and no window can become key.
-- **Fix:** `debug_activate_app` returns an error, not `ok`, when activation did not take, naming the frontmost app. The CLI checks for `loginwindow` (locked or asleep) before measuring and stops with "unlock the Mac and keep Apelles visible", instead of marking every perf step OVER with zero frames.
+- **Fix (done):** `debug_activate_app` returns an error, not `ok`, when activation did not take, naming the frontmost app. The CLI checks for `loginwindow` (locked or asleep) before measuring and stops with "unlock the Mac and keep Apelles visible", instead of marking every perf step OVER with zero frames.
 
 ## B-351 — a clip body shows the hand (`pointer`) cursor with the Select tool, not the arrow D-432 specifies
 
