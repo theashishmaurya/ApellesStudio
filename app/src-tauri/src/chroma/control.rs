@@ -38,6 +38,9 @@
 //!     detection for the window, a switch on the webview rather than store
 //!     state; it is what lets a covered window keep running rAF for the UI
 //!     harness's measurements.
+//!   - `debug_set_webkit_layer_debug` (D-437 S0b) — WebKit's compositing
+//!     borders and repaint counters (SPI on `WKPreferences`), a switch on the
+//!     webview like the one above; it is how a paint-isolation change is seen.
 //!   - `debug_activate_app` (D-434 / H15) — bring the app to the front (or hand
 //!     the front back), because WebKit only delivers a buttonless move to a key
 //!     window; harness-only, no MCP tool.
@@ -584,6 +587,12 @@ fn debug_native_op(app: &tauri::AppHandle, op: &str, args: &serde_json::Value) -
             super::debug_input::activate_app(app, window.as_deref(), restore_pid)
                 .and_then(|report| serde_json::to_value(report).map_err(|e| e.to_string()))
         }),
+        // D-437 S0b. Native for the same reason as occlusion: the flags live on
+        // the webview's WKPreferences. No flag named = a read.
+        "debug_set_webkit_layer_debug" => layer_debug_args(args).and_then(|(request, window)| {
+            super::debug_input::set_webkit_layer_debug(app, window.as_deref(), request)
+                .and_then(|report| serde_json::to_value(report).map_err(|e| e.to_string()))
+        }),
         "debug_set_occlusion_throttling" => match args.get("enabled").and_then(|v| v.as_bool()) {
             Some(enabled) => super::debug_input::set_occlusion_detection(
                 app,
@@ -615,6 +624,33 @@ fn debug_native_op(
     _args: &serde_json::Value,
 ) -> Option<String> {
     None
+}
+
+/// `{borders?, repaintCounters?, window?}` for `debug_set_webkit_layer_debug`
+/// (D-437 S0b). A flag that is absent or null is left alone; a flag that is
+/// present must be a boolean (a string "false" is refused, not coerced).
+#[cfg(debug_assertions)]
+fn layer_debug_args(
+    args: &serde_json::Value,
+) -> Result<(apelles_ui_input::LayerDebugRequest, Option<String>), String> {
+    let flag = |key: &str| -> Result<Option<bool>, String> {
+        match args.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(v) => v
+                .as_bool()
+                .map(Some)
+                .ok_or_else(|| format!("'{key}' must be true or false")),
+        }
+    };
+    let request = apelles_ui_input::LayerDebugRequest {
+        borders: flag("borders")?,
+        repaint_counters: flag("repaintCounters")?,
+    };
+    let window = args
+        .get("window")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    Ok((request, window))
 }
 
 /// `{restorePid?, window?}` for `debug_activate_app` (H15): with `restorePid` the
@@ -814,6 +850,32 @@ mod tests {
             activate_app_args(&serde_json::json!({ "restorePid": null })),
             Ok((None, None))
         );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn layer_debug_args_name_only_the_flags_given() {
+        let (request, window) = layer_debug_args(&serde_json::json!({})).unwrap();
+        assert!(request.is_read());
+        assert_eq!(window, None);
+        let (request, window) = layer_debug_args(
+            &serde_json::json!({ "borders": true, "repaintCounters": null, "window": "main" }),
+        )
+        .unwrap();
+        assert_eq!(request.borders, Some(true));
+        assert_eq!(request.repaint_counters, None);
+        assert_eq!(window.as_deref(), Some("main"));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn layer_debug_args_refuse_a_flag_that_is_not_a_boolean() {
+        for bad in [
+            serde_json::json!({ "borders": "false" }),
+            serde_json::json!({ "repaintCounters": 1 }),
+        ] {
+            assert!(layer_debug_args(&bad).is_err(), "{bad}");
+        }
     }
 
     #[cfg(debug_assertions)]

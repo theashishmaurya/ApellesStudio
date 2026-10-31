@@ -533,6 +533,18 @@ harness `method.test.ts`/`runner.test.ts`. Verified with a real `vite build` of 
   `apelles:edit:` string (a grep in a test or in the build check).
 
 ### S0b — WebKit layer debug toggle
+
+**Done 2026-11-01 (code, tests and parity; the live screenshot is pending).** The op is
+`debug_set_webkit_layer_debug {borders?, repaintCounters?, window?}` (MCP: `repaint_counters`),
+tool count 266 -> 267 (debug) / 250 -> 251 (release). The SPI was verified before use: the Xcode
+SDK exports the C twins and a runtime probe finds all four `WKPreferences` selectors with BOOL
+encodings (details in `debug-tooling.md`). All four are checked with `respondsToSelector:`
+before any call. **Deviations from the plan:** (1) `debug_get_ui_state` does not report the
+flags: they are native webview state the frontend cannot read, so the op reports `before`/`after`
+itself and a call with no flag is a read; (2) the live screenshot with borders on, and the answer
+to "does `debug_screenshot` include the overlays", need a running debug build and were not
+produced in this pass (the running dev app is off limits to the builder agent and the disk was
+short of a second debug build). Whoever runs S0c step 3 records both here.
 - Native op `debug_set_webkit_layer_debug {borders?, repaint_counters?}` in
   `app/src-tauri` behind `#[cfg(debug_assertions)]`. It calls the `WKPreferences` SPI
   `_setCompositingBordersVisible:` / `_setCompositingRepaintCountersVisible:` through
@@ -548,6 +560,7 @@ harness `method.test.ts`/`runner.test.ts`. Verified with a real `vite build` of 
   under `scratch/` and cited in this note.
 
 ### S0c — big fixture + baseline
+
 - `buildBigFixture({ clips: 300, tracks: 8 })` in `packages/ui-harness` (mixed lengths,
   linked A/V on two tracks, 4 markers, 2 transitions) and the `perf-300` scenario set.
   Scenarios assert little; they measure.

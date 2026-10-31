@@ -277,6 +277,27 @@ several rounds of the owner's own screenshots before an agent could even confirm
      This is the first tool aimed at the throttling wall the sections below keep
      hitting (B-124, D-217, D-330) rather than at diagnosing it — not yet verified
      live.
+   - **`debug_set_webkit_layer_debug`** (D-437 S0b, native control op + MCP tool in both
+     servers): WebKit's compositing debug overlays, `{borders?, repaint_counters?, window?}`.
+     Borders draw a coloured outline round every composited layer; repaint counters draw a
+     per-layer count that rises on each repaint. It answers the paint-isolation question frame
+     times only hint at ("does a clip we are not touching repaint while another is dragged?").
+     No flag named = a read. The selectors are `-[WKPreferences _setCompositingBordersVisible:]` /
+     `_setCompositingRepaintCountersVisible:` (and their getters), SPI. **Verified against this
+     macOS 26 SDK/runtime 2026-11-01:** the Xcode SDK's `WebKit.tbd` exports the C twins
+     `_WKPreferencesSetCompositingBordersVisible` / `...RepaintCountersVisible`, and a probe
+     (`class_getInstanceMethod([WKPreferences class], ...)`, built with `clang`) finds all four
+     ObjC selectors on `WKPreferences` with type encoding `v20@0:8B16` (BOOL setter) / `B16@0:8`
+     (getter), and none on `WKWebView`. The public SDK headers do not declare them (only
+     `WKPreferencesPrivate.h` does, which is not shipped), so the op checks all four with
+     `respondsToSelector:` before calling any and returns an error naming the missing one rather
+     than crash. Compiled out of release: `#[cfg(debug_assertions)]` in `chroma::debug_input` /
+     `control.rs`, and the MCP tool lives in the gated `debug` router (251 tools in a release
+     build, 267 in a debug build). Always turn both flags off afterwards: they paint over the
+     page and change what a screenshot or pixel probe sees. `debug_get_ui_state` does not report
+     them (they are native webview state, the frontend cannot read them); the op's own
+     `before`/`after` is the way to read them. Whether `debug_screenshot` (a WKWebView snapshot)
+     includes the overlays is recorded in the S0b section of `docs/notes/timeline-lanes.md`.
    - The scenario runner that uses them is its own package, `packages/ui-harness`;
      how to run it, write scenarios and read the budgets: `docs/notes/ui-harness.md`.
 
@@ -587,7 +608,7 @@ checked is how B-100 happened in the first place.
   `apelles-mcp` unit test (`tools::debug::tests`) pins that the debug router holds all 15
   `debug_*` tools in a debug build and that a release build's router is empty (that half
   runs under `cargo test --release`; not run here for disk space). Counts: 261 debug,
-  246 release.
+  246 release. (D-437 S0b: 267 debug, 251 release, with `debug_set_webkit_layer_debug`.)
 
 ## Status
 

@@ -17,7 +17,10 @@ Three layers, all debug-only (compiled out of a release build, see
 
 Plus `debug_set_occlusion_throttling(enabled)` — WebKit's own switch that keeps a covered
 window running `requestAnimationFrame`. Without it, every frame number from a window that
-is not frontmost reads zero (B-124 / D-217 / D-330's standing blocker).
+is not frontmost reads zero (B-124 / D-217 / D-330's standing blocker). And
+`debug_set_webkit_layer_debug({borders, repaint_counters})` (D-437 S0b), which draws WebKit's
+compositing borders and per-layer repaint counters on the page, so a paint-isolation change can
+be seen in a screenshot; turn it off again after, it paints over what you are measuring.
 
 ## Running the suite against the live app
 
@@ -445,8 +448,7 @@ reproduced, not as a defect.
   Tracks (~22 % of the release at 200 clips) and StrictMode's double render. For shipping
   numbers build `cd app && npm run tauri build -- --debug` (Rust debug, so the `debug_*` ops
   exist, with the production web bundle), start that app with `CHROMA_CONTROL_PORT=<free port>`
-  if the dev app is running, and point the harness at it with `--port`. See "Baseline recipe" below for
-  the exact commands (D-437 S0c).
+  if the dev app is running, and point the harness at it with `--port`. Not done yet: the production-bundle run.
 
 ### Perf picture (second run)
 

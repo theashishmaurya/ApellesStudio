@@ -33,6 +33,15 @@
 //!     measurement in `docs/notes/debug-tooling.md` (B-124, D-217, D-330).
 //!     Explicit, through `debug_set_occlusion_throttling`; never implicit.
 //!
+//!   - WebKit's compositing debug overlays (`-[WKPreferences
+//!     _setCompositingBordersVisible:]` and `_setCompositingRepaintCountersVisible:`,
+//!     the Safari "Show compositing borders / repaint counters" switches): a coloured
+//!     border round every composited layer and a repaint count in its corner, so a
+//!     paint-isolation change (D-437) can be SEEN instead of inferred. Explicit,
+//!     through `debug_set_webkit_layer_debug`; both flags default off and are
+//!     restored by the caller. `-respondsToSelector:` is checked first and a
+//!     missing selector is an error naming it, never a silent no-op or a crash.
+//!
 //!   - The app's activation state, for hover. WebKit delivers a buttonless
 //!     move only to a window that is key, and a window is only key while its
 //!     app is the active one; H5's `makeKeyWindow` does not take otherwise
@@ -54,7 +63,8 @@
 //!   (B-100 / D-219), so none of it exists in a release build.
 //!
 //! Private API, honestly labelled: `_setCurrentEvent:`, `_simulateMouseMove:`
-//!   and `_setWindowOcclusionDetectionEnabled:` are WebKit/AppKit SPI, each
+//!   `_setWindowOcclusionDetectionEnabled:` and the two `WKPreferences`
+//!   compositing selectors are WebKit/AppKit SPI, each
 //!   called only after `respondsToSelector:`, and the pinch event is built from
 //!   undocumented `CGEvent` gesture fields; the report says which path each
 //!   delivery actually took so a mismatch is visible, not silent.
@@ -62,7 +72,7 @@
 pub use apelles_ui_input::{InjectReport, LowEvent, Viewport};
 
 #[cfg(target_os = "macos")]
-pub use mac::{activate_app, inject, set_occlusion_detection};
+pub use mac::{activate_app, inject, set_occlusion_detection, set_webkit_layer_debug};
 
 /// One application, as `NSRunningApplication` names it.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -118,6 +128,15 @@ pub fn set_occlusion_detection<R: tauri::Runtime>(
     Err("occlusion throttling control is not supported on this platform (macOS only, D-434)".into())
 }
 
+#[cfg(not(target_os = "macos"))]
+pub fn set_webkit_layer_debug<R: tauri::Runtime>(
+    _app: &tauri::AppHandle<R>,
+    _window_label: Option<&str>,
+    _request: apelles_ui_input::LayerDebugRequest,
+) -> Result<apelles_ui_input::LayerDebugReport, String> {
+    Err("WebKit layer debugging is not supported on this platform (macOS only, D-437)".into())
+}
+
 #[cfg(target_os = "macos")]
 mod mac {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -141,9 +160,10 @@ mod mac {
     use super::{ActivationReport, AppRef};
     use crate::chroma::debug_capture::resolve_capturable_window;
     use apelles_ui_input::{
-        InjectReport, KeyPhase, LowEvent, MagnifyPhase, MouseButton, MouseKind, OcclusionReport,
-        Viewport, css_to_view, key_characters, modifier_bits, mouse_kind, move_needs_key_window,
-        override_in_effect, validate, view_scale, virtual_key, windowless_event_location,
+        FlagChange, InjectReport, KeyPhase, LayerDebugReport, LayerDebugRequest, LowEvent,
+        MagnifyPhase, MouseButton, MouseKind, OcclusionReport, Viewport, css_to_view,
+        key_characters, modifier_bits, mouse_kind, move_needs_key_window, override_in_effect,
+        validate, view_scale, virtual_key, windowless_event_location,
     };
 
     /// How long one event may take to be delivered on the main thread before
@@ -759,6 +779,73 @@ mod mac {
             }
             std::thread::sleep(ACTIVATION_POLL);
         }
+    }
+
+    pub fn set_webkit_layer_debug<R: Runtime>(
+        app: &tauri::AppHandle<R>,
+        window_label: Option<&str>,
+        request: LayerDebugRequest,
+    ) -> Result<LayerDebugReport, String> {
+        let window = resolve_capturable_window(app, window_label)?;
+        let label = window.label().to_string();
+        on_webview(&window, move |webview, _| {
+            let configuration: Retained<NSObject> = unsafe { msg_send![webview, configuration] };
+            let prefs: Retained<NSObject> = unsafe { msg_send![&*configuration, preferences] };
+            // Every selector is checked before any is called: a WebKit that lacks
+            // one answers with an error naming it, and changes nothing.
+            for (name, selector) in [
+                (
+                    "_compositingBordersVisible",
+                    sel!(_compositingBordersVisible),
+                ),
+                (
+                    "_setCompositingBordersVisible:",
+                    sel!(_setCompositingBordersVisible:),
+                ),
+                (
+                    "_compositingRepaintCountersVisible",
+                    sel!(_compositingRepaintCountersVisible),
+                ),
+                (
+                    "_setCompositingRepaintCountersVisible:",
+                    sel!(_setCompositingRepaintCountersVisible:),
+                ),
+            ] {
+                if !responds(&prefs, selector) {
+                    return Err(format!(
+                        "this WebKit's WKPreferences has no {name} — compositing debug overlays cannot be changed"
+                    ));
+                }
+            }
+            // SAFETY (all four sends): BOOL getters/setters on WKPreferences,
+            // each confirmed with respondsToSelector: above.
+            let borders_before: bool = unsafe { msg_send![&*prefs, _compositingBordersVisible] };
+            let counters_before: bool =
+                unsafe { msg_send![&*prefs, _compositingRepaintCountersVisible] };
+            let borders_target = LayerDebugRequest::target(request.borders, borders_before);
+            let counters_target =
+                LayerDebugRequest::target(request.repaint_counters, counters_before);
+            if borders_target != borders_before {
+                let _: () =
+                    unsafe { msg_send![&*prefs, _setCompositingBordersVisible: borders_target] };
+            }
+            if counters_target != counters_before {
+                let _: () = unsafe {
+                    msg_send![&*prefs, _setCompositingRepaintCountersVisible: counters_target]
+                };
+            }
+            Ok(LayerDebugReport {
+                borders: FlagChange {
+                    before: borders_before,
+                    after: unsafe { msg_send![&*prefs, _compositingBordersVisible] },
+                },
+                repaint_counters: FlagChange {
+                    before: counters_before,
+                    after: unsafe { msg_send![&*prefs, _compositingRepaintCountersVisible] },
+                },
+                window: label,
+            })
+        })
     }
 
     pub fn set_occlusion_detection<R: Runtime>(
