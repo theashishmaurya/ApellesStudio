@@ -228,6 +228,18 @@ The order that pays off fastest: F6 (so every other fix is judged on real number
 together, F3-2D, then F4. F5 is the structural fix and the one that makes 300-clip timelines
 meet the D-432 §8 target (p95 ≤ 8 ms, zero layout during `pointermove`).
 
+## Progress (quick-win pass, 2026-11-01)
+
+Each line is a landed fix. None is re-profiled against the live app yet (that needs a
+`tauri build --debug` run, F6); the gain column is the plan's expectation.
+
+- **F1 done.** `EditFeedbackLayer` no longer reads `offsetWidth` in `readout()`. A hidden
+  10-glyph probe is measured once by `measure()`, which `useEditGesture` calls at the claim
+  before its first write; the pill is monospace, so `width = text.length x glyph + padding`
+  and clamps with no layout read. Pinned by `EditFeedbackLayer.dom.test.tsx` (a spy on
+  `offsetWidth` counts one read per gesture). Expected: the forced layout leaves the input
+  handler (-1 layout per extra move at 120 Hz).
+
 ## Instrument next (exact additions; debug-only)
 
 Sampling gave proportions. Exact per-phase times need marks the harness can read back:

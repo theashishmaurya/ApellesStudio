@@ -28,6 +28,10 @@ import { TIMELINE_TEST_IDS } from './timelineTestIds';
 export const READOUT_GAP_PX = 8;
 /** The readout pill's height, px. */
 export const READOUT_HEIGHT_PX = 20;
+/** The readout pill's horizontal padding, both sides together (`px-1.5`), px. */
+const READOUT_PADDING_PX = 12;
+/** Glyphs in the probe used to measure one monospace advance. */
+const PROBE_GLYPHS = 10;
 
 export interface BracketPlacement {
   /** the edge's x in edit-area px */
@@ -48,6 +52,10 @@ export interface EditFeedbackHandle {
   snapGuide(x: number | null): void;
   /** The blade cut line at `x` across one clip's row; `null` hides it. */
   blade(r: { x: number; top: number; height: number } | null): void;
+  /** Measure the readout's glyph advance once (a layout read), so `readout` can
+   *  size its pill from the text length with no read of its own. Call it
+   *  BEFORE a gesture's first write; later calls are no-ops. */
+  measure(): void;
   /** Hide everything. */
   clear(): void;
 }
@@ -71,6 +79,9 @@ export const EditFeedbackLayer = forwardRef<EditFeedbackHandle>(function EditFee
   const readoutRef = useRef<HTMLDivElement>(null);
   const snapRef = useRef<HTMLDivElement>(null);
   const bladeRef = useRef<HTMLDivElement>(null);
+  const probeRef = useRef<HTMLSpanElement>(null);
+  /** One monospace glyph's advance, px; 0 = unmeasured (never under jsdom). */
+  const glyphWidthRef = useRef(0);
 
   useImperativeHandle(ref, () => {
     const brackets = (list: readonly BracketPlacement[]) => {
@@ -100,10 +111,12 @@ export const EditFeedbackLayer = forwardRef<EditFeedbackHandle>(function EditFee
       el.hidden = false;
       if (el.textContent !== r.text) el.textContent = r.text;
       el.dataset.chromaLimit = String(r.limit);
-      // Centred on the edge, then kept inside the viewport. The width is read
-      // once per text change at most (a layout read of one small node), and
-      // only when the viewport is measurable (never under jsdom).
-      const w = r.viewportWidth > 0 ? el.offsetWidth : 0;
+      // Centred on the edge, then kept inside the viewport. The pill is
+      // monospace, so its width is the text length times the glyph advance
+      // measured once at gesture start: no layout read after the gesture's
+      // style writes (B-347 F1). Unmeasured (jsdom) means no clamp.
+      const glyph = glyphWidthRef.current;
+      const w = r.viewportWidth > 0 && glyph > 0 ? Math.ceil(r.text.length * glyph + READOUT_PADDING_PX) : 0;
       const x = r.viewportWidth > 0 ? Math.min(Math.max(0, r.x - w / 2), Math.max(0, r.viewportWidth - w)) : r.x;
       place(el, x, Math.max(0, r.top - READOUT_HEIGHT_PX - READOUT_GAP_PX));
     };
@@ -127,6 +140,11 @@ export const EditFeedbackLayer = forwardRef<EditFeedbackHandle>(function EditFee
       readout,
       snapGuide,
       blade,
+      measure() {
+        const probe = probeRef.current;
+        if (!probe || glyphWidthRef.current > 0) return;
+        glyphWidthRef.current = probe.offsetWidth / PROBE_GLYPHS;
+      },
       clear() {
         brackets([]);
         readout(null);
@@ -153,6 +171,13 @@ export const EditFeedbackLayer = forwardRef<EditFeedbackHandle>(function EditFee
         data-testid={TIMELINE_TEST_IDS.bladeLine}
         className="pointer-events-none absolute left-0 top-0 z-(--z-timeline-edit-feedback) w-px bg-text-primary"
       />
+      <span
+        ref={probeRef}
+        aria-hidden
+        className="pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap font-mono text-2xs tabular-nums"
+      >
+        {'0'.repeat(PROBE_GLYPHS)}
+      </span>
       <div
         ref={readoutRef}
         hidden

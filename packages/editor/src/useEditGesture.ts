@@ -413,6 +413,8 @@ export function createEditGesture(
       area.dataset.chromaEditGesture = target.mode;
       area.style.cursor = GESTURE_CURSOR[target.mode];
     }
+    // The readout's one layout read, before this gesture writes anything (F1).
+    feedbackRef.current?.measure();
     showBrackets(tl, target, false);
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
