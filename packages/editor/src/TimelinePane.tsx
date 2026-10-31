@@ -38,7 +38,7 @@
  *     `interface/timeline.d.ts` has no `getRowHeaderRender` or similar,
  *     only `getActionRender`/`getScaleRender` for action/ruler content).
  *     So the header column is a fully custom sidebar to the LEFT of the
- *     library's own scrollable edit area, one fixed-`ROW_HEIGHT` block per
+ *     library's own scrollable edit area, one block per
  *     track, kept in vertical sync with the library's own scroll via its
  *     `onScroll` prop (`OnScrollParams.scrollTop`, from `react-virtualized`
  *     — the library's own scroll mechanism) applied as a CSS transform.
@@ -243,9 +243,10 @@
  * button, which has none, anchors on the playhead (viewport centre if the
  * playhead is off screen).
  *
- * D-058 (ruler): tick labels are real timecode (`ruler.ts`'s
- * `formatTimecode`, `HH:MM:SS` or `HH:MM:SS:FF` depending on the current
- * tick density) via `getScaleRender`, and the labeled-tick interval
+ * D-058 (ruler): tick labels are real timecode (D-432 P3: `ruler.ts`'s
+ * `formatRulerLabel`, `0:05` / `1:02:10`, frames only at frame-level zoom)
+ * via `getScaleRender`, the minor-tick density follows the zoom
+ * (`rulerSplitCount`), and the labeled-tick interval
  * (`scale`, seconds) is recomputed from `pxPerSec` on every zoom change via
  * `niceTickIntervalSeconds` — the library's own `scale` prop is a single
  * fixed value with no adaptive-density concept of its own (checked in its
@@ -282,45 +283,27 @@ import {
   type DragStartEvent,
   type Modifier,
 } from '@dnd-kit/core';
-import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { CSS as DndCSS } from '@dnd-kit/utilities';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import {
-  WaveformIcon,
   ArrowsLeftRightIcon,
-  // D-149 — the track-header ducking control's icon: "push this track down."
-  CaretDoubleDownIcon,
-  EyeIcon,
-  EyeSlashIcon,
   FilmStripIcon,
   ArrowsInLineHorizontalIcon,
-  DotsSixVerticalIcon,
   // D-138 — the A/V-link action's own icon. Deliberately `Link`, not
-  // `LinkSimpleHorizontal` below: that one is already the track header's
-  // sync-lock-ON icon, and sync-lock and an A/V link are different
-  // relationships (see `avLinkedIds`), so — same reasoning as
-  // `LinkBreak`/`LinkSimpleHorizontalBreak` just below — they must not share
-  // an icon.
-  LinkIcon,
-  LinkSimpleHorizontalIcon,
-  LockIcon,
-  TrashIcon,
-  // D-128 — the A/V-unlink action. Deliberately `LinkBreak`, not the
-  // `LinkSimpleHorizontalBreak` below: that one is already the track header's
-  // sync-lock toggle, and sync-lock and an A/V link are different
+  // `LinkSimpleHorizontal`: that one is the track header's sync-lock-ON icon
+  // (`TrackHeader.tsx`), and sync-lock and an A/V link are different
   // relationships (see `avLinkedIds`), so they must not share an icon.
+  LinkIcon,
+  TrashIcon,
+  // D-128 — the A/V-unlink action. Deliberately `LinkBreak`, not the header's
+  // `LinkSimpleHorizontalBreak` sync-lock toggle, for the same reason.
   LinkBreakIcon,
-  LinkSimpleHorizontalBreakIcon,
-  LockOpenIcon,
-  SpeakerHighIcon,
-  SpeakerSlashIcon,
   SplitHorizontalIcon,
   MagnifyingGlassPlusIcon,
   MagnifyingGlassMinusIcon,
-  // D-413 — the beat grid: the track header's "show beats" toggle and the
-  // toolbar's "snap cuts to beats" (a metronome, FCP/Logic's own beat glyph),
-  // and the toolbar's beat-snapping toggle (the NLE-standard magnet).
+  // D-413 — the toolbar's "snap cuts to beats" (a metronome, FCP/Logic's own
+  // beat glyph) and the beat-snapping toggle.
   MetronomeIcon,
-  MagnetIcon,
+  MagnetStraightIcon,
 } from '@phosphor-icons/react';
 import { snapSpan, snapTo } from '@apelles/beats';
 import { beatFramesOf } from './beatGrid';
@@ -340,12 +323,6 @@ import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
-  ScrubbableNumberInput,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
   Separator,
   Tooltip,
   TooltipContent,
@@ -378,11 +355,11 @@ import { ClipFadeOverlay } from './ClipFadeOverlay';
 import { ClipBlock, CLIP_KIND_CLASSES } from './ClipBlock';
 import { clipAnatomy, clipKindOf, cutStyleAt, CLIP_VERTICAL_INSET_PX } from './clipAnatomy';
 import { EditFeedbackLayer, type EditFeedbackHandle } from './EditFeedbackLayer';
+import { snapTargets } from './editGesture';
 import { useEditGesture } from './useEditGesture';
 import { TIMELINE_TEST_IDS, TIMELINE_VIEW_ATTRS } from './timelineTestIds';
 import {
   niceTickIntervalSeconds,
-  formatTimecode,
   DEFAULT_PX_PER_SEC,
   RULER_HEIGHT_PX,
 } from './ruler';
@@ -427,14 +404,12 @@ import {
   gapAt,
   newTransition,
   linkedClipIds,
-  linkedDragGhosts,
   linkedClipsFromDraggedMedia,
   markersOf,
   newMarker,
   resolveClipLanding,
   sourceFramesToTimeline,
   syncLinkedClipIds,
-  syncLinkedClipIdsAtPosition,
   timelineFps,
   trackIndexAfterMove,
   videoTrackIndex,
@@ -453,7 +428,6 @@ import {
   trimModeCursor,
   trimModeHint,
   trimModeLabel,
-  trimToolOwns,
   TRIM_ARM_HINT,
   type TrimMode,
   type TrimTool,
@@ -474,7 +448,20 @@ import {
   type MarqueeViewport,
 } from './marquee';
 import { useViewportWidth } from './useViewportWidth';
-import { trackLabels } from './trackOps';
+import { trackBadges, trackLabels } from './trackOps';
+import { TrackHeader, trackDragId } from './TrackHeader';
+import { ClipAppearanceButton, SnapSkimToggles } from './TimelineViewControls';
+import { TimelineRuler } from './TimelineRuler';
+import { usePreviewPeekStore } from './previewPeek';
+// D-432 P3 — per-track height.
+import {
+  clampTrackHeight,
+  DEFAULT_TRACK_HEIGHT,
+  trackAtY,
+  trackBoundaryNear,
+  trackHeights,
+  trackTops,
+} from './trackHeight';
 
 const EFFECT_ID = 'clip';
 /** how many pixels a labeled ruler tick should target, at any zoom (D-058
@@ -488,7 +475,6 @@ const TICK_TARGET_PX = 70;
 // (18%), too tight to see a whole multi-minute project at once; it is 1 so a
 // long timeline can actually be zoomed out to fit the visible width.
 const ZOOM_STEP = 1.2;
-const ROW_HEIGHT = 52;
 /** D-432 §4.3 — a clip that an edit shifted gets ONE opacity flash this long
  *  (ms), from `RIPPLE_FLASH_OPACITY` back to 1. No looping `animate-pulse`. */
 const RIPPLE_FLASH_MS = 160;
@@ -506,9 +492,13 @@ const TRIM_BADGE_OFFSET_PX = 16;
  *  hide/rearrange row) — now the `ResizablePanel`'s `defaultSize` (D-094:
  *  the sidebar became genuinely resizable, per the owner's standing
  *  "resizable-by-nature panels" rule in `CLAUDE.md`), not a fixed `width`. */
-const HEADER_WIDTH = 156;
-const HEADER_MIN_WIDTH = 110;
-const HEADER_MAX_WIDTH = 340;
+const HEADER_WIDTH = 136;
+const HEADER_MIN_WIDTH = 100;
+const HEADER_MAX_WIDTH = 280;
+/** D-432 P3 — the lane-side height-drag band, px, straddling the line between
+ *  two rows (the header's own zone is `TRACK_HEIGHT_ZONE_PX`, all inside its
+ *  row). Narrower than the header's so it takes at most a pixel of a clip. */
+const LANE_HEIGHT_ZONE_PX = 4;
 /** The ruler bar (`ruler.ts`'s `RULER_HEIGHT_PX`) + `.timeline-editor-edit-
  *  area`'s `margin-top`, i.e. exactly
  *  where row 0 starts on screen — which `dropTargetTrack` (D-080) and every
@@ -573,15 +563,15 @@ const FILMSTRIP_SCROLL_BUCKET_PX = 200;
 const INSERT_SNAP_PX = 28;
 /** D-097 — how wide the "insert a new track here" hit-zone is on EACH side
  *  of the boundary line between two existing track rows, in px, independent
- *  of `ROW_HEIGHT`'s own value. Deliberately a thin band, not half the row:
+ *  of any track's own height. Deliberately a thin band, not half the row:
  *  most of each row still resolves to "drop onto this existing track" (the
  *  pre-D-097 behaviour) — only hovering close to where two rows actually
- *  meet offers the mid-stack insert. ~22% of `ROW_HEIGHT` on each side
+ *  meet offers the mid-stack insert. ~22% of the default track height on each side
  *  (~44% combined) was picked as the deliberate trade-off between "reliably
  *  offers the affordance without pixel-perfect aim" and "doesn't eat so
  *  much of each row that an ordinary same-track drop near an edge
  *  accidentally triggers it." */
-const TRACK_INSERT_BAND_PX = Math.round(ROW_HEIGHT * 0.22);
+const TRACK_INSERT_BAND_PX = Math.round(DEFAULT_TRACK_HEIGHT * 0.22);
 
 /** One `TimelineRow` per track (D-080) — `row.id` is the track's own index
  *  (stringified), the stable key every callback below maps back to
@@ -590,7 +580,7 @@ const TRACK_INSERT_BAND_PX = Math.round(ROW_HEIGHT * 0.22);
  *  before D-080, a bare per-row index could never collide; with several
  *  tracks it could, so this stays unique across the whole timeline, not
  *  just within one row. */
-function buildRows(tl: Timeline, fps: number): TimelineRow[] {
+function buildRows(tl: Timeline, fps: number, heights: readonly number[]): TimelineRow[] {
   return tl.tracks.map((track, ti) => {
     const actions: TimelineAction[] = track.clips.map((clip, i) => ({
       id: clip.id || `t${ti}-clip-${i}`,
@@ -628,7 +618,10 @@ function buildRows(tl: Timeline, fps: number): TimelineRow[] {
       flexible: false,
       movable: false,
     }));
-    return { id: String(ti), actions };
+    // D-432 P3 — each row is its track's own height (the library lays rows
+    // out from `rowHeight` per row; `recomputeGridSize` runs on every new
+    // `editorData`).
+    return { id: String(ti), actions, rowHeight: heights[ti] ?? DEFAULT_TRACK_HEIGHT };
   });
 }
 
@@ -644,368 +637,6 @@ function startFramesById(tl: Timeline | null): Map<string, number> {
     for (const c of track.clips) m.set(c.id, c.start_frame);
   }
   return m;
-}
-
-/** D-098 — real `@dnd-kit/sortable` drag id for track `index`, and the
- *  `data` payload every drag source/target below reads back in `onDragEnd`
- *  to tell a track-reorder apart from a clip cross-track move (two
- *  independent drag "kinds" sharing one `DndContext`, disambiguated by
- *  `event.active.data.current.type`, not by id shape). */
-function trackDragId(index: number): string {
-  return `track:${index}`;
-}
-
-/** D-149 — the track-header ducking control: which track ducks this one, and
- *  the three real DSP numbers behind it.
- *
- *  **A track-header control, not a clip Inspector one**, because ducking is a
- *  relationship between two tracks rather than a property of a clip — the same
- *  reason the field lives on `apelles_timeline::Track` and not on `Clip`. It
- *  sits behind a popover rather than inline because the header row is already
- *  dense (grip, kind, name, lock, sync-lock, hide/mute, remove) and four
- *  controls would not fit at `ROW_HEIGHT`; the trigger button lights up when
- *  ducking is actually on, so the state is legible without opening it.
- *
- *  **Offered on audio tracks only**, matching this header's existing, deliberate
- *  per-kind split (mute is audio-only, hide is video-only). The engine and the
- *  `set_track_duck` MCP tool will duck ANY track — a video track's embedded
- *  audio included — but post-D-129 a video clip's sound lives on its own linked
- *  audio track, so putting the control on every video header would be clutter
- *  in the case where it does nothing. Documented rather than silent: an agent
- *  can still reach the rarer case.
- *
- *  Defined at module scope for the same remount-safety reason
- *  `SortableTrackHeader` is (see its doc). */
-function TrackDuckControl({
-  index,
-  duckFrom,
-  duckDb,
-  attackMs,
-  releaseMs,
-  trackLabels,
-  onChange,
-}: {
-  index: number;
-  duckFrom: number | null;
-  duckDb: number;
-  attackMs: number;
-  releaseMs: number;
-  /** every track's display label, indexed by track — the options this track can
-   *  be ducked from (itself excluded: a track ducking on its own clips would
-   *  attenuate exactly the audio triggering it, and Rust ignores it anyway). */
-  trackLabels: string[];
-  onChange: (patch: {
-    duckFrom?: number | null;
-    duckDb?: number;
-    attackMs?: number;
-    releaseMs?: number;
-  }) => void;
-}) {
-  const active = duckFrom != null && duckDb !== 0;
-  const num = 'h-6 w-16 px-1 text-[10px]';
-  const row = 'flex items-center justify-between gap-2';
-  return (
-    <Popover>
-      <PopoverTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className={active ? 'text-accent' : undefined}
-            aria-label={active ? 'Ducking settings (on)' : 'Ducking settings'}
-            title={
-              active
-                ? `Ducked ${duckDb} dB by ${trackLabels[duckFrom] ?? `track ${duckFrom + 1}`}`
-                : 'Ducking — lower this track while another one plays'
-            }
-          >
-            <CaretDoubleDownIcon className="size-3" />
-          </Button>
-        }
-      />
-      <PopoverContent className="w-64 p-3 text-xs">
-        <div className="flex flex-col gap-2">
-          <label className={row}>
-            <span className="text-text-secondary">Duck from</span>
-            <Select
-              value={duckFrom == null ? DUCK_OFF : String(duckFrom)}
-              onValueChange={(v) => onChange({ duckFrom: v === DUCK_OFF ? null : Number(v) })}
-            >
-              <SelectTrigger className="h-6 w-32 text-[11px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={DUCK_OFF}>Off</SelectItem>
-                {trackLabels.map((label, i) =>
-                  i === index ? null : (
-                    <SelectItem key={i} value={String(i)}>
-                      {label}
-                    </SelectItem>
-                  ),
-                )}
-              </SelectContent>
-            </Select>
-          </label>
-          <label className={row}>
-            <span className="text-text-secondary">Amount (dB)</span>
-            {/* Negative — a duck is a reduction. Not clamped: a positive value
-                boosts, which is unusual but well-defined, the same latitude
-                `gain > 1` already has. */}
-            <ScrubbableNumberInput
-              step={1}
-              max={0}
-              className={num}
-              value={duckDb}
-              onValueChange={(duckDb) => onChange({ duckDb })}
-            />
-          </label>
-          <label className={row}>
-            <span className="text-text-secondary">Attack (ms)</span>
-            <ScrubbableNumberInput
-              step={5}
-              min={0}
-              className={num}
-              value={attackMs}
-              onValueChange={(attackMs) => onChange({ attackMs })}
-            />
-          </label>
-          <label className={row}>
-            <span className="text-text-secondary">Release (ms)</span>
-            <ScrubbableNumberInput
-              step={10}
-              min={0}
-              className={num}
-              value={releaseMs}
-              onValueChange={(releaseMs) => onChange({ releaseMs })}
-            />
-          </label>
-          {/* Not decoration: these are the two numbers that ARE the feel of a
-              ducker, and a user who reads them as an abstract "strength" will
-              set them wrong. Stating what they actually mean is the same
-              discipline the Fade section's own note follows. */}
-          <p className="text-text-secondary/60 pt-1 text-[10px] leading-snug">
-            Lowers this track while the chosen track has a clip playing. Attack is how fast it
-            drops (short, so the duck beats the first word); release is how fast it comes back
-            (long, so the bed doesn&apos;t pump between words).
-          </p>
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-/** The `<Select>` value standing for "no ducking". A sentinel string, because
- *  Base UI's `Select` uses `""` for "nothing selected" and `null` is not a
- *  value it round-trips — the same reason `ClipInspectorPanel` uses a
- *  `CUSTOM_CURVE` sentinel rather than an empty option. */
-const DUCK_OFF = 'off';
-
-/** D-098 — a track header row, now a real `@dnd-kit/sortable` item
- *  (replacing D-094's native HTML5 `draggable` + hand-rolled
- *  `draggedTrack`/`dragOverTrack` state and per-row `onDragOver`/`onDrop`).
- *  Defined at module scope, not nested in `TimelinePane` — a component
- *  declared inside another component's body gets a new identity every
- *  render, which would force-remount this on every parent re-render and
- *  break `useSortable`'s own drag-state continuity; every dnd-kit-based
- *  component in this file follows the same rule. `setNodeRef` goes on the
- *  whole row (so the real "other rows slide out of the way" animation
- *  `@dnd-kit/sortable` is actually for applies to the row, not just the
- *  handle); `attributes`/`listeners` are spread ONLY on the small grip
- *  icon (the standard dnd-kit "drag handle" pattern) so the rest of the
- *  row — the lock/hide/mute/remove buttons — stays plain-clickable. */
-function SortableTrackHeader({
-  index,
-  height,
-  isVideo,
-  muted,
-  locked,
-  hidden,
-  syncLocked,
-  label,
-  duck,
-  trackLabels,
-  onToggleLock,
-  onToggleHidden,
-  onToggleMute,
-  onToggleSyncLocked,
-  onDuckChange,
-  onRemove,
-  beatGrid,
-  onToggleBeats,
-}: {
-  index: number;
-  height: number;
-  isVideo: boolean;
-  muted: boolean;
-  locked: boolean;
-  hidden: boolean;
-  syncLocked: boolean;
-  label: string;
-  /** D-149 — this track's ducking settings, already defaulted by the caller. */
-  duck: { from: number | null; db: number; attackMs: number; releaseMs: number };
-  /** D-149 — every track's label, for the "duck from" picker. */
-  trackLabels: string[];
-  onToggleLock: () => void;
-  onToggleHidden: () => void;
-  onToggleMute: () => void;
-  onToggleSyncLocked: () => void;
-  onDuckChange: (patch: {
-    duckFrom?: number | null;
-    duckDb?: number;
-    attackMs?: number;
-    releaseMs?: number;
-  }) => void;
-  onRemove: () => void;
-  /** D-413 — whether this track's beats are the timeline's grid. */
-  beatGrid: boolean;
-  /** D-413 — show / hide this track's beat grid. */
-  onToggleBeats: () => void;
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: trackDragId(index),
-    // B-122 — `'track-header'`, not `'track'`. `useSortable` makes this a
-    // DROPPABLE as well as a draggable, and `TrackDropZone` (the row lane) was
-    // a droppable calling itself `'track'` too — with a `track` field where
-    // this one has `index`. Every `event.over` reader discriminated on that
-    // one string, so the two were indistinguishable and a clip dropped on a
-    // HEADER read as a lane drop with `track: undefined`. See `dndTargets.ts`.
-    data: { type: 'track-header' as const, index } satisfies TrackHeaderDragData,
-  });
-  const style: CSSProperties = {
-    height,
-    transform: DndCSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.4 : 1,
-  };
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      data-testid={TIMELINE_TEST_IDS.trackHeader}
-      data-chroma-track={index}
-      className={
-        'flex flex-col justify-center gap-0.5 px-1.5 border-b border-border-color/60 text-text-secondary ' +
-        (locked ? 'opacity-60 ' : '')
-      }
-    >
-      <div className="flex items-center gap-1">
-        {/* D-098 — real `move_track` behaviour is now driven by
-            `@dnd-kit/sortable` instead of native HTML5 `draggable`,
-            specifically because native HTML5 drag was reported live as
-            unreliable on Tauri's macOS WKWebView (D-097's own doc) despite
-            passing every check this session's Chromium-based harness could
-            run — a real, honest gap dnd-kit's pointer/keyboard-sensor
-            model (not native browser drag internals) is meant to close. */}
-        <div
-          className="cursor-grab p-1 -m-1 text-text-secondary/60 hover:text-text-secondary active:cursor-grabbing shrink-0"
-          {...attributes}
-          {...listeners}
-          title="Drag to reorder track"
-          aria-label="Drag to reorder track"
-        >
-          <DotsSixVerticalIcon className="size-3" />
-        </div>
-        {isVideo ? <FilmStripIcon className="size-3 shrink-0" /> : <WaveformIcon className="size-3 shrink-0" />}
-        <span className="text-[10px] font-medium truncate flex-1">{label}</span>
-      </div>
-      <div className="flex items-center gap-1">
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          onClick={onToggleLock}
-          data-testid={TIMELINE_TEST_IDS.trackLock}
-          aria-label={locked ? 'Unlock track' : 'Lock track'}
-          title={locked ? 'Unlock track' : 'Lock track'}
-        >
-          {locked ? <LockIcon className="size-3" /> : <LockOpenIcon className="size-3" />}
-        </Button>
-        {/* D-106 — cross-track ripple sync toggle, a real per-track concept
-            distinct from `locked` above (see `Track.sync_locked`'s own
-            doc). Placed right next to lock/hide, matching where Resolve
-            puts its own Sync Lock in the track header. */}
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          onClick={onToggleSyncLocked}
-          data-testid={TIMELINE_TEST_IDS.trackSyncLock}
-          aria-label={syncLocked ? 'Disable sync lock' : 'Enable sync lock'}
-          title={
-            syncLocked
-              ? 'Sync lock on — ripples on other tracks shift this one too'
-              : 'Sync lock off — ripples on other tracks skip this one'
-          }
-        >
-          {syncLocked ? <LinkSimpleHorizontalIcon className="size-3" /> : <LinkSimpleHorizontalBreakIcon className="size-3" />}
-        </Button>
-        {isVideo && (
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={onToggleHidden}
-            data-testid={TIMELINE_TEST_IDS.trackHide}
-            aria-label={hidden ? 'Show track' : 'Hide track'}
-            title={hidden ? 'Show track (excluded from compositing)' : 'Hide track'}
-          >
-            {hidden ? <EyeSlashIcon className="size-3" /> : <EyeIcon className="size-3" />}
-          </Button>
-        )}
-        {!isVideo && (
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={onToggleMute}
-            data-testid={TIMELINE_TEST_IDS.trackMute}
-            aria-label={muted ? 'Unmute track' : 'Mute track'}
-            title={muted ? 'Unmute track' : 'Mute track'}
-          >
-            {muted ? <SpeakerSlashIcon className="size-3" /> : <SpeakerHighIcon className="size-3" />}
-          </Button>
-        )}
-        {/* D-149 — ducking, right beside mute: both are this track's mix
-            settings, as against lock/sync-lock/hide which are editing and
-            compositing concerns. Audio tracks only — see `TrackDuckControl`. */}
-        {!isVideo && (
-          <TrackDuckControl
-            index={index}
-            duckFrom={duck.from}
-            duckDb={duck.db}
-            attackMs={duck.attackMs}
-            releaseMs={duck.releaseMs}
-            trackLabels={trackLabels}
-            onChange={onDuckChange}
-          />
-        )}
-        {/* D-413 — "this track's music sets the beat grid": where FCP and
-            Resolve put beat detection, on the music itself (FCP: Clip >
-            Enable Beat Detection; Resolve: the clip's "Show Music Beats"). */}
-        {!isVideo && (
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className={beatGrid ? 'text-accent' : undefined}
-            onClick={onToggleBeats}
-            data-testid={TIMELINE_TEST_IDS.trackBeats}
-            aria-pressed={beatGrid}
-            aria-label={beatGrid ? 'Hide beats' : 'Show beats'}
-            title={beatGrid ? "Hide this track's beat grid" : "Show this track's beats on the timeline (and snap to them)"}
-          >
-            <MetronomeIcon className="size-3" />
-          </Button>
-        )}
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          className="ml-auto text-red-400 hover:text-red-400"
-          onClick={onRemove}
-          data-testid={TIMELINE_TEST_IDS.trackRemove}
-          aria-label="Remove track"
-          title="Remove track"
-        >
-          <TrashIcon className="size-3" />
-        </Button>
-      </div>
-    </div>
-  );
 }
 
 /** D-100 — the clip body itself, now the ONE real drag source for both
@@ -1105,7 +736,7 @@ function ClipBody({
 
 /** D-098 — one droppable target per track, overlaid on the edit area at
  *  that track's real on-screen position (same `RULER_AND_MARGIN_PX +
- *  index*ROW_HEIGHT - scrollTop` math `TimelineDragPreview`'s overlays already
+ *  rowTops[index] - scrollTop` math `TimelineDragPreview`'s overlays already
  *  use). **Always mounted** (not conditionally rendered on an active
  *  drag) — a real bug found live, not assumed: mounting these only once
  *  `activeDrag` flips on meant dnd-kit had to register + measure a brand
@@ -1317,6 +948,14 @@ export function TimelinePane() {
    */
   const editAreaRef = useRef<HTMLDivElement | null>(null);
   const [editArea, setEditArea] = useState<HTMLDivElement | null>(null);
+  /** D-432 P3 — the header column (a height drag resizes its row) and the
+   *  guide line a height drag moves across the lanes. */
+  const headerColumnRef = useRef<HTMLDivElement | null>(null);
+  const heightGuideRef = useRef<HTMLDivElement | null>(null);
+  /** B-350 — whether the current ruler press has become a scrub drag. */
+  const rulerScrubRef = useRef(false);
+  /** D-432 P3 — the skim line (skimming on), positioned imperatively. */
+  const skimLineRef = useRef<HTMLDivElement | null>(null);
   const attachEditArea = useCallback((node: HTMLDivElement | null) => {
     editAreaRef.current = node;
     setEditArea(node);
@@ -1324,6 +963,17 @@ export function TimelinePane() {
   const fps = timelineFps(timeline);
   const tracks = timeline?.tracks ?? [];
   const labels = useMemo(() => (timeline ? trackLabels(timeline) : []), [timeline]);
+  const badges = useMemo(() => (timeline ? trackBadges(timeline) : []), [timeline]);
+  // D-432 P3 — per-track height (a track's own `height`, else the Clip
+  // Appearance default) and the view toggles, all from `timelineView.ts`.
+  const viewClipHeight = useTimelineViewStore((s) => s.clipHeight);
+  const bandRatio = useTimelineViewStore((s) => s.bandRatio);
+  const showClipNames = useTimelineViewStore((s) => s.showNames);
+  const showClipBadges = useTimelineViewStore((s) => s.showBadges);
+  const snapping = useTimelineViewStore((s) => s.snapping);
+  const skimming = useTimelineViewStore((s) => s.skimming);
+  const rowHeights = useMemo(() => trackHeights(timeline?.tracks ?? [], viewClipHeight), [timeline, viewClipHeight]);
+  const rowTops = useMemo(() => trackTops(rowHeights), [rowHeights]);
 
   /**
    * D-233 — the curve lane's target, resolved from the store's `{track, id,
@@ -1554,10 +1204,18 @@ export function TimelinePane() {
   const setBeatSnap = useEditorTimelineStore((s) => s.setBeatSnap);
   const beatFrames = useMemo(() => beatFramesOf(beatView.beats), [beatView.beats]);
   const beatSnapReach = Math.max(1, Math.round((INSERT_SNAP_PX / pxPerSec) * fps));
+  // D-432 P3 — beats are one of snapping's targets (spec §5), so the toolbar's
+  // Snapping toggle (N) turns beat snapping off with everything else; the beat
+  // grid's own magnet still chooses whether beats are a target at all.
+  const beatSnapOn = snapping && beatSnap && beatFrames.length > 0;
   const snapFrameToBeat = (frame: number): number =>
-    beatSnap && beatFrames.length > 0 ? snapTo(frame, beatFrames, beatSnapReach).value : frame;
+    beatSnapOn ? snapTo(frame, beatFrames, beatSnapReach).value : frame;
   const snapClipToBeat = (start: number, length: number): number =>
-    beatSnap && beatFrames.length > 0 ? snapSpan(start, length, beatFrames, beatSnapReach).value : start;
+    beatSnapOn ? snapSpan(start, length, beatFrames, beatSnapReach).value : start;
+  /** D-432 P3 — the edge-snapping reach of a drop or a clip drag, in frames:
+   *  `INSERT_SNAP_PX` at the current zoom, or 0 (land exactly where released)
+   *  while the Snapping toggle (N) is off. */
+  const insertSnapFrames = snapping ? Math.round((INSERT_SNAP_PX / pxPerSec) * fps) : 0;
   const [snappingCuts, setSnappingCuts] = useState(false);
   /** The last "Snap cuts to beats" outcome, in words, shown beside the tempo
    *  (the answer belongs next to the button that asked, B-080's rule). */
@@ -1869,8 +1527,8 @@ export function TimelinePane() {
   }, [timeline]);
 
   const editorData = useMemo<TimelineRow[]>(
-    () => (timeline ? buildRows(timeline, fps) : [{ id: '0', actions: [] }]),
-    [timeline, fps],
+    () => (timeline ? buildRows(timeline, fps, rowHeights) : [{ id: '0', actions: [] }]),
+    [timeline, fps, rowHeights],
   );
 
   const effects = useMemo(() => ({ [EFFECT_ID]: { id: EFFECT_ID, name: 'clip' } }), []);
@@ -2059,7 +1717,8 @@ export function TimelinePane() {
     scrollTop,
     startLeftPx: START_LEFT_PX,
     rulerPx: RULER_AND_MARGIN_PX,
-    rowHeight: ROW_HEIGHT,
+    rowHeight: viewClipHeight,
+    rowTops,
   };
   const marqueeLatestRef = useRef<{ viewport: MarqueeViewport; timeline: Timeline | null }>({
     viewport: marqueeViewport,
@@ -2218,11 +1877,10 @@ export function TimelinePane() {
    *  so this cannot swallow a drop from outside the pane. */
   const trackInsertBoundary = (y: number, tracksLength: number): number | null => {
     if (tracksLength === 0) return null;
-    if (y >= tracksLength * ROW_HEIGHT) return tracksLength;
+    if (y >= rowTops[tracksLength]) return tracksLength;
     if (y < 0) return 0;
-    const b = Math.round(y / ROW_HEIGHT);
-    if (b >= 0 && b <= tracksLength && Math.abs(y - b * ROW_HEIGHT) <= TRACK_INSERT_BAND_PX) return b;
-    return null;
+    // D-432 P3 — the boundary lines are the rows' own tops, at any mix of heights.
+    return trackBoundaryNear(rowTops, y, TRACK_INSERT_BAND_PX);
   };
 
   /** D-097 — what kind a track created at insertion boundary `index` should
@@ -2278,7 +1936,7 @@ export function TimelinePane() {
    *  disagree, or the snap line lies about where the clip will actually
    *  land). `null` only for a drop with nothing nearby at all. */
   const nearestEdge = (track: Track, frame: number): number | null => {
-    const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
+    const snapFrames = insertSnapFrames;
     const edges = new Set<number>([0]);
     for (const c of track.clips) {
       edges.add(c.start_frame);
@@ -2324,7 +1982,7 @@ export function TimelinePane() {
     // one the drop actually uses. (B-115: `y < 0` no longer reaches here at
     // all — `onDrop` resolves it to insertion boundary 0, "a new track above
     // the top one", before ever calling this.)
-    return Math.max(0, Math.min(tracks.length - 1, Math.floor(y / ROW_HEIGHT)));
+    return Math.max(0, Math.min(tracks.length - 1, trackAtY(rowTops, y)));
   };
 
   // B-024: `dragover` fires continuously (many times/sec) for the whole
@@ -2380,7 +2038,7 @@ export function TimelinePane() {
     // It is unreachable now: with at least one track (guaranteed above),
     // `trackInsertBoundary` resolves every `y < 0` to boundary 0 and returns
     // in the branch above, so nothing negative ever reaches this point.
-    const track = Math.max(0, Math.min(tracks.length - 1, Math.floor(y / ROW_HEIGHT)));
+    const track = Math.max(0, Math.min(tracks.length - 1, trackAtY(rowTops, y)));
     const edge = nearestEdge(tracks[track], xToFrame(e, rect));
     dragPreviewRef.current?.setInsert((prev) =>
       edge === null
@@ -2461,7 +2119,7 @@ export function TimelinePane() {
     // back to the pre-D-095 plain append, same as no `rect`/track at all.
     const insertion =
       rect && trackData
-        ? computeInsertion(trackData, xToFrame(e, rect), clip, Math.round((INSERT_SNAP_PX / pxPerSec) * fps), fps)
+        ? computeInsertion(trackData, xToFrame(e, rect), clip, insertSnapFrames, fps)
         : null;
     if (insertion) {
       applyOp({
@@ -2559,7 +2217,9 @@ export function TimelinePane() {
     scrollTop,
     startLeft: START_LEFT_PX,
     rowsTop: RULER_AND_MARGIN_PX,
-    rowHeight: ROW_HEIGHT,
+    rowHeight: viewClipHeight,
+    rowTops,
+    snapping,
     viewportWidth,
     snapExtras: () => {
       const st = useEditorTimelineStore.getState();
@@ -2650,7 +2310,8 @@ export function TimelinePane() {
       const isLockedTrack = !!track?.locked;
       const pxWidth = (action.end - action.start) * pxPerSec;
       const kind = clip && track ? clipKindOf(clip, track.kind) : 'video';
-      const anatomy = clipAnatomy(ROW_HEIGHT, kind);
+      const trackHeight = rowHeights[ti] ?? viewClipHeight;
+      const anatomy = clipAnatomy(trackHeight, kind, bandRatio);
       const trimZonePx = Math.min(TRIM_ZONE_PX, pxWidth * TRIM_ZONE_MAX_FRACTION);
       const clipLeftPx = START_LEFT_PX + action.start * pxPerSec;
       return (
@@ -2685,7 +2346,10 @@ export function TimelinePane() {
             <ClipBlock
               clip={clip}
               kind={kind}
-              trackHeight={ROW_HEIGHT}
+              trackHeight={trackHeight}
+              bandRatio={bandRatio}
+              showName={showClipNames}
+              showBadges={showClipBadges}
               widthPx={pxWidth}
               fps={fps}
               // D-128/D-334 — the visible slice, so the filmstrip and waveform
@@ -3009,6 +2673,71 @@ export function TimelinePane() {
   useShortcut('edit.tool_slip', () => selectTrimTool('slip'));
   useShortcut('edit.tool_slide', () => selectTrimTool('slide'));
   useShortcut('edit.tool_blade', () => selectTrimTool('blade'));
+  /**
+   * D-432 P3 — skimming (S, off by default; spec §4.6). While it is on, the
+   * pointer over the timeline moves a 1 px `skimmer` line and asks the viewer
+   * for the frame under it (`previewPeek.ts`); the playhead does not move.
+   * Native listeners and a ref, coalesced to one update per animation frame
+   * and to frame changes only: a skim renders neither this pane nor the
+   * viewer (it fetches through its own latest-wins path). Suspended while a
+   * button is held (a drag, a trim) and cleared when the pointer leaves.
+   */
+  const skimViewRef = useRef({ fps, pxPerSec, scrollLeft });
+  useEffect(() => {
+    skimViewRef.current = { fps, pxPerSec, scrollLeft };
+  });
+  useEffect(() => {
+    const el = editArea;
+    if (!el || !skimming) return;
+    let raf = 0;
+    let lastX: number | null = null;
+    const hide = () => {
+      lastX = null;
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+      if (skimLineRef.current) skimLineRef.current.hidden = true;
+      usePreviewPeekStore.getState().setSkimFrame(null);
+    };
+    const apply = () => {
+      raf = 0;
+      if (lastX === null) return;
+      const v = skimViewRef.current;
+      const x = lastX - el.getBoundingClientRect().left;
+      const frame = Math.max(0, Math.round(((x + v.scrollLeft - START_LEFT_PX) / v.pxPerSec) * v.fps));
+      const line = skimLineRef.current;
+      if (line) {
+        line.hidden = false;
+        line.style.transform = `translate3d(${START_LEFT_PX + (frame / v.fps) * v.pxPerSec - v.scrollLeft}px, 0, 0)`;
+      }
+      usePreviewPeekStore.getState().setSkimFrame(frame);
+    };
+    const onMove = (e: PointerEvent) => {
+      if (e.buttons !== 0 || el.dataset.chromaEditGesture !== undefined) {
+        if (lastX !== null) hide();
+        return;
+      }
+      lastX = e.clientX;
+      if (!raf) raf = requestAnimationFrame(apply);
+    };
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerleave', hide);
+    return () => {
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerleave', hide);
+      hide();
+    };
+  }, [editArea, skimming]);
+
+  // D-432 P3 — Final Cut's N (snapping) and S (skimming): the same store the
+  // toolbar's toggles write.
+  useShortcut('edit.toggle_snapping', () => {
+    const v = useTimelineViewStore.getState();
+    v.setView({ snapping: !v.snapping });
+  });
+  useShortcut('edit.toggle_skimming', () => {
+    const v = useTimelineViewStore.getState();
+    v.setView({ skimming: !v.skimming });
+  });
 
   // D-080: "Move to another track" — the library has no cross-row drag (see
   // the module doc), so this is a discoverable affordance for the same
@@ -3113,6 +2842,61 @@ export function TimelinePane() {
     const t = tracks[track];
     if (!t) return;
     applyOp({ kind: 'set_track_sync_locked', track, syncLocked: !(t.sync_locked ?? DEFAULT_SYNC_LOCKED) });
+  };
+
+  /**
+   * D-432 P3 — the per-track height drag (§4.8), from a header's bottom edge
+   * or a lane's. Imperative, so a drag renders nothing: each move writes the
+   * dragged header's `height` (the headers below it reflow) and moves one
+   * guide line across the lanes; the release commits ONE `set_track_height`
+   * (one undo step, the same op `editor_set_track_height` applies), and that
+   * commit's render lays the lanes out at the new height. Esc cancels.
+   */
+  const startTrackHeightDrag = (e: ReactPointerEvent<HTMLElement>, track: number) => {
+    if (e.button !== 0) return;
+    const start = rowHeights[track];
+    if (start === undefined) return;
+    e.preventDefault();
+    const originY = e.clientY;
+    const header =
+      headerColumnRef.current?.querySelector<HTMLElement>(
+        `[data-testid="${TIMELINE_TEST_IDS.trackHeader}"][data-chroma-track="${track}"]`,
+      ) ?? null;
+    const guide = heightGuideRef.current;
+    const top = RULER_AND_MARGIN_PX + rowTops[track] - scrollTop;
+    let height = start;
+    const show = (h: number) => {
+      if (header) header.style.height = `${h}px`;
+      if (guide) {
+        guide.hidden = false;
+        guide.style.transform = `translate3d(0, ${top + h}px, 0)`;
+      }
+    };
+    const onMove = (ev: PointerEvent) => {
+      height = clampTrackHeight(start + ev.clientY - originY);
+      show(height);
+    };
+    const finish = (commit: boolean) => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('keydown', onKey, true);
+      if (guide) guide.hidden = true;
+      if (header) header.style.height = `${commit ? height : start}px`;
+      if (commit && height !== start) applyOp({ kind: 'set_track_height', track, height });
+    };
+    const onUp = () => finish(true);
+    const onCancel = () => finish(false);
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== 'Escape') return;
+      ev.stopPropagation();
+      finish(false);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+    window.addEventListener('keydown', onKey, true);
+    show(height);
   };
 
   // D-094 — track reorder is now a real drag handle on each header row
@@ -3313,7 +3097,7 @@ export function TimelinePane() {
       // D-413 — head or tail onto a beat first; the landing rule below then
       // resolves that frame to a real slot exactly as before.
       const intendedFrame = snapClipToBeat(clip.start_frame + deltaFrames, endFrame(clip, fps) - clip.start_frame);
-      const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
+      const snapFrames = insertSnapFrames;
       // `toTrack` came from `laneDropTrack`, which only ever returns a real
       // track index — so this cannot be the `undefined` that crashed
       // `resolveClipLanding` on `dest.clips` (B-122).
@@ -3509,7 +3293,7 @@ export function TimelinePane() {
       // D-413 — head or tail onto a beat first; the landing rule below then
       // resolves that frame to a real slot exactly as before.
       const intendedFrame = snapClipToBeat(clip.start_frame + deltaFrames, endFrame(clip, fps) - clip.start_frame);
-      const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
+      const snapFrames = insertSnapFrames;
       const { startFrame, ripple } = resolveClipLanding(tracks[toTrack], clip.id, clip, intendedFrame, snapFrames, fps);
       applyOp({ kind: 'move', fromTrack, toTrack, clip: i, startFrame, ripple });
       // A drag also selects the clip it moved — same-track or cross-track —
@@ -3576,6 +3360,9 @@ export function TimelinePane() {
 
   const zoomIn = () => zoomBy(ZOOM_STEP, null);
   const zoomOut = () => zoomBy(1 / ZOOM_STEP, null);
+  // D-432 P3 / B-348 — keyboard zoom (= / -), the buttons' own anchored step.
+  useShortcut('edit.zoom_in', zoomIn);
+  useShortcut('edit.zoom_out', zoomOut);
 
   // D-058 — the labeled-tick interval adapts to the current zoom ("nice
   // numbers": widen as pxPerSec shrinks, narrow as it grows) rather than the
@@ -3619,6 +3406,8 @@ export function TimelinePane() {
     activeDrag?.type === 'clip' ? clipsOf(activeDrag.track)[idxOf(activeDrag.track, activeDrag.clipId)] : null;
   const dragOverlayTrack = activeDrag?.type === 'clip' ? tracks[activeDrag.track] : null;
   const dragOverlayKind = dragOverlayClip && dragOverlayTrack ? clipKindOf(dragOverlayClip, dragOverlayTrack.kind) : 'video';
+  // D-432 P3 — the ghost is drawn at its own track's height.
+  const dragOverlayTrackHeight = activeDrag?.type === 'clip' ? (rowHeights[activeDrag.track] ?? viewClipHeight) : viewClipHeight;
   // B-137 — the cap above is what made the ghost detach from the pointer: a
   // capped ghost anchored (by `DragOverlay`, unavoidably) at the dragged
   // clip's LEFT EDGE has no spatial relationship to a press two-thirds of the
@@ -3714,7 +3503,14 @@ export function TimelinePane() {
         // `RULER_AND_MARGIN_PX` (which every overlay's `top` is measured from)
         // stays true. Set here rather than written as a literal in the
         // stylesheet so there is a single definition of the number.
-        style={{ '--chroma-marker-strip-height': `${MARKER_STRIP_HEIGHT}px` } as CSSProperties}
+        style={
+          {
+            '--chroma-marker-strip-height': `${MARKER_STRIP_HEIGHT}px`,
+            // D-432 P3 — the ruler's height, read by `timeline-overrides.css`
+            // for the library's ruler and its playhead's top.
+            '--chroma-ruler-height': `${RULER_HEIGHT_PX}px`,
+          } as CSSProperties
+        }
         tabIndex={0}
       >
       <TooltipProvider>
@@ -4000,17 +3796,24 @@ export function TimelinePane() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        className={beatSnap ? 'text-accent' : undefined}
+                        className={beatSnap ? 'text-accent-text' : undefined}
                         aria-pressed={beatSnap}
                         onClick={() => setBeatSnap(!beatSnap)}
                         aria-label={beatSnap ? 'Turn beat snapping off' : 'Turn beat snapping on'}
                       >
-                        <MagnetIcon />
+                        {/* D-432 P3 — the straight magnet: the toolbar's own
+                            Snapping toggle (N) has the round one, and beats
+                            are one of its targets. */}
+                        <MagnetStraightIcon />
                       </Button>
                     }
                   />
                   <TooltipContent>
-                    {beatSnap ? 'Beat snapping on: drags, trims and the playhead land on beats' : 'Beat snapping off'}
+                    {beatSnap
+                      ? snapping
+                        ? 'Beat snapping on: drags, trims and the playhead land on beats'
+                        : 'Beat snapping on, but Snapping (N) is off'
+                      : 'Beat snapping off'}
                   </TooltipContent>
                 </Tooltip>
                 <Tooltip>
@@ -4043,6 +3846,11 @@ export function TimelinePane() {
                 per-clip edit actions this strip holds, and the owner asked for
                 it there directly (an arrow drawn from it up to the top bar).
                 The dialog component is unchanged — only where it is mounted. */}
+            {/* D-432 P3 — Snapping (N), Skimming (S) and the Clip Appearance
+                popover (§4.9), then zoom. */}
+            <SnapSkimToggles />
+            <ClipAppearanceButton />
+            <Separator orientation="vertical" className="mx-1 h-5" />
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -4051,7 +3859,7 @@ export function TimelinePane() {
                   </Button>
                 }
               />
-              <TooltipContent>Zoom out (or scroll down over the timeline)</TooltipContent>
+              <TooltipContent>Zoom out (−, or ctrl/pinch-scroll over the timeline)</TooltipContent>
             </Tooltip>
             <span
               data-testid={TIMELINE_TEST_IDS.zoomReadout}
@@ -4067,7 +3875,7 @@ export function TimelinePane() {
                   </Button>
                 }
               />
-              <TooltipContent>Zoom in (or scroll up over the timeline)</TooltipContent>
+              <TooltipContent>Zoom in (=, or ctrl/pinch-scroll over the timeline)</TooltipContent>
             </Tooltip>
           </div>
         </div>
@@ -4096,34 +3904,38 @@ export function TimelinePane() {
           className="relative shrink-0 border-r border-border-color bg-surface overflow-hidden"
         >
           <div
+            ref={headerColumnRef}
             className="absolute left-0 right-0"
             style={{ top: RULER_AND_MARGIN_PX - scrollTop }}
           >
             {/* D-098 — real `@dnd-kit/sortable` list, replacing D-094's
                 native HTML5 `draggable` track-reorder handle + hand-rolled
                 `draggedTrack`/`dragOverTrack` state (see the module doc /
-                `SortableTrackHeader`'s own doc for why). `items` is the
+                `TrackHeader.tsx`'s own doc for why). `items` is the
                 CURRENT render's track ids in order — `SortableContext` uses
                 it to compute the live "other rows slide out of the way"
                 animation during a drag. */}
             <SortableContext items={tracks.map((_, i) => trackDragId(i))} strategy={verticalListSortingStrategy}>
               {tracks.map((track, i) => {
                 const isVideo = track.kind === 'video';
-                const muted = !isVideo && (track.gain ?? DEFAULT_TRACK_GAIN) <= 0;
+                const muted = track.kind === 'audio' && (track.gain ?? DEFAULT_TRACK_GAIN) <= 0;
                 const locked = !!track.locked;
                 const hidden = isVideo && !!track.hidden;
                 const syncLocked = track.sync_locked ?? DEFAULT_SYNC_LOCKED;
                 return (
-                  <SortableTrackHeader
+                  <TrackHeader
                     key={i}
                     index={i}
-                    height={ROW_HEIGHT}
-                    isVideo={isVideo}
+                    kind={track.kind}
+                    height={rowHeights[i]}
+                    ownHeight={track.height ?? null}
+                    badge={badges[i]}
+                    label={labels[i]}
+                    renamed={!!track.name?.trim()}
                     muted={muted}
                     locked={locked}
                     hidden={hidden}
                     syncLocked={syncLocked}
-                    label={labels[i]}
                     duck={{
                       // Defaulted here, once, so the control never has to read
                       // an absent field as falsy — `0 ms` attack/release is a
@@ -4142,6 +3954,9 @@ export function TimelinePane() {
                     onRemove={() => doRemoveTrack(i)}
                     beatGrid={track.beat_grid != null}
                     onToggleBeats={() => (track.beat_grid != null ? setBeatGrid(null, null) : setBeatGrid(i, {}))}
+                    onRename={(name) => applyOp({ kind: 'set_track_name', track: i, name })}
+                    onSetHeight={(height) => applyOp({ kind: 'set_track_height', track: i, height })}
+                    onHeightDragStart={startTrackHeightDrag}
                   />
                 );
               })}
@@ -4179,8 +3994,11 @@ export function TimelinePane() {
               [TIMELINE_VIEW_ATTRS.scrollTop]: Math.round(scrollTop),
               [TIMELINE_VIEW_ATTRS.fps]: fps,
               [TIMELINE_VIEW_ATTRS.startLeft]: START_LEFT_PX,
-              [TIMELINE_VIEW_ATTRS.rowHeight]: ROW_HEIGHT,
+              [TIMELINE_VIEW_ATTRS.rowHeight]: viewClipHeight,
               [TIMELINE_VIEW_ATTRS.rowsTop]: RULER_AND_MARGIN_PX,
+              // D-432 P3 — every row's top (one past the last), as tracks
+              // have their own heights now.
+              [TIMELINE_VIEW_ATTRS.rowTops]: rowTops.join(','),
             }}
             className="relative h-full overflow-hidden"
             // D-250 — the cursor half of Resolve's own context-sensitive trim
@@ -4235,7 +4053,7 @@ export function TimelinePane() {
               const rect = editAreaRef.current?.getBoundingClientRect();
               if (rect) {
                 const y = e.clientY - rect.top - RULER_AND_MARGIN_PX + scrollTop;
-                const trackIdx = Math.floor(y / ROW_HEIGHT);
+                const trackIdx = trackAtY(rowTops, y);
                 // B-326 — a click on empty track space (not a clip — that
                 // returned above) moves the playhead there, the Resolve /
                 // Premiere default; the library only does it for the ruler.
@@ -4265,19 +4083,16 @@ export function TimelinePane() {
               effects={effects}
               scale={tickSeconds}
               scaleWidth={libScaleWidth}
-              getScaleRender={(sec) => formatTimecode(sec, fps, tickSeconds)}
+              // D-432 P3 — the library's ruler is hidden (our `TimelineRuler`
+              // draws over it); `scale` / `scaleWidth` still lay it out.
               startLeft={START_LEFT_PX}
-              rowHeight={ROW_HEIGHT}
+              rowHeight={viewClipHeight}
               autoScroll
               dragLine
               style={{ width: '100%', height: '100%' }}
               onScroll={onTimelineScroll}
               getActionRender={getActionRender}
               onClickAction={onClickAction}
-              onClickTimeArea={(time) => {
-                seekPlayhead(snapFrameToBeat(s2f(time)));
-                return true;
-              }}
               // D-232 — the timeline's own tape-scrub gesture. The library
               // already distinguishes the three phases of a cursor drag, which
               // is exactly what scrub audio needs and what `onCursorDrag`
@@ -4298,6 +4113,35 @@ export function TimelinePane() {
               }}
               onCursorDragEnd={() => endScrub()}
               onChange={() => false}
+            />
+            {/* D-432 P3 / B-350 — our own ruler: press seeks (a running
+                transport keeps running, B-326), press-and-drag scrubs (pausing,
+                with scrub audio — the same calls as the playhead head's drag). */}
+            <TimelineRuler
+              fps={fps}
+              pxPerSec={pxPerSec}
+              scrollLeft={scrollLeft}
+              startLeftPx={START_LEFT_PX}
+              viewportWidth={viewportWidth}
+              tickSeconds={tickSeconds}
+              snapFrame={snapFrameToBeat}
+              onScrubStart={(frame) => {
+                rulerScrubRef.current = false;
+                seekPlayhead(frame);
+              }}
+              onScrub={(frame) => {
+                if (!rulerScrubRef.current) {
+                  rulerScrubRef.current = true;
+                  setPlaying(false);
+                  beginScrub(frame);
+                }
+                setPlayhead(frame);
+                updateScrub(frame);
+              }}
+              onScrubEnd={() => {
+                if (rulerScrubRef.current) endScrub();
+                rulerScrubRef.current = false;
+              }}
             />
             {/* D-250 — the armed trim mode, named AT THE POINTER. Resolve's own
                 copy for this feature is explicit that the signal belongs there
@@ -4353,8 +4197,8 @@ export function TimelinePane() {
                     style={{
                       left: START_LEFT_PX + (gap.gapStart / fps) * pxPerSec - scrollLeft,
                       width: ((gap.gapEnd - gap.gapStart) / fps) * pxPerSec,
-                      top: RULER_AND_MARGIN_PX + selectedGap.track * ROW_HEIGHT - scrollTop,
-                      height: ROW_HEIGHT,
+                      top: RULER_AND_MARGIN_PX + rowTops[selectedGap.track] - scrollTop,
+                      height: rowHeights[selectedGap.track],
                     }}
                   />
                 );
@@ -4373,7 +4217,8 @@ export function TimelinePane() {
               scrollLeft={scrollLeft}
               scrollTop={scrollTop}
               startLeftPx={START_LEFT_PX}
-              rowHeight={ROW_HEIGHT}
+              rowHeight={viewClipHeight}
+              rowTops={rowTops}
               rulerAndMarginPx={RULER_AND_MARGIN_PX}
               onChange={(track, id, patch: TransitionPatch) =>
                 applyOp({ kind: 'set_transition', track, id, patch })
@@ -4391,7 +4236,7 @@ export function TimelinePane() {
               <div
                 key={`row-line-${i}`}
                 className="pointer-events-none absolute left-0 right-0 z-(--z-timeline-lanes) border-b border-border-color/60"
-                style={{ top: RULER_AND_MARGIN_PX + i * ROW_HEIGHT - scrollTop, height: ROW_HEIGHT }}
+                style={{ top: RULER_AND_MARGIN_PX + rowTops[i] - scrollTop, height: rowHeights[i] }}
               />
             ))}
             {/* B-160 / D-304 — the four live drag-preview overlays (the
@@ -4422,7 +4267,8 @@ export function TimelinePane() {
               scrollLeft={scrollLeft}
               scrollTop={scrollTop}
               startLeftPx={START_LEFT_PX}
-              rowHeight={ROW_HEIGHT}
+              rowHeight={viewClipHeight}
+              rowTops={rowTops}
               rulerAndMarginPx={RULER_AND_MARGIN_PX}
             />
             {/* D-098 — one real `useDroppable` target per track, always
@@ -4449,8 +4295,44 @@ export function TimelinePane() {
               />
             )}
             {tracks.map((_, i) => (
-              <TrackDropZone key={i} track={i} top={RULER_AND_MARGIN_PX + i * ROW_HEIGHT - scrollTop} height={ROW_HEIGHT} />
+              <TrackDropZone key={i} track={i} top={RULER_AND_MARGIN_PX + rowTops[i] - scrollTop} height={rowHeights[i]} />
             ))}
+            {/* D-432 P3 — each lane's bottom edge drags its track's height, as
+                the header's does (§4.8). A thin band straddling the line
+                between two rows: a clip sits 1 px inside its lane, so this
+                takes at most a pixel of either clip. Double-click resets. */}
+            {tracks.map((_, i) => (
+              <div
+                key={`height-${i}`}
+                data-testid={TIMELINE_TEST_IDS.laneHeightResize}
+                data-chroma-track={i}
+                data-chroma-no-marquee=""
+                aria-hidden
+                className="absolute left-0 right-0 z-(--z-timeline-clip-controls) cursor-row-resize"
+                style={{
+                  top: RULER_AND_MARGIN_PX + rowTops[i + 1] - scrollTop - LANE_HEIGHT_ZONE_PX / 2,
+                  height: LANE_HEIGHT_ZONE_PX,
+                }}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  startTrackHeightDrag(e, i);
+                }}
+                onClick={(e) => e.stopPropagation()}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  applyOp({ kind: 'set_track_height', track: i, height: null });
+                }}
+              />
+            ))}
+            {/* D-432 P3 — where a track-height drag will put the row's bottom
+                edge; positioned by `startTrackHeightDrag`, hidden otherwise. */}
+            <div
+              ref={heightGuideRef}
+              data-testid={TIMELINE_TEST_IDS.trackHeightGuide}
+              hidden
+              aria-hidden
+              className="pointer-events-none absolute top-0 right-0 left-0 z-(--z-timeline-edit-feedback) h-px bg-selection"
+            />
             {/* D-222 — the marker flag strip, in the band between the ruler's
                 ticks and track row 0 (`timeline-overrides.css` widened that
                 band to fit it). Last in this container so it paints over the
@@ -4484,8 +4366,27 @@ export function TimelinePane() {
                 onRemove={(id) => applyOp({ kind: 'remove_marker', id })}
                 editingId={editingMarkerId}
                 onEditingIdChange={setEditingMarkerId}
+                // D-432 P3 / B-348 — a dragged marker snaps to clip edges, the
+                // playhead and the other markers while Snapping (N) is on.
+                snapTargets={(movingId) => {
+                  const st = useEditorTimelineStore.getState();
+                  if (!useTimelineViewStore.getState().snapping || !st.timeline) return null;
+                  const others = markersOf(st.timeline)
+                    .filter((m) => m.id !== movingId)
+                    .map((m) => m.frame);
+                  return snapTargets(st.timeline, null, [st.playhead, ...others]);
+                }}
               />
             )}
+            {/* D-432 P3 — the skim line: positioned by the skimming listener
+                above, hidden unless skimming is on and the pointer is here. */}
+            <div
+              ref={skimLineRef}
+              data-testid={TIMELINE_TEST_IDS.skimLine}
+              hidden
+              aria-hidden
+              className="pointer-events-none absolute top-0 bottom-0 left-0 z-(--z-timeline-playhead) w-px bg-skimmer"
+            />
             {/* D-432 P2 — the trim brackets, the edge-pinned delta readout, the
                 snap guide and the Blade line (one set per pane, positioned
                 imperatively by `useEditGesture`). */}
@@ -4541,7 +4442,7 @@ export function TimelinePane() {
               'pointer-events-none relative overflow-hidden rounded-xs outline-2 -outline-offset-2 outline-selection ' +
               CLIP_KIND_CLASSES[dragOverlayKind].body
             }
-            style={{ width: dragOverlayWidth, height: ROW_HEIGHT - 2 * CLIP_VERTICAL_INSET_PX }}
+            style={{ width: dragOverlayWidth, height: dragOverlayTrackHeight - 2 * CLIP_VERTICAL_INSET_PX }}
           >
             <ClipBlock
               clip={{
@@ -4552,7 +4453,10 @@ export function TimelinePane() {
                 duration: Math.round(dragOverlayDurationSecs * (dragOverlayClip.source_fps ?? fps)),
               }}
               kind={dragOverlayKind}
-              trackHeight={ROW_HEIGHT}
+              trackHeight={dragOverlayTrackHeight}
+              bandRatio={bandRatio}
+              showName={showClipNames}
+              showBadges={showClipBadges}
               widthPx={dragOverlayWidth}
               fps={fps}
             />

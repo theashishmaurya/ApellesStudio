@@ -593,6 +593,22 @@ pub struct Track {
     /// input. `None` round-trips a pre-D-413 project byte-identically.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub beat_grid: Option<BeatGrid>,
+    /// **D-432 P3 — the name a person gave this track** in its header ("Music",
+    /// "VO"). `None` (every pre-P3 project) means the header shows the derived
+    /// per-kind label (`V1`, `A1`, …, `trackOps.ts`'s `trackLabels`), which is
+    /// what a track was always called. On the track for `beat_grid`'s reason:
+    /// tracks have no ids, and a name has to move with its track on a reorder.
+    /// This crate never reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// **D-432 P3 — this track's height in the timeline, CSS px** (Resolve's
+    /// per-track height). `None` means the timeline view's default clip height
+    /// (the Clip Appearance setting, a UI preference outside this document).
+    /// A presentation hint stored with the track so it follows reorders and
+    /// survives a relaunch; this crate never reads it and nothing renders or
+    /// exports differently because of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
 }
 
 /// The analysis parameters of a track's beat grid (D-413). Both optional:
@@ -840,6 +856,8 @@ impl Default for Track {
             // needed, exactly `Clip::caption`'s own reasoning.
             caption_style: None,
             beat_grid: None,
+            name: None,
+            height: None,
         }
     }
 }
@@ -5297,6 +5315,22 @@ mod tests {
         let bare: Timeline =
             serde_json::from_str(&json.replace(r#""meter":3,"tempo_hint_bpm":72.0"#, ""))?;
         assert_eq!(bare.tracks[0].beat_grid, Some(BeatGrid::default()));
+        Ok(())
+    }
+
+    /// D-432 P3 — a track's header name and height round-trip, and absent ones
+    /// write no key (a pre-P3 project is byte-identical).
+    #[test]
+    fn track_name_and_height_round_trip_and_absent_write_no_key() -> Result<(), serde_json::Error> {
+        let mut t = Timeline::from_shots(&shots());
+        let plain = serde_json::to_string(&t)?;
+        assert!(!plain.contains("\"name\":\"Music\""));
+        assert!(!plain.contains("\"height\""));
+        t.tracks[0].name = Some("Music".into());
+        t.tracks[0].height = Some(76);
+        let back: Timeline = serde_json::from_str(&serde_json::to_string(&t)?)?;
+        assert_eq!(back.tracks[0].name.as_deref(), Some("Music"));
+        assert_eq!(back.tracks[0].height, Some(76));
         Ok(())
     }
 

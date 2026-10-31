@@ -94,6 +94,9 @@ import { clampEqBand, eqBandsForDisplay, type EqBand } from './eq';
 import { sanitizeHighlight, type ClipHighlight } from './clipHighlights';
 import { TIMELINE_DEFAULT_SCALING, type ClipScaling } from './clipScaling';
 import { isValidTimelineRate, retimeTimeline } from './timelineRetime';
+// D-432 P3 — the per-track height range (a leaf module: it imports only types
+// from here).
+import { clampTrackHeight } from './trackHeight';
 // D-236 — the speed ramp's arithmetic lives in its own module, which imports
 // only the `Clip` TYPE back from here (erased at build), so the runtime
 // dependency stays one-way: `timeline.ts` -> `speedRamp.ts`, never a cycle.
@@ -1345,6 +1348,16 @@ export interface Track {
    *  one track carries it (`set_beat_grid` clears the others); the beats
    *  themselves are derived from the clips' files and never stored. */
   beat_grid?: BeatGrid | null;
+  /** D-432 P3 — the name a person gave this track in its header. Mirrors
+   *  `apelles_timeline::Track::name`. Absent/`null` = the derived per-kind
+   *  label (`trackLabels`, "Video 1"). Written by `set_track_name`. */
+  name?: string | null;
+  /** D-432 P3 — this track's height in the timeline, CSS px. Mirrors
+   *  `apelles_timeline::Track::height`. Absent/`null` = the timeline view's
+   *  default clip height (`timelineView.ts`). A presentation hint only: nothing
+   *  renders or exports differently. Written by `set_track_height`, clamped to
+   *  `trackHeight.ts`'s 32..200. */
+  height?: number | null;
 }
 
 /** D-413 — a beat grid's analysis parameters; mirrors
@@ -3963,6 +3976,16 @@ export type EditOp =
    *  `apelles_timeline::Track::sync_locked`. Always succeeds — same
    *  track-list-level reasoning as `set_track_locked`/`set_track_hidden`. */
   | { kind: 'set_track_sync_locked'; track: number; syncLocked: boolean }
+  /** D-432 P3 — rename a track (the header's double-click rename,
+   *  `editor_rename_track`). `null` or a blank name clears it back to the
+   *  derived label. Always succeeds for an in-range track: a track-level
+   *  property like `set_track_locked`, not gated by the track's lock. */
+  | { kind: 'set_track_name'; track: number; name: string | null }
+  /** D-432 P3 — set a track's height (the header/lane bottom-edge drag, the
+   *  header menu's S/M/L/XL, `editor_set_track_height`). `null` clears it back
+   *  to the view's default height. Clamped to 32..200 px. Always succeeds for
+   *  an in-range track, for `set_track_name`'s reason. */
+  | { kind: 'set_track_height'; track: number; height: number | null }
   /** D-149 — set a track's ducking: which track triggers it (`duckFrom`, or
    *  `null` to turn ducking off) and the three real DSP numbers. Mirrors
    *  `apelles_timeline::Track`'s `duck_from`/`duck_db`/`duck_attack_ms`/
@@ -4654,6 +4677,10 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return op.hidden ? `Hide track ${op.track + 1}` : `Show track ${op.track + 1}`;
     case 'set_track_sync_locked':
       return op.syncLocked ? `Sync-lock track ${op.track + 1}` : `Unsync track ${op.track + 1}`;
+    case 'set_track_name':
+      return op.name && op.name.trim() ? `Rename track ${op.track + 1}` : `Reset name of track ${op.track + 1}`;
+    case 'set_track_height':
+      return op.height == null ? `Reset height of track ${op.track + 1}` : `Resize track ${op.track + 1}`;
     case 'set_track_duck':
       return op.duckFrom == null
         ? `Stop ducking track ${op.track + 1}`
@@ -6181,6 +6208,24 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     if (op.track < 0 || op.track >= tl.tracks.length) return tl;
     const next = clone(tl);
     next.tracks[op.track].sync_locked = op.syncLocked;
+    return next;
+  }
+  if (op.kind === 'set_track_name') {
+    if (op.track < 0 || op.track >= tl.tracks.length) return tl;
+    const name = op.name?.trim() ?? '';
+    const next = clone(tl);
+    // A blank name is "no name of its own": the key is dropped rather than
+    // stored empty, so the derived label comes back and a pre-P3 project
+    // round-trips byte-identically.
+    if (name) next.tracks[op.track].name = name;
+    else delete next.tracks[op.track].name;
+    return next;
+  }
+  if (op.kind === 'set_track_height') {
+    if (op.track < 0 || op.track >= tl.tracks.length) return tl;
+    const next = clone(tl);
+    if (op.height == null || !Number.isFinite(op.height)) delete next.tracks[op.track].height;
+    else next.tracks[op.track].height = clampTrackHeight(op.height);
     return next;
   }
   if (op.kind === 'set_track_duck') {

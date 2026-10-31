@@ -33,6 +33,7 @@
  * its own either — `pxPerSec`/`scrollLeft`/`startLeftPx`/`rowHeight` come from
  * `TimelinePane`, which is the one place that math lives.
  */
+import { rowHeightAt, rowTopAt } from './trackHeight';
 import { useMemo, useState } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import { IntersectIcon, TrashIcon, MagicWandIcon } from '@phosphor-icons/react';
@@ -165,6 +166,7 @@ export function TransitionBadges({
   scrollTop,
   startLeftPx,
   rowHeight,
+  rowTops,
   rulerAndMarginPx,
   onChange,
   onRemove,
@@ -176,6 +178,8 @@ export function TransitionBadges({
   scrollTop: number;
   startLeftPx: number;
   rowHeight: number;
+  /** D-432 P3 — each row's top when tracks have their own heights */
+  rowTops?: readonly number[];
   rulerAndMarginPx: number;
   onChange: (track: number, id: string, patch: TransitionPatch) => void;
   onRemove: (track: number, id: string) => void;
@@ -198,6 +202,8 @@ export function TransitionBadges({
       {badges.map(({ trackIndex, transition, start, end }) => {
         const left = startLeftPx + (start / fps) * pxPerSec - scrollLeft;
         const width = Math.max(6, ((end - start) / fps) * pxPerSec);
+        const rowTop = rowTops ? rowTopAt(rowTops, trackIndex, rowHeight) : trackIndex * rowHeight;
+        const rowH = rowTops ? rowHeightAt(rowTops, trackIndex, rowHeight) : rowHeight;
         return (
           <Popover key={`${trackIndex}:${transition.id}`}>
             <PopoverTrigger
@@ -214,8 +220,8 @@ export function TransitionBadges({
                   style={{
                     left,
                     width,
-                    top: rulerAndMarginPx + trackIndex * rowHeight - scrollTop + rowHeight * 0.15,
-                    height: rowHeight * 0.7,
+                    top: rulerAndMarginPx + rowTop - scrollTop + rowH * 0.15,
+                    height: rowH * 0.7,
                     // The dissolve X, drawn as two gradients rather than an SVG
                     // so a timeline full of transitions paints plain divs — the
                     // same reasoning `TimelineMarkers`' `clip-path` flag uses.

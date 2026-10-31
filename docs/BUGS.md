@@ -14,11 +14,12 @@ status: **open** · severity: minor (feel, not function) · area: `packages/edit
 
 ## B-350 — dragging in the time ruler does not scrub: the playhead jumps once on release
 
-status: **open** · severity: minor · area: `@xzdarcy/react-timeline-editor` (`.timeline-editor-time-area-interact` is click-to-seek only; the drag handle is the playhead's `.timeline-editor-cursor` element), `TimelinePane.tsx` ruler wiring
+status: **fixed (2026-11-01, D-432 P3)** · severity: minor · area: `@xzdarcy/react-timeline-editor` (`.timeline-editor-time-area-interact` is click-to-seek only; the drag handle is the playhead's `.timeline-editor-cursor` element), `TimelinePane.tsx` ruler wiring
 
 - **found:** 2026-11-01, second live harness run, `scrub-playhead-drag` (`.timeline-editor-cursor` took 2 distinct x values over 53 frames; the store ends at 200). Triage: the same drag started on the playhead's head band (`.timeline-editor-cursor-area`) scrubs live (21 distinct x values, playhead 200); a drag from the ruler at frame 60 to 200 gives 2 values (seek on release only).
 - **expected:** Premiere and Resolve both scrub when you press and drag anywhere in the time ruler; grabbing the playhead's head first is not required.
 - **not a P2 regression:** the library never scrubbed from the ruler; P2 confined the grab zone to the head band (B-346), which made the scenario's ruler target (H4) stop reaching the handle. Natural home: P3's own ruler.
+- **fix:** P3 replaced the library's ruler with our own `TimelineRuler.tsx` (the library's is hidden, kept for layout only; built to survive D-437). A press seeks (a running transport keeps running, B-326); a press-and-drag scrubs on every move, pausing and driving the same `beginScrub` / `updateScrub` / `endScrub` as the playhead head's drag. DOM test `TimelinePane.p3.dom.test.tsx` ("a press seeks and a drag scrubs live"); new harness scenario `scrub-ruler-drag`. Live-harness confirmation pending.
 
 ## B-349 — the 1 px playhead line still grabs the playhead over the tracks: a press exactly on it starts a scrub instead of selecting or trimming the clip under it (B-346 residual)
 
@@ -35,6 +36,7 @@ status: **open, feature gap: for the roadmap, not a bug fix** · severity: mediu
 - **found:** 2026-10-31, the first live run of the D-434 harness (`docs/notes/ui-harness.md` § "First live run"). Each one FAILs by design until built; absence confirmed by reading the code, not just by the failing scenario.
 - **missing:** a Blade/Razor tool (`razor-blade-tool`: the trim palette is select/ripple/roll/slip/slide only); a two-up trim viewer during roll/slip (`trim-two-up-viewer`, D-432 P2 §5.1 plans it); J/K/L shuttle, I/O in/out marks, ↑/↓ edit-point navigation, Shift+Delete ripple delete, `=`/`-` keyboard zoom, a snapping toggle (`key-jkl-shuttle`, `key-in-out-marks`, `key-edit-point-navigation`, `ripple-delete-shortcut`, `zoom-keyboard`, `move-snapping-toggle`: none of these ids exist in `SHORTCUTS`; D-432 puts snapping on N and skimming on S); dragging a marker flag (`marker-drag-move`: the flag only stops propagation, `TimelineMarkers.tsx:252`, no drag handler).
 - **parity note:** each needs its MCP side in the same pass (CLAUDE.md human + AI rule). Timeline zoom already has a GUI and no MCP tool at all; `editor_set_snapping` / `editor_set_tool` are named in `ui-redesign.md` §7 and do not exist yet.
+- **progress, 2026-11-01 (D-432 P3):** built — the Blade tool (P2, key C), the **two-up trim viewer** (`TwoUpViewer.tsx`, roll / slip / slide; test id `timeline-two-up-viewer`), **`=` / `-` keyboard zoom** (`edit.zoom_in` / `edit.zoom_out`, Cmd variants as aliases), the **snapping toggle** on **N** (`edit.toggle_snapping`, toolbar magnet; MCP: `editor_set_timeline_view(snapping=…)`, read back as `editor_get_state.timelineView.snapping`), and **marker drag** (snaps while snapping is on, one `set_marker`). Still missing: J/K/L shuttle, I/O marks, ↑/↓ edit-point navigation, Shift+Delete ripple delete (no existing op/surface to map them onto in P3's scope; each needs its own design).
 
 ## B-347 — edit-tool drags and zoom gestures miss the frame budget (worst frames 53–90 ms, 12–20 % dropped)
 

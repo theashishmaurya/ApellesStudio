@@ -3,7 +3,41 @@
 // see `ruler.ts`'s module doc for why this exists as a separate,
 // independently-testable file.
 import { describe, expect, it } from 'vitest';
-import { NICE_TICK_STEPS_SECONDS, formatTimecode, niceTickIntervalSeconds } from './ruler';
+import {
+  NICE_TICK_STEPS_SECONDS,
+  MIN_MINOR_TICK_PX,
+  formatRulerLabel,
+  formatTimecode,
+  niceTickIntervalSeconds,
+  rulerSplitCount,
+} from './ruler';
+
+describe('formatRulerLabel (D-432 P3, spec §4.6)', () => {
+  it('drops zero-padded hours: m:ss, then h:mm:ss once there are hours', () => {
+    expect(formatRulerLabel(5, 24, 1)).toBe('0:05');
+    expect(formatRulerLabel(90, 24, 5)).toBe('1:30');
+    expect(formatRulerLabel(3730, 24, 10)).toBe('1:02:10');
+  });
+
+  it('adds frames only at frame-level zoom (a sub-second labelled interval)', () => {
+    expect(formatRulerLabel(90.5, 24, 0.5)).toBe('1:30:12');
+    expect(formatRulerLabel(90.5, 24, 1)).toBe('1:30');
+  });
+});
+
+describe('rulerSplitCount (D-432 P3)', () => {
+  it('keeps minor ticks at least MIN_MINOR_TICK_PX apart, finest first', () => {
+    expect(rulerSplitCount(1, 90)).toBe(10);
+    expect(rulerSplitCount(1, 70)).toBe(5);
+    expect(rulerSplitCount(1, 20)).toBe(2);
+    expect(rulerSplitCount(1, 10)).toBe(1);
+    for (const px of [1, 5, 33, 90, 200, 480]) {
+      const tick = niceTickIntervalSeconds(px, 70);
+      const split = rulerSplitCount(tick, px);
+      expect(split === 1 || (tick * px) / split >= MIN_MINOR_TICK_PX).toBe(true);
+    }
+  });
+});
 
 describe('niceTickIntervalSeconds', () => {
   it('only ever returns a value from the nice-steps list', () => {

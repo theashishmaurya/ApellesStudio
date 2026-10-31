@@ -60,7 +60,26 @@ export const TIMELINE_TEST_IDS = {
   trackHide: 'timeline-track-hide',
   trackMute: 'timeline-track-mute',
   trackBeats: 'timeline-track-beats',
+  /** D-432 P3 — the track menu's "Delete track" item (it was a red trash on
+   *  every row; the menu opens from `trackMenu` or a right-click). */
   trackRemove: 'timeline-track-remove',
+  /** D-432 P3 — the header's anatomy: the `V1` / `A1` ID pill, the name (a
+   *  double-click opens `trackNameInput`), the ducking popover trigger, the
+   *  `DotsThree` menu and its Rename item, and the bottom-edge height zone of
+   *  the header (`trackHeightResize`) and of the lane (`laneHeightResize`),
+   *  both carrying `data-chroma-track`. A toggle in its non-default state
+   *  carries `data-chroma-active`. */
+  trackBadge: 'timeline-track-badge',
+  trackName: 'timeline-track-name',
+  trackNameInput: 'timeline-track-name-input',
+  trackDuck: 'timeline-track-duck',
+  trackMenu: 'timeline-track-menu',
+  trackRename: 'timeline-track-rename',
+  trackHeightResize: 'timeline-track-height-resize',
+  laneHeightResize: 'timeline-lane-height-resize',
+  /** D-432 P3 — the guide line drawn across the lanes while a track height is
+   *  dragged. */
+  trackHeightGuide: 'timeline-track-height-guide',
   /** The divider between the track-header column and the edit area. Passed as
    *  the handle's `id`, NOT `data-testid`: react-resizable-panels 4.x writes
    *  `data-testid` from its `id`, overwriting any prop (H7). */
@@ -78,10 +97,34 @@ export const TIMELINE_TEST_IDS = {
   zoomReadout: 'timeline-zoom-readout',
   addMarker: 'timeline-add-marker',
   markerList: 'timeline-marker-list',
+  /** D-432 P3 — the view toggles and the Clip Appearance popover
+   *  (`TimelineViewControls.tsx`): Snapping (N), Skimming (S), the popover's
+   *  trigger and body, its zoom slider and its names / badges switches. The
+   *  height and balance buttons carry `data-chroma-clip-height` /
+   *  `data-chroma-band-ratio`. */
+  snappingToggle: 'timeline-snapping-toggle',
+  skimmingToggle: 'timeline-skimming-toggle',
+  clipAppearance: 'timeline-clip-appearance',
+  clipAppearancePopover: 'timeline-clip-appearance-popover',
+  zoomSlider: 'timeline-zoom-slider',
+  showClipNames: 'timeline-show-clip-names',
+  showClipBadges: 'timeline-show-clip-badges',
   /** One trim-palette tool button; the tool id is in `data-chroma-trim-tool`. */
   trimTool: 'timeline-trim-tool',
-  /** One marker flag; its id is in `data-chroma-marker`. */
+  /** One marker flag; its id is in `data-chroma-marker`. D-432 P3: a drag
+   *  moves it; the editor popover is `markerEditor`. */
   marker: 'timeline-marker',
+  markerEditor: 'timeline-marker-editor',
+  /** D-432 P3 — our own time ruler (`TimelineRuler.tsx`; press seeks, drag
+   *  scrubs, B-350) and one of its labels. The ruler carries
+   *  `data-chroma-tick-seconds` / `data-chroma-tick-split`. */
+  ruler: 'timeline-ruler',
+  /** D-432 P3 — the skim line (skimming on, pointer over the timeline) and
+   *  the viewer's two-up trim overlay (`TwoUpViewer.tsx`, roll / slip / slide
+   *  drags only; each half carries `data-chroma-two-up-half`). */
+  skimLine: 'timeline-skim-line',
+  twoUpViewer: 'timeline-two-up-viewer',
+  rulerLabel: 'timeline-ruler-label',
   /** One transition badge on a cut. */
   transition: 'timeline-transition',
   /** Overlays. */
@@ -102,8 +145,6 @@ export type TimelineTestId = (typeof TIMELINE_TEST_IDS)[keyof typeof TIMELINE_TE
 /** The library-rendered parts, by the library's own class names (pinned by
  *  `timelineTestIds.test.ts` against the installed package's stylesheet). */
 export const TIMELINE_LIBRARY_SELECTORS = {
-  /** The ruler — a click seeks, a drag scrubs. */
-  ruler: '.timeline-editor-time-area',
   /** The playhead line, and the grab handle at its top. */
   playhead: '.timeline-editor-cursor',
   playheadHandle: '.timeline-editor-cursor-top',
@@ -131,4 +172,8 @@ export const TIMELINE_VIEW_ATTRS = {
   startLeft: 'data-chroma-start-left',
   rowHeight: 'data-chroma-row-height',
   rowsTop: 'data-chroma-rows-top',
+  /** D-432 P3 — every row's top below `rowsTop`, comma-separated, one entry
+   *  past the last row (tracks have their own heights; `rowHeight` is the
+   *  view's default). */
+  rowTops: 'data-chroma-row-tops',
 } as const;

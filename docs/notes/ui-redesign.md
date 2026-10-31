@@ -1,6 +1,6 @@
 # UI redesign: an FCP-style Edit tab (research + spec)
 
-**Status: accepted (D-432). P1 (tokens and type) and P2 (clip block, handles, edit-tool feedback, playhead, layer scale) done 2026-10-31; P3 to P5 not started.**
+**Status: accepted (D-432). P1 (tokens and type) and P2 (clip block, handles, edit-tool feedback, playhead, layer scale) done 2026-10-31; P3 (track headers, per-track height, ruler, markers, snapping / skimming, two-up viewer) done 2026-11-01; P4 and P5 not started.**
 This note is the research trail, the design system, the per-component spec, the list of
 concrete CSS defects in today's components, and the phased plan. The look is shown in
 the static mockup `scratch/ui-redesign-mockup.html` (not app code; `scratch/` is
@@ -723,6 +723,95 @@ waveforms (stubbed IPC).
 spike at release, `elementFromPoint` on the edge zones at a butted cut (both halves), slip's
 filmstrip motion, the head-only playhead grab, and `observed.trusted` on the capture-phase
 claim.
+
+## 6c. P3 as built (2026-11-01)
+
+**Files.** `TrackHeader.tsx` (the header row, its toggles, menu and rename; the
+D-149 ducking popover moved here), `trackHeight.ts` (pure per-track geometry:
+presets, clamp, tops, row at y, fractional rows), `TimelineViewControls.tsx`
+(Snapping / Skimming toggles, Clip Appearance popover), `TimelineRuler.tsx`
+(our own ruler), `previewPeek.ts` (skim frame + two-up request store),
+`twoUp.ts` + `TwoUpViewer.tsx` (two-up), the rewritten `MarkerStrip` /
+`MarkerEditor` in `TimelineMarkers.tsx`, `timelineView.ts` (new fields),
+`trackOps.ts` (labels, badges, the two new tools' argument checks). Rust:
+`Track.name` / `Track.height` (`apelles-timeline`), `PipeLane::TRIM_VIEW`
+(`apelles-media`), `chroma_trim_view_frame` / `chroma_trim_view_end`
+(`chroma/edit.rs`).
+
+**Keys.** N snapping, S skimming, **T Roll** (moved off N; FCP's Trim tool and
+Resolve's Trim Edit mode are both T), `=` / `-` zoom with Cmd+= / Cmd+- as
+aliases. §5's "S toggles snapping" and §4.9's "Snapping (`Magnet`, S)" are
+superseded by the owner's answer (D-432): snapping is N.
+
+**How a height drag works.** The header's bottom 6 px (and a 4 px band on each
+lane line) starts `startTrackHeightDrag`: each move writes the dragged
+header's `height` and moves one guide line across the lanes, with no React
+render; release commits one `set_track_height` (one undo step), whose render
+lays the lanes out (the library takes a `rowHeight` per row). Esc cancels;
+double-click resets to the view default. Every `index × ROW_HEIGHT` in the
+pane, the drag preview, transitions, the gesture feedback and the marquee now
+reads `trackTops`; the edit area exposes them as `data-chroma-row-tops` for
+the harness.
+
+**AI parity.** `editor_set_timeline_view` gained `clip_height`, `band_ratio`,
+`show_names`, `show_badges`, `snapping`, `skimming` (all optional; at least
+one field); `editor_get_state.timelineView` reports them. New tools
+`editor_rename_track` and `editor_set_track_height` (the per-track values are
+document data, see D-432 P3 for why). `editor_list_tracks` reports `badge`,
+`renamed` and `height`. 262 -> 264 tools (release 249).
+
+**Deviations from the spec above.**
+- Toggles are hidden by `display` (not opacity) and float over the name's
+  right end: with opacity, the hidden buttons still took the row's width and
+  truncated an audio track's name to nothing at 136 px (caught in the
+  Chromium check). Revealing them changes no layout.
+- The ID pill never turns accent: there is no "target track for edits /
+  paste" concept yet to drive it.
+- Markers keep the D-328 16-colour palette (MCP colour names are a contract),
+  as 14 px swatches in two rows; Time and Duration are on separate rows.
+- The ruler is ours, the playhead still the library's: its head keeps the
+  library shape, recoloured (D-437 replaces both).
+- The zoom readout stays beside the +/- buttons (harness ids); the zoom slider
+  is in the Clip Appearance popover.
+- The beat grid's own snap toggle stays (D-413) with a straight magnet; the
+  toolbar's Snapping (N) gates it.
+- Two-up shows source frames without grade or transform (Final Cut's two-up
+  shows the clip picture too); trim / ripple stay on the playhead's frame
+  (no one-up edge frame yet).
+- View settings are not persisted across relaunch (P5's layout persistence).
+- Not built: the locked-track hatch, the hover tooltip delay rules, hover
+  suspension during drags via `data-dragging`.
+
+**Defects closed:** §6 #9, #10, #11, #13, #14. Bugs: B-350; B-348 in part
+(two-up, keyboard zoom, snapping toggle, marker drag).
+
+**Tests.** `trackHeight.test.ts` (geometry, ops, labels), `twoUp.test.ts`
+(roll / slip / slide frames, marker drag rule), `ruler.test.ts` (labels,
+split count), `timelineView.dom.test.tsx` (new view fields, both new tools),
+`TimelinePane.p3.dom.test.tsx` (19: headers, rename, menu delete, height drag
+renders nothing and commits once, anatomy at L, Esc and reset, appearance
+popover, ruler per zoom, ruler scrub, marker shield / drag / editor, N / T
+keys, snapping on/off on a trim, skimming with no pane render, keyboard zoom,
+two-up only during roll); `trimMode.test.ts` (keys); the marker DOM suite
+updated for the 24 px ruler and the shield. Rust: `apelles-timeline` round
+trip of name / height; MCP parity corpus re-captured.
+
+**Visual check.** `app/harness.html` in Chromium (real tokens, stubbed IPC),
+saved to `scratch/ui-redesign-p3/` (main checkout): `before-owner-after-p2.png`
+(the owner's screenshot before P3), `after-rest.png`,
+`after-headers-heights-markers.png` (renamed audio track, a 108 px track, a
+locked track's lock showing, point and ranged markers),
+`after-clip-appearance.png`, `after-marker-editor.png`. Not WKWebView; no
+thumbnails or waveforms; the two-up viewer lives in the preview, which the
+timeline-mode harness does not mount.
+
+**Needs the live harness:** scroll at 60 fps with 12 tracks × 300 clips, the
+height drag's single commit, marker popover open-and-focused within a frame of
+M, `editor_set_track_height` round trip, the new scenarios
+(`snapping-toggle-button`, `skimming-toggle-key`, `scrub-ruler-drag`,
+`track-height-drag`, `track-header-quiet`, the updated
+`move-snapping-toggle` / `trim-tool-shortcuts` / `trim-two-up-viewer`), and
+the two-up decode cadence on real 4K footage.
 
 ## 7. Human + AI parity
 

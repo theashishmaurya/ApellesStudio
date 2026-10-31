@@ -256,7 +256,7 @@ import {
 // D-413 — the beat grid: the same functions the track header's metronome and
 // the toolbar's "Snap cuts to beats" call.
 import { detectTrackBeats, setBeatGridOp, snapCutsToBeatsOp } from './beatOps';
-import { listTracks, sliceTimelineDto, syncLockArgs } from './trackOps';
+import { listTracks, renameTrackArgs, sliceTimelineDto, syncLockArgs, trackHeightArgs, trackLabels } from './trackOps';
 import { detectedForGate, gateDetectorGroups, type DetectorGateResult } from './detectorGate';
 
 /** What a retake answer says about the gate behind its `status` (D-382). */
@@ -351,8 +351,7 @@ import {
   previewZoomPct,
 } from './previewZoom';
 // D-434 / H2 — the timeline's own zoom, settable over MCP like the preview's.
-import { clampPxPerSec, timelineZoomPct, useTimelineViewStore } from './timelineView';
-import { DEFAULT_PX_PER_SEC, MAX_PX_PER_SEC, MIN_PX_PER_SEC } from './ruler';
+import { timelineViewPatch, timelineViewReport, useTimelineViewStore } from './timelineView';
 
 const EDITOR_OP_PREFIX = 'editor_';
 
@@ -957,13 +956,6 @@ function parseCurve(v: unknown, which: string): EaseCurve | { error: string } | 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirrors the untyped `chroma://request` payload these replace
 const opArgs = (args: any): any => args || {};
 
-/** D-434 / H2 — the timeline's horizontal zoom as `editor_get_state` and
- *  `editor_set_timeline_view` report it: `zoom` is a multiplier of the default
- *  (1 = the toolbar's 100 %), `pxPerSec` the raw value frame-to-pixel maths uses. */
-function timelineViewReport() {
-  const { pxPerSec } = useTimelineViewStore.getState();
-  return { zoom: pxPerSec / DEFAULT_PX_PER_SEC, pct: timelineZoomPct(pxPerSec), pxPerSec };
-}
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ditto: an op handler's result is an open record by contract
 const opError = (result: any): string | null => result?.error ?? null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ditto: a thrown value is `unknown` in practice
@@ -2277,7 +2269,7 @@ export function useEditorControl(): void {
           // readout), the read half of `editor_set_timeline_view`. Without it
           // a frame number cannot be turned into a screen position, and a
           // harness run could not tell a leaked zoom from a layout bug.
-          timelineView: timelineViewReport(),
+          timelineView: timelineViewReport(useTimelineViewStore.getState()),
           previewZoom: {
             zoom: s.previewView.zoom,
             pct: previewZoomPct(s.previewView.zoom),
@@ -2896,22 +2888,18 @@ export function useEditorControl(): void {
       // carry the Clip Appearance view settings too; zoom is its first field.
       // Display-only and NOT undoable (D-216's reasoning, as for
       // `editor_set_preview_zoom`): a view setting, never in `Timeline`.
+      // D-432 P3 — the same tool carries the Clip Appearance popover (default
+      // clip height, waveform/filmstrip balance, names, badges) and the N / S
+      // toggles (snapping, skimming): one store, `timelineView.ts`, which the
+      // popover and the toolbar buttons write through the same `setView`.
       editor_set_timeline_view: (a) => {
-        const raw = a?.zoom;
-        if (raw === undefined) return { error: 'pass zoom (a multiplier, 1 = the default 100 %) or zoom="default"' };
-        const zoom = raw === 'default' || raw === null ? 1 : Number(raw);
-        if (!Number.isFinite(zoom) || zoom <= 0) {
-          return { error: 'zoom must be a positive multiplier (1 = the default 100 %) or "default"' };
-        }
-        const wanted = zoom * DEFAULT_PX_PER_SEC;
-        const applied = clampPxPerSec(wanted);
-        useTimelineViewStore.getState().setPxPerSec(applied);
+        const parsed = timelineViewPatch(opArgs(a));
+        if ('error' in parsed) return parsed;
+        useTimelineViewStore.getState().setView(parsed.patch);
         return {
           ok: true,
-          timelineView: timelineViewReport(),
-          ...(applied !== wanted
-            ? { note: `zoom ${zoom} is outside ${(MIN_PX_PER_SEC / DEFAULT_PX_PER_SEC).toFixed(2)}..${(MAX_PX_PER_SEC / DEFAULT_PX_PER_SEC).toFixed(1)} and was clamped` }
-            : {}),
+          timelineView: timelineViewReport(useTimelineViewStore.getState()),
+          ...(parsed.notes.length > 0 ? { note: parsed.notes.join('; ') } : {}),
         };
       },
       editor_set_preview_zoom: (a) => {
@@ -6263,6 +6251,28 @@ export function useEditorControl(): void {
         const track = Math.round(Number(a?.track));
         useEditorTimelineStore.getState().applyOp({ kind: 'set_track_hidden', track, hidden: !!a?.hidden });
         return { ok: true, track, hidden: !!a?.hidden };
+      },
+      // D-432 P3 — the track header's double-click rename, as an op: the SAME
+      // `set_track_name` the header's inline field commits.
+      editor_rename_track: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const args = renameTrackArgs(tl, a);
+        if ('error' in args) return args;
+        useEditorTimelineStore.getState().applyOp({ kind: 'set_track_name', ...args });
+        const after = useEditorTimelineStore.getState().timeline;
+        return { ok: true, track: args.track, name: after ? trackLabels(after)[args.track] : args.name, renamed: args.name !== null };
+      },
+      // D-432 P3 — the track's bottom-edge drag and the header menu's S/M/L/XL,
+      // as an op: the SAME `set_track_height` both commit.
+      editor_set_track_height: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const args = trackHeightArgs(tl, a);
+        if ('error' in args) return args;
+        useEditorTimelineStore.getState().applyOp({ kind: 'set_track_height', ...args });
+        const viewDefault = useTimelineViewStore.getState().clipHeight;
+        return { ok: true, track: args.track, height: args.height, drawnHeight: args.height ?? viewDefault };
       },
     };
 

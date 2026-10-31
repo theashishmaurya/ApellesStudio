@@ -46,6 +46,7 @@
  * `@xzdarcy/react-timeline-editor`'s bundled CSS, not guessed.
  */
 
+import { rowAtY, yAtRow } from './trackHeight';
 import { endFrame, timelineFps, type Timeline } from './timeline';
 
 /** How far the pointer must travel before a press on empty timeline canvas
@@ -240,7 +241,12 @@ export interface MarqueeViewport {
   scrollTop: number;
   startLeftPx: number;
   rulerPx: number;
+  /** the default row height; with no `rowTops` every row is this tall */
   rowHeight: number;
+  /** D-432 P3 — each row's top (`trackHeight.ts` `trackTops`, one entry past
+   *  the last row) when tracks have their own heights; rows are fractional
+   *  over these, and `rowHeight` covers only the space above / below them */
+  rowTops?: readonly number[];
 }
 
 /** Edit-area-relative pixels for the pointer at `clientX`/`clientY`, converted
@@ -253,7 +259,9 @@ export function marqueeAnchorFromPoint(
 ): MarqueeAnchor {
   return {
     frame: ((offsetX + v.scrollLeft - v.startLeftPx) / v.pxPerSec) * v.fps,
-    row: (offsetY - v.rulerPx + v.scrollTop) / v.rowHeight,
+    row: v.rowTops
+      ? rowAtY(v.rowTops, offsetY - v.rulerPx + v.scrollTop, v.rowHeight)
+      : (offsetY - v.rulerPx + v.scrollTop) / v.rowHeight,
   };
 }
 
@@ -267,7 +275,8 @@ export function marqueeOverlayBox(
 ): { left: number; top: number; width: number; height: number } {
   const left = v.startLeftPx + (rect.frameStart / v.fps) * v.pxPerSec - v.scrollLeft;
   const right = v.startLeftPx + (rect.frameEnd / v.fps) * v.pxPerSec - v.scrollLeft;
-  const top = v.rulerPx + rect.rowStart * v.rowHeight - v.scrollTop;
-  const bottom = v.rulerPx + rect.rowEnd * v.rowHeight - v.scrollTop;
+  const yOf = (row: number) => (v.rowTops ? yAtRow(v.rowTops, row, v.rowHeight) : row * v.rowHeight);
+  const top = v.rulerPx + yOf(rect.rowStart) - v.scrollTop;
+  const bottom = v.rulerPx + yOf(rect.rowEnd) - v.scrollTop;
   return { left, top, width: right - left, height: bottom - top };
 }

@@ -1319,6 +1319,56 @@ fn preview_canvas_size(comp: (u32, u32), max_long_edge: Option<u32>) -> (u32, u3
 /// `spawn_blocking` shape `chroma::commands`' and `chroma::session`'s decode
 /// commands already use.
 ///
+/// D-432 P3 — one frame of one SOURCE file as preview JPEG bytes, for the Edit
+/// tab's two-up trim viewer (the outgoing and incoming frames of a roll, slip
+/// or slide while it is dragged).
+///
+/// Why a source frame and not [`chroma_timeline_frame`]: during the drag the
+/// persisted timeline still holds the pre-edit cut, so the frame a roll is
+/// about to make the outgoing clip's last one is not at any timeline position
+/// yet; it is a frame of that clip's source. Decoded through the same
+/// [`decode_clip_picture`] the preview's single-layer path uses, on its own
+/// pipe lane ([`decode_pipe::PipeLane::TRIM_VIEW`]) with one slot per half
+/// (`half` 0 or 1), so a drag reads each side sequentially and never touches
+/// the live preview's pipes. No grade, no transform: it shows the picture
+/// being cut, as Final Cut's two-up does. `chroma_trim_view_end` releases the
+/// lane's pipes when the gesture ends.
+#[tauri::command]
+pub async fn chroma_trim_view_frame(
+    source_path: String,
+    source_frame: u64,
+    half: u8,
+    max_long_edge: Option<u32>,
+) -> Result<tauri::ipc::Response, String> {
+    let jpeg = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let size = clip_source_size(&source_path)?;
+        let slot = decode_pipe::PipeSlot::Track(usize::from(half.min(1)));
+        let img = decode_clip_picture(
+            &source_path,
+            size,
+            decode_pipe::PipeLane::TRIM_VIEW,
+            slot,
+            source_frame,
+            max_long_edge,
+        )?;
+        encode_preview_jpeg(&img)
+    })
+    .await
+    .map_err(|e| format!("trim view frame task: {e}"))??;
+    Ok(tauri::ipc::Response::new(jpeg))
+}
+
+/// D-432 P3 — the two-up trim viewer's gesture ended: release its decode pipes
+/// (each one is a live `ffmpeg` process).
+#[tauri::command]
+pub async fn chroma_trim_view_end() -> Result<(), String> {
+    tokio::task::spawn_blocking(|| {
+        decode_pipe::retain_pipe_slots(decode_pipe::PipeLane::TRIM_VIEW, &[])
+    })
+    .await
+    .map_err(|e| format!("trim view release task: {e}"))
+}
+
 /// **`playing` is D-324.** `Some(true)` means "this is the next frame of a
 /// running playback", which is what licenses priming a decode pipe for the cut
 /// ahead (see [`prefetch_upcoming_boundaries`]). Optional and defaulting to

@@ -28,6 +28,25 @@
   background: var(--color-playhead);
   transform: none;
   z-index: var(--z-timeline-playhead);
+  /* D-432 P3 — under the 24 px ruler, not the library's 32 px one. */
+  top: var(--chroma-ruler-height, 32px);
+  height: calc(100% - var(--chroma-ruler-height, 32px));
+}
+
+/*
+ * D-432 P3 — the library's ruler is replaced by our own (`TimelineRuler.tsx`,
+ * drawn over this band: ticks, labels, press-to-seek and drag-to-scrub,
+ * B-350). The library's stays for layout only — its height sets where its
+ * edit area starts — at our 24 px (`RULER_HEIGHT_PX`, through the
+ * `--chroma-ruler-height` custom property `TimelinePane` sets), hidden and
+ * out of hit testing.
+ */
+.timeline-editor-time-area {
+  height: var(--chroma-ruler-height, 32px);
+  visibility: hidden;
+}
+.timeline-editor {
+  font-family: inherit;
 }
 
 /* The head keeps the library's own shape (its inline SVG), recoloured, and

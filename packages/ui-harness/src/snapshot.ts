@@ -105,6 +105,9 @@ export interface ViewSnap {
   startLeft: number;
   rowHeight: number;
   rowsTop: number;
+  /** D-432 P3 — each row's top below `rowsTop` (one past the last), when the
+   *  app reports it: tracks have their own heights. */
+  rowTops?: number[];
   /** The edit area's viewport rect, CSS px. */
   rect: { x: number; y: number; width: number; height: number };
 }
@@ -135,6 +138,8 @@ export function viewSnapshot(domTree: unknown): ViewSnap | { error: string } {
   };
   const missing = Object.entries(view).filter(([k, v]) => k !== 'rect' && !Number.isFinite(v));
   if (missing.length) return { error: `the edit area lacks its view readout (${missing.map(([k]) => k).join(', ')}) — an older app build?` };
+  const tops = attrs[TIMELINE_VIEW_ATTRS.rowTops];
+  if (tops) view.rowTops = tops.split(',').map(Number);
   return view;
 }
 
@@ -143,7 +148,12 @@ export function viewSnapshot(domTree: unknown): ViewSnap | { error: string } {
  *  down the row (0 top … 1 bottom), default the middle. */
 export function pointAtFrame(view: ViewSnap, frame: number, track: number, fy = 0.5): { x: number; y: number } {
   const x = view.rect.x + view.startLeft + (frame / view.fps) * view.pxPerSec - view.scrollLeft;
-  const y = view.rect.y + view.rowsTop + (track + fy) * view.rowHeight - view.scrollTop;
+  const tops = view.rowTops;
+  const rowY =
+    tops && track + 1 < tops.length
+      ? tops[track] + fy * (tops[track + 1] - tops[track])
+      : (track + fy) * view.rowHeight;
+  const y = view.rect.y + view.rowsTop + rowY - view.scrollTop;
   return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 };
 }
 

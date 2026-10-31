@@ -12,6 +12,10 @@
  * - `editor_set_track_sync_locked` — the MCP half of the track header's
  *   sync-lock button; it applies the SAME `set_track_sync_locked` op the
  *   button does.
+ * - D-432 P3: `editor_rename_track` / `editor_set_track_height` — the MCP half
+ *   of the header's double-click rename and its bottom-edge height drag; same
+ *   `set_track_name` / `set_track_height` ops. `trackLabels` / `trackBadges`
+ *   name a track for the header and for `editor_list_tracks`.
  *
  * **What it does NOT do.** It owns no timeline maths and no DTO shape: the
  * clip fields come from `timelineDto` (`useEditorControl.ts`), and the filters
@@ -27,21 +31,43 @@ import {
   timelineFps,
   type Timeline,
 } from './timeline';
+import {
+  clampTrackHeight,
+  isTrackHeightPreset,
+  TRACK_HEIGHT_MAX,
+  TRACK_HEIGHT_MIN,
+  TRACK_HEIGHT_PRESETS,
+} from './trackHeight';
 
 type OpArgs = Record<string, unknown> | undefined;
 
 /** "Video 1" / "Audio 1" / "Subtitle 1" — numbered per kind. The track header
- *  and `editor_list_tracks` both name a track this way (tracks carry no stored
- *  name). D-229 added the subtitle lane, named the way the reference names it. */
+ *  and `editor_list_tracks` both name a track this way. D-229 added the
+ *  subtitle lane, named the way the reference names it. D-432 P3: a track a
+ *  person renamed (`Track.name`) is called by that name instead; the per-kind
+ *  number still counts it, so the tracks after it keep their numbers. */
 export function trackLabels(tl: Timeline): string[] {
   let videoN = 0;
   let audioN = 0;
   let subN = 0;
   return tl.tracks.map((t) => {
-    if (t.kind === 'audio') return `Audio ${++audioN}`;
-    if (t.kind === 'subtitle') return `Subtitle ${++subN}`;
-    return `Video ${++videoN}`;
+    const derived =
+      t.kind === 'audio' ? `Audio ${++audioN}` : t.kind === 'subtitle' ? `Subtitle ${++subN}` : `Video ${++videoN}`;
+    return t.name?.trim() || derived;
   });
+}
+
+/** D-432 P3 — the header's ID pill: `V1`, `A1`, `C1` (captions), numbered per
+ *  kind in track order — the same order `trackLabels` counts in, so `V2` and
+ *  "Video 2" always name the same track. A rename never changes it: the pill
+ *  is the track's address, the name is the person's label for it. */
+export function trackBadges(tl: Pick<Timeline, 'tracks'>): string[] {
+  let videoN = 0;
+  let audioN = 0;
+  let subN = 0;
+  return tl.tracks.map((t) =>
+    t.kind === 'audio' ? `A${++audioN}` : t.kind === 'subtitle' ? `C${++subN}` : `V${++videoN}`,
+  );
 }
 
 /** At most this many distinct source file names per track row; `sourceCount`
@@ -58,6 +84,7 @@ function baseName(path: string): string {
 export function listTracks(tl: Timeline) {
   const fps = timelineFps(tl);
   const labels = trackLabels(tl);
+  const badges = trackBadges(tl);
   return {
     ok: true,
     timelineId: tl.id,
@@ -71,6 +98,12 @@ export function listTracks(tl: Timeline) {
         index,
         kind: t.kind,
         name: labels[index],
+        // D-432 P3 — the header's ID pill, whether the name is the person's own
+        // (`editor_rename_track`), and the drawn height when one was set
+        // (`editor_set_track_height`; absent = the view default).
+        badge: badges[index],
+        renamed: !!t.name?.trim(),
+        ...(t.height != null ? { height: t.height } : {}),
         gain,
         muted: gain === 0,
         hidden: !!t.hidden,
@@ -234,4 +267,54 @@ export function syncLockArgs(tl: Timeline, a: OpArgs): { track: number; syncLock
     return { error: 'syncLocked must be true or false' };
   }
   return { track, syncLocked: a.syncLocked };
+}
+
+/** A track name's longest legal length: a header label, not a description. */
+export const TRACK_NAME_MAX = 64;
+
+/** D-432 P3 — `editor_rename_track`'s arguments, validated: an in-range
+ *  `track` and a `name` that is a string (blank clears) or `null` (clears). */
+export function renameTrackArgs(tl: Timeline, a: OpArgs): { track: number; name: string | null } | { error: string } {
+  const track = typeof a?.track === 'number' ? a.track : Number.NaN;
+  if (!Number.isInteger(track) || !tl.tracks[track]) {
+    return { error: `track must be a track index, 0..${tl.tracks.length - 1}` };
+  }
+  const raw = a?.name;
+  if (raw !== null && typeof raw !== 'string') {
+    return { error: 'name must be a string (an empty one, or null, resets the track to its default label)' };
+  }
+  const name = raw === null ? null : raw.trim() || null;
+  if (name !== null && name.length > TRACK_NAME_MAX) {
+    return { error: `name must be at most ${TRACK_NAME_MAX} characters` };
+  }
+  return { track, name };
+}
+
+/** D-432 P3 — a height argument as the GUI's presets name it or as px:
+ *  `"S" | "M" | "L" | "XL"`, a number of CSS px, or `"default"` / `null` (the
+ *  view default). `undefined` when absent; the caller decides if that is an
+ *  error. */
+export function heightArg(raw: unknown, name: string): number | null | undefined | { error: string } {
+  if (raw === undefined) return undefined;
+  if (raw === null || raw === 'default') return null;
+  if (typeof raw === 'string') {
+    const preset = raw.toUpperCase();
+    if (isTrackHeightPreset(preset)) return TRACK_HEIGHT_PRESETS[preset];
+  }
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return clampTrackHeight(raw);
+  return {
+    error: `${name} must be a number of px (${TRACK_HEIGHT_MIN}-${TRACK_HEIGHT_MAX}), one of S / M / L / XL, or "default"`,
+  };
+}
+
+/** D-432 P3 — `editor_set_track_height`'s arguments, validated. */
+export function trackHeightArgs(tl: Timeline, a: OpArgs): { track: number; height: number | null } | { error: string } {
+  const track = typeof a?.track === 'number' ? a.track : Number.NaN;
+  if (!Number.isInteger(track) || !tl.tracks[track]) {
+    return { error: `track must be a track index, 0..${tl.tracks.length - 1}` };
+  }
+  const height = heightArg(a?.height, 'height');
+  if (height === undefined) return { error: 'pass height (px, S / M / L / XL, or "default")' };
+  if (height !== null && typeof height === 'object') return height;
+  return { track, height };
 }

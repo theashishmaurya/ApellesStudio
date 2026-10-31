@@ -5260,7 +5260,7 @@
     },
     {
       "name": "editor_list_tracks",
-      "description": "The active timeline's tracks, compactly and WITHOUT their clips (B-318)\n    \u2014 read this first to find which track holds the voice-over, the music, the\n    captions, instead of pulling every clip through `get_timeline`.\n\n    Returns {ok, timelineId, durationFrames, trackCount, tracks: [{index,\n    kind: \"video\"|\"audio\"|\"subtitle\", name (\"Video 1\", \"Audio 2\", ...: numbered\n    per kind, the label the track header shows), gain, muted (gain is 0),\n    hidden, locked, syncLocked, duckFrom (the track whose clips duck this one,\n    or null) and, when ducked, duckDb / duckAttackMs / duckReleaseMs, beatGrid\n    (only on the track whose beats are shown), clipCount, sourceCount, sources\n    (the distinct source file NAMES on the track, at most 12), firstFrame and\n    endFrame (the track's extent in TIMELINE frames; null when empty)}]}.\n\n    `index` is what every track-addressed tool takes. Then slice the clips with\n    `get_timeline(track=..., start_frame=..., end_frame=..., fields=[...])`.\n    The same facts are in the GUI's track headers. Read-only.",
+      "description": "The active timeline's tracks, compactly and WITHOUT their clips (B-318)\n    \u2014 read this first to find which track holds the voice-over, the music, the\n    captions, instead of pulling every clip through `get_timeline`.\n\n    Returns {ok, timelineId, durationFrames, trackCount, tracks: [{index,\n    kind: \"video\"|\"audio\"|\"subtitle\", name (\"Video 1\", \"Audio 2\", ...: numbered\n    per kind, the label the track header shows, or the name given with\n    `editor_rename_track`), badge (the header's ID pill: V1, A1, C1), renamed,\n    height (px; only when the track has its own, `editor_set_track_height`),\n    gain, muted (gain is 0),\n    hidden, locked, syncLocked, duckFrom (the track whose clips duck this one,\n    or null) and, when ducked, duckDb / duckAttackMs / duckReleaseMs, beatGrid\n    (only on the track whose beats are shown), clipCount, sourceCount, sources\n    (the distinct source file NAMES on the track, at most 12), firstFrame and\n    endFrame (the track's extent in TIMELINE frames; null when empty)}]}.\n\n    `index` is what every track-addressed tool takes. Then slice the clips with\n    `get_timeline(track=..., start_frame=..., end_frame=..., fields=[...])`.\n    The same facts are in the GUI's track headers. Read-only.",
       "inputSchema": {
         "properties": {},
         "type": "object",
@@ -5848,6 +5848,35 @@
         ],
         "type": "object",
         "title": "editor_rename_timelineArguments"
+      }
+    },
+    {
+      "name": "editor_rename_track",
+      "description": "Rename a track \u2014 the track header's double-click rename (D-432 P3). The\n    name is what the header and `editor_list_tracks` show (\"Music\", \"VO\"); the\n    header's `V1` / `A1` ID pill is unchanged. An empty string or null resets\n    the track to its default label (\"Audio 2\"). At most 64 characters. One undo\n    step.\n\n    Returns {ok, track, name (the label now shown), renamed}; `track` is the\n    0-based index from `editor_list_tracks`.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "track",
+          "name"
+        ],
+        "type": "object",
+        "title": "editor_rename_trackArguments"
       }
     },
     {
@@ -7921,7 +7950,7 @@
     },
     {
       "name": "editor_set_timeline_view",
-      "description": "Set the Edit tab's TIMELINE zoom: how many pixels one second of timeline\n    spans (D-434, the AI half of the timeline toolbar's `-  100%  +` buttons and\n    ctrl/pinch-scroll over the lanes; D-432 plans the Clip Appearance view\n    settings to join it on this tool).\n\n    **Display-only. It changes no clip, no timing, and nothing that renders or\n    exports** \u2014 only how wide the timeline is drawn, so a frame number maps to a\n    different screen x. Why you would call it: to read fine detail (zoom in\n    before a `debug_pointer` drag that has to land on an exact frame), to see a\n    whole long timeline in one screenshot (zoom out), and to put the view back\n    to a known state \u2014 the default \u2014 after something else changed it.\n\n    `zoom`: a multiplier of the default, where **1 = the default** (the\n    toolbar's 100 %, 90 px per second), 2 = twice as wide, 0.5 = half. Range\n    about 0.01-5.3; outside it the value is clamped and the response says so in\n    `note`. Pass the string `\"default\"` for 1. A zoom set here does NOT anchor\n    on the playhead the way the toolbar buttons do; the scroll position is left\n    as it is.\n\n    Not undoable, by design (same reasoning as `editor_set_preview_zoom`, D-216):\n    a view setting is UI state, not part of the `Timeline` document. The current\n    value is reported by `editor_get_state` as `timelineView`\n    (`{zoom, pct, pxPerSec}`).",
+      "description": "Set how the Edit tab's TIMELINE is drawn and how it behaves under the\n    pointer: its zoom, its Clip Appearance, and the snapping and skimming\n    toggles (D-434 zoom; D-432 P3 the rest \u2014 the AI half of the toolbar's zoom\n    buttons, its Clip Appearance popover, and its Snapping (N) and Skimming (S)\n    buttons). Pass any subset; at least one.\n\n    **Display-only. It changes no clip, no timing, and nothing that renders or\n    exports.** Why you would call it: to read fine detail (zoom in before a\n    `debug_pointer` drag that has to land on an exact frame), to see a whole\n    long timeline in one screenshot (zoom out), to make clips tall enough to\n    read their waveforms, and to put the view back to a known state.\n\n    `zoom`: a multiplier of the default, where **1 = the default** (the\n    toolbar's 100 %, 90 px per second), 2 = twice as wide, 0.5 = half. Range\n    about 0.01-5.3; outside it the value is clamped and the response says so in\n    `note`. Pass the string `\"default\"` for 1. It does NOT anchor on the\n    playhead the way the toolbar buttons do; the scroll position is left as it\n    is.\n\n    `clip_height`: the default height of every track that has no height of its\n    own \u2014 `\"S\"` (32 px), `\"M\"` (52, the default), `\"L\"` (76), `\"XL\"` (108), a\n    number of px (32-200), or `\"default\"`. A track dragged to its own height\n    (`editor_set_track_height`) keeps it.\n\n    `band_ratio`: how a clip's body below its name strip is shared between the\n    filmstrip and the waveform band, 0 (filmstrip only) to 1 (waveform only);\n    0.3 is the default.\n\n    `show_names` / `show_badges`: the clip name and the speed / keyframe badges\n    in each clip's name strip.\n\n    `snapping`: whether drags, trims, drops and the playhead snap to clip\n    edges, the playhead and markers (on by default; N in the GUI). Beat\n    snapping also needs this on.\n\n    `skimming`: whether hovering the timeline previews the frame under the\n    pointer in the viewer without moving the playhead (off by default; S in the\n    GUI).\n\n    Not undoable, by design (same reasoning as `editor_set_preview_zoom`, D-216):\n    view settings are UI state, not part of the `Timeline` document. The current\n    values are reported by `editor_get_state` as `timelineView` (`{zoom, pct,\n    pxPerSec, clipHeight, clipHeightPreset, bandRatio, showNames, showBadges,\n    snapping, skimming}`).",
       "inputSchema": {
         "properties": {
           "zoom": {
@@ -7931,14 +7960,90 @@
               },
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
               }
             ],
+            "default": null,
             "title": "Zoom"
+          },
+          "clip_height": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Clip Height"
+          },
+          "band_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Band Ratio"
+          },
+          "show_names": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Show Names"
+          },
+          "show_badges": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Show Badges"
+          },
+          "snapping": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Snapping"
+          },
+          "skimming": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Skimming"
           }
         },
-        "required": [
-          "zoom"
-        ],
         "type": "object",
         "title": "editor_set_timeline_viewArguments"
       }
@@ -7963,6 +8068,35 @@
         ],
         "type": "object",
         "title": "editor_set_track_gainArguments"
+      }
+    },
+    {
+      "name": "editor_set_track_height",
+      "description": "Set one track's height in the timeline \u2014 the track's bottom-edge drag and\n    its header menu's S / M / L / XL (D-432 P3). `height`: `\"S\"` (32 px), `\"M\"`\n    (52), `\"L\"` (76), `\"XL\"` (108), a number of px (clamped to 32-200), or\n    `\"default\"` to drop the track's own height and follow the timeline's clip\n    height (`editor_set_timeline_view(clip_height=...)`).\n\n    A taller track shows more of each clip: a larger filmstrip and a waveform\n    band you can read (the split by height is fixed: the name strip, then the\n    picture, then the waveform). Display-only: nothing renders or exports\n    differently. Stored with the track, so it follows the track when tracks are\n    reordered and is kept when the project reopens. One undo step.\n\n    Returns {ok, track, height (px, or null for the default), drawnHeight}.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Height"
+          }
+        },
+        "required": [
+          "track",
+          "height"
+        ],
+        "type": "object",
+        "title": "editor_set_track_heightArguments"
       }
     },
     {
@@ -19730,6 +19864,31 @@
       ]
     },
     {
+      "tool": "editor_rename_track",
+      "case": "minimal",
+      "arguments": {
+        "track": 25,
+        "name": "v_editor_rename_track.name"
+      },
+      "requests": [
+        {
+          "op": "editor_rename_track",
+          "args": {
+            "track": 25,
+            "name": "v_editor_rename_track.name"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "editor_reprobe_media",
       "case": "minimal",
       "arguments": {
@@ -21181,14 +21340,45 @@
     {
       "tool": "editor_set_timeline_view",
       "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "editor_set_timeline_view",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_set_timeline_view",
+      "case": "full",
       "arguments": {
-        "zoom": 5.35
+        "zoom": 5.35,
+        "clip_height": 27.76,
+        "band_ratio": 11.45,
+        "show_names": true,
+        "show_badges": true,
+        "snapping": true,
+        "skimming": true
       },
       "requests": [
         {
           "op": "editor_set_timeline_view",
           "args": {
-            "zoom": 5.35
+            "zoom": 5.35,
+            "clipHeight": 27.76,
+            "bandRatio": 11.45,
+            "showNames": true,
+            "showBadges": true,
+            "snapping": true,
+            "skimming": true
           },
           "timeout_ms": 20000
         }
@@ -21214,6 +21404,31 @@
           "args": {
             "track": 28,
             "gain": 1.01
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_set_track_height",
+      "case": "minimal",
+      "arguments": {
+        "track": 6,
+        "height": -19.08
+      },
+      "requests": [
+        {
+          "op": "editor_set_track_height",
+          "args": {
+            "track": 6,
+            "height": -19.08
           },
           "timeout_ms": 20000
         }

@@ -176,27 +176,38 @@ a repeated part carries one id on every instance and its identity in `data-chrom
 
 | test id | element | identity |
 |---|---|---|
-| `timeline-edit-area` | the edit area; also the view readout `data-chroma-px-per-sec`, `-scroll-left`, `-scroll-top`, `-fps`, `-start-left`, `-row-height`, `-rows-top` | |
+| `timeline-edit-area` | the edit area; also the view readout `data-chroma-px-per-sec`, `-scroll-left`, `-scroll-top`, `-fps`, `-start-left`, `-row-height` (the view's default track height), `-rows-top`, `-row-tops` (D-432 P3: each row's top, comma-separated, one past the last; `pointAtFrame` uses it) | |
 | `timeline-clip` | a clip body (dnd-kit drag source) | `data-chroma-clip-id`, `data-chroma-track` |
 | `timeline-clip-fade-in` / `-fade-out` | fade handles | inside the clip |
 | `timeline-clip-trim-start` / `-end` | a clip's edge-trim zones (D-432 P2; replaced the library's stretch handles) | inside the clip; `data-chroma-trim-edge` |
 | `timeline-clip-strip`, `-film`, `-band`, `-keyframes-badge` | the clip anatomy (name strip, filmstrip, waveform band, curve-lane badge) | inside the clip; the picture+waveform layer is `[data-chroma-clip-media]` |
 | `timeline-track-lane` | a track's row (pointer-transparent geometry) | `data-chroma-track` |
-| `timeline-track-header` + `-lock` `-sync-lock` `-hide` `-mute` `-beats` `-remove` | header and its buttons | `data-chroma-track` on the header |
+| `timeline-track-header` + `-lock` `-sync-lock` `-hide` `-mute` `-beats` `-duck` `-badge` `-name` `-name-input` `-menu` | header and its parts (D-432 P3: toggles are `display: none` until the header is hovered unless non-default, which carries `data-chroma-active`) | `data-chroma-track` on the header |
+| `timeline-track-rename`, `timeline-track-remove` | the track menu's Rename and Delete track items (open `timeline-track-menu` or right-click the header first) | |
+| `timeline-track-height-resize`, `timeline-lane-height-resize`, `timeline-track-height-guide` | a header's / lane's bottom-edge height zone, and the guide line while dragging | `data-chroma-track` |
 | `timeline-header-resize`, `timeline-curve-resize` | the column / curve-lane dividers | |
-| `timeline-split` `-delete` `-link` `-unlink` `-remove-gap` `-zoom-in` `-zoom-out` `-zoom-readout` `-add-marker` `-marker-list` | toolbar | |
+| `timeline-split` `-delete` `-link` `-unlink` `-remove-gap` `-zoom-in` `-zoom-out` `-zoom-readout` `-add-marker` `-marker-list` `-snapping-toggle` `-skimming-toggle` `-clip-appearance` | toolbar | |
+| `timeline-clip-appearance-popover`, `timeline-zoom-slider`, `timeline-show-clip-names`, `timeline-show-clip-badges` | the Clip Appearance popover | height buttons `data-chroma-clip-height`, balance `data-chroma-band-ratio` |
+| `timeline-ruler`, `timeline-ruler-label` | our own ruler (D-432 P3; press seeks, drag scrubs) | `data-chroma-tick-seconds`, `data-chroma-tick-split` |
+| `timeline-skim-line`, `timeline-two-up-viewer` | the skim line; the viewer's two-up overlay during roll / slip / slide | halves: `data-chroma-two-up-half` |
 | `timeline-trim-tool` | a trim-palette button | `data-chroma-trim-tool` (`select` `ripple` `roll` `slip` `slide`) |
-| `timeline-marker` | a marker flag | `data-chroma-marker` |
+| `timeline-marker`, `timeline-marker-editor` | a marker flag (drag moves it), its editor popover | `data-chroma-marker`, `data-chroma-marker-selected` |
 | `timeline-transition` | a transition badge | `data-chroma-transition` |
 | `timeline-marquee`, `timeline-gap-selection`, `timeline-drag-ghost` | overlays | |
 | `timeline-edit-bracket`, `timeline-edit-readout`, `timeline-snap-guide`, `timeline-blade-line` | the edit-gesture feedback layer (D-432 P2) | bracket: `data-chroma-bracket-side` in/out, `data-chroma-limit` |
 
 Library-rendered parts by the library's own classes (`TIMELINE_LIBRARY_SELECTORS`, pinned by
-`timelineTestIds.test.ts` against the installed stylesheet): ruler
-`.timeline-editor-time-area`, playhead `.timeline-editor-cursor` and its handle
+`timelineTestIds.test.ts` against the installed stylesheet): playhead `.timeline-editor-cursor` and its handle
 `.timeline-editor-cursor-top`, a clip's wrapper `.timeline-editor-action`, the scroll container
-`.timeline-editor-edit-area`. There is no zoom SLIDER (buttons, ctrl/pinch wheel only) and
+`.timeline-editor-edit-area`. There is zoom slider only inside the Clip Appearance popover (D-432 P3; scenarios use the buttons, `=` / `-` or the wheel) and
 no scrollbar element (native overflow scrolling) — scenarios scroll with the wheel.
+
+D-432 P3 scenarios (2026-11-01): `snapping-toggle-button`, `skimming-toggle-key`,
+`scrub-ruler-drag` (B-350), `track-height-drag`, `track-header-quiet`; updated:
+`move-snapping-toggle` (N, not S), `trim-tool-shortcuts` (Roll on T),
+`trim-two-up-viewer` (the real overlay id). The fixture now resets every
+`editor_set_timeline_view` field per scenario, and frame targets in the ruler
+resolve against `timeline-ruler`.
 
 ## Known limits (phase 2 checks these first)
 

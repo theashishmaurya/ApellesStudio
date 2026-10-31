@@ -30,7 +30,8 @@
  *   - **The active tool is a FILLED button**, every other one a plain ghost —
  *     in Adobe's own screenshot the Selection tool is the one solid blue chip
  *     in an otherwise flat strip.
- *   - **Adobe's shortcuts, unchanged**: V/B/N/Y/U. Handled by `TimelinePane`'s
+ *   - **Adobe's shortcuts**: V/B/Y/U, and T for Roll (D-432 P3: N became
+ *     Final Cut's snapping toggle). Handled by `TimelinePane`'s
  *     own `onKeyDown` (this component is presentational), and shown here so the
  *     tooltip teaches them.
  *
