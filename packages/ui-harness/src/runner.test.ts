@@ -152,7 +152,7 @@ class FakeApp implements OpClient {
     if (args.action === 'click' && toolMatch) this.tool = toolMatch[1];
     const watched = (args.watch as { selectors?: string[] } | undefined)?.selectors ?? [];
     let frames: { t: number; rects: Record<string, { x: number; y: number; width: number; height: number }[]>; cursor: string }[] = [];
-    if (args.action === 'drag' && this.tool === 'roll' && sel.includes('right-stretch')) {
+    if (args.action === 'drag' && this.tool === 'roll' && sel.includes('timeline-clip-trim-end')) {
       const to = args.to as { byX: number };
       const delta = Math.round((to.byX / PX_PER_SEC) * FPS);
       const clipId = /data-chroma-clip-id="([^"]+)"/.exec(sel)?.[1];

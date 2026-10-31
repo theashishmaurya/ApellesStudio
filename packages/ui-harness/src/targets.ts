@@ -18,8 +18,9 @@ import { TIMELINE_LIBRARY_SELECTORS as LIB, TIMELINE_TEST_IDS as ID } from '@ape
 import type { Value } from './assertions.ts';
 import type { FrameOffset, FrameTarget, TargetRef } from './scenario.ts';
 
-/** How far inside a clip edge a trim press lands — the library's edge-trim
- *  zone is 10 px wide, so 3 px is well inside it and clear of the neighbour. */
+/** How far inside a clip edge a trim press lands — a clip's own edge-trim
+ *  zone is 8 px wide (D-432 P2), so 3 px is well inside it and clear of the
+ *  neighbour's. */
 export const EDGE_INSET_PX = 3;
 
 const q = (value: string) => value.replace(/["\\]/g, '\\$&');
@@ -32,9 +33,6 @@ export const markerIdToken = (name: string) => `@marker:${name}`;
 
 /** The selector for one fixture clip's body, by its fixture name. */
 export const clipSelector = (name: string) => `[data-testid="${ID.clip}"][data-chroma-clip-id="${clipIdToken(name)}"]`;
-
-/** The library's wrapper around that clip (the trim handles live inside it). */
-export const actionSelector = (name: string) => `${LIB.action}:has(${clipSelector(name)})`;
 
 export const testid = (id: string, at?: { fx?: number; fy?: number; dx?: number; dy?: number }, nth?: number): TargetRef => ({
   testid: id,
@@ -50,9 +48,10 @@ export const selector = (sel: string, at?: { fx?: number; fy?: number; dx?: numb
 /** A clip body; `fx`/`fy` place the press (e.g. `fy: 0.2` = the slip band). */
 export const clip = (name: string, at?: { fx?: number; fy?: number; dx?: number; dy?: number }) => selector(clipSelector(name), at);
 
-/** A clip's left / right edge-trim zone. */
-export const trimLeft = (name: string): TargetRef => selector(`${actionSelector(name)} ${LIB.trimLeft}`);
-export const trimRight = (name: string): TargetRef => selector(`${actionSelector(name)} ${LIB.trimRight}`);
+/** A clip's left / right edge-trim zone (D-432 P2: the clip's own zones,
+ *  which replaced the library's interact.js stretch handles). */
+export const trimLeft = (name: string): TargetRef => selector(`${clipSelector(name)} [data-testid="${ID.clipTrimStart}"]`);
+export const trimRight = (name: string): TargetRef => selector(`${clipSelector(name)} [data-testid="${ID.clipTrimEnd}"]`);
 
 /** A point inside a clip, `px` from its left/right edge (an edge trim aimed by
  *  geometry rather than by the library's handle element). */

@@ -127,8 +127,15 @@ Not asked, taken as the spec's defaults: dark theme only for v0.4 (light follows
   - Colour values moved into `@apelles/tokens`; `themes.ts` imports them.
   - Type scale, radii and shadows went into `@theme`; the system font is the default.
   - Details and the destructive-red deviation from the spec: `docs/notes/ui-redesign.md` "P1 as built".
-
-**Not decided here.** Replacing `@xzdarcy/react-timeline-editor`. If the P2 harness shows its interact.js drag (which writes `left` on every move) cannot reach zero layout during a drag, that gets its own D-NNN.
+- **P2 (clip block, handles, selection, edit-tool feedback, playhead, layer scale) done 2026-10-31** — code-complete and DOM-tested; the live-harness numbers are still to be measured (B-347).
+  - The FCP clip block (`ClipBlock.tsx`, rules in `clipAnatomy.ts`): name strip, filmstrip, the clip's own rectified waveform band, opaque `clip-*` tokens, 2 px radius, hairline / dashed through-edit cuts. The curve-lane button left the picture for a keyframes badge in the strip.
+  - Selection is a 2 px inset amber outline (on a pre-laid `::before`, above the strip); the looping `animate-pulse` ripple highlight is a single 160 ms Web-Animations flash with no React render.
+  - **Edit gestures no longer go through the timeline library.** Its interact.js resize is off (`flexible: false`); each clip has its own ≥ 8 px edge zones, and `useEditGesture.ts` owns trim / ripple / roll / slip / slide (and the new **Blade** tool, key **C**). The live preview applies the real `applyOp` to a copy and diffs it (`editGesture.ts`), so what moves during the drag is exactly what commits: downstream clips for a ripple, both sides for a roll, the content for a slip, the neighbours for a slide. Per move it writes `transform`s (and the one changing clip's `width`) on existing nodes and sets no React state; the pane renders once, at release. This fixes B-344 (trims landing 1–2 frames short) and B-345 (no live result), so **replacing `@xzdarcy/react-timeline-editor` is not needed for P2**: the library now only lays clips out and runs the ruler/playhead.
+  - One shared feedback layer (`EditFeedbackLayer.tsx`): the amber bracket (red at a limit), an edge-pinned delta readout, the snap guide (8 px, sticky ×1.5, ⌘ suspends), the Blade cut line.
+  - The playhead is a 1 px amber line; its grab zone is the head band only (B-346).
+  - A stacking-layer scale (`--z-timeline-*` in `app/src/styles.css`) with the timeline as one isolated stacking context (B-342).
+  - Deviations, the parts left for later phases and what only the live harness can confirm: `docs/notes/ui-redesign.md` "P2 as built".
+  - Keys: Roll stays on **N** for now. Snapping (N) and skimming (S) are not built in P2; Roll moves off N in the phase that builds the snapping toggle.
 
 ## D-429 — A `fit` / `fill` footprint starts centred: `position` stays the top-left corner, plus a derived origin
 

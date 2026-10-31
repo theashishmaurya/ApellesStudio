@@ -63,7 +63,7 @@ export const BeatLane = memo(function BeatLane({ beats, fps, pxPerSec, scrollLef
     <div
       data-chroma-beat-lane
       aria-hidden
-      className="pointer-events-none absolute inset-0 z-30 overflow-hidden"
+      className="pointer-events-none absolute inset-0 z-(--z-timeline-overlay) overflow-hidden"
     >
       {shown.beats.map((b) => {
         const x = markerLeftPx(b.frame, fps, pxPerSec, scrollLeft, startLeftPx);

@@ -1,6 +1,6 @@
 # UI redesign: an FCP-style Edit tab (research + spec)
 
-**Status: accepted (D-432). P1 (tokens and type) done 2026-10-31; P2 to P5 not started.**
+**Status: accepted (D-432). P1 (tokens and type) and P2 (clip block, handles, edit-tool feedback, playhead, layer scale) done 2026-10-31; P3 to P5 not started.**
 This note is the research trail, the design system, the per-component spec, the list of
 concrete CSS defects in today's components, and the phased plan. The look is shown in
 the static mockup `scratch/ui-redesign-mockup.html` (not app code; `scratch/` is
@@ -631,6 +631,96 @@ Defects closed: 15, 16, 17 and the token half of 4 and 20. Left for later phases
 **Tests.** `packages/tokens/src/tokens.test.ts`: every token present in every theme with a parseable colour, no duplicates, each name aliased in CSS, clip colours theme-independent, and computed WCAG contrast (text >= 4.5, UI >= 3, `clip-label` on every `clip-*-strip` >= 4.5).
 
 **Not verified.** No screenshot pass: the app was not run (a running dev instance was off limits) and no visual harness exists for the three tabs. The first look at it on screen is the owner's or the P2 harness.
+
+## 6b. P2 as built (2026-10-31)
+
+**Files.** `clipAnatomy.ts` (pure split by track height + width thresholds + cut style),
+`ClipBlock.tsx` (the clip's inside, shared by the resting clip and the drag ghost),
+`editGesture.ts` (pure: op per drag, live preview, clamp, brackets, snap, readout),
+`useEditGesture.ts` (the imperative gesture), `EditFeedbackLayer.tsx` (bracket, readout,
+snap guide, Blade line), `timeline-overrides.css` (library overrides), the
+`--z-timeline-*` scale in `app/src/styles.css`. `TimelinePane.tsx` wires them.
+
+**How an edit drag works now.** The library's interact.js resize is off
+(`flexible: false`); each clip renders two invisible ≥ 8 px edge zones
+(`data-testid` `timeline-clip-trim-start` / `-end`). The clip body's capture-phase
+`pointerdown` resolves the mode with the D-235/D-261 rule (`resolveTrimMode`) and, for
+anything but a move, claims the press before dnd-kit sees it. Each `pointermove`: delta =
+pointer offset since press + scroll since press, in frames; snapped as a whole to clip
+edges / playhead / markers (8 px, sticky ×1.5, ⌘ suspends); `previewEdit` applies the real
+`applyOp` to a copy and diffs every clip, bisecting to the furthest legal delta if the op
+refuses (which turns the bracket and readout red). The diff becomes `transform`s on the
+moving clip bodies, a `width` on a clip whose length changes, and a `transform` on the
+slipped clip's `[data-chroma-clip-media]` layer. No React state is set during the gesture;
+on release the op commits once, the edited clip is selected (same batched render), and a
+layout effect drops the inline styles on that render, before paint. Esc or a refused op
+animates back over 120 ms.
+
+**Perf design vs the §8 targets.**
+- Zero React renders while the pointer moves; one pane render at release (DOM test:
+  `paneRenders` 0 during the drag, ≤ 2 including the release; React commits anywhere in the
+  tree during the drag: 0).
+- Per move: one `applyOp` on a copy (structured clone of the timeline) only when the snapped
+  frame delta changes, plus transform writes. On a 300-clip project the clone cost is the
+  one thing to watch in the live trace.
+- **Not literally "zero layout during pointermove":** a trimmed clip takes its new `width`
+  (the spec allows "width on that one clip only"); it is `contain: layout paint style`, so
+  the layout is that node's subtree. Neighbours that only shift are transform-only. The
+  library no longer writes `left`/`width` during a gesture at all.
+- Measured live: not yet (owner's app and ports were off limits); the harness run after the
+  merge is the acceptance check for p95 ≤ 8 ms.
+
+**Deviations from the spec above.**
+- Band heights follow the §4.3 formula (`round((H − strip) × 0.3)`, as the mockup does):
+  M = 14/25/11, L = 16/41/17, XL = 16/63/27. The table's 24/12, 40/18, 62/28 differ by
+  rounding.
+- Track height is still the fixed 52 px for every track; per-track height, the Clip
+  Appearance popover and their `editor_set_timeline_view` fields are P3. The anatomy is
+  computed for any height already and unit-tested at S/M/L/XL.
+- The filmstrip is still per-tile `<img>` (not one canvas); the waveform is one canvas and
+  now draws rectified in the clip's `-wave-ink` (`Waveform` `variant="band"`).
+- Not built in P2: the two-up trim viewer, the volume line on audio clips, sticky labels,
+  the per-tool pointer pill (the D-250 badge still names an armed mode), the locked-track
+  hatch (locked clips keep `opacity-60`), missing/muted/generating states, the FLIP settle
+  (unneeded: the preview is the result, so nothing moves at commit).
+- The Blade tool is a palette tool (key **C**, Premiere's Razor; FCP's B is Ripple here). Its
+  MCP twin is the existing `editor_split_clip(track, clip, at_frame)`; no new tool, count
+  unchanged.
+- Snapping (N) and skimming (S) toggles are not in P2, so **Roll keeps N** until the phase
+  that builds snapping moves it.
+- The playhead head keeps the library's own inline SVG shape, recoloured amber by CSS (not
+  a Phosphor `CaretDown`): replacing it means rendering our own playhead, which is P3's
+  ruler work.
+- The playhead grab zone is the head band under the ruler (the marker-strip height), not
+  the ruler itself; the ruler still seeks on click.
+- The z-index scale is plain custom properties in `app/src/styles.css` (with the radii and
+  shadows), not `@apelles/tokens`, which holds colour values only; the shadcn `z-50` layer
+  and the rest of the app's literals are not migrated.
+- Clip body cursor is the default arrow (spec §5); harness scenario
+  `clip-body-hover-cursor` was updated from "grab" to "default/auto" to match.
+
+**Defects closed:** §6 #1, #2, #3, #4 (use), #5, #6, #7, #8, #12, #18 (drag ghost: no
+shadow/ring/blur, same anatomy). Bugs: B-342, B-344, B-345, B-346; B-347 in part.
+
+**Tests.** `clipAnatomy.test.ts` (12), `editGesture.test.ts` (18: each tool's preview,
+the clamps, preview == commit, brackets, snapping, readout), `timelineOverrides.test.ts` (3),
+`TimelinePane.clipBlock.dom.test.tsx` (19: anatomy, selection outline, zones and limit
+bracket, live motion and exact result for trim/head-trim/ripple/roll/slip/slide, Esc,
+style drop at commit, render budget, Blade, layer isolation), `tokens.test.ts` (layer
+order). Updated: trim, trimTools and fade DOM suites, `trimMode.test.ts` (`resizeEndOp` /
+`bodyDragOp` removed with their only callers).
+
+**Visual check.** The real `TimelinePane` in the D-142 browser harness
+(`app/harness.html`, Chromium, real tokens): `scratch/ui-redesign-p2/after-rest-selected.png`
+(main checkout) — strip / filmstrip / band, amber playhead, selected clip; and
+`after-roll-mid-drag.png` — a roll mid-drag, `][` brackets on the cut, `+13f` readout,
+both clips moving, then committed exactly. Chromium, not WKWebView, and no thumbnails or
+waveforms (stubbed IPC).
+
+**Needs the live harness:** frame p95 / worst / dropped for every edit tool, the commit
+spike at release, `elementFromPoint` on the edge zones at a butted cut (both halves), slip's
+filmstrip motion, the head-only playhead grab, and `observed.trusted` on the capture-phase
+claim.
 
 ## 7. Human + AI parity
 

@@ -1,34 +1,54 @@
 /*
- * Apelles — resize-handle cursor + hover affordance for
- * `@xzdarcy/react-timeline-editor`'s clip edge-trim handles (D-060).
+ * Apelles — overrides for `@xzdarcy/react-timeline-editor`'s bundled CSS
+ * (imported just above this file in `TimelinePane.tsx`, so these rules win on
+ * specificity ties).
  *
- * The bundled library CSS (imported just above this one in
- * `TimelinePane.tsx`, so this file's rules win on specificity ties) styles
- * these handles' `:after` triangle indicator but never sets a `cursor` on
- * the handle itself — trimming worked fine (`interact.js`'s own
- * `resizable()` needs no cursor styling to function, and D-058 already
- * fixed the real pointer-events bug blocking the drag itself), but nothing
- * told the mouse it *could* until the owner pointed out there was no
- * visual cue at all on hover, unlike a reference editor's clear
- * ew-resize/highlight affordance. Reuses the library's own
- * `.timeline-editor-cursor`/`-area` `ew-resize` convention (already the
- * playhead scrubber's hover cursor) rather than inventing a new one, plus
- * a hover opacity bump on the same `:after` triangle the library already
- * draws — only the side that's actually visible on that handle (the other
- * side is `transparent` by design, left untouched so it doesn't gain a
- * visible border where none should be).
+ * D-432 P2 removed the edge-trim handle rules D-060 kept here (a cursor and a
+ * hover brightening of the library's translucent stretch triangles): the
+ * library's interact.js resize is off (`flexible: false`, B-344) and a clip's
+ * own edge zones carry the trim, with the amber bracket drawn by
+ * `EditFeedbackLayer`. The triangles were the "drag handles" the owner
+ * disliked (ui-redesign §6 defect 6).
  */
-.timeline-editor-action-left-stretch,
-.timeline-editor-action-right-stretch {
-  cursor: ew-resize;
+
+/* D-432 §6 defect 7 — the library paints a grey `#2f3134` backing under every
+ * clip; the clip block is opaque and draws its own colour and 2 px radius. */
+.timeline-editor-action {
+  background-color: transparent;
 }
 
-.timeline-editor-action-left-stretch:hover:after {
-  border-left-color: rgba(255, 255, 255, 0.35);
+/*
+ * D-432 §4.6 — the playhead: a crisp 1 px `--color-playhead` line (the library
+ * drew two blue `#5297FF` borders and scaled them by half, which renders
+ * blurry), above clips and markers in the timeline's own layer scale.
+ */
+.timeline-editor-cursor {
+  border: 0;
+  width: 1px;
+  background: var(--color-playhead);
+  transform: none;
+  z-index: var(--z-timeline-playhead);
 }
 
-.timeline-editor-action-right-stretch:hover:after {
-  border-right-color: rgba(255, 255, 255, 0.35);
+/* The head keeps the library's own shape (its inline SVG), recoloured, and
+ * loses the ×2 that only undid the line's old ×0.5. */
+.timeline-editor-cursor-top {
+  transform: translate(-50%);
+}
+.timeline-editor-cursor-top path {
+  fill: var(--color-playhead);
+}
+
+/*
+ * B-346 — the playhead's 16 px grab strip ran the full height of every track,
+ * so a click or a trim within 8 px of the playhead (including the cut a split
+ * at the playhead had just made) grabbed the playhead instead. Final Cut and
+ * Resolve grab the playhead by its head only: the strip is cut down to the
+ * head's band under the ruler (the marker-strip height, below) and keeps its
+ * width there. The ruler itself still seeks on click.
+ */
+.timeline-editor-cursor-area {
+  height: var(--chroma-marker-strip-height, 10px);
 }
 
 /*
@@ -50,4 +70,14 @@
  */
 .timeline-editor-edit-area {
   margin-top: var(--chroma-marker-strip-height, 10px);
+}
+
+/*
+ * D-432 P2 — while an edit gesture runs, the edit area carries
+ * `data-chroma-edit-gesture` and the gesture's cursor (`useEditGesture.ts`);
+ * every element under the pointer shows that cursor rather than its own, so a
+ * roll that passes over a clip body or a marker never flickers to an arrow.
+ */
+[data-chroma-edit-gesture] * {
+  cursor: inherit !important;
 }

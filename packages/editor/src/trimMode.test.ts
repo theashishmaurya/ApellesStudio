@@ -15,10 +15,8 @@ import { describe, expect, it } from 'vitest';
 import { shortcutById } from '@apelles/keymap';
 import { applyOp, endFrame, labelForOp, timelineFps, type Clip, type Timeline } from './timeline';
 import {
-  bodyDragOp,
   edgeIsEditPoint,
   outgoingClipAt,
-  resizeEndOp,
   resolveTrimMode,
   trimModeLabel,
   trimOpFor,
@@ -136,8 +134,8 @@ describe('resolveTrimMode — armed, the mode comes from the pointer position', 
 // --------------------------------------------------------------------------- //
 
 describe('TRIM_TOOLS — the palette itself', () => {
-  it('is Adobe’s five tools, Selection first', () => {
-    expect(TRIM_TOOLS.map((t) => t.tool)).toEqual(['select', 'ripple', 'roll', 'slip', 'slide']);
+  it('is Adobe’s five tools, Selection first, then the Blade (D-432 P2)', () => {
+    expect(TRIM_TOOLS.map((t) => t.tool)).toEqual(['select', 'ripple', 'roll', 'slip', 'slide', 'blade']);
   });
 
   it('links each tool to its registry action, all distinct', () => {
@@ -151,17 +149,18 @@ describe('TRIM_TOOLS — the palette itself', () => {
       'edit.tool_roll',
       'edit.tool_slip',
       'edit.tool_slide',
+      'edit.tool_blade',
     ]);
     expect(new Set(TRIM_TOOLS.map((t) => t.shortcutId)).size).toBe(TRIM_TOOLS.length);
   });
 
-  it('is still bound to Adobe’s own V/B/N/Y/U by default', () => {
+  it('is still bound to Adobe’s own V/B/N/Y/U (+ C, Premiere’s Razor) by default', () => {
     // V/B/N/Y/U, quoted from Adobe's own help pages in
     // `scratch/premiere-tools-reference/premiere-tools-panel.json`. Asserted
     // against the registry now that it is the one place the letters live.
     expect(
       TRIM_TOOLS.map((t) => shortcutById(t.shortcutId)?.defaultCombo),
-    ).toEqual([['KeyV'], ['KeyB'], ['KeyN'], ['KeyY'], ['KeyU']]);
+    ).toEqual([['KeyV'], ['KeyB'], ['KeyN'], ['KeyY'], ['KeyU'], ['KeyC']]);
   });
 
   it('gives every tool a label and a blurb, so nothing renders blank', () => {
@@ -182,6 +181,9 @@ describe('TRIM_TOOLS — the palette itself', () => {
     // Select owns nothing — it is what every other tool falls back TO.
     expect(trimToolOwns('select', 'body')).toBe(false);
     expect(trimToolOwns('select', 'edge-start')).toBe(false);
+    // The Blade cuts; it owns no trim zone, and a press never resolves to its tool.
+    expect(trimToolOwns('blade', 'body')).toBe(false);
+    expect(resolveTrimMode(gesture({ tool: 'blade', zone: 'body' }))).toBe('move');
   });
 
   it('does not collide with the pane’s other shortcuts', () => {
@@ -250,87 +252,6 @@ describe('resolveTrimMode — an explicit tool decides alone (D-261)', () => {
     expect(resolveTrimMode(gesture({ tool: 'select', zone: 'edge-end', altKey: true, atEditPoint: true }))).toBe('roll');
     expect(resolveTrimMode(gesture({ tool: 'select', zone: 'edge-end', altKey: true, atEditPoint: false }))).toBe(
       'ripple',
-    );
-  });
-});
-
-describe('the icon path and the Alt path build the SAME op (D-261)', () => {
-  // The edge half of D-261's central claim. Its body half is asserted on real
-  // DOM in `TimelinePane.trimTools.dom.test.tsx`; the two EDGE modes cannot be
-  // driven from pointer events in jsdom at all (the timeline library's resize
-  // is interact.js-driven — see `resizeEndOp`'s own doc), so this is where
-  // ripple and roll are really pinned.
-  const t = threeUp();
-  const alt = (shiftKey = false) => ({ altKey: true, shiftKey });
-  const tool = (tool: TrimTool) => ({ altKey: false, shiftKey: false, tool });
-
-  it('Ripple: the tool with no modifier == Alt+Shift at an edit point', () => {
-    const args = { tl: t, track: 0, clip: 1, dir: 'right' as const, startFrame: 100, endFrame: 225 };
-    expect(resizeEndOp({ ...args, press: tool('ripple') })).toEqual(resizeEndOp({ ...args, press: alt(true) }));
-    expect(resizeEndOp({ ...args, press: tool('ripple') })).toEqual({
-      kind: 'trim_end',
-      track: 0,
-      clip: 1,
-      delta: 25,
-      ripple: true,
-    });
-  });
-
-  it('Roll: the tool with no modifier == plain Alt at an edit point, redirect included', () => {
-    // Grabbed at the clip's HEAD, so this also proves the tool path goes
-    // through the same outgoing-clip redirect the Alt path does — a roll
-    // applied to the wrong side of the cut would still "work" and be wrong.
-    const args = { tl: t, track: 0, clip: 1, dir: 'left' as const, startFrame: 125, endFrame: 200 };
-    expect(resizeEndOp({ ...args, press: tool('roll') })).toEqual(resizeEndOp({ ...args, press: alt() }));
-    expect(resizeEndOp({ ...args, press: tool('roll') })).toEqual({ kind: 'roll', track: 0, clip: 0, delta: 25 });
-  });
-
-  it('Slip / Slide: the tool with no modifier == Alt in the matching vertical band', () => {
-    const args = { tl: t, track: 0, clip: 1, delta: 30 };
-    expect(bodyDragOp({ ...args, press: { ...tool('slip'), bodyYRatio: 0.9 } })).toEqual(
-      bodyDragOp({ ...args, press: { ...alt(), bodyYRatio: 0.2 } }),
-    );
-    expect(bodyDragOp({ ...args, press: { ...tool('slide'), bodyYRatio: 0.1 } })).toEqual(
-      bodyDragOp({ ...args, press: { ...alt(), bodyYRatio: 0.8 } }),
-    );
-  });
-
-  it('Ripple at a FREE edge still ripples — the tool does not need an edit point', () => {
-    // Where the two paths legitimately differ is only in what they can REACH:
-    // under Alt a free edge ripples and an edit point rolls, so roll is
-    // unreachable without a neighbour. The tool says which edit you want
-    // outright, so it never has to guess.
-    expect(
-      resizeEndOp({ tl: t, track: 0, clip: 2, dir: 'right', startFrame: 200, endFrame: 320, press: tool('ripple') }),
-    ).toEqual({ kind: 'trim_end', track: 0, clip: 2, delta: 20, ripple: true });
-  });
-
-  it('Roll at a free edge is a safe no-op, never a silent plain trim', () => {
-    // 'a' starts the track: there is no cut at its head to roll. The op must
-    // either be null or be refused by the model — what it must NOT be is a
-    // destructive trim the user did not ask for.
-    const op = resizeEndOp({ tl: t, track: 0, clip: 0, dir: 'left', startFrame: 15, endFrame: 100, press: tool('roll') });
-    expect(op).toBe(null);
-    const endOp = resizeEndOp({
-      tl: t,
-      track: 0,
-      clip: 2,
-      dir: 'right',
-      startFrame: 200,
-      endFrame: 320,
-      press: tool('roll'),
-    });
-    expect(endOp).toEqual({ kind: 'roll', track: 0, clip: 2, delta: 20 });
-    expect(applyOp(t, endOp!), 'a roll with no edit point must change nothing').toBe(t);
-  });
-
-  it('an unknown tool on the press bag resolves to Select, never to a surprise', () => {
-    // `press` without a `tool` is what every pre-D-261 caller passes.
-    expect(
-      resizeEndOp({ tl: t, track: 0, clip: 1, dir: 'right', startFrame: 100, endFrame: 230, press: { altKey: false, shiftKey: false } }),
-    ).toEqual({ kind: 'trim_end', track: 0, clip: 1, delta: 30 });
-    expect(bodyDragOp({ tl: t, track: 0, clip: 1, delta: 30, press: { altKey: false, shiftKey: false, bodyYRatio: 0.2 } })).toBe(
-      null,
     );
   });
 });
@@ -423,116 +344,6 @@ describe('trimOpFor', () => {
     expect(trimModeLabel('trim')).toBe(null);
   });
 });
-
-describe('resizeEndOp — the whole edge-drag decision', () => {
-  // This is the piece `TimelinePane`'s `onActionResizeEndCb` is now a two-line
-  // adapter over, precisely because the timeline library's interact.js-driven
-  // resize does not run under jsdom (verified, see the function's own doc), so
-  // this is where an edge drag's behaviour is really pinned.
-  const press = (altKey: boolean, shiftKey = false) => ({ altKey, shiftKey });
-
-  it('unarmed: the same plain trims this handler produced before D-235', () => {
-    const t = threeUp();
-    // Dragging clip b's tail out to frame 230 (from 200).
-    expect(resizeEndOp({ tl: t, track: 0, clip: 1, dir: 'right', startFrame: 100, endFrame: 230, press: press(false) })).toEqual(
-      { kind: 'trim_end', track: 0, clip: 1, delta: 30 },
-    );
-    // Dragging clip b's head in to frame 120 (from 100).
-    expect(resizeEndOp({ tl: t, track: 0, clip: 1, dir: 'left', startFrame: 120, endFrame: 200, press: press(false) })).toEqual(
-      { kind: 'trim_start', track: 0, clip: 1, delta: 20 },
-    );
-  });
-
-  it('a missing captured press is treated as unarmed, never as a surprise', () => {
-    const t = threeUp();
-    expect(resizeEndOp({ tl: t, track: 0, clip: 1, dir: 'right', startFrame: 100, endFrame: 230, press: null })).toEqual({
-      kind: 'trim_end',
-      track: 0,
-      clip: 1,
-      delta: 30,
-    });
-  });
-
-  it('armed at an edit point: a roll, addressed to the outgoing clip on both handles', () => {
-    const t = threeUp();
-    // b's tail is the b/c edit point — b is already the outgoing clip.
-    expect(resizeEndOp({ tl: t, track: 0, clip: 1, dir: 'right', startFrame: 100, endFrame: 225, press: press(true) })).toEqual(
-      { kind: 'roll', track: 0, clip: 1, delta: 25 },
-    );
-    // b's head is the a/b edit point — the outgoing clip there is a, index 0.
-    expect(resizeEndOp({ tl: t, track: 0, clip: 1, dir: 'left', startFrame: 125, endFrame: 200, press: press(true) })).toEqual(
-      { kind: 'roll', track: 0, clip: 0, delta: 25 },
-    );
-  });
-
-  it('armed at a FREE edge: a ripple, because there is no edit point to roll', () => {
-    const t = threeUp();
-    // c's tail is the end of the track.
-    expect(resizeEndOp({ tl: t, track: 0, clip: 2, dir: 'right', startFrame: 200, endFrame: 320, press: press(true) })).toEqual(
-      { kind: 'trim_end', track: 0, clip: 2, delta: 20, ripple: true },
-    );
-    // a's head is the start of the track.
-    expect(resizeEndOp({ tl: t, track: 0, clip: 0, dir: 'left', startFrame: 15, endFrame: 100, press: press(true) })).toEqual({
-      kind: 'trim_start',
-      track: 0,
-      clip: 0,
-      delta: 15,
-      ripple: true,
-    });
-  });
-
-  it('armed + Shift at an edit point: a ripple, overriding the roll', () => {
-    const t = threeUp();
-    expect(
-      resizeEndOp({ tl: t, track: 0, clip: 1, dir: 'right', startFrame: 100, endFrame: 225, press: press(true, true) }),
-    ).toEqual({ kind: 'trim_end', track: 0, clip: 1, delta: 25, ripple: true });
-  });
-
-  it('commits nothing for a drag that ended where it began', () => {
-    const t = threeUp();
-    expect(resizeEndOp({ tl: t, track: 0, clip: 1, dir: 'right', startFrame: 100, endFrame: 200, press: press(true) })).toBe(
-      null,
-    );
-    expect(resizeEndOp({ tl: t, track: 0, clip: 1, dir: 'left', startFrame: 100, endFrame: 200, press: press(false) })).toBe(
-      null,
-    );
-  });
-
-  it('commits nothing for a clip that is not there', () => {
-    const t = threeUp();
-    expect(resizeEndOp({ tl: t, track: 0, clip: 9, dir: 'right', startFrame: 0, endFrame: 50, press: press(true) })).toBe(null);
-  });
-});
-
-describe('bodyDragOp — the whole body-drag decision', () => {
-  const t = threeUp();
-
-  it('returns null when unarmed, so the caller falls through to its move path', () => {
-    expect(bodyDragOp({ tl: t, track: 0, clip: 1, delta: 30, press: { altKey: false, shiftKey: false, bodyYRatio: 0.2 } })).toBe(
-      null,
-    );
-    expect(bodyDragOp({ tl: t, track: 0, clip: 1, delta: 30, press: null })).toBe(null);
-  });
-
-  it('slips from the upper band and slides from the lower one', () => {
-    expect(bodyDragOp({ tl: t, track: 0, clip: 1, delta: 30, press: { altKey: true, shiftKey: false, bodyYRatio: 0.2 } })).toEqual(
-      { kind: 'slip', track: 0, clip: 1, delta: 30 },
-    );
-    expect(bodyDragOp({ tl: t, track: 0, clip: 1, delta: -30, press: { altKey: true, shiftKey: false, bodyYRatio: 0.8 } })).toEqual(
-      { kind: 'slide', track: 0, clip: 1, delta: -30 },
-    );
-  });
-
-  it('commits nothing for a drag that did not move a whole frame', () => {
-    expect(bodyDragOp({ tl: t, track: 0, clip: 1, delta: 0, press: { altKey: true, shiftKey: false, bodyYRatio: 0.2 } })).toBe(
-      null,
-    );
-  });
-});
-
-// --------------------------------------------------------------------------- //
-// 2. the ops themselves
-// --------------------------------------------------------------------------- //
 
 describe('ripple trim', () => {
   it('shortening a tail pulls every later clip in by the same amount', () => {

@@ -38,6 +38,18 @@ export const TIMELINE_TEST_IDS = {
   /** A clip's fade-in / fade-out corner handle (`ClipFadeOverlay`). */
   clipFadeIn: 'timeline-clip-fade-in',
   clipFadeOut: 'timeline-clip-fade-out',
+  /** D-432 P2 — a clip's own edge-trim zones (they replaced the library's
+   *  interact.js stretch handles, B-344): ≥ 8 px inside each edge, both sides
+   *  of a cut together 16 px. The edge is in `data-chroma-trim-edge`. */
+  clipTrimStart: 'timeline-clip-trim-start',
+  clipTrimEnd: 'timeline-clip-trim-end',
+  /** D-432 P2 — the clip anatomy: the name strip, the filmstrip band, the
+   *  video's own waveform band (an audio clip's waveform area is the band). */
+  clipStrip: 'timeline-clip-strip',
+  clipFilm: 'timeline-clip-film',
+  clipBand: 'timeline-clip-band',
+  /** D-432 P2 — the strip's keyframes badge, which opens the curve lane. */
+  clipKeyframesBadge: 'timeline-clip-keyframes-badge',
   /** One track's row in the edit area (`TrackDropZone` — pointer-transparent,
    *  so it is a geometry target: "the lane of track N"). */
   trackLane: 'timeline-track-lane',
@@ -76,6 +88,13 @@ export const TIMELINE_TEST_IDS = {
   marquee: 'timeline-marquee',
   gapSelection: 'timeline-gap-selection',
   dragGhost: 'timeline-drag-ghost',
+  /** D-432 P2 — the edit-gesture feedback layer (`EditFeedbackLayer`): the
+   *  trim bracket(s) (`data-chroma-bracket-side` in/out, `data-chroma-limit`),
+   *  the edge-pinned delta readout, the snap guide and the blade cut line. */
+  editBracket: 'timeline-edit-bracket',
+  editReadout: 'timeline-edit-readout',
+  snapGuide: 'timeline-snap-guide',
+  bladeLine: 'timeline-blade-line',
 } as const;
 
 export type TimelineTestId = (typeof TIMELINE_TEST_IDS)[keyof typeof TIMELINE_TEST_IDS];
@@ -90,9 +109,6 @@ export const TIMELINE_LIBRARY_SELECTORS = {
   playheadHandle: '.timeline-editor-cursor-top',
   /** The wrapper the library draws around each clip. */
   action: '.timeline-editor-action',
-  /** A clip's left / right edge-trim zone (interact.js resize). */
-  trimLeft: '.timeline-editor-action-left-stretch',
-  trimRight: '.timeline-editor-action-right-stretch',
   /** The library's own scroll container (its native scrollbars live here). */
   scroller: '.timeline-editor-edit-area',
 } as const;

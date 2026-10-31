@@ -139,3 +139,26 @@ describe('UI font', () => {
     expect(resolveUiFontStack('poppins')).toBe(UI_FONT_STACKS.poppins);
   });
 });
+
+describe('stacking-layer scale (D-432 P2)', () => {
+  const css = readFileSync(new URL('../../../app/src/styles.css', import.meta.url), 'utf8');
+  const layer = (name: string): number => {
+    const m = new RegExp(`--z-${name}:\\s*(-?\\d+);`).exec(css);
+    if (!m) throw new Error(`--z-${name} is not defined in app/src/styles.css`);
+    return Number(m[1]);
+  };
+
+  it('orders the timeline layers lanes < clip controls < overlays < markers < playhead < edit feedback', () => {
+    const order = [
+      'timeline-lanes',
+      'timeline-clip-controls',
+      'timeline-overlay',
+      'timeline-markers',
+      'timeline-playhead',
+      'timeline-edit-feedback',
+    ];
+    const values = order.map(layer);
+    expect([...values].sort((a, b) => a - b)).toEqual(values);
+    expect(new Set(values).size).toBe(values.length);
+  });
+});

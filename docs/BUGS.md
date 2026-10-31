@@ -14,7 +14,7 @@ status: **open, feature gap: for the roadmap, not a bug fix** · severity: mediu
 
 ## B-347 — edit-tool drags and zoom gestures miss the frame budget (worst frames 53–90 ms, 12–20 % dropped)
 
-status: **open** · severity: medium (CLAUDE.md: a janky drag is a real defect) · area: `TimelinePane.tsx`, `@xzdarcy/react-timeline-editor`, dnd-kit clip drags
+status: **open — the edit-gesture half addressed by D-432 P2, to be measured** (trims/ripple/roll/slip/slide: no React render and no library `left`/`width` write per move; one pane render at release, measured in `TimelinePane.clipBlock.dom.test.tsx`; the trimmed clip(s) still take a `width` per move — a contained layout of one or two nodes). Moves (dnd-kit), marquee and zoom are untouched · severity: medium (CLAUDE.md: a janky drag is a real defect) · area: `TimelinePane.tsx`, `@xzdarcy/react-timeline-editor`, dnd-kit clip drags
 
 - **found:** 2026-10-31 by the D-434 harness, 13 of 23 measured steps over budget on the first run (`scratch/ui-harness/runs/2026-10-31T17-37-31-132Z/`), reproduced on the rerun (`…/2026-10-31T17-42-35-009Z/`). Numbers per gesture are in `docs/notes/ui-harness.md` § "Perf picture".
 - **worst:** slide (worst frame 76–90 ms, 15–20 % dropped, input→frame p95 68–79 ms), slip (65–75 ms, 12–17 %, 58–72 ms), ripple (67–72 ms, input→frame 60–62 ms), roll (72 ms on the rerun), plain edge trims (53 ms), cross-track move (57 ms), linked A/V move (p95 44 ms, 18 %), marquee (18 % dropped), ctrl+wheel / pinch zoom (p95 46–48 ms, 63–64 % of a short window dropped). Median frames are a steady 16–17 ms: the misses are spikes, not a slow steady state.
@@ -23,7 +23,7 @@ status: **open** · severity: medium (CLAUDE.md: a janky drag is a real defect) 
 
 ## B-346 — the playhead's 16 px drag strip covers every track, so a click or trim within 8 px of the playhead grabs the playhead instead of the clip
 
-status: **open — fix in redesign P2** (§4.6 playhead) · severity: medium · area: `@xzdarcy/react-timeline-editor` CSS (`.timeline-editor-cursor-area { width: 16px; height: 100% }`), `packages/editor/src/timeline-overrides.css`
+status: **fixed 2026-10-31 (D-432 P2)** — `timeline-overrides.css` cuts `.timeline-editor-cursor-area` down to the head band under the ruler (`--chroma-marker-strip-height`), as Final Cut and Resolve do; the ruler still seeks on click. Pinned by `timelineOverrides.test.ts`. Live confirmation: harness `split-at-playhead-shortcut` · severity: medium · area: `@xzdarcy/react-timeline-editor` CSS (`.timeline-editor-cursor-area { width: 16px; height: 100% }`), `packages/editor/src/timeline-overrides.css`
 
 - **found:** 2026-10-31, harness `split-at-playhead-shortcut`: with the playhead parked mid-clip, the click meant to select `b` resolves (`elementFromPoint`) to `div.timeline-editor-cursor-area`, so nothing is selected and Cmd+K has nothing to split. The same click 20 % into the clip (off the playhead) selects it and Cmd+K splits it (verified live in a scratch project).
 - **why it hurts:** right after a split at the playhead the new cut sits under the playhead, so the edit point you just made cannot be selected or trimmed until you move the playhead away. Resolve and Premiere do not hit-test the playhead line over the tracks; only its head in the ruler is a handle.
@@ -31,7 +31,7 @@ status: **open — fix in redesign P2** (§4.6 playhead) · severity: medium · 
 
 ## B-345 — ripple, roll, slip and slide show no live result while dragging: only the dragged edge moves, the rest jumps at release
 
-status: **open — fix in redesign P2** (§5.1 edit tools) · severity: **major** (the owner's "roll etc. don't show the change / animate properly") · area: `packages/editor/src/TimelinePane.tsx`
+status: **fixed 2026-10-31 (D-432 P2), live run pending** — edge and slip/slide drags are `useEditGesture.ts`'s own gesture: every move previews the real op (`previewEdit` applies `applyOp` to a copy and diffs it) as `transform`s on the moving clips, the slipped clip's picture slides inside it, and the drop commits exactly the previewed op. DOM tests: `TimelinePane.clipBlock.dom.test.tsx` ("edit tools: live motion…") · severity: **major** (the owner's "roll etc. don't show the change / animate properly") · area: `packages/editor/src/TimelinePane.tsx`
 
 - **found:** 2026-10-31, harness live-feedback checks (rects sampled every frame during the gesture): `ripple-trim-tool` (downstream `c` takes 1–2 distinct x values over 44 frames; it should follow the edge), `roll-edit-tool` and `roll-smart-trim-alt` (`b`'s head 1–2 values while `a` resizes), `slide-tool` (`b` and `a` 2 values each). Store results after release are right; only the feedback is missing.
 - **cause:** edge drags go through the library's resize, which moves only the dragged clip's own DOM; `TimelinePane` passes no `onActionResizing` (only `onActionResizeEnd` → `resizeEndOp`, `:3039`/`:4672`), so neighbours never preview. Slip and slide go through the dnd-kit body drag, and `onDndDragMove` deliberately suppresses all preview for them (`:3558–3575`, B-144), so nothing moves at all until drop.
@@ -39,7 +39,7 @@ status: **open — fix in redesign P2** (§5.1 edit tools) · severity: **major*
 
 ## B-344 — trims, rolls and ripples land up to ~2 frames short of where the pointer was released (the library's snap eats pointer travel)
 
-status: **open** · severity: **major** (every edge drag that starts at a butted cut, i.e. most of them) · area: `@xzdarcy/react-timeline-editor` `RowDnd` resize `onmove` (`node_modules/@xzdarcy/react-timeline-editor/dist/index.es.js`, the `dir === "left" / "right"` handler; `adsorptionDistance` default `rr = 8` px), enabled by `TimelinePane.tsx`'s `dragLine`
+status: **fixed 2026-10-31 (D-432 P2), live run pending** — the library's resize is off (`flexible: false`); the delta is the pointer's absolute offset since press (plus scroll), snapped as a whole (`snapFrame`, sticky ×1.5), never accumulated. A 15-frame drag commits 15 in `TimelinePane.clipBlock.dom.test.tsx` and `editGesture.test.ts` · severity: **major** (every edge drag that starts at a butted cut, i.e. most of them) · area: `@xzdarcy/react-timeline-editor` `RowDnd` resize `onmove` (`node_modules/@xzdarcy/react-timeline-editor/dist/index.es.js`, the `dir === "left" / "right"` handler; `adsorptionDistance` default `rr = 8` px), enabled by `TimelinePane.tsx`'s `dragLine`
 
 - **found:** 2026-10-31, harness: a 15-frame drag of `b`'s right edge commits 13 frames (`b.duration` 77, expected 75); left edge 193 vs 195; roll 103 vs 105; Alt smart-trim the same.
 - **isolated:** same 15-frame drag, varied step size (scratch-project experiment, native AND synthetic input agree, so not a harness artefact): 45 steps of 1 px → 1 frame short; 15 steps of 3 px → 2 frames short; 3 steps of 15 px → exact; a 30-frame drag in 6 px steps → exact. Loss grows as each move gets smaller, i.e. the slower and finer a human drags, the worse it gets.
@@ -57,7 +57,7 @@ status: **fixed 2026-10-31** (`useProjectScopedHistory`, called once from `app/s
 
 ## B-342 — a timeline marker flag draws on top of the Agent activity dock
 
-status: **open — fix in redesign P2** (with a z-index layer scale in `@apelles/tokens`) · severity: minor · area: `packages/editor/src/TimelineMarkers.tsx:185` (`z-40`); the dock half went away with B-341 (D-435), the missing layer scale did not
+status: **fixed 2026-10-31 (D-432 P2)** — a named scale `--z-timeline-{lanes,clip-controls,overlay,markers,playhead,edit-feedback}` (plain custom properties in `app/src/styles.css`, beside the radii and shadows: Tailwind v4 has no z-index theme namespace, so it sits with the other CSS-side tokens rather than in `@apelles/tokens`' colour values), used by every timeline overlay; the timeline pane root is `isolate`, so nothing inside it can paint over a floating surface. The shadcn layer (`z-50`) is unchanged; the other app-wide literals are not migrated in this pass. Ordering pinned by `tokens.test.ts` · severity: minor · area: `packages/editor/src/TimelineMarkers.tsx:185` (`z-40`); the dock half went away with B-341 (D-435), the missing layer scale did not
 
 - **found:** 2026-10-31, owner screenshot `scratch/bug-refs/2026-10-31-marker-above-agent-activity.png`: the amber marker flag paints over the dock's rows.
 - **cause:** both use `z-40` in the root stacking context, so DOM order decides and the timeline comes later. There is no layer scale: z-indexes are ad-hoc literals across the app (`z-10` ×53, `z-50` ×43, `z-20` ×33, `z-30` ×14, `z-40` ×12, plus `z-100`, `z-[9999]`, `z-9999`, `z-101`, `z-[15]`).

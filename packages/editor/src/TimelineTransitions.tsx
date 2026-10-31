@@ -210,7 +210,7 @@ export function TransitionBadges({
                   data-chroma-transition={transition.id}
                   data-testid={TIMELINE_TEST_IDS.transition}
                   aria-label={`Transition at frame ${transition.at_frame}`}
-                  className="absolute z-30 cursor-pointer rounded-sm border border-accent bg-accent/25 hover:bg-accent/40"
+                  className="absolute z-(--z-timeline-overlay) cursor-pointer rounded-sm border border-accent bg-accent/25 hover:bg-accent/40"
                   style={{
                     left,
                     width,

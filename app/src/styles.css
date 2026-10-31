@@ -84,6 +84,27 @@
   --radius-lg: 10px;
 }
 
+/* D-432 P2 — the stacking-layer scale. One definition of every z-index the
+   timeline and the shell's floating surfaces use, used as `z-(--z-…)`.
+
+   The Edit timeline is ONE isolated stacking context (`isolate` on the pane
+   root, B-342), so its inner layers only order things against each other and
+   the whole timeline paints at the page's base layer: anything floating over
+   the window (the @apelles/ui shadcn popovers, menus, tooltips and dialogs,
+   which keep the library's own z-50; the agent-activity popover, D-435) is
+   above every one of them. Plain custom properties, not `@theme` variables:
+   Tailwind v4 has no z-index theme namespace, and these must always be
+   emitted. */
+:root {
+  /* inside the timeline */
+  --z-timeline-lanes: 0;
+  --z-timeline-clip-controls: 10;
+  --z-timeline-overlay: 20;
+  --z-timeline-markers: 30;
+  --z-timeline-playhead: 40;
+  --z-timeline-edit-feedback: 45;
+}
+
 @layer base {
   *,
   ::after,

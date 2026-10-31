@@ -257,10 +257,10 @@ persist `EditorInspectorPanel.tsx`'s numeric Fade field already used — so the
 two views cannot disagree. Live overlay-only feedback during the drag and one
 op on pointer-up is the `TransformOverlay`/D-046 convention (`applyOp`
 snapshots the whole timeline per call). Against the **third** gesture on a clip
-body, the timeline library's own full-height 10px edge-trim handles, the fade
-handle is separated by *where in the row* the press lands — a 15px-tall grab
-target at the clip's top edge, leaving the lower ~37px of both trim zones
-untouched, which is how Resolve stacks the same two affordances. Against the
+body, the clip's own full-height 8 px edge-trim zones (D-432 P2), the fade
+handle is a distinct target just under the name strip that the edit gesture
+stands aside for (`useEditGesture.ts` skips presses on `[data-chroma-fade-handle]`),
+which is how Final Cut and Resolve stack the same two affordances. Against the
 dnd-kit clip drag it is a distinct hit target that `stopPropagation`s, as
 D-094's grip handle was. The drag clamps to the clip's own length; the *model*
 still permits a longer-than-clip fade (`set_clip_fade` deliberately does not
@@ -425,6 +425,17 @@ display font and text colour on every unlocked title; composes `set_caption_styl
 `set_text_clip`, so their refusals hold), one undo step. A kit font reaches Edit only as a
 `.ttf`/`.otf` file in the project's kit snapshot (its asset id is the catalogue key
 `chroma_text_fonts` lists) or through the font's `editFallback`.
+
+**Clip block and edit gestures (D-432 P2).** `clipAnatomy.ts` (pure: the FCP split of a
+clip into name strip / filmstrip / waveform band by track height, the width thresholds, the
+cut style) and `ClipBlock.tsx` (the clip's inside, for the resting clip and the drag ghost).
+`editGesture.ts` is the pure half of trim / ripple / roll / slip / slide: the op a drag
+commits, its live preview (the real `applyOp` on a copy, diffed), the clamp, the brackets,
+snapping and the readout. `useEditGesture.ts` is the imperative half (capture-phase press on
+a clip's own edge zones or body, transform-only preview, one commit, the Blade tool's cut),
+and `EditFeedbackLayer.tsx` draws the shared bracket / readout / snap guide / blade line.
+The timeline library's interact.js resize is no longer used. Spec and as-built notes:
+`docs/notes/ui-redesign.md` §4.3–§5.1, §6b.
 
 **Deferred** (later tracked steps): multi-track, audio, transitions, transcript
 cut, GPU compositing, grade-in-preview, OTIO export, MCP, timeline

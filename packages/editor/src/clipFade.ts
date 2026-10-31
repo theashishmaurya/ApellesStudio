@@ -35,12 +35,6 @@ import {
   type EaseCurve,
 } from './timeline';
 
-/** Diameter of the drawn fade handle, in px. Matches `TransformOverlay.tsx`'s
- *  own `HANDLE_SIZE` (10) minus a pixel: this one sits inside a 52px timeline
- *  row rather than over a full-size preview, so it is drawn a touch smaller
- *  while keeping the same visual weight. */
-export const FADE_HANDLE_SIZE_PX = 9;
-
 /** The handle's square pointer target, in px — bigger than the drawn handle so
  *  grabbing one never needs pixel accuracy, the same reason
  *  `TransformOverlay.tsx` gives its corners a `HANDLE_HIT_SLOP`.

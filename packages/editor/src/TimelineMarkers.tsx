@@ -182,7 +182,7 @@ export function MarkerStrip({
     <div
       data-chroma-marker-strip
       data-chroma-no-marquee
-      className="pointer-events-none absolute left-0 right-0 z-40 overflow-hidden"
+      className="pointer-events-none absolute left-0 right-0 z-(--z-timeline-markers) overflow-hidden"
       style={{ top: RULER_HEIGHT_PX, height: MARKER_STRIP_HEIGHT }}
     >
       {/* D-328 — the span bars, drawn BEFORE the flags so a flag always sits on
