@@ -1,8 +1,9 @@
 /**
  * @apelles/editor — the Edit tab's DOCKED library panel (D-263).
  *
- * **What it is.** The content of the left-hand library column while the rail
- * (`EditLibraryRail.tsx`) has one of this tab's own libraries selected:
+ * **What it is.** The content of the Edit tab's browser while its tab bar
+ * (`EditBrowser.tsx`, D-432 P5; D-263's rail until then) has one of this tab's
+ * own libraries selected:
  * **Titles**, **Effects** (the generated clips — a text title, an adjustment
  * clip) and **Subtitles** (the caption style library, `.srt`/`.vtt` import,
  * and the transcript-driven generator). Every library entry is BOTH a real

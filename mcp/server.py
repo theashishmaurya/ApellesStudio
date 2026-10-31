@@ -7714,15 +7714,13 @@ def debug_set_active_tab(tab: str) -> str:
 
 @mcp.tool()
 def debug_set_sources_panel(open: bool) -> str:
-    """Show or hide the shell's docked left library column — the same state the
-    panel's own toggle drives (on the Edit tab, that toggle is the library
-    rail's own buttons).
+    """Show or hide the shell's docked Sources column on the Motion and
+    Colorist tabs — the same state that column's own toggle drives.
 
-    D-263: this column shows the shared media pool by default, but the Edit
-    tab's rail can switch it to that tab's Titles / Effects / Subtitles
-    libraries. `debug_ui_state`'s `editor.libraryMode` says which one is
-    showing, so a screenshot of this column can be read correctly; this tool
-    still only controls whether the column is open at all.
+    The Edit tab has no shell column (D-432 P5): it lays out its own media
+    browser beside the viewer, shown and hidden with `debug_set_editor_layout`
+    (`browser_open`) and switched between libraries with
+    `debug_set_library_mode`.
 
     Returns {ok, sourcesPanelOpen}."""
     import json
@@ -7734,18 +7732,18 @@ def debug_set_sources_panel(open: bool) -> str:
 
 @mcp.tool()
 def debug_set_library_mode(mode: str) -> str:
-    """Switch which panel the Edit tab's left library column shows, and open
-    the column so that panel is actually visible — the same state the library
-    rail's own buttons drive.
+    """Switch which library the Edit tab's media browser shows, and show the
+    browser so that library is actually visible — the same state the browser's
+    own tab bar drives (D-432 P5; it replaced the old left icon rail).
 
     `mode` is one of "sources", "titles", "effects", "subtitles", "recut",
-    "music", "clipper" or "index" (`debug_ui_state`'s `editor.libraryModes` lists them). The column
-    is opened as well because the rail lives inside it: choosing a mode while
-    the column is closed would change nothing on screen. Useful to reach the
-    Recut panel and check a retake proposal there. An unknown mode is refused
-    with the accepted list rather than silently ignored.
+    "music", "clipper" or "index" (`debug_ui_state`'s `editor.libraryModes`
+    lists them). The browser is shown as well because choosing a library while
+    it is hidden would change nothing on screen. Useful to reach the Recut
+    panel and check a retake proposal there. An unknown mode is refused with
+    the accepted list rather than silently ignored.
 
-    Returns {ok, libraryMode, sourcesPanelOpen}."""
+    Returns {ok, libraryMode, browserOpen}."""
     import json
 
     return json.dumps(_op("debug_set_library_mode", mode=mode), indent=2, default=str)
@@ -7754,7 +7752,7 @@ def debug_set_library_mode(mode: str) -> str:
 @mcp.tool()
 def debug_set_editor_inspector(open: bool) -> str:
     """Show or hide the Edit tab's Inspector column — the same state its own
-    toggle button (top-right of the preview) drives.
+    toggle button (right end of the viewer header) drives.
 
     Useful as the first step of a verification loop: open the Inspector here,
     `debug_screenshot` to see it, `debug_dom_tree('[data-chroma-panel=
@@ -7766,6 +7764,54 @@ def debug_set_editor_inspector(open: bool) -> str:
     return json.dumps(
         _op("debug_set_editor_inspector", open=open), indent=2, default=str
     )
+
+
+@mcp.tool()
+def debug_set_editor_layout(
+    browser_open: bool | None = None,
+    browser_width: float | None = None,
+    inspector_width: float | None = None,
+    timeline_height: float | None = None,
+    reset_timeline_height: bool = False,
+) -> str:
+    """Set the Edit tab's panel layout (D-432 P5) — the same state the human
+    sets by dragging its splits: browser | viewer | Inspector across the top,
+    the timeline across the full width below.
+
+    Every argument is optional; give at least one. Sizes are CSS pixels and are
+    clamped to each split's bounds (browser 220-480, Inspector 264-440,
+    timeline at least 180), exactly as a drag is. The layout persists across
+    relaunches like a drag does. `debug_ui_state`'s `editor.layout` reports
+    the current values (`timelineHeight: null` means never resized: the
+    default 42 % share).
+
+    Useful to put the window into a known shape before `debug_screenshot` or a
+    harness scenario, or to reproduce a layout the human reported.
+
+    Args:
+        browser_open: show or hide the media browser (left).
+        browser_width: the browser's width.
+        inspector_width: the Inspector's width (shown or hidden with
+            `debug_set_editor_inspector`).
+        timeline_height: the timeline's height.
+        reset_timeline_height: go back to the default 42 % share (overrides
+            `timeline_height`).
+
+    Returns {ok, layout} with the layout as it now stands."""
+    import json
+
+    args: dict[str, Any] = {}
+    if browser_open is not None:
+        args["browserOpen"] = browser_open
+    if browser_width is not None:
+        args["browserWidth"] = browser_width
+    if inspector_width is not None:
+        args["inspectorWidth"] = inspector_width
+    if reset_timeline_height:
+        args["timelineHeight"] = None
+    elif timeline_height is not None:
+        args["timelineHeight"] = timeline_height
+    return json.dumps(_op("debug_set_editor_layout", **args), indent=2, default=str)
 
 
 @mcp.tool()

@@ -105,6 +105,7 @@ export {
   CommandSeparator,
 } from './components/ui/command';
 export { ResizablePanelGroup, ResizablePanel, ResizableHandle } from './components/ui/resizable';
+export type { PanelImperativeHandle, PanelSize, LayoutChangedMeta } from './components/ui/resizable';
 export {
   Sheet,
   SheetTrigger,
@@ -116,6 +117,8 @@ export {
   SheetDescription,
 } from './components/ui/sheet';
 export { Slider } from './components/ui/slider';
+export { ScrubBar } from './components/ui/scrub-bar';
+export type { ScrubBarProps } from './components/ui/scrub-bar';
 export { Progress } from './components/ui/progress';
 export { Switch } from './components/ui/switch';
 export { ScrollArea, ScrollBar } from './components/ui/scroll-area';

@@ -316,7 +316,8 @@ describe('the default view is fit — the assumption every pre-D-218 suite rests
     expect(previewImage().style.transform).toBe('');
     expect(button('Reset zoom to fit')).toBeNull();
     expect(requireButton('Zoom in').textContent).toBe('');
-    expect(mounted?.container.textContent).toContain('100%');
+    // D-432 P5 — the viewer header reads `Fit` at fit (a percentage otherwise).
+    expect(mounted?.container.querySelector('[data-player-header]')?.textContent).toContain('Fit');
   });
 
   // The project-change reset (D-218): a zoom/pan is a look at ONE

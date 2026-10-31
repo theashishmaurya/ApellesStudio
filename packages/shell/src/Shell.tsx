@@ -79,23 +79,19 @@
  * outside this package), so they naturally read as "on the right" once
  * Sources vacates that slot.
  *
- * Per-tab library rail (D-263): each `ShellTab` may also carry a
- * `libraryRail` node and a `libraryPanel` node. The rail renders as the
- * LEFTMOST column of the content area — left of the docked column above — and
- * the panel renders INSIDE that column in place of `sourcesPanel`, both only
- * while that tab is active. This is the same injection slot, with the same
- * reasoning, as `headerAction` below (D-251 introduced both): the Edit tab's
- * library rail
- * (`@apelles/editor`'s `EditLibraryRail`) is tab-local content that has to sit
- * at a specific position relative to a panel the SHELL owns, which reordering
- * anything inside `EditorTab.tsx` could never achieve — it was rendering to
- * the right of the very column it switches. `Shell` still imports nothing from
- * the tab packages and learns nothing about what a tab's libraries are: it
- * renders the nodes it is handed, and "no `libraryPanel` this render" simply
- * means the shared Sources panel shows. The docked column keeps its
- * `data-chroma-panel="sources"` hook (same column, same name every doc and
- * debug recipe already uses) and the shared `sourcesPanel` stays MOUNTED but
- * hidden while a tab's own library shows, so its search/bin state survives.
+ * Tab-owned library column (D-432 P5; supersedes D-263's per-tab rail
+ * slots): a `ShellTab` with `ownsLibraryColumn` lays out its own media browser
+ * inside its content (the Edit tab's Final Cut arrangement, where the timeline
+ * spans the full width UNDER the browser, which a shell-level column beside
+ * the tab can never allow), so while it is active the shell draws neither the
+ * docked column nor its floating Sources chip. D-263's `libraryRail` /
+ * `libraryPanel` slots existed only for the Edit tab's old left rail and are
+ * gone with it. Motion and Colorist keep the shell's docked Sources column.
+ *
+ * Top bar (D-432 P5, `docs/notes/ui-redesign.md` §4.2): 38 px; traffic
+ * lights, then a `‹ Projects / <project name>` breadcrumb (the caret closes
+ * the project); the three tabs as a centred segmented control; on the right
+ * Export and the icon buttons.
  *
  * Chrome-bar action (D-251, made shell-level by D-297): the `headerAction`
  * node renders in the top bar's own right-hand cluster, left of the window
@@ -148,23 +144,10 @@ export interface ShellTab {
   label: string;
   icon?: ReactNode;
   element: ReactNode;
-  /** D-263 — this tab's own icon rail, rendered as the LEFTMOST column of the
-   *  content area (left of the docked library column), ONLY while this tab is
-   *  active. Same injection slot and same reasoning as `headerAction` above;
-   *  see this file's "Per-tab library rail" doc section. A tab that supplies
-   *  one owns the docked column's toggle itself, so the shell's own floating
-   *  Sources chip is not drawn for it. Omit for a tab with no rail
-   *  (Motion/Colorist today). */
-  libraryRail?: ReactNode;
-  /** D-263 — content this tab puts in the docked library column INSTEAD of
-   *  the shared `sourcesPanel`, while this tab is active.
-   *
-   *  Supply the node only while the tab is actually taking the column over:
-   *  `undefined` means "show the shared media pool", which is what the Edit
-   *  tab's `sources` library mode is. `Root.tsx` (which owns both the mode and
-   *  both nodes) is where that choice is made — the shell deliberately does
-   *  not learn what a tab's library modes are called. */
-  libraryPanel?: ReactNode;
+  /** D-432 P5 — this tab lays out its own media browser (the Edit tab's
+   *  Final Cut arrangement), so while it is active the shell draws neither the
+   *  docked library column nor the floating Sources chip. */
+  ownsLibraryColumn?: boolean;
 }
 
 export interface ShellProps {
@@ -176,6 +159,9 @@ export interface ShellProps {
   launcher: ReactNode;
   /** "‹ Projects" — close the current project, back to the launcher. */
   onCloseProject?: () => void;
+  /** D-432 P5 — the open project's name, shown after `Projects /` in the top
+   *  bar's breadcrumb. Omit → the breadcrumb shows `Projects` alone. */
+  projectName?: string;
   /** the D-046 Sources/Library panel, injected by the caller (app → shell
    *  only, same reasoning as `launcher`). Docked to the right of the tab
    *  content, toggled via a chrome-bar button; omit to run without one. */
@@ -222,6 +208,7 @@ export function Shell({
   projectOpen,
   launcher,
   onCloseProject,
+  projectName,
   sourcesPanel,
   headerAction,
   activityAction,
@@ -258,10 +245,8 @@ export function Shell({
   // If persisted/default tab isn't in the registry, fall back to the first tab.
   const active = tabs.some((t) => t.id === activeTab) ? activeTab : tabs[0]?.id;
   const activeTabEntry = projectOpen ? tabs.find((t) => t.id === active) : undefined;
-  // D-263 — the active tab's left icon rail, and the content
-  // it puts in the docked library column in place of the shared media pool.
-  const activeLibraryRail = activeTabEntry?.libraryRail;
-  const activeLibraryPanel = activeTabEntry?.libraryPanel;
+  // D-432 P5 — a tab that lays out its own browser gets no shell column.
+  const tabOwnsColumn = activeTabEntry?.ownsLibraryColumn === true;
 
   // D-273 — which tab is frontmost gates which shortcuts can fire at all.
   // Before this, every keydown handler in the app was a bare `window`
@@ -314,7 +299,7 @@ export function Shell({
     >
       <div
         data-tauri-drag-region
-        className="shrink-0 h-10 flex items-center gap-1 px-2 bg-surface border-b border-border-color select-none relative"
+        className="shrink-0 h-[38px] flex items-center gap-1 px-2 bg-surface border-b border-divider select-none relative"
       >
         {/* left: traffic lights (mac). No wordmark here any more (owner,
             live: "you did not removed APELLES from the shell as it already
@@ -326,25 +311,42 @@ export function Shell({
             Help-menu work. */}
         <MacTrafficLights show={chrome.isMac && !chrome.isMobile} />
 
-        {/* left (project open): back to the launcher */}
-        {projectOpen && onCloseProject && (
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={onCloseProject}
-            title="Close project — back to all projects"
-            className="h-6 gap-1 text-text-secondary hover:text-text-primary"
-          >
-            <CaretLeftIcon className="size-3" /> Projects
-          </Button>
+        {/* left (project open): the breadcrumb — `‹ Projects` goes back to
+            the launcher, then the open project's name (D-432 P5, §4.2). */}
+        {projectOpen && (
+          <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1 text-sm">
+            {onCloseProject && (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={onCloseProject}
+                title="Close project — back to all projects"
+                className="h-6 gap-1 px-1.5 text-sm font-normal text-text-secondary hover:text-text-primary"
+              >
+                <CaretLeftIcon className="size-3" /> Projects
+              </Button>
+            )}
+            {projectName && (
+              <>
+                <span aria-hidden className="text-text-tertiary">
+                  /
+                </span>
+                <span data-chroma-project-name className="max-w-64 truncate px-1 text-text-primary">
+                  {projectName}
+                </span>
+              </>
+            )}
+          </nav>
         )}
 
-        {/* centre: the tabs, absolutely centred (only while a project is open) */}
+        {/* centre: the tabs as a segmented control, absolutely centred (only
+            while a project is open). D-432 P5 / §4.2: 24 px high, the track
+            `bg-secondary`, the active segment `card-active`. */}
         {projectOpen && (
           <div
             role="tablist"
             aria-label="Apelles tabs"
-            className="absolute left-1/2 -translate-x-1/2 flex items-stretch h-full gap-1"
+            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex h-6 items-stretch gap-0.5 rounded-sm bg-bg-secondary p-0.5"
           >
             {tabs.map((tab) => {
               const isActive = tab.id === active;
@@ -356,18 +358,12 @@ export function Shell({
                   aria-selected={isActive}
                   onClick={() => setActiveTab(tab.id)}
                   className={
-                    'relative flex items-center gap-1.5 px-3 text-xs font-medium transition-colors ' +
-                    (isActive ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary')
+                    'flex min-w-16 items-center justify-center gap-1.5 rounded-xs px-4 text-xs font-medium transition-colors ' +
+                    (isActive ? 'bg-card-active text-text-primary' : 'text-text-secondary hover:text-text-primary')
                   }
                 >
                   {tab.icon}
                   {tab.label}
-                  <span
-                    className={
-                      'absolute left-2 right-2 bottom-0 h-0.5 rounded-full transition-colors ' +
-                      (isActive ? 'bg-accent' : 'bg-transparent')
-                    }
-                  />
                 </button>
               );
             })}
@@ -385,7 +381,6 @@ export function Shell({
             occupies, matching the spatial pattern D-118 established for the
             Inspector's own toggle (opposite corner, same idea). */}
         <div className="ml-auto flex items-center h-full gap-1">
-          {projectOpen && headerAction}
           {projectOpen && activityAction}
           {projectOpen && brandAction}
           {/* D-273 — the Keyboard Shortcuts window's opener. Genuinely
@@ -421,6 +416,9 @@ export function Shell({
               <PlugsConnectedIcon className="size-3.5" />
             </Button>
           )}
+          {/* D-432 P5 — Export last, at the right edge, as in the mockup (and
+              where Final Cut's own toolbar puts Share). */}
+          {projectOpen && headerAction}
           <WindowControls chrome={chrome} />
         </div>
       </div>
@@ -434,21 +432,13 @@ export function Shell({
       <ConnectMcpDialog open={mcpDialogOpen} onOpenChange={setMcpDialogOpen} />
 
       <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0 overflow-hidden relative">
-        {/* D-263 — the active tab's icon rail, LEFTMOST, immediately left of
-            the column it switches. A plain fixed-width sibling of the
-            resizable columns, not a `ResizablePanel`: whatever a tab puts here
-            holds icon buttons and nothing else, exactly the case CLAUDE.md's
-            resizable-panels rule exempts. Rendered whether or not that column
-            is open — collapsing it is one of the rail's own jobs. */}
-        {activeLibraryRail}
-
         {/* docked library column (D-046's Sources panel; left + resizable,
             D-116; content switchable per-tab, D-263) — a sibling column, never
             layered over the tab content, so it can't fight Colorist's own
             panels or Editor's timeline pane for space. A real
             `ResizablePanel`, not a fixed width, per this project's own
             "resizable-by-nature panels must actually be resizable" rule. */}
-        {projectOpen && sourcesPanel && sourcesPanelOpen && (
+        {projectOpen && sourcesPanel && sourcesPanelOpen && !tabOwnsColumn && (
           <>
             <ResizablePanel
               // D-219 — same stable hook the Edit tab's Inspector carries, so
@@ -464,18 +454,7 @@ export function Shell({
               maxSize={SOURCES_PANEL_MAX_WIDTH}
               className="shrink-0 h-full border-r border-border-color bg-surface overflow-hidden"
             >
-              {/* D-263 — the shared media pool stays MOUNTED while a tab shows
-                  its own library here, hidden rather than unmounted, so its
-                  search text, open bin and scroll position survive a trip
-                  through the Titles library. Hidden with the same
-                  `hidden`-class swap on a wrapper with no other `display`
-                  utility that the tab panels below use — never a Base UI
-                  primitive that defers the hide to a `requestAnimationFrame`
-                  that a non-frontmost window never fires (B-124). */}
-              <div className={activeLibraryPanel ? 'hidden' : 'h-full'}>
-                <PanelErrorBoundary panel="Sources">{sourcesPanel}</PanelErrorBoundary>
-              </div>
-              {activeLibraryPanel && <PanelErrorBoundary panel="Library">{activeLibraryPanel}</PanelErrorBoundary>}
+              <PanelErrorBoundary panel="Sources">{sourcesPanel}</PanelErrorBoundary>
             </ResizablePanel>
             <ResizableHandle />
           </>
@@ -495,14 +474,10 @@ export function Shell({
               here in `Shell.tsx`, not duplicated per-tab, because Sources is
               genuinely shell-level (all three tabs), unlike the Inspector.
 
-              D-263 — NOT drawn on a tab that supplies its own `libraryRail`:
-              that rail's own Sources button both selects the media pool and
-              collapses the column (VS Code activity-bar semantics, see
-              `EditLibraryRail.tsx`), so this chip would be a second control
-              for the same panel sitting one step to its right — the exact
-              disconnected-opener complaint D-120 exists to answer. Motion and
-              Colorist have no rail, so they keep it. */}
-          {projectOpen && sourcesPanel && !activeLibraryRail && (
+              D-432 P5 — NOT drawn on a tab that owns its library column (the
+              Edit tab's browser has its own toggle in the viewer header, and
+              no shell column to open). Motion and Colorist keep it. */}
+          {projectOpen && sourcesPanel && !tabOwnsColumn && (
             // A floating control positioned relative to the whole tab-content
             // area (deliberately, D-120 — reachable regardless of which tab
             // is active) will always land directly on top of *some* tab's

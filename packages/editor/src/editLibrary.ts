@@ -10,8 +10,9 @@
  *
  * **What it does NOT do.** It holds no state (that is `timelineStore.ts`'s
  * `libraryMode`), renders nothing, and knows nothing about the panel's
- * contents — `EditLibraryRail.tsx` renders one button per mode and
- * `EditLibraryPanel.tsx` renders the content for the active one.
+ * contents — `EditBrowser.tsx` renders one tab per mode (D-432 P5; D-263's
+ * rail did until then) and `EditLibraryPanel.tsx` renders the content for the
+ * active one.
  *
  * **Why `sources` is in this list even though `@apelles/editor` does not own
  * it.** The Sources panel is shell-level (`Shell.tsx`'s `sourcesPanel`, D-046/

@@ -192,6 +192,13 @@ export interface AppSettings {
   canvasInputMode?: 'mouse' | 'trackpad';
   zoomSpeedMultiplier?: number;
   keybinds?: { [action: string]: string[] };
+  /** D-432 P5 — the Edit tab's panel sizes (`@apelles/editor`'s `EditLayout`). */
+  editLayout?: {
+    browserOpen?: boolean;
+    browserWidth?: number;
+    inspectorWidth?: number;
+    timelineHeight?: number | null;
+  };
   tonemapperOverrideEnabled?: boolean;
   defaultRawTonemapper?: string;
   defaultNonRawTonemapper?: string;

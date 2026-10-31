@@ -10,7 +10,7 @@
 //!  compile-time gate — never a runtime flag, never "just don't call it in prod."
 //!  That is the same gate `control.rs`'s `native_op` uses on its own side (B-100 /
 //!  D-219), and it is why a release build of this server publishes 250 tools where a
-//!  debug build publishes 266: the SIXTEEN gated tools here are the whole difference,
+//!  debug build publishes 267: the SEVENTEEN gated tools here are the whole difference,
 //!  counted off the `name = "debug_…"` attributes in this module (D-434 added
 //!  `debug_pointer`, `debug_key` and `debug_set_occlusion_throttling`, and the timeline-perf pass added
 //!  `debug_perf_entries`; the figures
@@ -60,7 +60,7 @@ mod tests {
             .map(|t| t.name.to_string())
             .collect();
         if cfg!(debug_assertions) {
-            assert_eq!(names.len(), 16, "{names:?}");
+            assert_eq!(names.len(), 17, "{names:?}");
             for tool in [
                 "debug_pointer",
                 "debug_key",

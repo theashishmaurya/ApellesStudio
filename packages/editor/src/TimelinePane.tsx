@@ -814,7 +814,9 @@ function TrackDropZone({ track, top, height }: { track: number; top: number; hei
 }
 
 
-export function TimelinePane() {
+/** D-432 P5 — `toolbarCenter`: what the Edit tab centres in this pane's
+ *  toolbar row (the timeline switcher and timecode, spec §4.9). */
+export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   // D-325 — deliberately NOT `useEditorTimelineStore((s) => s.playhead)`. This
   // is the only component in the codebase where that selector's ordinary
@@ -3778,6 +3780,7 @@ export function TimelinePane() {
               same fields/ops, better UX for iterating on values, no reason
               to keep both. */}
 
+          {toolbarCenter && <div className="mx-auto flex shrink-0 items-center px-3">{toolbarCenter}</div>}
           <div className="ml-auto flex items-center gap-0.5">
             {/* D-413 — the beat grid's controls, shown only while a track's
                 beats are on: its tempo (or that it is still being analysed),

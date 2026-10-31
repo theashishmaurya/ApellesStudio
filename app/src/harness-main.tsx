@@ -73,9 +73,11 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-  EditLibraryPanel,
-  EditLibraryRail,
+  EditBrowser,
+  EditorExportDialog,
   EditorInspectorPanel,
+  EditorTab,
+  useEditLayoutStore,
   PreviewPane,
   TimelinePane,
   TimelineSwitcher,
@@ -92,6 +94,10 @@ import {
   type TimelineSummary,
 } from '@apelles/editor';
 import { DEFAULT_THEME_ID, THEMES } from './utils/themes';
+import { Shell } from '@apelles/shell';
+import { SourcesPanel } from './components/chroma/SourcesPanel';
+import { useSessionStore } from './store/useSessionStore';
+import { useMediaPoolStore, type MediaItem } from '@apelles/bridge';
 import '../src/styles.css';
 
 /** D-199 — which component this page mounts, switchable at runtime via
@@ -117,12 +123,27 @@ import '../src/styles.css';
  *  shell's own 288px default width), so a real browser can measure and
  *  screenshot it. `window.__chromaHarness.setLibraryMode('titles' | 'effects'
  *  | 'subtitles' | 'sources')` switches what the column shows without a
- *  synthesised click, the same store action the rail's own button calls. */
-type HarnessMode = 'timeline' | 'preview' | 'inspector' | 'library';
+ *  synthesised click, the same store action the rail's own button calls.
+ *  D-432 P5 replaced the rail with the browser's own tab bar, so this mode now
+ *  mounts `EditBrowser` at its 280 px default width.
+ *
+ *  **D-432 P5 added `'edit'`**: the whole Edit tab inside the real `Shell` —
+ *  top bar, browser | viewer | Inspector, the full-width timeline — so the
+ *  layout itself (which panel sits where, the splits, the viewer header and
+ *  transport) can be measured and screenshotted side by side with the
+ *  redesign mockup. `installWindowStubs` gives `Shell`'s window chrome the
+ *  Tauri window/OS metadata it reads (D-095's reason this page used to stop
+ *  short of the shell). The media pool is the real `SourcesPanel`, empty. */
+type HarnessMode = 'timeline' | 'preview' | 'inspector' | 'library' | 'edit';
 
 function setStatus(text: string): void {
   const el = document.getElementById('harness-status');
-  if (el) el.textContent = text;
+  if (!el) return;
+  el.textContent = text;
+  // D-432 P5 — in `'edit'` mode the top-right corner is the shell's Export
+  // button, so the badge moves to the bottom-right.
+  el.style.top = mode === 'edit' ? '' : '0';
+  el.style.bottom = mode === 'edit' ? '0' : '';
 }
 
 
@@ -501,7 +522,7 @@ function select(track?: number, id?: string): void {
 let strict = true;
 let mode: HarnessMode = ((): HarnessMode => {
   const raw = new URLSearchParams(window.location.search).get('mode');
-  return raw === 'preview' || raw === 'inspector' || raw === 'library' ? raw : 'timeline';
+  return raw === 'preview' || raw === 'inspector' || raw === 'library' || raw === 'edit' ? raw : 'timeline';
 })();
 let root: ReturnType<typeof createRoot> | null = null;
 
@@ -520,6 +541,7 @@ function render(): void {
   // reproduces that box, at the Inspector's own default width, rather than
   // letting the panel grow to its content and hide the defect.
   container.style.height = mode === 'timeline' ? '' : '100vh';
+  container.style.flexDirection = mode === 'edit' ? 'column' : '';
   container.style.display = mode === 'timeline' ? '' : 'flex';
   container.style.width = mode === 'inspector' ? '320px' : '';
   // D-195, Task 3 — in 'timeline' mode, `TimelineSwitcher` renders above
@@ -538,28 +560,36 @@ function render(): void {
           React.createElement('div', { className: 'flex-1 min-h-0' }, React.createElement(EditorInspectorPanel)),
         )
       : mode === 'library'
-        ? // D-263 — the shell's own left region, reproduced: the rail (fixed
-          // width, its own) followed by the docked column at `Shell.tsx`'s
-          // `SOURCES_PANEL_DEFAULT_WIDTH`. The real column is a
-          // `ResizablePanel`; a fixed-width box is the same geometry at its
-          // default size, without pulling the whole shell (and its Tauri
-          // window chrome) into a page that has no Tauri behind it.
+        ? // D-432 P5 — the Edit tab's browser at its default width (the real
+          // one is a `ResizablePanel` in `EditorTab`; a fixed box is the same
+          // geometry at its default size).
           React.createElement(
             'div',
             { className: 'flex h-full w-full min-h-0' },
-            React.createElement(EditLibraryRail, {
-              dockOpen: true,
-              onDockOpenChange: () => {},
-            }),
             React.createElement(
               'div',
-              {
-                className: 'h-full shrink-0 border-r border-border-color bg-surface overflow-hidden',
-                style: { width: 288 },
-              },
-              React.createElement(EditLibraryPanel),
+              { className: 'h-full shrink-0 overflow-hidden bg-surface', style: { width: 280 } },
+              React.createElement(EditBrowser, { mediaPool: React.createElement(SourcesPanel) }),
             ),
           )
+        : mode === 'edit'
+          ? React.createElement(Shell, {
+              projectOpen: true,
+              projectName: 'Harness project',
+              onCloseProject: () => {},
+              launcher: React.createElement('div', null, 'launcher'),
+              headerAction: React.createElement(EditorExportDialog),
+              tabs: [
+                {
+                  id: 'edit',
+                  label: 'Edit',
+                  element: React.createElement(EditorTab, { mediaPool: React.createElement(SourcesPanel) }),
+                  ownsLibraryColumn: true,
+                },
+                { id: 'motion', label: 'Motion', element: React.createElement('div') },
+                { id: 'colorist', label: 'Colorist', element: React.createElement('div') },
+              ],
+            })
         : mode === 'preview'
           ? React.createElement(PreviewPane)
           : React.createElement(React.Fragment, null, React.createElement(TimelineSwitcher), React.createElement(TimelinePane));
@@ -584,8 +614,70 @@ function applyDefaultTheme(): void {
   document.body.style.background = 'var(--color-bg-primary)';
 }
 
+/** D-432 P5 — what `Shell`'s window chrome reads from Tauri: the OS plugin's
+ *  platform (macOS, so the traffic lights draw) and the current window's
+ *  metadata (`getCurrentWindow()`), plus its two state queries. */
+function installWindowStubs(): void {
+  const w = window as unknown as Record<string, unknown> & {
+    __TAURI_INTERNALS__: { metadata?: unknown; invoke: (cmd: string, args?: unknown) => Promise<unknown> };
+  };
+  w.__TAURI_OS_PLUGIN_INTERNALS__ = { platform: 'macos', family: 'unix', os_type: 'macos', arch: 'aarch64', version: '', eol: '\n', exe_extension: '' };
+  w.__TAURI_INTERNALS__.metadata = {
+    currentWindow: { label: 'main' },
+    currentWebview: { windowLabel: 'main', label: 'main' },
+  };
+  const inner = w.__TAURI_INTERNALS__.invoke;
+  w.__TAURI_INTERNALS__.invoke = async (cmd: string, args?: unknown) => {
+    if (cmd === 'plugin:window|is_fullscreen' || cmd === 'plugin:window|is_maximized') return false;
+    if (cmd === 'chroma_media_list') return harnessMedia;
+    if (cmd === 'chroma_media_folders') return [];
+    return inner(cmd, args);
+  };
+}
+
+/** D-432 P5 — a small media pool for the `'edit'` mode's browser, so the
+ *  Sources grid has tiles to lay out. The poster frames are painted on a
+ *  canvas at load (two flat bands each), not shipped as image files. */
+let harnessMedia: MediaItem[] = [];
+function seedHarnessMedia(): void {
+  const swatches: [string, string, string, number][] = [
+    ['Interview_A_cam_take3', '#d9b98a', '#8a5a34', 872],
+    ['Interview_B_cam', '#3c4a5c', '#1f2833', 728],
+    ['Broll_street_03', '#9fb4c8', '#4a5560', 41],
+    ['Broll_cafe_01', '#6b4630', '#2c1d14', 22],
+    ['Forest_drone', '#2f6b4f', '#173326', 65],
+    ['Sunset_timelapse', '#c46a8a', '#3b2a52', 30],
+  ];
+  const canvas = document.createElement('canvas');
+  canvas.width = 160;
+  canvas.height = 90;
+  const ctx = canvas.getContext('2d');
+  harnessMedia = swatches.map(([name, top, bottom, secs], i): MediaItem => {
+    if (ctx) {
+      ctx.fillStyle = top;
+      ctx.fillRect(0, 0, 160, 50);
+      ctx.fillStyle = bottom;
+      ctx.fillRect(0, 50, 160, 40);
+    }
+    return {
+      id: `harness-media-${i}`,
+      sourcePath: `/harness/${name}.mp4`,
+      name: `${name}.mp4`,
+      added: '2026-11-01T00:00:00Z',
+      video: { width: 1920, height: 1080, fps: 24, frameCount: secs * 24, durationSecs: secs, hasAudio: true },
+      offline: false,
+      folder: null,
+      thumb: ctx ? canvas.toDataURL('image/jpeg') : null,
+    };
+  });
+  useSessionStore.setState({ projectName: 'Harness project' });
+  useMediaPoolStore.setState({ openProjectKey: HARNESS_PROJECT_KEY, items: harnessMedia, folders: [], loading: false });
+}
+
 applyDefaultTheme();
 installInvokeStub();
+installWindowStubs();
+seedHarnessMedia();
 seed(defaultFixture());
 // D-195, Task 3 — `TimelineSwitcher` fetches its own tab list via `loadList()`
 // on mount, against `fakeProject` rather than the `seed()` call above alone.
@@ -690,6 +782,9 @@ render();
    *  does for clip geometry: hand the page the fact the sidecar would have
    *  produced, then verify the rendering that fact drives. */
   mediaStore: useMediaUnderstandingStore,
+  /** D-432 P5 — the Edit tab's panel sizes (`'edit'` mode), for a CDP session
+   *  to read what a split drag committed or to set a layout. */
+  layoutStore: useEditLayoutStore,
   setStrictMode(next: boolean) {
     strict = next;
     render();

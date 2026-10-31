@@ -51,9 +51,12 @@ several rounds of the owner's own screenshots before an agent could even confirm
 2. **UI state open/close/select debug actions** — **DONE (D-219, 2026-09-08).**
    Deterministic, non-pixel-coordinate ways to drive the UI, through the same store
    actions a human's click goes through: `debug_set_active_tab` (Edit/Motion/
-   Colorist), `debug_set_sources_panel`, `debug_set_library_mode` (which panel the Edit
-   tab's left library column shows, plus opens the column so it is visible —
-   added so an agent can reach the Recut panel), `debug_set_editor_inspector`,
+   Colorist), `debug_set_sources_panel`, `debug_set_library_mode` (which library the
+   Edit tab's browser shows, plus shows the browser so it is visible — added so an
+   agent can reach the Recut panel; since D-432 P5 the browser's own tab bar, not a
+   left rail), `debug_set_editor_inspector`, `debug_set_editor_layout` (D-432 P5 —
+   the Edit tab's split sizes and the browser's visibility, read back as
+   `editor.layout`; clamped and persisted exactly as a drag is),
    `debug_set_inspector_tab` (D-246 — the clip Inspector's own Video/Audio tab;
    only one renders at a time, so a screenshot of the panel is a screenshot of
    one of them), plus the read

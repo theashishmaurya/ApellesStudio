@@ -1,6 +1,7 @@
 # UI redesign: an FCP-style Edit tab (research + spec)
 
 **Status: accepted (D-432). P1 (tokens and type) and P2 (clip block, handles, edit-tool feedback, playhead, layer scale) done 2026-10-31; P3 (track headers, per-track height, ruler, markers, snapping / skimming, two-up viewer) done 2026-11-01; P4 (Inspector) done 2026-11-01; P5 not started.**
+**Status: accepted (D-432). P1 (tokens and type) and P2 (clip block, handles, edit-tool feedback, playhead, layer scale) done 2026-10-31; P3 (track headers, per-track height, ruler, markers, snapping / skimming, two-up viewer) done 2026-11-01; P5 (chrome and layout: full-width timeline, browser tabs, viewer header and transport, top bar) done 2026-11-01, ahead of P4; P4 not started.**
 This note is the research trail, the design system, the per-component spec, the list of
 concrete CSS defects in today's components, and the phased plan. The look is shown in
 the static mockup `scratch/ui-redesign-mockup.html` (not app code; `scratch/` is
@@ -610,7 +611,7 @@ Line numbers are as of `main` at `c90569f`. Each one is fixed by the phase in br
 18. **`TimelinePane.tsx:4670`** — the drop ghost uses `backdrop-blur-sm` with a gradient and an inset shadow. Backdrop blur is re-rasterised on every frame of a drag. **`:4848`** the drag preview is `rounded shadow-lg ring-2 ring-accent` → §5. **[P2]**
 19. **`packages/inspector/src/InspectorSection.tsx:13`** — the section header is `text-[10px] font-semibold uppercase tracking-wide` → §4.10. **[P4]**
 20. Arbitrary text-size literals throughout the editor: `text-[10px]` and `text-[11px]` at **`TimelinePane.tsx:737, 766, 818, 939, 2738, 2754, 2774, 2780, 4136, 4145, 4319, 4329, 4392`** and more, plus `ClipInspectorPanel.tsx:658, 781, 819, 904` → the §3.4 scale. **[P1 scale, each phase migrates its own files]**
-21. **`packages/editor/src/EditorTab.tsx:152–278`** — the timeline sits *inside* the centre column, so Sources and the Inspector take full height and the timeline loses ~600 px of width at 1440 → §4.1. **[P5]**
+21. **`packages/editor/src/EditorTab.tsx:152–278`** — the timeline sits *inside* the centre column, so Sources and the Inspector take full height and the timeline loses ~600 px of width at 1440 → §4.1. **[P5 — closed, §6d]**
 
 ## 6a. P1 as built (2026-10-31)
 
@@ -823,6 +824,125 @@ the two-up decode cadence on real 4K footage.
 - **AI parity.** Every op, MCP tool and debug op is unchanged (`debug_set_editor_inspector`, `debug_set_inspector_tab`); `debug_get_ui_state` gained `editor.inspectorSections`. There is no new MCP surface: nothing here adds a capability, only presentation and gesture.
 - **Not done (deviations).** No inline sliders (mockup rows with a range); no Speed / Info icon tabs (Speed stays a section); no duration in the header (the panel has no fps); the Text / Caption / Adjustment inspectors keep their own rows (they get the new heading type only); the section open state has a read (`debug_get_ui_state`) but no debug write op, to avoid touching `mcp/server.py` during the drag-perf work. Live-harness numbers (scrub latency, swap time, hover CLS) are not yet measured.
 - **Evidence.** `scratch/ui-redesign-p4/after-*.png`: the Inspector rendered in `app/harness.html?mode=inspector` (headless Chromium, 380 px wide); the "before" is the owner's `scratch/bug-refs/2026-11-01-after-p2.png`.
+## 6d. P5 as built (2026-11-01)
+
+Done ahead of P4, at the owner's ask ("the player and buttons etc. still
+haven't moved to the way you showed me").
+
+**What moved where.**
+- **Layout (§4.1, defect #21).** `EditorTab` is one vertical `ResizablePanelGroup`:
+  the upper band (`data-chroma-panel="edit-upper"`) holds browser | viewer |
+  Inspector as a horizontal group, and the timeline (`edit-timeline`) sits
+  beneath it across the full window width. All three splits are `@apelles/ui`
+  resizable panels. Bounds: browser 280 px (220–480), Inspector 320 px
+  (264–440), viewer at least 320, upper band at least 260, timeline at least
+  180 and 42 % of the tab by default. At 1440 the timeline's edit area is now
+  1304 px wide (it was ~660 px with Sources and the Inspector open).
+- **Persistence.** `packages/editor/src/editLayout.ts` (`useEditLayoutStore`)
+  holds the sizes and the browser's open flag. A split commits only when the
+  user releases it (`onLayoutChanged` with `isUserInteraction`), so a mount or
+  a window resize never rewrites a saved size. The composition root hydrates it
+  from, and persists it to, `appSettings.editLayout` (new
+  `EditLayoutSettings` in `app_settings.rs`), the keymap's injected-sink
+  pattern (D-273). A non-user write (debug op, late hydrate) is applied to the
+  live panels through their imperative `resize`.
+- **Browser (§4.12).** `EditBrowser.tsx` is the upper-left panel: a tab bar
+  of eight icon tabs (`@apelles/ui` `Tabs`, `data-chroma-browser-tab`) over the
+  selected library — Sources shows the injected media pool (kept mounted,
+  hidden, on the other tabs), the rest `EditLibraryPanel`. The left icon rail
+  (`EditLibraryRail.tsx`) and `Shell`'s `libraryRail` / `libraryPanel` slots are
+  deleted. `ShellTab.ownsLibraryColumn` tells `Shell` to draw neither its
+  docked column nor its floating Sources chip for the Edit tab; Motion and
+  Colorist keep both.
+- **Viewer (§4.11).** `Player`: a 28 px header (caller's `headerStart` — the
+  browser toggle —, the format line `1920×1080 · 24p`, the timeline name
+  centred, then `− Fit +`, the Safe Area menu (D-431), the waveform toggle and
+  the caller's `headerEnd` — the Inspector toggle); the black picture; the
+  optional waveform band; a **3 px scrub bar** (`ScrubBar`, new in
+  `@apelles/ui`: Base UI slider, playhead-coloured fill, knob on hover / focus
+  / drag, 12 px hit area, arrows / Shift ×10 / Home / End); a 40 px transport
+  (full timecode in `--color-playhead` left; previous edit, frame back, play,
+  frame forward, next edit centred; rate, volume, fullscreen right). The two
+  floating corner chips are gone, and so is the `W×H` chip `CanvasBoundary`
+  painted over the picture.
+- **Edit points.** The outer transport buttons go to the previous / next
+  edit point (`editPoints.ts`: every clip start and end on any track, plus
+  the first and last frame), also on ↑ / ↓ (`edit.prev_edit` /
+  `edit.next_edit`, rebindable).
+- **Top bar (§4.2).** 38 px; traffic lights, a `‹ Projects / <name>`
+  breadcrumb (new `projectName` prop), the tabs as a centred segmented control
+  (`bg-secondary` track, `card-active` segment), then activity, brand,
+  shortcuts, MCP and **Export last** (restyled as the secondary button). The
+  72 px macOS spacer is gone: the tabs are absolutely centred anyway.
+- **Timeline toolbar (§4.9).** `TimelinePane` takes a `toolbarCenter` slot
+  (two small hunks: the prop at its signature and one line before the right
+  group). `EditorTab` puts the timeline switcher there, now a `Name ▾` menu
+  (timelines as a radio list, then New / Rename / Duplicate / Size / Delete),
+  and `PlayheadTimecode` (current / duration, written straight to its text
+  node: no React render per played frame). The separate tab strip row is gone;
+  a timeline with no tracks gets the same centre as its own row, since the
+  pane then has no toolbar.
+
+**AI parity.** `debug_get_ui_state` reports `editor.layout`. New
+`debug_set_editor_layout {browserOpen?, browserWidth?, inspectorWidth?,
+timelineHeight?}` (both servers, corpus re-captured, 264 -> 265 tools; release
+count unchanged, debug tools are not in it). `debug_set_library_mode` now shows
+the Edit browser (it opened the shell column before) and replies
+`browserOpen`; `debug_set_sources_panel` drives the shell column on Motion and
+Colorist only.
+
+**Deviations from the spec.**
+- The timeline toolbar's centre is a flex item between the left and right
+  groups (`mx-auto`), not absolutely centred: the left group is wide enough at
+  1280 that an absolute centre would overlap it. At 1440 and 1280 it sits
+  within ~20 px of true centre (measured in Chromium).
+- The browser's tab bar holds all eight libraries; Import stays in the Sources
+  panel's own header rather than the tab bar (no room beside eight tabs at
+  220 px).
+- Zoom in the viewer header is `− Fit +` inline, not a `Fit ▾` menu: a menu
+  would hide the three controls behind a click and break the D-218 cluster's
+  disabled-at-a-bound contract.
+- The transport timecode shows frames (`HH:MM:SS:FF`), as the mockup does;
+  the old readout dropped them and showed `current / total`. The total is in
+  the timeline toolbar now.
+- The Inspector keeps its 320 px default (spec 300) until P4 rebuilds its rows.
+- Clicking the selected browser tab does nothing (the rail collapsed the
+  column); the viewer header's toggle hides the browser.
+- Two `SourcesPanel` instances can be mounted at once (the Edit browser's and
+  the shell column's on Motion / Colorist), each with its own search text.
+- Not done in P5: the §4.13 empty states (the timeline's lives inside
+  `TimelinePane`, which D-437 is rewriting), Cmd+4 for the Inspector, volume
+  as a popover slider (it is still the hover-expanding one), and the toolbar's
+  own regrouping beyond the centre slot (it is inside `TimelinePane`).
+
+**Tests.** `EditorTab.layout.dom.test.tsx` (full-width timeline as a sibling
+of the upper band, panel order, three separators, both toggles, the toolbar
+centre, the empty-timeline row, no store write on mount),
+`editLayout.test.ts` (clamp, junk, no-op writes, hydrate does not persist),
+`editPoints.test.ts`, `Player.layout.dom.test.tsx` (header cells, transport
+cells and wiring, the scrub bar's 3 px / 12 px geometry, keyboard steps,
+Shift ×10, Home / End, a pointer drag as one start / end gesture, unmount
+mid-drag), `Shell.chrome.dom.test.tsx` (breadcrumb, segmented tabs, Export
+last, owned column) replacing `Shell.libraryRail.dom.test.tsx`,
+`debugOps.editLayout.test.ts`; `EditLibraryPanel.dom.test.tsx` and
+`TimelinePane.drop.dom.test.tsx` drive the browser tabs instead of the rail.
+Rust: the MCP parity suite.
+
+**Visual check.** `app/harness.html?mode=edit` (new: the real `Shell` +
+`EditorTab` + an empty-but-seeded `SourcesPanel`, with Tauri window / OS
+metadata stubbed) in Chromium, screenshots in `scratch/ui-redesign-p5/` of
+the P5 worktree (`mockup.png`, `after-edit-tab.png`, `side-by-side.png`,
+`after-titles-selected-1280.png`). Measured there: timeline 1440 px wide and
+42 % tall, header 28, transport 40, scrub track 3 px in a 12 px hit area; a
+real pointer drag on the timeline split committed one `user` write (311 ->
+391 px) and a debug write moved all three splits to the requested sizes. Not
+WKWebView.
+
+**Needs the live app:** the persisted sizes surviving a relaunch
+(`appSettings.editLayout`), panel resize at 60 fps, no panel under its
+minimum at 1280×800 in the real window, the harness scenarios after the
+layout change (the edit area is wider, so H11's outside-the-visible-area
+misses should drop), and the scrub bar's feel on a trackpad.
 
 ## 7. Human + AI parity
 

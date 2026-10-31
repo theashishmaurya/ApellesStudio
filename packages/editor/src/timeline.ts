@@ -2162,8 +2162,9 @@ export const CHROMA_MEDIA_DRAG_MIME = 'application/x-apelles-media';
  *
  * **Native HTML5, not `@dnd-kit`**, unlike the transitions palette (D-226).
  * That palette is rendered *inside* `TimelinePane`'s own `DndContext`; the
- * library rail (`EditLibraryRail.tsx`) is a sibling of the whole timeline
- * pane, and a `useDraggable` outside the provider is not a drag at all. This
+ * library browser (`EditBrowser.tsx`, which replaced the rail in D-432 P5) is
+ * a sibling of the whole timeline pane, and a `useDraggable` outside the
+ * provider is not a drag at all. This
  * is the same boundary the Sources panel crosses, so it uses the same
  * mechanism the Sources panel already crosses it with.
  */

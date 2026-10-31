@@ -376,7 +376,9 @@ track.
 Two things changed here in the same pass as the owner's live Edit-tab review:
 
 - **A generated clip is a drag source too (D-248, fixing B-117; docked by
-  D-263).** The Edit tab's left library is an activity bar in the VS Code /
+  D-263; the rail below became the browser's own tab bar in D-432 P5 —
+  `EditBrowser.tsx`, inside the Edit tab's upper-left panel, so what follows
+  about the rail and the shell slots is history).** The Edit tab's left library is an activity bar in the VS Code /
   Final Cut sense (`scratch/activity-bar-reference/`): `EditLibraryRail.tsx` is
   the leftmost column — four icon buttons, Sources / Titles / Effects /
   Subtitles — and `EditLibraryPanel.tsx` is what the DOCKED column beside it

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * @apelles/editor — real-DOM coverage for what happens when something is
- * DROPPED on the timeline: the library rail's generator drag (D-248 / B-117)
+ * DROPPED on the timeline: the library browser's generator drag (D-248 / B-117)
  * and the "create a new track above the top one" insertion boundary (B-115).
  *
  * **Why this file exists.** Both defects were reported live by the owner
@@ -23,7 +23,7 @@
  * (see `stubEditAreaRect`) — the same disclosure every `TimelinePane.*.dom`
  * suite in this package makes. It proves the handlers, the payload contract
  * and the ops that come out of them. It does NOT prove that a real
- * WKWebView delivers a `dragstart` from the rail (native HTML5 drag has real
+ * WKWebView delivers a `dragstart` from the browser (native HTML5 drag has real
  * platform behaviour jsdom has none of) or that the drop lands on the right
  * element by paint order — those are owner/live checks, so every gesture here
  * targets the handler's own element directly and the geometry it depends on is
@@ -55,8 +55,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import { useEditorTimelineStore } from './timelineStore';
 import { TimelinePane } from './TimelinePane';
-import { EditLibraryRail } from './EditLibraryRail';
-import { EditLibraryPanel } from './EditLibraryPanel';
+import { EditBrowser } from './EditBrowser';
 import { useHistoryStore } from '@apelles/history';
 import {
   CHROMA_GENERATOR_DRAG_MIME,
@@ -159,17 +158,10 @@ function dragEvent(
   return e;
 }
 
-/** The rail plus the docked column it switches, mounted the way `Shell.tsx`
- *  mounts them (D-263): rail first, then the column. The dock-open flag is
- *  shell state in the real app, so it is a plain prop here — `true`, i.e. the
- *  column is showing, which is the state a library drag starts from. */
+/** The Edit tab's browser (D-432 P5: its tab bar replaced D-263's rail),
+ *  which shows the library a drag starts from. */
 function LibraryHarness(): React.ReactElement {
-  return React.createElement(
-    'div',
-    null,
-    React.createElement(EditLibraryRail, { dockOpen: true, onDockOpenChange: () => {} }),
-    React.createElement(EditLibraryPanel),
-  );
+  return React.createElement(EditBrowser);
 }
 
 function layout(): Array<{ kind: string; clips: string[] }> {
@@ -293,7 +285,7 @@ describe('B-115 — dragging ABOVE the top track creates a new track there', () 
 });
 
 describe('B-117 / D-248 — a Title is a real drag source and a real drop', () => {
-  it('4. the library rail exposes a draggable Title that carries the generator payload', async () => {
+  it('4. the browser exposes a draggable Title that carries the generator payload', async () => {
     actSync(() =>
       useEditorTimelineStore.setState({
         timeline: fixture(),
@@ -304,16 +296,13 @@ describe('B-117 / D-248 — a Title is a real drag source and a real drop', () =
         libraryMode: 'sources',
       }),
     );
-    // D-263 — the rail and the docked panel it switches, mounted the way the
-    // shell mounts them (rail, then the column beside it). Before D-263 the
-    // rail held the library inside its own popover and this test mounted only
-    // the rail.
+    // D-432 P5 — the browser, whose tab bar replaced D-263's rail.
     ui = mount(React.createElement(LibraryHarness), { strictMode: true });
     await waitFrames(2);
 
-    // The rail's Titles button switches the docked panel to the Titles library.
-    const trigger = document.querySelector<HTMLElement>('[data-chroma-rail-button="titles"]');
-    expect(trigger, 'the rail has a Titles button').not.toBeNull();
+    // The browser's Titles tab switches it to the Titles library.
+    const trigger = document.querySelector<HTMLElement>('[data-chroma-browser-tab="titles"]');
+    expect(trigger, 'the browser has a Titles tab').not.toBeNull();
     actSync(() => trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
     await waitFrames(2);
 
@@ -467,10 +456,8 @@ describe('B-117 / D-248 — a Title is a real drag source and a real drop', () =
  * was always right; these cover the two ways in that were not.
  */
 describe('B-129 — adding a Title targets a NEW video track, never an occupied or audio one', () => {
-  /** Select Titles on the rail and press the library's click-to-add button —
-   *  the exact gesture the owner used. D-263 split those two across the rail
-   *  and the DOCKED panel it switches (they were one popover when B-129 was
-   *  filed), so this mounts both, exactly as the shell does. */
+  /** Select the Titles tab and press the library's click-to-add button —
+   *  the exact gesture the owner used, in the browser that holds both. */
   async function addTitleAtPlayhead(playhead = 0): Promise<void> {
     actSync(() =>
       useEditorTimelineStore.setState({
@@ -485,7 +472,7 @@ describe('B-129 — adding a Title targets a NEW video track, never an occupied 
     );
     ui = mount(React.createElement(LibraryHarness), { strictMode: true });
     await waitFrames(2);
-    const trigger = document.querySelector<HTMLElement>('[data-chroma-rail-button="titles"]');
+    const trigger = document.querySelector<HTMLElement>('[data-chroma-browser-tab="titles"]');
     actSync(() => trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
     await waitFrames(2);
     const add = document.querySelector<HTMLElement>('[aria-label="Add title at the playhead"]');

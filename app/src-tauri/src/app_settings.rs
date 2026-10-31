@@ -194,6 +194,23 @@ pub fn default_included_adjustments() -> HashSet<String> {
     defaults
 }
 
+/// D-432 P5 — the Edit tab's persisted layout (`packages/editor/src/
+/// editLayout.ts`). Sizes are CSS pixels; the frontend clamps every value it
+/// reads back, so this only has to round-trip them. `timeline_height: None`
+/// means never resized (the timeline takes its default share of the tab).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EditLayoutSettings {
+    #[serde(default)]
+    pub browser_open: Option<bool>,
+    #[serde(default)]
+    pub browser_width: Option<f64>,
+    #[serde(default)]
+    pub inspector_width: Option<f64>,
+    #[serde(default)]
+    pub timeline_height: Option<f64>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CopyPasteSettings {
@@ -480,6 +497,11 @@ pub struct AppSettings {
     pub zoom_speed_multiplier: Option<f32>,
     #[serde(default)]
     pub keybinds: HashMap<String, Vec<String>>,
+    /// D-432 P5 — the Edit tab's panel sizes, written by `@apelles/editor`'s
+    /// `editLayout.ts` through the composition root, the way `keybinds` carries
+    /// the keymap's remaps (D-273). `None` until the user first resizes.
+    #[serde(default)]
+    pub edit_layout: Option<EditLayoutSettings>,
     #[serde(default)]
     pub thumbnail_worker_threads: Option<u32>,
     #[serde(default)]
@@ -594,6 +616,7 @@ impl Default for AppSettings {
             canvas_input_mode: Some("mouse".to_string()),
             zoom_speed_multiplier: Some(1.0),
             keybinds: HashMap::new(),
+            edit_layout: None,
             #[cfg(target_os = "android")]
             thumbnail_worker_threads: Some(2),
             #[cfg(not(target_os = "android"))]

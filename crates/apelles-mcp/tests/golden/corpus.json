@@ -1663,7 +1663,7 @@
     },
     {
       "name": "debug_set_editor_inspector",
-      "description": "Show or hide the Edit tab's Inspector column \u2014 the same state its own\n    toggle button (top-right of the preview) drives.\n\n    Useful as the first step of a verification loop: open the Inspector here,\n    `debug_screenshot` to see it, `debug_dom_tree('[data-chroma-panel=\n    \"editor-inspector\"]')` to check where it actually landed.\n\n    Returns {ok, inspectorOpen}.",
+      "description": "Show or hide the Edit tab's Inspector column \u2014 the same state its own\n    toggle button (right end of the viewer header) drives.\n\n    Useful as the first step of a verification loop: open the Inspector here,\n    `debug_screenshot` to see it, `debug_dom_tree('[data-chroma-panel=\n    \"editor-inspector\"]')` to check where it actually landed.\n\n    Returns {ok, inspectorOpen}.",
       "inputSchema": {
         "properties": {
           "open": {
@@ -1676,6 +1676,69 @@
         ],
         "type": "object",
         "title": "debug_set_editor_inspectorArguments"
+      }
+    },
+    {
+      "name": "debug_set_editor_layout",
+      "description": "Set the Edit tab's panel layout (D-432 P5) \u2014 the same state the human\n    sets by dragging its splits: browser | viewer | Inspector across the top,\n    the timeline across the full width below.\n\n    Every argument is optional; give at least one. Sizes are CSS pixels and are\n    clamped to each split's bounds (browser 220-480, Inspector 264-440,\n    timeline at least 180), exactly as a drag is. The layout persists across\n    relaunches like a drag does. `debug_ui_state`'s `editor.layout` reports\n    the current values (`timelineHeight: null` means never resized: the\n    default 42 % share).\n\n    Useful to put the window into a known shape before `debug_screenshot` or a\n    harness scenario, or to reproduce a layout the human reported.\n\n    Args:\n        browser_open: show or hide the media browser (left).\n        browser_width: the browser's width.\n        inspector_width: the Inspector's width (shown or hidden with\n            `debug_set_editor_inspector`).\n        timeline_height: the timeline's height.\n        reset_timeline_height: go back to the default 42 % share (overrides\n            `timeline_height`).\n\n    Returns {ok, layout} with the layout as it now stands.",
+      "inputSchema": {
+        "properties": {
+          "browser_open": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Browser Open"
+          },
+          "browser_width": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Browser Width"
+          },
+          "inspector_width": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Inspector Width"
+          },
+          "timeline_height": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Timeline Height"
+          },
+          "reset_timeline_height": {
+            "default": false,
+            "title": "Reset Timeline Height",
+            "type": "boolean"
+          }
+        },
+        "type": "object",
+        "title": "debug_set_editor_layoutArguments"
       }
     },
     {
@@ -1738,7 +1801,7 @@
     },
     {
       "name": "debug_set_library_mode",
-      "description": "Switch which panel the Edit tab's left library column shows, and open\n    the column so that panel is actually visible \u2014 the same state the library\n    rail's own buttons drive.\n\n    `mode` is one of \"sources\", \"titles\", \"effects\", \"subtitles\", \"recut\",\n    \"music\", \"clipper\" or \"index\" (`debug_ui_state`'s `editor.libraryModes` lists them). The column\n    is opened as well because the rail lives inside it: choosing a mode while\n    the column is closed would change nothing on screen. Useful to reach the\n    Recut panel and check a retake proposal there. An unknown mode is refused\n    with the accepted list rather than silently ignored.\n\n    Returns {ok, libraryMode, sourcesPanelOpen}.",
+      "description": "Switch which library the Edit tab's media browser shows, and show the\n    browser so that library is actually visible \u2014 the same state the browser's\n    own tab bar drives (D-432 P5; it replaced the old left icon rail).\n\n    `mode` is one of \"sources\", \"titles\", \"effects\", \"subtitles\", \"recut\",\n    \"music\", \"clipper\" or \"index\" (`debug_ui_state`'s `editor.libraryModes`\n    lists them). The browser is shown as well because choosing a library while\n    it is hidden would change nothing on screen. Useful to reach the Recut\n    panel and check a retake proposal there. An unknown mode is refused with\n    the accepted list rather than silently ignored.\n\n    Returns {ok, libraryMode, browserOpen}.",
       "inputSchema": {
         "properties": {
           "mode": {
@@ -1784,7 +1847,7 @@
     },
     {
       "name": "debug_set_sources_panel",
-      "description": "Show or hide the shell's docked left library column \u2014 the same state the\n    panel's own toggle drives (on the Edit tab, that toggle is the library\n    rail's own buttons).\n\n    D-263: this column shows the shared media pool by default, but the Edit\n    tab's rail can switch it to that tab's Titles / Effects / Subtitles\n    libraries. `debug_ui_state`'s `editor.libraryMode` says which one is\n    showing, so a screenshot of this column can be read correctly; this tool\n    still only controls whether the column is open at all.\n\n    Returns {ok, sourcesPanelOpen}.",
+      "description": "Show or hide the shell's docked Sources column on the Motion and\n    Colorist tabs \u2014 the same state that column's own toggle drives.\n\n    The Edit tab has no shell column (D-432 P5): it lays out its own media\n    browser beside the viewer, shown and hidden with `debug_set_editor_layout`\n    (`browser_open`) and switched between libraries with\n    `debug_set_library_mode`.\n\n    Returns {ok, sourcesPanelOpen}.",
       "inputSchema": {
         "properties": {
           "open": {
@@ -16461,6 +16524,55 @@
           "op": "debug_set_editor_inspector",
           "args": {
             "open": true
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "debug_set_editor_layout",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "debug_set_editor_layout",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "debug_set_editor_layout",
+      "case": "full",
+      "arguments": {
+        "browser_open": true,
+        "browser_width": -6.5,
+        "inspector_width": 7.18,
+        "timeline_height": -0.7,
+        "reset_timeline_height": false
+      },
+      "requests": [
+        {
+          "op": "debug_set_editor_layout",
+          "args": {
+            "browserOpen": true,
+            "browserWidth": -6.5,
+            "inspectorWidth": 7.18,
+            "timelineHeight": -0.7
           },
           "timeout_ms": 20000
         }

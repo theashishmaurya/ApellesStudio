@@ -35,16 +35,20 @@
  *                                   proxy states and (B-292) every panel
  *                                   showing its crash fallback.
  *   `debug_set_active_tab`        — Edit / Motion / Colorist.
- *   `debug_set_sources_panel`     — the shell's docked library column (Sources
- *                                   is its default content; D-263 lets the
- *                                   Edit tab's rail switch it to Titles /
- *                                   Effects / Subtitles, reported as
- *                                   `editor.libraryMode`).
- *   `debug_set_library_mode`      — which panel the Edit tab's left library
- *                                   column shows (sources / titles / effects /
- *                                   subtitles / recut / index) AND opens that
- *                                   column, so the panel is actually visible.
+ *   `debug_set_sources_panel`     — the shell's docked Sources column, shown on
+ *                                   the Motion and Colorist tabs. The Edit tab
+ *                                   lays out its own browser (D-432 P5) and
+ *                                   draws no shell column.
+ *   `debug_set_library_mode`      — which library the Edit tab's browser shows
+ *                                   (its tab bar, which replaced D-263's rail:
+ *                                   sources / titles / effects / subtitles /
+ *                                   recut / music / clipper / index) AND shows
+ *                                   the browser, so the panel is visible.
  *   `debug_set_editor_inspector`  — the Edit tab's Inspector column.
+ *   `debug_set_editor_layout`     — D-432 P5. The Edit tab's split sizes
+ *                                   (browser / Inspector width, timeline
+ *                                   height) and whether the browser shows;
+ *                                   reported as `editor.layout`.
  *   `debug_set_inspector_tab`     — that Inspector's Video/Audio tab (D-246).
  *   `debug_set_popover_open`      — any registered Edit-tab popover/dialog by
  *                                   id (D-252, `@apelles/editor`'s
@@ -109,6 +113,8 @@ import {
   parsePanelId,
   EDIT_LIBRARY_MODES,
   parseEditLibraryMode,
+  useEditLayoutStore,
+  editLayoutSnapshot,
 } from '@apelles/editor';
 import { customProxyStore } from '@apelles/motion/src/customProxyStore';
 
@@ -171,16 +177,16 @@ function uiStateSnapshot() {
       // filled in lazily and `panelIds` is the reference for what CAN appear.
       openPanels: editor.openPanels,
       panelIds: PANEL_IDS,
-      // D-263 — which library the docked left column is showing while the Edit
-      // tab is active (`sources` = the shared media pool, i.e. `Shell`'s own
-      // `sourcesPanel`). Reported because it changes what a screenshot of that
-      // column MEANS; `shell.sourcesPanelOpen` above still says whether the
-      // column is open at all. Read-only on purpose — see D-263 on why no
-      // `debug_set_library_mode` op: an agent adds a title or a caption with
-      // `editor_add_text_clip` / `editor_add_caption`, which do not care what
-      // the human currently has on screen.
+      // D-263 / D-432 P5 — which library the Edit tab's browser is showing
+      // (`sources` = the shared media pool). Reported because it changes what
+      // a screenshot of that panel MEANS; `layout.browserOpen` below says
+      // whether the browser is shown at all.
       libraryMode: editor.libraryMode,
       libraryModes: EDIT_LIBRARY_MODES,
+      // D-432 P5 — the Edit tab's split sizes in CSS px and whether the
+      // browser shows (`timelineHeight: null` = never resized, the default
+      // 42 % share). Set with `debug_set_editor_layout`.
+      layout: editLayoutSnapshot(),
       projectOpen: editor.openProjectKey !== null,
       timelineStatus: editor.status,
       selection: editor.selection,
@@ -247,16 +253,46 @@ export const DEBUG_OPS: Record<string, OpHandler> = {
     if (mode === null) {
       return { error: `unknown mode ${JSON.stringify(a?.mode)} — expected one of ${EDIT_LIBRARY_MODES.join(', ')}` };
     }
-    // The same action the library rail's own buttons call, plus the shell's
-    // open flag: the rail lives inside the column, so a mode chosen while the
-    // column is closed would otherwise change nothing anyone can see.
+    // The same action the browser's tab bar calls, plus the browser's own
+    // open flag: a mode chosen while the browser is hidden would otherwise
+    // change nothing anyone can see.
     useEditorTimelineStore.getState().setLibraryMode(mode);
-    useShellStore.getState().setSourcesPanelOpen(true);
+    useEditLayoutStore.getState().setLayout({ browserOpen: true }, 'debug');
     return {
       ok: true,
       libraryMode: useEditorTimelineStore.getState().libraryMode,
-      sourcesPanelOpen: useShellStore.getState().sourcesPanelOpen,
+      browserOpen: useEditLayoutStore.getState().browserOpen,
     };
+  },
+
+  debug_set_editor_layout: (a) => {
+    // D-432 P5 — every field optional, at least one required; sizes are CSS
+    // px, clamped to each split's bounds (the same clamp a drag is held to),
+    // and the reply is the layout as it now stands. `timelineHeight: null`
+    // goes back to the default share. The same store action a released split
+    // calls, so the live panels move (`EditorTab` applies non-user writes).
+    const keys = ['browserOpen', 'browserWidth', 'inspectorWidth', 'timelineHeight'] as const;
+    const given = keys.filter((k) => a?.[k] !== undefined);
+    if (given.length === 0) return { error: `give at least one of ${keys.join(', ')}` };
+    if (a.browserOpen !== undefined && typeof a.browserOpen !== 'boolean') {
+      return { error: "'browserOpen' must be true or false" };
+    }
+    for (const k of ['browserWidth', 'inspectorWidth'] as const) {
+      if (a[k] !== undefined && (typeof a[k] !== 'number' || !Number.isFinite(a[k]))) {
+        return { error: `'${k}' must be a number of CSS pixels` };
+      }
+    }
+    if (
+      a.timelineHeight !== undefined &&
+      a.timelineHeight !== null &&
+      (typeof a.timelineHeight !== 'number' || !Number.isFinite(a.timelineHeight))
+    ) {
+      return { error: "'timelineHeight' must be a number of CSS pixels, or null for the default" };
+    }
+    const patch: Record<string, unknown> = {};
+    for (const k of given) patch[k] = a[k];
+    useEditLayoutStore.getState().setLayout(patch, 'debug');
+    return { ok: true, layout: editLayoutSnapshot() };
   },
 
   debug_set_editor_inspector: (a) => {

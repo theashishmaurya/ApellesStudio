@@ -31,11 +31,13 @@
  * with the preview's viewport zoom/pan composed on top, so this rectangle
  * keeps tracking the picture's real edges at any zoom level, which is exactly
  * what makes it the reference frame it claims to be.
+ *
+ * D-432 P5 — the `W×H` chip this drew in the frame's top-left corner is gone:
+ * the size now reads in the viewer header's format line (spec §4.11, "nothing
+ * drawn over the picture except the user's own overlays").
  */
 import { usePreviewContentBox } from './usePreviewContentBox';
 import type { CompositionSize } from './useCompositionSize';
-
-const LABEL_MARGIN = 4;
 
 export function CanvasBoundary({
   container,
@@ -58,13 +60,6 @@ export function CanvasBoundary({
         height: contentBox.height,
         boxSizing: 'border-box',
       }}
-    >
-      <span
-        className="absolute rounded-sm bg-bg-primary/80 px-1 text-[10px] leading-tight text-text-secondary"
-        style={{ left: LABEL_MARGIN, top: LABEL_MARGIN }}
-      >
-        {size.width}×{size.height}
-      </span>
-    </div>
+    />
   );
 }

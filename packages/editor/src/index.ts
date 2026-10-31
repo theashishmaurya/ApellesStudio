@@ -14,6 +14,7 @@
  */
 
 export { EditorTab } from './EditorTab';
+export type { EditorTabProps } from './EditorTab';
 /** Exported alongside `EditorTab` (D-142) so `app/harness.html`'s permanent
  *  isolated pointer-gesture harness — and any future one — can mount the
  *  timeline strip standalone, matching the precedent D-095 established
@@ -30,7 +31,8 @@ export { TimelinePane } from './TimelinePane';
  *  `docs/notes/preview-canvas-boundary.md` — the harness's job is the React
  *  layer: does the returned frame render, does the boundary land in the
  *  right place, does dragging commit). */
-export { PreviewPane } from './PreviewPane';
+export { PreviewPane, viewerFormatLabel } from './PreviewPane';
+export type { PreviewPaneProps } from './PreviewPane';
 /** B-124 — the same D-142/D-199 precedent again, for the clip Inspector.
  *  `app/harness.html`'s `?mode=inspector` mounts this standalone so a real
  *  Chromium tab can measure what the Video/Audio tab split actually PAINTS —
@@ -38,15 +40,31 @@ export { PreviewPane } from './PreviewPane';
  *  both-panels-visible bug ship green (see that bug's entry in
  *  `docs/BUGS.md`). */
 export { EditorInspectorPanel } from './EditorInspectorPanel';
-/** D-263 — the Edit tab's library rail and its docked library column. Both are
- *  mounted by the composition root (`app/src/Root.tsx`) into `@apelles/shell`'s
- *  per-tab `libraryRail` / `libraryPanel` slots rather than by `EditorTab`
- *  itself, because they must sit to the LEFT of the shell-level Sources
- *  column; `Shell` renders whatever node it is handed and still imports
- *  nothing from this package (D-251's own injection pattern). */
-export { EditLibraryRail } from './EditLibraryRail';
-export type { EditLibraryRailProps } from './EditLibraryRail';
+/** D-432 P5 — the Edit tab's media browser (the library tab bar that replaced
+ *  D-263's left rail, over the selected library) and the library panel it
+ *  shows for every tab but Sources. `EditorTab` mounts the browser itself; both
+ *  are exported for the harness and the shell's DOM tests. */
+export { EditBrowser, BROWSER_TAB_ICONS } from './EditBrowser';
+export type { EditBrowserProps } from './EditBrowser';
 export { EditLibraryPanel } from './EditLibraryPanel';
+/** D-432 P5 — the Edit tab's persisted panel sizes (browser / Inspector width,
+ *  timeline height, browser shown). The composition root hydrates it from and
+ *  persists it to `appSettings.editLayout`; `@apelles/debug` reads and sets it. */
+export {
+  useEditLayoutStore,
+  editLayoutSnapshot,
+  mergeEditLayout,
+  DEFAULT_EDIT_LAYOUT,
+  BROWSER_WIDTH,
+  INSPECTOR_WIDTH,
+  TIMELINE_HEIGHT,
+  TIMELINE_DEFAULT_PERCENT,
+  UPPER_MIN_HEIGHT,
+  VIEWER_MIN_WIDTH,
+} from './editLayout';
+export type { EditLayout, EditLayoutSource } from './editLayout';
+export { editPoints, prevEditPoint, nextEditPoint } from './editPoints';
+export { PlayheadTimecode } from './PlayheadTimecode';
 /** D-318 — the Recut library's own panel, and the pure seconds↔frames helpers
  *  it shares with the `editor_detect_*` ops. Exported because the conversion is
  *  the one place a detected span becomes a cut, and both interfaces must reach
