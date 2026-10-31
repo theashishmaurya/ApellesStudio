@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-01** — **Timeline drag perf, F4 domain part (D-434, B-347):** `applyOp` keeps the identity of every clip/track an op does not change (`shareUnchanged` reconcile, matched by id); `ClipBlock` memoisation waits for the P3 TimelinePane work.
 - **2026-11-01** — **Timeline drag perf, F3 (D-434, B-347):** ripple/slide neighbours move with a 2D `translate`, not `translate3d` (no per-clip layer promotion during a drag).
 - **2026-11-01** — **Timeline drag perf, F2 (D-434, B-347):** `contain: layout size style` on the library's clip wrapper so a trim's width change no longer relayouts the scroller; pinned in `timelineOverrides.test.ts`, live re-profile pending.
 - **2026-11-01** — **Timeline drag perf, F1 (D-434, B-347):** the edit readout no longer forces a layout on every snapped preview; its width comes from a glyph advance measured once at gesture start. See `docs/notes/timeline-drag-perf.md` Progress.

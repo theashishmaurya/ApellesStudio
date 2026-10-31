@@ -252,6 +252,20 @@ Each line is a landed fix. None is re-profiled against the live app yet (that ne
   `media` shift keeps `translate3d`: it is one element per gesture. Pinned by a
   `TimelinePane.clipBlock.dom.test.tsx` case. The per-track group transform stays with F5.
   Expected: 200-clip ripple/slide move p95 66 -> ~25 ms; **unverified live**.
+- **F4 (domain part) done.** `applyOp` is now `shareUnchanged(tl, applyOpCopy(tl, op))`
+  (`timeline.ts`): the ~60 op bodies are untouched and still deep-copy, then a reconcile pass
+  hands back the original node for every deeply-equal subtree (arrays of id'd records, i.e. a
+  track's clips, are matched by id so an insert or remove does not misalign the rest). An
+  untouched clip, track or array is `===` to the input's; a no-op is the input itself. Chosen
+  over a copy-on-write rewrite of every op because the copy costs <= 1 % and the exhaustive
+  op suite then holds by construction (2760 editor tests green, results `toEqual`-identical).
+  It exposed one real aliasing hazard: `rippleDeleteOneRange` mutated the result of the
+  composed `applyOp` calls in place, which now shares clips with the input, so it clones
+  first (caught by `rippleDeleteRanges.property.test.ts`). Pinned by `timelineShare.test.ts`.
+  **Not done here (after P3):** memoising `ClipBlock` in `TimelinePane.tsx`'s
+  `getActionRender` on the now-stable clip identity. That memo is what turns the identity
+  into the release-time win (expected -40-60 % at 200 clips); until it lands the library
+  still re-renders every wrapper.
 
 ## Instrument next (exact additions; debug-only)
 
