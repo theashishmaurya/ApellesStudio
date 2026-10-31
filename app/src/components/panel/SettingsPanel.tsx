@@ -31,6 +31,7 @@ import Button from '../ui/Button';
 import ConfirmModal from '../modals/ConfirmModal';
 import Dropdown, { OptionItem } from '../ui/Dropdown';
 import Switch from '../ui/Switch';
+import VideoUnderstandingCard from './VideoUnderstandingCard';
 import Input from '../ui/Input';
 import Slider from '../ui/Slider';
 import { ThemeProps, THEMES, DEFAULT_THEME_ID } from '../../utils/themes';
@@ -2482,6 +2483,9 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                       sits after them because it is the thing that explains a
                       sidecar being down on a fresh install. */}
                   <AiEnvStatusCard />
+
+                  {/* D-433 — the opt-in for the one heavy, rarely used AI feature. */}
+                  <VideoUnderstandingCard />
 
                   {/* D-417 — Motion's on-demand render runtime, the other thing
                       this app downloads after install. */}

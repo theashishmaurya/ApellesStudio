@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'react-toastify';
 import { resolveUiFontStack } from '@apelles/tokens';
 import { useShallow } from 'zustand/react/shallow';
+import { useVideoUnderstandingStore, watchVideoUnderstanding } from '@apelles/bridge';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useUIStore, reconcileWorkspace } from '../store/useUIStore';
 import { useLibraryStore } from '../store/useLibraryStore';
@@ -239,6 +240,24 @@ export const useAppInitialization = ({
     setThumbnailSize,
     setThumbnailAspectRatio,
   ]);
+
+  // D-433 — the video-understanding flag is written straight to settings.json by
+  // Rust (the Settings card and the `ai_set_video_understanding` MCP tool both go
+  // through it). Mirror it into the in-memory `appSettings` so the next
+  // whole-struct `SaveSettings` does not write the old value back over it.
+  useEffect(() => {
+    const stopWatching = watchVideoUnderstanding();
+    const unsubscribe = useVideoUnderstandingStore.subscribe((state) => {
+      const enabled = state.status?.enabled;
+      const current = useSettingsStore.getState().appSettings;
+      if (enabled === undefined || !current || current.enableVideoUnderstanding === enabled) return;
+      useSettingsStore.getState().setAppSettings({ ...current, enableVideoUnderstanding: enabled });
+    });
+    return () => {
+      unsubscribe();
+      stopWatching();
+    };
+  }, []);
 
   useEffect(() => {
     if (isInitialMount.current || !appSettings) return;

@@ -23,6 +23,12 @@ D-045/D-046 media-pool store, now consumed by a real panel (D-046's
   which this package cannot depend on without inverting the D-039 layer
   direction, so it lives directly in `SourcesPanel.tsx` instead.
 
+- `useVideoUnderstanding` / `useVideoUnderstandingStore` (`src/videoUnderstanding.ts`,
+  D-433) — the opt-in "AI video understanding" flag: `chroma_video_understanding_status`
+  / `chroma_set_video_understanding`, the `video-understanding-status` event, and the
+  Mac's RAM with the under-16 GB warning text. Unlike `useAiEnv` the flag is a real
+  gate, but the gate itself is Rust's `chroma_analyze_video`; this only shows and flips it.
+
 - `useAiEnv` / `useAiEnvStore` (`src/aiEnv.ts`, D-315) — the AI-environment
   bootstrap's one frontend view: `chroma_ai_env_status`, `chroma_ai_env_retry`
   and the `ai-env-status` event behind a reference-counted subscription, plus

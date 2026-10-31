@@ -143,6 +143,10 @@ pub async fn chroma_transcribe_status(job_id: String) -> Result<serde_json::Valu
 /// `scene_threshold` / `min_gap_s` / `max_candidates` are content-dependent
 /// tuning knobs (a fast-cut ad needs different values than a slow screen
 /// recording); `None` leaves the sidecar's own defaults in place.
+///
+/// **Refuses when the user's "AI video understanding" setting is off** (D-433) —
+/// see `video_understanding.rs`. This command is the choke point for the GUI and
+/// the MCP alike.
 #[tauri::command]
 pub async fn chroma_analyze_video(
     path: String,
@@ -150,7 +154,12 @@ pub async fn chroma_analyze_video(
     scene_threshold: Option<f64>,
     min_gap_s: Option<f64>,
     max_candidates: Option<u32>,
+    app_handle: tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
+    // D-433 — the ONE gate. Refuses before anything is downloaded or spawned.
+    super::video_understanding::ensure_enabled(super::video_understanding::read_enabled(
+        &app_handle,
+    )?)?;
     apelles_ai::media_understanding::understand_video(
         &path,
         question,

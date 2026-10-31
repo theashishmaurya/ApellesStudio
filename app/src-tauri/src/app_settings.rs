@@ -524,6 +524,10 @@ pub struct AppSettings {
     pub always_decode_raw_thumbnails: Option<bool>,
     #[serde(default)]
     pub workspace: WorkspaceState,
+    /// D-433 — AI video understanding (Qwen3-VL) is opt-in: heavy download and
+    /// memory for a rarely used feature. `None`/absent means off.
+    #[serde(default)]
+    pub enable_video_understanding: Option<bool>,
 }
 
 impl Default for AppSettings {
@@ -617,6 +621,7 @@ impl Default for AppSettings {
             group_preferred_type: Some("raw".to_string()),
             always_decode_raw_thumbnails: Some(false),
             workspace: WorkspaceState::default(),
+            enable_video_understanding: Some(false),
         }
     }
 }

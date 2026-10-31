@@ -247,3 +247,9 @@ background job recorded as an error rather than an unhandled rejection).
 app, confirm both Settings sidecar cards read healthy, then call
 `editor_get_transcript` and `editor_analyze_video` over MCP against a real
 clip. That is also phase 5's precondition.
+
+## Update 2026-10-31 — video understanding is opt-in (D-433)
+
+The video-understanding job (`chroma_analyze_video` / `editor_analyze_video`) is behind a
+user setting, default off, because of its ~3 GB model and ~9 GB peak for a rarely used
+feature. The transcript half is unaffected. See D-433 for the options and the single gate.

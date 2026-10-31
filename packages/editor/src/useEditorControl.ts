@@ -106,7 +106,13 @@ import {
 } from './recutRuns';
 import { listen, emit } from '@tauri-apps/api/event';
 
-import { assertRequestLive, newBridgeClaim, useMediaPoolStore, type MediaItem } from '@apelles/bridge';
+import {
+  assertRequestLive,
+  newBridgeClaim,
+  useMediaPoolStore,
+  useVideoUnderstandingStore,
+  type MediaItem,
+} from '@apelles/bridge';
 import { runAsAgent } from '@apelles/history';
 // B-217/D-358 — the cross-store project-identity guard; see the dispatcher below.
 import { assertProjectIdentity } from '@apelles/store';
@@ -5866,9 +5872,14 @@ export function useEditorControl(): void {
         };
       },
 
-      editor_analyze_video: (a) => {
+      editor_analyze_video: async (a) => {
         const path = resolveMediaPath(a);
         if ('error' in path) return path;
+        // D-433 — refuse up front, with the backend's own words, rather than
+        // reporting "running" and surfacing the refusal on the next poll. The
+        // authoritative gate is still Rust's `chroma_analyze_video`.
+        const flag = await useVideoUnderstandingStore.getState().refresh();
+        if (!flag.enabled) return { error: flag.refusal ?? 'AI video understanding is turned off.' };
         const num = (v: unknown): number | undefined => {
           if (v === undefined || v === null) return undefined;
           const n = Number(v);
