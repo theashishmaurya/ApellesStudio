@@ -77,6 +77,20 @@ pub struct DebugSetEditorInspectorArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct DebugSetEditorLayoutArgs {
+    #[serde(default)]
+    pub browser_open: Option<bool>,
+    #[serde(default)]
+    pub browser_width: Option<f64>,
+    #[serde(default)]
+    pub inspector_width: Option<f64>,
+    #[serde(default)]
+    pub timeline_height: Option<f64>,
+    #[serde(default)]
+    pub reset_timeline_height: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct DebugSetInspectorTabArgs {
     pub tab: String,
 }
@@ -361,15 +375,13 @@ impl ApellesMcp {
 
     #[tool(
         name = "debug_set_sources_panel",
-        description = r#"Show or hide the shell's docked left library column — the same state the
-    panel's own toggle drives (on the Edit tab, that toggle is the library
-    rail's own buttons).
+        description = r#"Show or hide the shell's docked Sources column on the Motion and
+    Colorist tabs — the same state that column's own toggle drives.
 
-    D-263: this column shows the shared media pool by default, but the Edit
-    tab's rail can switch it to that tab's Titles / Effects / Subtitles
-    libraries. `debug_ui_state`'s `editor.libraryMode` says which one is
-    showing, so a screenshot of this column can be read correctly; this tool
-    still only controls whether the column is open at all.
+    The Edit tab has no shell column (D-432 P5): it lays out its own media
+    browser beside the viewer, shown and hidden with `debug_set_editor_layout`
+    (`browser_open`) and switched between libraries with
+    `debug_set_library_mode`.
 
     Returns {ok, sourcesPanelOpen}."#
     )]
@@ -384,18 +396,18 @@ impl ApellesMcp {
 
     #[tool(
         name = "debug_set_library_mode",
-        description = r#"Switch which panel the Edit tab's left library column shows, and open
-    the column so that panel is actually visible — the same state the library
-    rail's own buttons drive.
+        description = r#"Switch which library the Edit tab's media browser shows, and show the
+    browser so that library is actually visible — the same state the browser's
+    own tab bar drives (D-432 P5; it replaced the old left icon rail).
 
     `mode` is one of "sources", "titles", "effects", "subtitles", "recut",
-    "music", "clipper" or "index" (`debug_ui_state`'s `editor.libraryModes` lists them). The column
-    is opened as well because the rail lives inside it: choosing a mode while
-    the column is closed would change nothing on screen. Useful to reach the
-    Recut panel and check a retake proposal there. An unknown mode is refused
-    with the accepted list rather than silently ignored.
+    "music", "clipper" or "index" (`debug_ui_state`'s `editor.libraryModes`
+    lists them). The browser is shown as well because choosing a library while
+    it is hidden would change nothing on screen. Useful to reach the Recut
+    panel and check a retake proposal there. An unknown mode is refused with
+    the accepted list rather than silently ignored.
 
-    Returns {ok, libraryMode, sourcesPanelOpen}."#
+    Returns {ok, libraryMode, browserOpen}."#
     )]
     pub async fn debug_set_library_mode(
         &self,
@@ -409,7 +421,7 @@ impl ApellesMcp {
     #[tool(
         name = "debug_set_editor_inspector",
         description = r#"Show or hide the Edit tab's Inspector column — the same state its own
-    toggle button (top-right of the preview) drives.
+    toggle button (right end of the viewer header) drives.
 
     Useful as the first step of a verification loop: open the Inspector here,
     `debug_screenshot` to see it, `debug_dom_tree('[data-chroma-panel=
@@ -423,6 +435,52 @@ impl ApellesMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new().set("open", p.open);
         let env = self.op("debug_set_editor_inspector", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "debug_set_editor_layout",
+        description = r#"Set the Edit tab's panel layout (D-432 P5) — the same state the human
+    sets by dragging its splits: browser | viewer | Inspector across the top,
+    the timeline across the full width below.
+
+    Every argument is optional; give at least one. Sizes are CSS pixels and are
+    clamped to each split's bounds (browser 220-480, Inspector 264-440,
+    timeline at least 180), exactly as a drag is. The layout persists across
+    relaunches like a drag does. `debug_ui_state`'s `editor.layout` reports
+    the current values (`timelineHeight: null` means never resized: the
+    default 42 % share).
+
+    Useful to put the window into a known shape before `debug_screenshot` or a
+    harness scenario, or to reproduce a layout the human reported.
+
+    Args:
+        browser_open: show or hide the media browser (left).
+        browser_width: the browser's width.
+        inspector_width: the Inspector's width (shown or hidden with
+            `debug_set_editor_inspector`).
+        timeline_height: the timeline's height.
+        reset_timeline_height: go back to the default 42 % share (overrides
+            `timeline_height`).
+
+    Returns {ok, layout} with the layout as it now stands."#
+    )]
+    pub async fn debug_set_editor_layout(
+        &self,
+        Parameters(p): Parameters<DebugSetEditorLayoutArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut args = WireArgs::new()
+            .put("browserOpen", p.browser_open)
+            .put("browserWidth", p.browser_width)
+            .put("inspectorWidth", p.inspector_width);
+        // `null` is the op's own "back to the default share", so the reset
+        // flag sends it explicitly rather than omitting the key.
+        args = if p.reset_timeline_height {
+            args.set("timelineHeight", serde_json::Value::Null)
+        } else {
+            args.put("timelineHeight", p.timeline_height)
+        };
+        let env = self.op("debug_set_editor_layout", args).await?;
         Ok(render::json_text(&env))
     }
 

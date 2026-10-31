@@ -493,7 +493,7 @@ tool, on D-232's own reasoning.
 > pointing at the worktree's own `packages/*`. Nothing about the product code
 > depends on it; it is recorded so the numbers can be reproduced.
 
-## Debug / UI verification — CLOSED, 9 tools (D-210 + D-219, 2026-09-08; +1, D-246)
+## Debug / UI verification — CLOSED, 9 tools (D-210 + D-219, 2026-09-08; +1, D-246; +1, D-432 P5)
 
 `debug_screenshot`, `debug_sample_pixel`. Not a *product* capability like
 everything above — an agent-tooling one, and the reason it belongs in this doc
@@ -518,9 +518,10 @@ DOM behind the pixels:
 | --- | --- |
 | `debug_ui_state` | active tab, Sources panel, Edit Inspector, selection/playhead, and every dialog the DOM has open. The read half of the four below. |
 | `debug_set_active_tab` | Edit / Motion / Colorist, through `useShellStore.setActiveTab` — the function the tab button's own onClick calls. |
-| `debug_set_sources_panel` | the shell's docked Sources column, through its own store action. |
-| `debug_set_library_mode` | which panel the Edit tab's left library column shows (sources / titles / effects / subtitles / recut / index), through `useEditorTimelineStore.setLibraryMode`, and opens the column so it is visible. An unknown mode is refused with the accepted list. |
+| `debug_set_sources_panel` | the shell's docked Sources column (Motion / Colorist), through its own store action. |
+| `debug_set_library_mode` | which library the Edit tab's browser shows (sources / titles / effects / subtitles / recut / music / clipper / index), through `useEditorTimelineStore.setLibraryMode`, and shows the browser so it is visible. An unknown mode is refused with the accepted list. |
 | `debug_set_editor_inspector` | the Edit tab's Inspector column, ditto. |
+| `debug_set_editor_layout` | D-432 P5 — the Edit tab's split sizes (browser / Inspector width, timeline height) and whether the browser shows, through `useEditLayoutStore.setLayout` (the action a released split calls); clamped and persisted like a drag. |
 | `debug_set_inspector_tab` | that Inspector's own Video/Audio tab (D-246), through `useEditorTimelineStore.setInspectorTab` — the action the tab button's own onClick calls. Only one tab renders at a time, so this is what puts the half you want to look at on screen before a screenshot or a DOM dump. |
 | `debug_dom_tree` | bounded JSON of the real DOM under a selector: hierarchy, semantic attributes, `getBoundingClientRect()`, chosen computed styles. The "why is it positioned like that" answer a screenshot cannot give. |
 | `debug_frame_timing` | the preview's real rAF/paint intervals — the webview-side smoothness measurement D-217 needed and had no way to take. |
