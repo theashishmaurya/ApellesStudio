@@ -6,6 +6,59 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-432 — Edit-tab redesign in the Final Cut Pro direction: new token values, FCP clip anatomy, full-width timeline
+
+**open: proposed 2026-10-31, awaiting owner approval** · spec, research trail and the concrete CSS defect list: `docs/notes/ui-redesign.md` · mockup: `scratch/ui-redesign-mockup.html` (main checkout; `scratch/` is gitignored) · references: `scratch/ui-redesign-reference/`
+
+**Context.** The owner, 2026-10-31: "I don't like the UI at all … the drag handles, the clip names, etc." He chose Final Cut Pro as the direction (clean, Mac-native, calm, still pro) and supplied an FCP timeline as the target for clip anatomy. He also flagged three specific defects: a selected clip drawn with "a thick white, heavily rounded border" and a floating glyph ("no timeline has this"); a marker flag with no editor on click; and edit tools that "don't show the change / animate properly".
+
+**Research, checked 2026-10-31.**
+- **Final Cut Pro:** Apple's guide pages on the interface, the magnetic timeline, clip appearance and slip/roll edits, plus the owner's screenshot, sampled for colours and proportions.
+- **DaVinci Resolve:** the Blackmagic Edit page scrape (`resolve-reference/`): track headers, markers dialog, trim modes.
+- **Palmier Pro:** README screenshots, and its real theme and timeline constants read from the GPL-3.0 `last-gpl-source` branch (numbers only, no code).
+- **Cardboard:** its docs and screenshots.
+
+The root causes of the owner's complaints are in today's tokens and a few component lines, not in the libraries:
+- The dark theme's accent is white (`themes.ts:23`), so selection, focus and text are the same colour.
+- Selection is a `ring-2` box-shadow outside a rounded body (`TimelinePane.tsx:2700`).
+- Clip names are centred over the picture in black text (`:2947`, `button-text` is black).
+- Clip colours are 55 %-alpha literals over the library's grey backing (`:659`).
+- The library's translucent stretch triangles are the "drag handles".
+- The default font is Poppins (`useAppInitialization.ts:314`).
+
+**Options.**
+- **(a) Restyle component by component, keeping the tokens.** It cannot fix the white-accent collision and adds literals.
+- **(b) Adopt a component kit's theme** (shadcn default / Radix colours) as a second palette. This breaks the one-token-source rule.
+- **(c) Keep the token *names*, change the *values*, add a small set of semantic names, then rebuild the timeline/Inspector/chrome against them in five independently shippable phases.** The new names are `selection`, `playhead`, `divider`, `surface-raised`, `text-tertiary`, `timeline-bg`, `lane-alt`, `destructive`, `clip-label`, and `clip-<kind>` with `-strip` / `-wave`. The values move into `@apelles/tokens`, which was always meant to hold them.
+
+**Choice: (c)**, as specified in the note. Headlines:
+- macOS system blue accent for controls, with amber `#F5C542` for timeline selection and the playhead (FCP's split).
+- SF Pro via the system stack, an 11/12/13 type scale, radii 2/4/6/10, flat panels with 1 px dividers.
+- FCP clip anatomy: a 14–16 px name strip, a continuous filmstrip, the audio waveform band in the same block. The split by track height is specified.
+- A 2 px inset amber selection outline, a 2 px radius, no glyphs over the picture.
+- An edge-hover trim bracket, red at a media limit.
+- Live clip motion for ripple/roll/slip/slide, an edge-pinned delta readout, a two-up viewer for roll/slip/slide, and a ≤ 120 ms transform-only settle.
+- Resolve-style track headers (colour strip, `V1` pill, quiet toggles, resizable, per-track height).
+- Phosphor shield marker flags with an editor that opens on create.
+- An FCP Inspector (icon tabs, collapsible sections, a 92 px label column, a new `NumberScrubber`).
+- **The FCP window arrangement:** the timeline spans the full width, and the Inspector sits beside the viewer.
+
+Every component has a perf note: transform/opacity only, no box-shadow/filter/backdrop in the timeline, one canvas per filmstrip/waveform, and a pane that renders twice per gesture. Every phase has harness targets (drag p95 ≤ 8 ms, zero layout during pointermove, and so on). Every new GUI capability gets its MCP tool in the same phase (`editor_set_track_height`, `editor_set_timeline_view`).
+
+**Why.** The owner picked FCP. Changing values rather than names reaches every surface that already uses the tokens (the Colorist and Motion tabs too) without a parallel theme. The phase order (tokens → clip → headers/ruler/markers → Inspector → chrome) puts the most visible fix second, and keeps the 4.9k-line `TimelinePane.tsx` edits sequential.
+
+**Open questions** (§9 of the note):
+1. The accent colour.
+2. A full-width timeline.
+3. Separate vs. FCP-collapsed linked A/V display.
+4. The light theme.
+5. Skimming.
+6. The viewer scrub bar.
+7. Arithmetic in number fields.
+8. Flat vs. floating panels.
+
+**Not decided here.** Replacing `@xzdarcy/react-timeline-editor`. If the P2 harness shows its interact.js drag (which writes `left` on every move) cannot reach zero layout during a drag, that gets its own D-NNN.
+
 ## D-429 — A `fit` / `fill` footprint starts centred: `position` stays the top-left corner, plus a derived origin
 
 **decided (2026-10-29)** · fixes B-328 · refines D-425 (input scaling) on D-338 (`position` is the top-left corner)

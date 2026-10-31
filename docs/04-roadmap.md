@@ -250,6 +250,8 @@ lives in the `D-NNN` / `docs/notes/*.md` referenced. Sequenced because they shar
 files (`App.tsx`, `Shell.tsx`, `useUIStore.ts`) — one subagent at a time until the
 crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 
+00. **Edit-tab UI redesign, Final Cut Pro direction — D-432 (proposed 2026-10-31, awaiting owner approval)** (owner: "I don't like the UI at all … the drag handles, the clip names"). Spec + CSS defect list + phases: `docs/notes/ui-redesign.md`; mockup `scratch/ui-redesign-mockup.html`. Phases, each shippable alone: P1 tokens/type, P2 clip block + trim/fade handles + edit-tool feedback + playhead, P3 track headers/ruler/markers + per-track height, P4 Inspector + `NumberScrubber`, P5 chrome/layout (full-width timeline). Nothing built until the owner approves.
+
 0a. ~~**Motion renders that survive, report and resume — B-265, B-264, B-263, B-262**~~ **Done 2026-10-26 (D-398).** The render is a backend job (snapshot, persisted, resumable, per-scene targeting), `motion_reload_manifest` + Reload from disk. Open: root-cause the dev webview running stale engine code after a reload (B-265, second half; the Vite server side was checked and is fine).
 
 0b. **Native clip highlights (the "highlighter pen" sweep) — D-396** (owner, 2026-10-26: "for all the newspaper and blogs do that effect ... support that natively"). Shipped: `Clip.highlights`, drawn on the clip's own picture in the live compositor, the compositor export and the ffmpeg export (pixel-pinned to real ffmpeg), `editor_set_clip_highlights` and `editor_suggest_clip_highlights` (OCR + narration match, D-397) over MCP, the Inspector "Highlights" section and draggable viewer boxes. **Done**; open: the viewer boxes are not yet exercised in the running app.
