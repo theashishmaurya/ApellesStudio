@@ -30,10 +30,9 @@
  */
 /** The ruler bar's height, in px. D-432 P3: 24 (spec §4.6), down from the
  *  library's own 32 (`.timeline-editor-time-area { height: 32px }` in its
- *  bundled CSS). `timeline-overrides.css` sets the library's ruler and its
- *  playhead's top from this number through the `--chroma-ruler-height`
- *  custom property `TimelinePane` writes, so the CSS and the overlay maths
- *  read one definition.
+ *  bundled CSS). Since D-437 S4 the playhead (`lanes/Playhead.tsx`, its
+ *  `rulerHeightPx`) and the lanes' scroller top (`RULER_AND_MARGIN_PX`) take it
+ *  straight from here, so the playhead and the overlay maths read one definition.
  *
  *  A constant here rather than a literal at each site (D-222) because two
  *  unrelated files now need the same number and must not disagree about it:

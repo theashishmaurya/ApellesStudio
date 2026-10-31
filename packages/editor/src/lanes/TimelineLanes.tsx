@@ -22,7 +22,7 @@
  * labelled group; each lane is a group labelled with its track label. Off-screen
  * clips are not in the accessibility tree, like any virtualised list.
  *
- * NOT wired into `TimelinePane` yet (D-437 S4 switches the pane over). What it
+ * Rendered by `TimelinePane` since D-437 S4 (in place of the library). What it
  * does NOT do: own selection or editing (`actions`), draw overlays (ruler,
  * markers, transitions, the playhead — `Playhead.tsx` — stay separate), or read
  * the store.
@@ -34,7 +34,7 @@ import { contentWidth } from './laneLayout';
 import { laneIndexOf, laneWindow, laneWindowParams } from './laneWindow';
 import { TrackLane } from './TrackLane';
 import type { LaneActions } from './useLaneActions';
-import { TIMELINE_TEST_IDS } from '../timelineTestIds';
+import { TIMELINE_LIBRARY_ALIAS_CLASSES, TIMELINE_TEST_IDS } from '../timelineTestIds';
 
 export interface TimelineLanesProps {
   tracks: readonly Track[];
@@ -151,7 +151,8 @@ export const TimelineLanes = memo(function TimelineLanes({
       aria-label="Timeline tracks"
       tabIndex={-1}
       data-testid={TIMELINE_TEST_IDS.scroller}
-      className="absolute right-0 bottom-0 left-0 overflow-auto outline-none"
+      // D-437 S4 — the library-era scroller class is an inert alias (S6 deletes it).
+      className={`${TIMELINE_LIBRARY_ALIAS_CLASSES.scroller} absolute right-0 bottom-0 left-0 overflow-auto outline-none`}
       style={{ top: topPx }}
       onScroll={onScroll}
       onFocus={onFocus}

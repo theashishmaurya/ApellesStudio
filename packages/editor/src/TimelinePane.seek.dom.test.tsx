@@ -118,7 +118,8 @@ describe('click-to-seek on the track area (B-326)', () => {
 });
 
 describe('the view follows the playhead during playback (B-326)', () => {
-  const scroller = (): HTMLElement | null => editArea.querySelector('.ReactVirtualized__Grid');
+  // D-437 S4 — the lanes' own native scroller (it was the library's grid).
+  const scroller = (): HTMLElement | null => editArea.querySelector('[data-testid="timeline-scroller"]');
 
   it('pages when the playhead leaves the window, only while playing', () => {
     actSync(() => useEditorTimelineStore.setState({ playhead: 640 }));

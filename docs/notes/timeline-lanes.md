@@ -1,6 +1,6 @@
 # Timeline lanes: replacing `@xzdarcy/react-timeline-editor` (D-437 build plan)
 
-Status: **plan, 2026-11-01. Built so far: S1, S2, S3a, S3b (standalone in `packages/editor/src/lanes/`, not wired into `TimelinePane`; see each step's "Built" note).** Decision: D-437 (`docs/08-decisions.md`).
+Status: **plan, 2026-11-01. Built so far: S0, S1, S2, S3a, S3b, S4 — `TimelinePane` renders the lanes and our playhead since S4; the library package is still installed but imported by nothing (S5 deletes it). See each step's "Built" note.** Decision: D-437 (`docs/08-decisions.md`).
 Evidence: `docs/notes/timeline-drag-perf.md` (B-347), the live harness runs under
 `scratch/ui-harness/runs/` (run 4: `2026-10-31T21-00-23-799Z`). Builds on D-432 P2/P3
 (`docs/notes/ui-redesign.md` §6b, §6c) and the harness (`docs/notes/ui-harness.md`).
@@ -683,6 +683,72 @@ is paint)._
   assertions**; Chromium check in `app/harness.html` (screenshots in `scratch/`); a live
   harness run passes the 51 that run 4 passed. Docs: `ui-redesign.md` §6c "the playhead
   still the library's" line updated; this note's status.
+- **Built (2026-11-01).** `TimelinePane.tsx` renders `<TimelineLanes>` + `<Playhead>` where
+  `<TimelineEditor>` was. The library's JS and CSS imports are gone (it stays in `package.json`
+  for S5), and with them `buildRows`/`EFFECT_ID`/`effects`/`editorData`, `getActionRender`,
+  `editorRef`, `s2f`, `libScaleWidth`, the pane's `TRIM_ZONE_*` copies, the D-128 filmstrip bucket
+  (the lanes' `visibleSlice` does it), the `measureEpoch` key (the hidden-tab case is "width 0 = no
+  culling" now), the `--chroma-ruler-height`/`--chroma-marker-strip-height` custom properties and
+  the row-line divs (the lanes' bottom border). Wiring: `setTime` → `playheadRef.setFrame` (same raw
+  store subscription, D-325); `setScrollLeft` → `scroller.scrollLeft =` (playback follow, B-326, and
+  the zoom anchor's layout effect, which now also calls `playheadRef.setScroll` in the same commit);
+  the scroller's `scroll` event → `onTimelineScroll` (B-326 detection, `setScrollLeft/Top`,
+  `playheadRef.setScroll`); `onClickAction` → `onClipClick(e, track, id)` behind `useLaneActions`;
+  the three `.timeline-editor-action` reads → `[data-chroma-clip-slot]`; `MARQUEE_BLOCKING_SELECTOR`
+  per §2.7; the playhead's scrub → `setPlaying(false)`/`setPlayhead`/`beginScrub`,
+  `setPlayhead`/`updateScrub`, `endScrub`. `pinnedClipIds` = the dnd-kit drag source (a memoised
+  `Set`). P2's `useEditGesture` (and S0's `commit-*` perf marks, which fire from its
+  `committedRendered`/`committedEffects` on the pane's commit), the overlays, P3's headers/heights/
+  ruler/markers/skimmer/two-up, P5's `toolbarCenter`, F1–F4 and B-349's head-only grab are untouched.
+  `timeline-overrides.css` keeps only the B-351 and edit-gesture cursor rules.
+  **Tests:** editor 2961 green (2952 before; +6 `TimelinePane.laneRenders.dom.test.tsx`, marquee
+  tests rewritten for the new selector, the override-CSS pins rewritten), ui-harness 80, tsc
+  baselines unchanged (editor 3, app 65), `reactCompiler.test.ts` zero bailouts (pane + `lanes/`).
+  Every P2 gesture case in `TimelinePane.clipBlock.dom.test.tsx` passes with no assertion edits.
+  **Render counts at the pane level** (`TimelinePane.laneRenders.dom.test.tsx`, real store, real
+  ops, counted at `LaneClip`'s `memo` boundary): an unrelated pane render re-renders 0 clips; a plain
+  trim re-renders the trimmed clip, plus the next clip only when its cut mark changed (it no longer
+  abuts); a trim with no abutting neighbour re-renders exactly 1; a ripple trim re-renders the
+  trimmed and shifted clips and nothing on the non-sync-locked track; a selection re-renders the
+  selected clip plus the clips that turn sync-linked; a move re-renders the moved clip only. A
+  playhead tick costs **0** pane commits now (was 1 per tick: the library's cursor re-render;
+  `TimelinePane.playheadCost.dom.test.tsx` tightened to 0).
+  **Ported suites:** `clipDrag` (the scroller test id instead of the library's grid),
+  `seek` (same), `playheadCost` (0 commits + the line's transform moved), `zoomScrollLoop`
+  (rewritten as planned: one `scrollLeft` write per zoom change, never from a passive effect,
+  against the new content width; the B-291 loop has no second copy to loop with), `marquee.test.ts`,
+  `timelineOverrides.test.ts`. The rest (`trim`, `trimTools`, `zoomedOut`, `clipBlock`,
+  `cssOverrides`, …) run unchanged through the aliases below.
+  **Visual check:** headless Chromium on `app/harness.html?mode=edit` (dev server on a private
+  port), same state before (library) and after: `scratch/d437-s4/{before,after}-{1-initial,
+  2-selected,3-zoomed-scrolled}.png` (main checkout's `scratch/`). Clip boxes, rows, ruler, selection
+  and playhead x are pixel-identical at scroll 0; after a ×3 zoom and a 400 px scroll, clips, ruler
+  labels and playhead agree (the library build ignored the scripted scroll, so shot 3 has no
+  library twin). Intended differences: the head is the Phosphor caret in the ruler (§2.6) instead of
+  the library's pentagon in the marker band. One unplanned difference to confirm with the owner:
+  the library painted faint per-tick vertical grid lines through the lanes (its row background);
+  the lanes draw none (no spec asks for them; Final Cut has none).
+  **Deviations:** (1) **Class aliases instead of only repointing `TIMELINE_LIBRARY_SELECTORS`.** The
+  new elements also carry the library's class names (`TIMELINE_LIBRARY_ALIAS_CLASSES` in
+  `timelineTestIds.ts`, the one definition; `TIMELINE_LIBRARY_SELECTORS` is derived from it), so the
+  harness and its unit tests need no change at all across the switch and the DOM suites querying
+  `.timeline-editor-*` keep working. Because the aliases would otherwise pick up the library-era
+  override rules (`.timeline-editor-cursor-top { transform }` would move the head,
+  `.timeline-editor-edit-area { margin-top }` would shift the scroller), those rules were deleted in
+  S4 rather than S5, and `timelineOverrides.test.ts` now pins that no rule styles an alias. S6 deletes
+  the aliases with the selectors. (2) `useViewportWidth` still observes the **edit area**, not the
+  scroller: every other consumer (ruler, beat lane, follower, gesture) reads the edit area's width,
+  and with overlay scrollbars the two are equal; `epoch` is now unused (S5 drops it). (3) **The edit
+  gesture's target is not pinned** separately: it is on screen at the press, the window keeps a
+  viewport of overscan, and `styledFor` already tolerates a missing body; pinning it would need a
+  pane render at the claim. Only a > 1-viewport scroll during a trim could unmount it (preview drops,
+  the commit is unaffected). (4) The playhead's `onScrubStart` gets the snapped frame (the library
+  passed the raw one).
+  **Check live with the harness (S4's remaining gate):** the full run (`npm run harness --workspace
+  @apelles/ui-harness`) against the 51/55 of run 4; WKWebView scrollbars on the scroller (R12: overlay
+  vs. classic, and whether a classic bar shrinks the lanes' viewport); the playhead head/band grab and
+  scrub autoscroll; dnd-kit autoscroll finding the new scroller during a clip drag; header column
+  vertical sync while scrolling; a hidden-tab start (B-267) now that there is no remount.
 
 ### S5 — delete the library
 - Remove `@xzdarcy/react-timeline-editor` from `packages/editor/package.json` and the lock

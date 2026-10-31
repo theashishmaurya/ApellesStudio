@@ -19,13 +19,18 @@
  *   clip" would then need a prefix match that also catches the clip's own
  *   handles.
  *
- * What it does NOT cover: parts the timeline LIBRARY renders itself
- *   (`@xzdarcy/react-timeline-editor` — the ruler, the playhead, a clip's two
- *   edge-trim handles). Those elements are not ours to put attributes on; the
- *   harness addresses them by the library's own class names in
- *   `TIMELINE_LIBRARY_SELECTORS` below, and a test pins those names against
- *   the installed library so an upgrade that renames one fails loudly.
- *
+ * The library-era class names (D-437 S4): until D-437 S4 the edit area, the
+ *   playhead and each clip's wrapper were rendered by
+ *   `@xzdarcy/react-timeline-editor`, and the harness addressed them by the
+ *   library's own class names (`TIMELINE_LIBRARY_SELECTORS`). S4 switched the
+ *   pane to Apelles' own lanes (`lanes/`), which carry real test ids (`trackRow`,
+ *   `clipSlot`, `scroller`, `playhead`, `playheadHead`, `playheadBand`) AND, as a
+ *   transitional alias, the old class names (`TIMELINE_LIBRARY_ALIAS_CLASSES`),
+ *   so every harness scenario and DOM suite runs unchanged across the switch.
+ *   The aliases are selectors only: no stylesheet may style them
+ *   (`timelineOverrides.test.ts`). D-437 S6 moves the harness to the test ids
+ *   and deletes both objects.
+
  * Test ids are inert in production (an attribute nothing in the app reads),
  *   which is why they are not compile-gated the way the debug tooling is.
  */
@@ -57,8 +62,8 @@ export const TIMELINE_TEST_IDS = {
    *  (carries `data-chroma-track`), a clip's positioning slot (also
    *  `data-chroma-clip-slot`; the `timeline-clip` body is inside it), the
    *  native scroller, and the playhead's line, head (in the ruler) and grab
-   *  band (under it). They replace the library selectors below once the pane
-   *  is switched over. */
+   *  band (under it). Since S4 the pane renders them; they also carry the
+   *  library-era class aliases below until S6. */
   trackRow: 'timeline-track-row',
   clipSlot: 'timeline-clip-slot',
   scroller: 'timeline-scroller',
@@ -154,18 +159,42 @@ export const TIMELINE_TEST_IDS = {
 
 export type TimelineTestId = (typeof TIMELINE_TEST_IDS)[keyof typeof TIMELINE_TEST_IDS];
 
-/** The library-rendered parts, by the library's own class names (pinned by
- *  `timelineTestIds.test.ts` against the installed package's stylesheet). */
+/** D-437 S4 — the class names `@xzdarcy/react-timeline-editor` gave these parts,
+ *  now written by Apelles' own lanes onto the elements that replaced them, so a
+ *  selector written against the library keeps matching (see the module doc).
+ *  One definition: the lane components read their alias from here, and
+ *  `TIMELINE_LIBRARY_SELECTORS` is derived from it. Inert: no stylesheet styles
+ *  them. Deleted by D-437 S6 together with the selectors below. */
+export const TIMELINE_LIBRARY_ALIAS_CLASSES = {
+  /** On the playhead line (`TIMELINE_TEST_IDS.playhead`). */
+  playhead: 'timeline-editor-cursor',
+  /** On the playhead's head, in the ruler (`TIMELINE_TEST_IDS.playheadHead`). */
+  playheadHandle: 'timeline-editor-cursor-top',
+  /** On the playhead's grab band under the ruler (`TIMELINE_TEST_IDS.playheadBand`):
+   *  with the head, the only part of the playhead that takes the pointer (B-346, B-349). */
+  playheadBand: 'timeline-editor-cursor-area',
+  /** On each clip's positioning slot (`TIMELINE_TEST_IDS.clipSlot`). */
+  action: 'timeline-editor-action',
+  /** On the native scroller (`TIMELINE_TEST_IDS.scroller`). */
+  scroller: 'timeline-editor-edit-area',
+  /** On each track's lane row (`TIMELINE_TEST_IDS.trackRow`). */
+  row: 'timeline-editor-edit-row',
+} as const;
+
+/** The library-era selectors (`.` + `TIMELINE_LIBRARY_ALIAS_CLASSES`), kept so the UI
+ *  harness compiles and runs unchanged across D-437 S4. Each still names a class the
+ *  installed library styles (pinned by `timelineTestIds.test.ts` until S5 removes the
+ *  package); S6 moves the harness to `TIMELINE_TEST_IDS` and deletes this. */
 export const TIMELINE_LIBRARY_SELECTORS = {
   /** The playhead line, and the grab handle at its top. */
-  playhead: '.timeline-editor-cursor',
-  playheadHandle: '.timeline-editor-cursor-top',
+  playhead: `.${TIMELINE_LIBRARY_ALIAS_CLASSES.playhead}`,
+  playheadHandle: `.${TIMELINE_LIBRARY_ALIAS_CLASSES.playheadHandle}`,
   /** The playhead's head band under the ruler: the only part of it that takes the pointer (B-346, B-349). */
-  playheadBand: '.timeline-editor-cursor-area',
-  /** The wrapper the library draws around each clip. */
-  action: '.timeline-editor-action',
-  /** The library's own scroll container (its native scrollbars live here). */
-  scroller: '.timeline-editor-edit-area',
+  playheadBand: `.${TIMELINE_LIBRARY_ALIAS_CLASSES.playheadBand}`,
+  /** Each clip's positioning slot (the library's "action" wrapper). */
+  action: `.${TIMELINE_LIBRARY_ALIAS_CLASSES.action}`,
+  /** The timeline's scroll container (its native scrollbars live here). */
+  scroller: `.${TIMELINE_LIBRARY_ALIAS_CLASSES.scroller}`,
 } as const;
 
 /** The view readout on the edit area (D-434) — the zoom and scroll that live

@@ -47,6 +47,13 @@
  * asserting a property of a third-party library's internals this fix does
  * not (and should not try to) change.
  *
+ * **D-437 S4 — zero commits now.** The pane renders its own `Playhead`
+ * (`lanes/Playhead.tsx`), moved by `playheadRef.setFrame` writing one
+ * `transform`; there is no library state left to re-render. So the assertion
+ * tightened from "N ticks cost exactly N commits" to "N ticks cost ZERO
+ * commits, and the line really moved": the remaining per-tick React cost the
+ * paragraph above disclosed is gone, not just bounded.
+ *
  * **Tier and its honest limits.** jsdom — same caveats as every sibling
  * `*.dom.test.tsx` in this package: no real layout, no real paint, no real
  * IPC. This proves the redundant commit is gone; it cannot say how many real
@@ -178,9 +185,9 @@ afterEach(() => {
   );
 });
 
-describe('D-325 — a playhead-only update commits TimelinePane once, not twice', () => {
+describe('D-325 / D-437 S4 — a playhead-only update commits nothing; the line moves by transform', () => {
   for (const clipCount of [2, 96, 200]) {
-    it(`clip_count=${clipCount}: ${TICKS} ticks cost exactly ${TICKS} commits`, async () => {
+    it(`clip_count=${clipCount}: ${TICKS} ticks cost zero commits`, async () => {
       await mountPane(clipCount);
       commits.length = 0; // drop mount-time commits — measure steady-state ticks only
 
@@ -188,19 +195,16 @@ describe('D-325 — a playhead-only update commits TimelinePane once, not twice'
         actSync(() => useEditorTimelineStore.setState({ playhead: i }));
       }
 
-      // The regression this guards: before D-325, a reactive `playhead`
-      // selector made this component re-render on top of the SAME effect's
-      // own imperative `editorRef.current.setTime()` call — two commits for
-      // one playhead update. Exactly one commit per tick is the fixed
-      // behaviour; two (or more) is the bug back.
-      expect(commits.length).toBe(TICKS);
-
-      const total = commits.reduce((a, b) => a + b, 0);
-      // eslint-disable-next-line no-console
-      console.log(
-        `clip_count=${clipCount}: ${commits.length} commits, ${total.toFixed(3)}ms total, ` +
-          `${(total / commits.length).toFixed(4)}ms/commit`,
-      );
+      // Before D-325 a reactive `playhead` selector re-rendered this component
+      // on top of the library's own re-render (two commits per tick); D-325
+      // got it to one (the library's). D-437 S4's playhead is moved by a
+      // `transform` write through its handle: any commit at all is the bug back.
+      expect(commits.length).toBe(0);
+      const line = ui!.container.querySelector<HTMLElement>('[data-testid="timeline-playhead"]');
+      expect(line).not.toBeNull();
+      // START_LEFT_PX + TICKS frames at the default zoom, minus no scroll: not the origin.
+      expect(line!.style.transform).toMatch(/^translate3d\(/);
+      expect(line!.style.transform).not.toBe('translate3d(32px, 0, 0)');
     }, 15000);
   }
 });

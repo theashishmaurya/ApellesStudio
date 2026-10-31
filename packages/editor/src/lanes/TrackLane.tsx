@@ -18,7 +18,7 @@ import { animatedParams } from '../clipKeyframes';
 import { clipKindOf } from '../clipAnatomy';
 import type { CurveEditorTarget } from '../timelineStore';
 import type { Track } from '../timeline';
-import { TIMELINE_TEST_IDS } from '../timelineTestIds';
+import { TIMELINE_LIBRARY_ALIAS_CLASSES, TIMELINE_TEST_IDS } from '../timelineTestIds';
 import { LaneClip } from './LaneClip';
 import { clipLeftPx, clipWidthPx, visibleSlice } from './laneLayout';
 import { windowClipIndices, type LaneFrameWindow } from './laneWindow';
@@ -90,7 +90,8 @@ export function TrackLane({
       aria-label={label}
       data-testid={TIMELINE_TEST_IDS.trackRow}
       data-chroma-track={trackIndex}
-      className="absolute left-0 border-b border-border-color/60"
+      // D-437 S4 — the library-era row class is an inert alias (S6 deletes it).
+      className={`${TIMELINE_LIBRARY_ALIAS_CLASSES.row} absolute left-0 border-b border-border-color/60`}
       style={{ top, height, width: contentWidthPx, contain: 'strict' }}
     >
       {windowClipIndices(track, frameWindow, fps, pinnedIds).map((clipIndex) => {

@@ -77,33 +77,35 @@ function target(...chain: string[]): MarqueeHitTarget {
 
 describe('canStartMarquee — empty-space vs. clip pointerdown discrimination', () => {
   it('starts on genuinely empty edit-area canvas', () => {
-    expect(canStartMarquee(0, target('.timeline-editor-edit-area'))).toBe(true);
+    expect(canStartMarquee(0, target('[data-testid="timeline-scroller"]'))).toBe(true);
   });
 
   it('refuses a pointerdown on the dnd-kit draggable clip body', () => {
     // The real DOM shape: our label div, inside `ClipBody` (the one
-    // `useDraggable` node), inside the library's action wrapper.
+    // `useDraggable` node), inside its lane slot, inside its track's lane.
     expect(
-      canStartMarquee(0, target('[data-chroma-clip-drag]', '.timeline-editor-action', '.timeline-editor-edit-row')),
+      canStartMarquee(0, target('[data-chroma-clip-drag]', '[data-chroma-clip-slot]', '[data-testid="timeline-track-row"]')),
     ).toBe(false);
   });
 
   it('refuses even if only the dnd-kit attribute is present', () => {
     // The load-bearing assertion: the guard is "is a dnd-kit draggable on this
-    // event's path", independent of the timeline library's own classes. If
-    // `ClipBody` ever moved out from under `.timeline-editor-action`, this
-    // still holds.
+    // event's path", independent of the lane slot around it. If `ClipBody`
+    // ever moved out from under `[data-chroma-clip-slot]`, this still holds.
     expect(canStartMarquee(0, target('[data-chroma-clip-drag]'))).toBe(false);
   });
 
-  it("refuses the library's own edge-trim handles (an action descendant)", () => {
-    expect(canStartMarquee(0, target('.timeline-editor-action-left-stretch', '.timeline-editor-action'))).toBe(false);
+  it('refuses the clip slot around the body (its 1 px insets are the clip, D-437 S4)', () => {
+    expect(canStartMarquee(0, target('[data-chroma-clip-slot]', '[data-testid="timeline-track-row"]'))).toBe(false);
   });
 
-  it('refuses the ruler and the playhead cursor', () => {
-    expect(canStartMarquee(0, target('.timeline-editor-time-area'))).toBe(false);
-    expect(canStartMarquee(0, target('.timeline-editor-cursor'))).toBe(false);
-    expect(canStartMarquee(0, target('.timeline-editor-cursor-area'))).toBe(false);
+  it('refuses the ruler and the playhead (line, head, band)', () => {
+    expect(canStartMarquee(0, target('[data-testid="timeline-ruler"]'))).toBe(false);
+    expect(canStartMarquee(0, target('[data-chroma-playhead]'))).toBe(false);
+  });
+
+  it('starts on an empty lane (the track row itself is canvas)', () => {
+    expect(canStartMarquee(0, target('[data-testid="timeline-track-row"]', '[data-testid="timeline-scroller"]'))).toBe(true);
   });
 
   it('honours the explicit opt-out attribute', () => {
@@ -111,8 +113,8 @@ describe('canStartMarquee — empty-space vs. clip pointerdown discrimination', 
   });
 
   it('refuses a non-primary button and a missing target', () => {
-    expect(canStartMarquee(1, target('.timeline-editor-edit-area'))).toBe(false);
-    expect(canStartMarquee(2, target('.timeline-editor-edit-area'))).toBe(false);
+    expect(canStartMarquee(1, target('[data-testid="timeline-scroller"]'))).toBe(false);
+    expect(canStartMarquee(2, target('[data-testid="timeline-scroller"]'))).toBe(false);
     expect(canStartMarquee(0, null)).toBe(false);
   });
 });
