@@ -4,6 +4,14 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-352 — the UI harness reports "no frames sampled" instead of detecting a locked screen, and `debug_activate_app` reports success without bringing Apelles forward
+
+status: open · severity: minor (harness) · area: `packages/ui-harness` (CLI start), `app/src-tauri/src/chroma/debug_input.rs` (`debug_activate_app`)
+
+- **Seen:** third live run (2026-11-01, `scratch/ui-harness/runs/2026-10-31T20-38-35-053Z`). Every measured step reported `frames 0` ("the window is throttled or rAF is stalled"), playback and Space failed, and 4 hover scenarios skipped. The run was functionally fine (45/55 pass), and the `apelles:edit:*` marks still recorded (preview p95 1–4 ms, `commitRenderedMs` 60–101 ms).
+- **Cause found afterwards:** the Mac's screen was locked. `debug_activate_app` answered `ok: true` with `active: false` and the frontmost app `loginwindow`. While the session is locked, macOS stops display updates, so rAF never fires and no window can become key.
+- **Fix:** `debug_activate_app` returns an error, not `ok`, when activation did not take, naming the frontmost app. The CLI checks for `loginwindow` (locked or asleep) before measuring and stops with "unlock the Mac and keep Apelles visible", instead of marking every perf step OVER with zero frames.
+
 ## B-351 — a clip body shows the hand (`pointer`) cursor with the Select tool, not the arrow D-432 specifies
 
 status: **fixed 2026-11-01** — `timeline-overrides.css`: `[data-chroma-clip-drag] { cursor: default }`. It matches the `ClipBody` element only (so a real button inside a clip keeps its pointer, and no `TimelinePane.tsx` edit was needed); the inline cursors the trim hover and the gestures write still win. Pinned by `timelineOverrides.test.ts` and `TimelinePane.cssOverrides.dom.test.tsx` (computed cursor `default` on a `role="button"` body). Not re-checked live · was: severity: minor (feel, not function) · area: `packages/editor/src/TimelinePane.tsx` `ClipBody` (spreads dnd-kit's `useDraggable` `attributes`, which include `role="button"`), `app/src/styles.css:184` (`@layer base { :where(button, [role='button']):not([disabled]) { cursor: pointer } }`)
