@@ -24,7 +24,7 @@
  */
 
 import { describeElement } from './geometry';
-import { droppedFrames, FRAME_BUDGET_MS, intervals, summarize, type Summary } from './stats';
+import { droppedFrames, FRAME_BUDGET_MS, intervals, splitFramePhases, summarize, type Summary } from './stats';
 
 export interface WatchOptions {
   /** CSS selectors whose matched elements' rects are sampled every frame. */
@@ -57,6 +57,10 @@ export interface WatchFrame {
 export interface PerfReport {
   frameBudgetMs: number;
   frames: (Summary & { dropped: number }) | { samples: 0 };
+  /** `frames` split at the release (`pointerup`): the gesture's move frames, and
+   *  the frames after it (the commit). `null` when there was no release or no
+   *  frame in that phase. Present only when the gesture had a `pointerup`. */
+  phases?: { move: (Summary & { dropped: number }) | null; release: (Summary & { dropped: number }) | null };
   /** Per input event: time from the event to the next animation frame. */
   inputToFrame: Summary | null;
   store: {
@@ -73,7 +77,7 @@ const r1 = (n: number) => Math.round(n * 10) / 10;
 
 export interface FrameSampler {
   noteStoreChange(): void;
-  stop(inputTimes: readonly number[]): { perf: PerfReport; watch: WatchFrame[] | null; watchTruncated: boolean };
+  stop(inputTimes: readonly number[], releaseAt?: number | null): { perf: PerfReport; watch: WatchFrame[] | null; watchTruncated: boolean };
 }
 
 export function startFrameSampler(opts: {
@@ -134,7 +138,7 @@ export function startFrameSampler(opts: {
     noteStoreChange: () => {
       storeTimes.push(now());
     },
-    stop(inputTimes) {
+    stop(inputTimes, releaseAt = null) {
       running = false;
       win.cancelAnimationFrame(handle);
       const frameIntervals = intervals(frameTimes);
@@ -144,6 +148,11 @@ export function startFrameSampler(opts: {
         const next = frameTimes.find((f) => f >= t);
         if (next !== undefined) latencies.push(next - t);
       }
+      const withDropped = (xs: readonly number[]) => {
+        const s = summarize(xs);
+        return s ? { ...s, dropped: droppedFrames(xs) } : null;
+      };
+      const phases = releaseAt === null ? null : splitFramePhases(frameTimes, releaseAt);
       const firstInput = inputTimes.length ? Math.min(...inputTimes) : null;
       const lastInput = inputTimes.length ? Math.max(...inputTimes) : null;
       const firstCommit = firstInput === null ? undefined : storeTimes.find((s) => s >= firstInput);
@@ -152,6 +161,7 @@ export function startFrameSampler(opts: {
         perf: {
           frameBudgetMs: r1(FRAME_BUDGET_MS),
           frames: summary ? { ...summary, dropped: droppedFrames(frameIntervals) } : { samples: 0 },
+          ...(phases ? { phases: { move: withDropped(phases.move ?? []), release: withDropped(phases.release ?? []) } } : {}),
           inputToFrame: summarize(latencies),
           store: {
             commits: storeTimes.length,

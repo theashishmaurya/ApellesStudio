@@ -132,7 +132,7 @@ async function runPlan(
   }
   const durationMs = Math.round(performance.now() - started);
   const observed = observer.stop();
-  const sampled = sampler?.stop(observed.inputTimes);
+  const sampled = sampler?.stop(observed.inputTimes, observed.releaseAt);
   for (const ev of plan) if (ev.kind === 'mouse') heldButtons = ev.buttons;
   // `inputTimes` is internal (it feeds the latency numbers) and not reported.
   const observedOut = {

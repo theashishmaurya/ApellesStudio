@@ -1,7 +1,7 @@
 /** D-434 — the perf arithmetic shared by the input tool and the scenario runner. */
 import { describe, expect, it } from 'vitest';
 
-import { droppedFrames, FRAME_BUDGET_MS, intervals, percentile, summarize } from './stats';
+import { droppedFrames, FRAME_BUDGET_MS, intervals, percentile, splitFramePhases, summarize } from './stats';
 
 describe('stats', () => {
   it('nearest-rank percentiles report values that really occurred', () => {
@@ -28,5 +28,23 @@ describe('stats', () => {
   it('intervals are successive differences', () => {
     expect(intervals([0, 16, 40])).toEqual([16, 24]);
     expect(intervals([5])).toEqual([]);
+  });
+});
+
+describe('splitFramePhases (B-347 F6)', () => {
+  const frames = [0, 16, 33, 50, 66, 150, 166, 183];
+
+  it('puts the interval that ends at or after the release, and everything later, in the release phase', () => {
+    const { move, release } = splitFramePhases(frames, 100);
+    expect(move).toEqual([16, 17, 17, 16]);
+    expect(release).toEqual([84, 16, 17]);
+  });
+
+  it('a release before the first frame makes everything the release phase', () => {
+    expect(splitFramePhases(frames, -5)).toEqual({ move: [], release: intervals(frames) });
+  });
+
+  it('no release time (a key press, a wheel) is all move', () => {
+    expect(splitFramePhases(frames, null)).toEqual({ move: intervals(frames), release: null });
   });
 });
