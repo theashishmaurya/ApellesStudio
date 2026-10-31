@@ -678,6 +678,8 @@ replacing it is a separate D-NNN, not part of this redesign.
 
 ## 9. Open questions for the owner
 
+**Answered 2026-10-31: see D-432** (terracotta accent, full-width timeline, separate A/V tracks, skimming on S with snapping on N; the rest take the defaults below).
+
 1. **Accent colour.** macOS system blue (`#0A84FF`, FCP's own active-control colour) for controls, with amber kept for timeline selection and the playhead. Or should Apelles have a brand accent of its own?
 2. **Layout.** Should the timeline go full width under all three upper panels (FCP), or stay under the viewer only (today)?
 3. **Linked A/V display.** Keep the picture and its linked audio on separate V and A lanes, with the audio band in the video clip only as a reference (Resolve/Premiere)? Or offer an FCP-style collapsed view where the linked audio lives inside the video block and the A-lane clip is hidden?

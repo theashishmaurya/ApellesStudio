@@ -8,7 +8,7 @@ Status: `open` · `decided` · `revisit`
 
 ## D-432 — Edit-tab redesign in the Final Cut Pro direction: new token values, FCP clip anatomy, full-width timeline
 
-**open: proposed 2026-10-31, awaiting owner approval** · spec, research trail and the concrete CSS defect list: `docs/notes/ui-redesign.md` · mockup: `scratch/ui-redesign-mockup.html` (main checkout; `scratch/` is gitignored) · references: `scratch/ui-redesign-reference/`
+**accepted 2026-10-31 (owner reviewed the mockup; answers below)** · spec, research trail and the concrete CSS defect list: `docs/notes/ui-redesign.md` · mockup: `scratch/ui-redesign-mockup.html` (main checkout; `scratch/` is gitignored) · references: `scratch/ui-redesign-reference/`
 
 **Context.** The owner, 2026-10-31: "I don't like the UI at all … the drag handles, the clip names, etc." He chose Final Cut Pro as the direction (clean, Mac-native, calm, still pro) and supplied an FCP timeline as the target for clip anatomy. He also flagged three specific defects: a selected clip drawn with "a thick white, heavily rounded border" and a floating glyph ("no timeline has this"); a marker flag with no editor on click; and edit tools that "don't show the change / animate properly".
 
@@ -47,15 +47,13 @@ Every component has a perf note: transform/opacity only, no box-shadow/filter/ba
 
 **Why.** The owner picked FCP. Changing values rather than names reaches every surface that already uses the tokens (the Colorist and Motion tabs too) without a parallel theme. The phase order (tokens → clip → headers/ruler/markers → Inspector → chrome) puts the most visible fix second, and keeps the 4.9k-line `TimelinePane.tsx` edits sequential.
 
-**Open questions** (§9 of the note):
-1. The accent colour.
-2. A full-width timeline.
-3. Separate vs. FCP-collapsed linked A/V display.
-4. The light theme.
-5. Skimming.
-6. The viewer scrub bar.
-7. Arithmetic in number fields.
-8. Flat vs. floating panels.
+**Owner's answers (2026-10-31)** to §9 of the note:
+1. **Accent: Apelles terracotta**, not macOS blue. The brand accent drives buttons, focus rings and active tools; timeline selection and the playhead stay amber.
+2. **Timeline: full window width** (FCP).
+3. **Linked A/V: separate V and A tracks** (Resolve/Premiere); no collapsed view.
+4. **Skimming: yes**, off by default, toggled with **S** (FCP's key). Snapping therefore takes **N** (FCP's key too); the Roll tool, which holds N today, moves to a free key chosen at build time and recorded in the keymap docs.
+
+Not asked, taken as the spec's defaults: dark theme only for v0.4 (light follows), a thin 3 px viewer scrub bar, arithmetic in number fields, flat panels.
 
 **Not decided here.** Replacing `@xzdarcy/react-timeline-editor`. If the P2 harness shows its interact.js drag (which writes `left` on every move) cannot reach zero layout during a drag, that gets its own D-NNN.
 
