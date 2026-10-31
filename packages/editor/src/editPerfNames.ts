@@ -6,20 +6,28 @@
  * `debug_perf_entries` and the harness read them back by these names.
  */
 
-/** Every mark / measure name, under one prefix so one read takes them all. */
+/**
+ * Every mark / measure name, under one prefix so one read takes them all. The
+ * names are plain string literals, not template literals: a bundler can then drop
+ * the unused table whole in a release build (a template is not provably pure).
+ */
 export const EDIT_PERF_PREFIX = 'apelles:edit:';
 
 export const EDIT_PERF = {
   /** mark: the press claimed an edit gesture. */
-  press: `${EDIT_PERF_PREFIX}press`,
+  press: 'apelles:edit:press',
   /** mark: a preview started. */
-  previewStart: `${EDIT_PERF_PREFIX}preview:start`,
+  previewStart: 'apelles:edit:preview:start',
   /** measure: one preview (the op on a copy plus the style writes). */
-  preview: `${EDIT_PERF_PREFIX}preview`,
+  preview: 'apelles:edit:preview',
   /** mark: the release is about to call the op. */
-  commit: `${EDIT_PERF_PREFIX}commit`,
-  /** measure: commit -> React has rendered the result. */
-  commitRendered: `${EDIT_PERF_PREFIX}commit-rendered`,
-  /** measure: commit -> the frame after it. */
-  commitPainted: `${EDIT_PERF_PREFIX}commit-painted`,
+  commit: 'apelles:edit:commit',
+  /** measure: commit -> React has rendered the result (layout effects). */
+  commitRendered: 'apelles:edit:commit-rendered',
+  /** measure: commit -> the pane's passive effects have run. */
+  commitEffects: 'apelles:edit:commit-effects',
+  /** measure: commit -> the start of the next frame (rAF; before that frame's style/layout/paint). */
+  commitFrame: 'apelles:edit:commit-frame',
+  /** measure: commit -> after the next frame has rendered (rAF, then a posted task). */
+  commitPainted: 'apelles:edit:commit-painted',
 } as const;

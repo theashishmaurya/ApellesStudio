@@ -56,9 +56,21 @@ describe('summarizeEditMarks (F6)', () => {
       ...[1, 2, 3, 4, 20].map((d) => entry('apelles:edit:preview', d)),
       entry('apelles:edit:commit-rendered', 12),
       entry('apelles:edit:commit-rendered', 30),
+      entry('apelles:edit:commit-effects', 33),
+      entry('apelles:edit:commit-frame', 38),
       entry('apelles:edit:commit-painted', 45),
     ]);
-    expect(out).toMatchObject({ previews: 5, previewP50Ms: 3, previewP95Ms: 20, previewMaxMs: 20, commitRenderedMs: 30, commitPaintedMs: 45 });
+    expect(out).toMatchObject({
+      previews: 5,
+      previewP50Ms: 3,
+      previewP95Ms: 20,
+      previewMaxMs: 20,
+      commitRenderedMs: 30,
+      commitEffectsMs: 33,
+      commitFrameMs: 38,
+      commitPaintedMs: 45,
+      paintMs: 7,
+    });
   });
 
   it('is null when the app wrote no edit marks (a production web bundle)', () => {

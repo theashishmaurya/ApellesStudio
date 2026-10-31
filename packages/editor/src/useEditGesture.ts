@@ -40,7 +40,7 @@
  * `timeline.ts` `applyOp`).
  */
 
-import { useLayoutEffect, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 
 import type { EditFeedbackHandle } from './EditFeedbackLayer';
 import {
@@ -62,7 +62,7 @@ import { TIMELINE_TEST_IDS } from './timelineTestIds';
 import { rowHeightAt, rowTopAt } from './trackHeight';
 import { usePreviewPeekStore } from './previewPeek';
 import { twoUpView } from './twoUp';
-import { EDIT_PERF, perfMark, perfMeasure, perfMeasureAfterPaint } from './editPerf';
+import { EDIT_PERF, perfMark, perfMeasure, perfMeasureAfterPaint, perfMeasureAtFrame } from './editPerf';
 
 /** Snap threshold, px at any zoom (Palmier Pro's 8 px, spec §5). */
 export const EDIT_SNAP_PX = 8;
@@ -151,6 +151,8 @@ export interface EditGestureController {
   setView: (view: EditGestureView) => void;
   /** the render that landed a committed edit: drop the preview's inline styles */
   committedRendered: () => void;
+  /** the passive-effect half of the same commit (a perf mark only, D-437 S0a) */
+  committedEffects: () => void;
 }
 
 /**
@@ -169,6 +171,8 @@ export function createEditGesture(
   const gestureRef: { current: Gesture | null } = { current: null };
   /** Clips styled by a committed gesture, cleared on the render that lands it. */
   const pendingClearRef: { current: Map<string, StyledClip> | null } = { current: null };
+  /** a commit's passive effects have not run yet (only for the `commit-effects` perf mark) */
+  let effectsPending = false;
   const hoverKeyRef: { current: string | null } = { current: null };
 
   const px = (frames: number) => {
@@ -507,8 +511,15 @@ export function createEditGesture(
       if (!pending) return;
       pendingClearRef.current = null;
       resetStyles(pending);
+      effectsPending = true;
       perfMeasure(EDIT_PERF.commitRendered, EDIT_PERF.commit);
+      perfMeasureAtFrame(EDIT_PERF.commitFrame, EDIT_PERF.commit);
       perfMeasureAfterPaint(EDIT_PERF.commitPainted, EDIT_PERF.commit);
+    },
+    committedEffects() {
+      if (!effectsPending) return;
+      effectsPending = false;
+      perfMeasure(EDIT_PERF.commitEffects, EDIT_PERF.commit);
     },
   };
 }
@@ -528,6 +539,10 @@ export function useEditGesture(
   // so the preview's inline styles come off in the same frame, before paint.
   useLayoutEffect(() => {
     controller.committedRendered();
+  }, [controller, view.timeline]);
+  // The same commit's passive effects (perf mark `commit-effects`).
+  useEffect(() => {
+    controller.committedEffects();
   }, [controller, view.timeline]);
   return controller;
 }

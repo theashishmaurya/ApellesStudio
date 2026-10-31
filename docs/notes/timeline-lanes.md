@@ -506,6 +506,19 @@ moves new code to `lanes/`.
 | S9 | Verification run at 3 + 300 clips, production bundle; Results section; D-437 status; roadmap tick | S | S5–S8 | — | Sonnet |
 
 ### S0a — perf marks that mean what they say
+
+**Done 2026-11-01.** The gate is `import.meta.env.APELLES_PERF_MARKS` (not a bare global, so
+an unconfigured vitest run gets no marks instead of a ReferenceError), defined by
+`app/perfMarks.mjs` from Tauri's own `TAURI_ENV_DEBUG` (`"true"` for `tauri build --debug` and
+`tauri dev`, `"false"` for release) instead of the plan's `APELLES_PERF_MARKS=1` env switch, which
+survives only as an override for a plain `vite build`. The name table is plain string literals
+(a template literal was not dropped by the bundler and left `apelles:edit:` in the release
+bundle). The helpers stay as inert branches behind a constant-false guard. Side fix: the Vite
+config's `minify`/`sourcemap` tested `TAURI_ENV_DEBUG` for truthiness, which `"false"` satisfies,
+so release builds were never minified; fixed in the same file. Tests: `editPerf.test.ts`,
+`editPerf.bundle.test.ts` (bundles `editPerf.ts` both ways), `app/perfMarks.test.mjs`,
+harness `method.test.ts`/`runner.test.ts`. Verified with a real `vite build` of the app:
+`TAURI_ENV_DEBUG=false` has no `apelles:edit:`, `=true` has it.
 - `editPerf.ts`: gate on a Vite `define` (`__APELLES_PERF_MARKS__`) instead of
   `import.meta.env.DEV`. Set it true for `vite dev` and when `APELLES_PERF_MARKS=1` (the
   debug-tauri build recipe in `ui-harness.md`). A release build defines it false, so the

@@ -69,9 +69,17 @@ export interface EditMarkNumbers {
   previewP50Ms: number | null;
   previewP95Ms: number | null;
   previewMaxMs: number | null;
-  /** The last commit: release -> React rendered, and release -> painted. */
+  /**
+   * The last commit (D-437 S0a): release -> React rendered (layout effects),
+   * -> the pane's passive effects, -> the next frame's rAF (before its paint),
+   * -> after that frame rendered. `paintMs` is painted - frame: the style, layout,
+   * paint and composite of the frame that followed (an estimate, not a profile).
+   */
   commitRenderedMs: number | null;
+  commitEffectsMs: number | null;
+  commitFrameMs: number | null;
   commitPaintedMs: number | null;
+  paintMs: number | null;
 }
 
 const last = (entries: readonly PerfEntry[], name: string): number | null => {
@@ -83,6 +91,8 @@ const last = (entries: readonly PerfEntry[], name: string): number | null => {
 export function summarizeEditMarks(entries: readonly PerfEntry[]): EditMarkNumbers | null {
   const previews = entries.filter((e) => e.name === EDIT_PERF.preview).map((e) => e.duration);
   const rendered = last(entries, EDIT_PERF.commitRendered);
+  const effects = last(entries, EDIT_PERF.commitEffects);
+  const frame = last(entries, EDIT_PERF.commitFrame);
   const painted = last(entries, EDIT_PERF.commitPainted);
   if (previews.length === 0 && rendered === null && painted === null) return null;
   const s = summarize(previews);
@@ -92,6 +102,9 @@ export function summarizeEditMarks(entries: readonly PerfEntry[]): EditMarkNumbe
     previewP95Ms: s?.p95Ms ?? null,
     previewMaxMs: s?.maxMs ?? null,
     commitRenderedMs: rendered,
+    commitEffectsMs: effects,
+    commitFrameMs: frame,
     commitPaintedMs: painted,
+    paintMs: frame !== null && painted !== null ? Math.round((painted - frame) * 10) / 10 : null,
   };
 }

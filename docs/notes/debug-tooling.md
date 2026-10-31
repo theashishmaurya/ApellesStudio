@@ -261,9 +261,17 @@ several rounds of the owner's own screenshots before an agent could even confirm
      front back. `chroma::debug_input`, compile-gated with the rest.
    - **`debug_perf_entries`** (B-347, frontend op + MCP tool): the app's own
      `performance` marks for the edit gestures (`apelles:edit:*`, written by
-     `@apelles/editor`'s `editPerf.ts`) with `build.dev`, and an optional `waitIdleMs`
-     that waits for on-time frames before a measurement starts. Exact per-phase numbers
-     where `sample` only gave proportions.
+     `@apelles/editor`'s `editPerf.ts`) with `build.dev` and `build.perfMarks`, and an
+     optional `waitIdleMs` that waits for on-time frames before a measurement starts.
+     Exact per-phase numbers where `sample` only gave proportions. The marks are gated on
+     the build-time define `import.meta.env.APELLES_PERF_MARKS` (`app/perfMarks.mjs`): ON
+     under `vite dev` and in a `tauri build --debug` bundle (`TAURI_ENV_DEBUG=true`, production
+     React), OFF in a release build, whose bundle contains no `apelles:edit:` string
+     (D-437 S0a; `editPerf.bundle.test.ts` builds it both ways). A commit is measured four
+     ways: `commit-rendered` (layout effects), `commit-effects` (passive effects),
+     `commit-frame` (next rAF, before that frame's paint) and `commit-painted` (rAF then a
+     `MessageChannel` task, after the frame rendered); `painted - frame` is the paint+composite
+     estimate.
    - **`debug_set_occlusion_throttling`** (native control op): WebKit's
      `_setWindowOcclusionDetectionEnabled:`, so a covered window keeps running rAF.
      This is the first tool aimed at the throttling wall the sections below keep

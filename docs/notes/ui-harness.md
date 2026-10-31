@@ -433,15 +433,20 @@ reproduced, not as a defect.
   waveform requests a big fixture queued do not land in the measurement.
 - **Exact per-phase numbers.** After the step the runner reads the `apelles:edit:*` marks
   (`editPerf.ts`) and attaches `previews`, `previewP50Ms`, `previewP95Ms`, `commitRenderedMs`,
-  `commitPaintedMs`, plus `moveP95Ms`, `moveMaxMs`, `releaseMaxMs` to the step. They are null
-  in a production web bundle (no marks are written).
+  `commitEffectsMs`, `commitFrameMs`, `commitPaintedMs`, `paintMs` (= painted - frame, the
+  paint+composite estimate), plus `moveP95Ms`, `moveMaxMs`, `releaseMaxMs` to the step. D-437
+  S0a made the marks mean what they say: `commitPaintedMs` used to stop at the next rAF
+  callback (before that frame's style/layout/paint) and is now rAF then a `MessageChannel`
+  task; the old measure is `commitFrameMs`. The marks exist in `vite dev` and in a
+  `tauri build --debug` bundle (production React); a release build writes none. They are null
+  only in a release bundle.
 - **Measure what ships.** The report names the web bundle it saw (`debug_perf_entries
   build.dev`). A `tauri dev` app serves the Vite DEVELOPMENT bundle: React dev Performance
   Tracks (~22 % of the release at 200 clips) and StrictMode's double render. For shipping
   numbers build `cd app && npm run tauri build -- --debug` (Rust debug, so the `debug_*` ops
   exist, with the production web bundle), start that app with `CHROMA_CONTROL_PORT=<free port>`
-  if the dev app is running, and point the harness at it with `--port`. **Not done here:** that
-  build was not made or run, so no number in this repo is from it yet.
+  if the dev app is running, and point the harness at it with `--port`. See "Baseline recipe" below for
+  the exact commands (D-437 S0c).
 
 ### Perf picture (second run)
 
