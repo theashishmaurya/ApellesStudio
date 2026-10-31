@@ -591,15 +591,16 @@ export const TIMELINE_SCENARIOS: Scenario[] = [
   },
   {
     id: 'clip-body-hover-cursor',
-    title: 'Hovering a clip body shows a grab cursor',
+    title: 'Hovering a clip body (Select tool) shows the plain arrow, not a grab hand',
     area: 'move',
-    reference: 'Resolve / Premiere: the pointer over a movable clip signals it can be dragged',
+    reference:
+      'Final Cut Pro / Premiere Selection tool: the default arrow over a clip body; `grab` is for track headers (D-432 spec §5 "Cursors", owner-approved)',
     fixture: THREE_CLIPS,
     steps: [
       { pointer: { action: 'move', target: clip('b', { fy: 0.8 }), watch: { cursor: true }, settleMs: 100 } },
-      { expect: { cursor: { anyOf: ['grab', 'move', 'pointer'] } } },
+      { expect: { cursor: { anyOf: ['default', 'auto'] } } },
       { capture: 'dom', selector: clipSelector('b'), as: 'body' },
-      { expect: { path: 'body.cursor', op: 'in', value: ['grab', 'move'] } },
+      { expect: { path: 'body.cursor', op: 'in', value: ['default', 'auto'] } },
     ],
   },
   {
