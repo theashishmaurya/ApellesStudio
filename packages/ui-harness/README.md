@@ -11,7 +11,13 @@ npm run harness --workspace @apelles/ui-harness -- --filter roll # by id / area
 npm run harness --workspace @apelles/ui-harness -- --list
 ```
 
-Needs a running **debug** build of the app (`npm run tauri:dev`). It never edits the
+Flags: `--evidence` keeps the per-frame rect watch on measured steps (live-feedback checks;
+its frame numbers are inflated), `--no-activate` leaves the front app alone, `--port` targets
+another app instance (e.g. a `tauri build --debug` one for production-bundle numbers).
+
+Needs a running **debug** build of the app (`npm run tauri:dev`, or `tauri build --debug`
+for numbers from the production web bundle). It brings Apelles to the front for the run
+(hover needs a key window) and hands the front back at the end. It never edits the
 owner's projects: it opens a scratch `ui-harness-<stamp>` project with generated ffmpeg
 test media, builds one fresh timeline per scenario, and on the way out reopens the
 original project and deletes the scratch one. Full guide — running, writing scenarios,
@@ -30,6 +36,9 @@ budgets, test ids, known limits: **`docs/notes/ui-harness.md`**.
 | `src/budgets.ts` | the performance budgets, each a named constant |
 | `src/targets.ts` | named places on the timeline (built on `@apelles/editor`'s `timelineTestIds.ts`) |
 | `src/report.ts` | the markdown report |
+| `src/perfMethod.ts` | how a measured step is run (no watch, stretched gesture, idle first) and the `apelles:edit:*` mark summary |
+| `src/visibility.ts` | keeps targets inside the visible edit area (H11) |
+| `src/activation.ts` | brings the app to the front for a run and hands it back (H15) |
 | `src/scenario.ts` | the scenario / step types |
 | `src/scenarios/` | the starter suite: `editTools.ts` (trim, ripple, roll, slip, slide, split, blade, two-up) and `timeline.ts` (seek, selection, moves, linked A/V, delete/undo, zoom, scroll, header column, markers, keyboard transport, playback) |
 

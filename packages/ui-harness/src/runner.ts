@@ -23,12 +23,16 @@
 import { join } from 'node:path';
 
 import { evaluate, resolveValue, rootsOf, type Assertion, type Scope, type Verdict } from './assertions.ts';
+import { EDIT_PERF_PREFIX } from '@apelles/editor/src/editPerfNames.ts';
+
 import { checkBudget, DEFAULT_PERF_BUDGET, PLAYBACK_PAINT_MIN_FPS, PLAYBACK_RAF_MIN_FPS, type PerfReport } from './budgets.ts';
 import type { OpClient } from './client.ts';
 import { buildFixture, teardownFixture, type BuiltFixture, type ScratchProject } from './fixture.ts';
 import type { FrameOffset, FrameTarget, Scenario, Step, TargetRef } from './scenario.ts';
 import { TIMELINE_LIBRARY_SELECTORS, TIMELINE_TEST_IDS } from '@apelles/editor/src/timelineTestIds.ts';
+import { IDLE_QUIET_MS, measuredArgs, summarizeEditMarks, type PerfEntry as MarkEntry } from './perfMethod.ts';
 import { framesToPx, pointAtFrame, timelineSnapshot, VIEW_QUERY, viewSnapshot, type ViewSnap } from './snapshot.ts';
+import { assertVisible, clampAtToVisible, OutsideVisibleArea, zoomToShowFrame, type At, type Rect } from './visibility.ts';
 
 export type Status = 'PASS' | 'FAIL' | 'SKIP' | 'ERROR';
 
@@ -60,10 +64,15 @@ export interface RunOptions {
   shotsDir: string;
   /** Default `waitFor` budget. */
   waitForTimeoutMs?: number;
+  /** Keep the per-frame rect `watch` on measured steps (live-feedback evidence).
+   *  Default off: the watch forces a layout every frame and skews the numbers. */
+  evidence?: boolean;
 }
 
 const DEFAULT_WAIT_FOR_MS = 2000;
 const WAIT_FOR_POLL_MS = 100;
+/** The idle wait is bounded app-side (5 s); leave room for the reply. */
+const IDLE_OP_TIMEOUT_MS = 10_000;
 /** Input ops carry a whole gesture; mirror the MCP servers' budget. */
 const INPUT_OP_TIMEOUT_MS = 90_000;
 
@@ -118,9 +127,12 @@ export function resolveTargetRef(t: TargetRef, view: ViewSnap | null, scope: Sco
         // the frame's x relative to the ruler is the same arithmetic minus
         // the area's own left; the app resolves the ruler's live rect.
         const x = pointAtFrame(view, frame, 0).x - view.rect.x;
+        assertVisible({ x: view.rect.x + x, y: view.rect.y + view.rowsTop / 2 }, view, `frame ${frame} on the ruler`, frame);
         return { selector: TIMELINE_LIBRARY_SELECTORS.ruler, at: { fx: 0, fy: t.fy ?? 0.5, dx: x } };
       }
-      return pointAtFrame(view, frame, t.track, t.fy);
+      const point = pointAtFrame(view, frame, t.track, t.fy);
+      assertVisible(point, view, `frame ${frame} on track ${t.track}`, frame);
+      return point;
     }
     const frames = Number(resolveValue(t.byFrames, scope));
     if (!Number.isFinite(frames)) throw new Error(`byFrames ${JSON.stringify(t.byFrames)} did not resolve to a number`);
@@ -129,15 +141,18 @@ export function resolveTargetRef(t: TargetRef, view: ViewSnap | null, scope: Sco
   return { ...t };
 }
 
-function needsView(step: Step): boolean {
-  if (!('pointer' in step)) return false;
-  const all = [step.pointer.target, step.pointer.to, ...(step.pointer.path ?? [])].filter((x): x is TargetRef => !!x);
-  return all.some((t) => isFrameTarget(t) || isFrameOffset(t));
-}
-
-function perfNumbers(p: PerfReport): Record<string, number | null> {
+function perfNumbers(p: PerfReport, marks: ReturnType<typeof summarizeEditMarks>): Record<string, number | null> {
   return {
     frames: p.frames.samples,
+    moveFrames: p.phases?.move?.samples ?? null,
+    moveP95Ms: p.phases?.move?.p95Ms ?? null,
+    moveMaxMs: p.phases?.move?.maxMs ?? null,
+    releaseMaxMs: p.phases?.release?.maxMs ?? null,
+    previews: marks?.previews ?? null,
+    previewP50Ms: marks?.previewP50Ms ?? null,
+    previewP95Ms: marks?.previewP95Ms ?? null,
+    commitRenderedMs: marks?.commitRenderedMs ?? null,
+    commitPaintedMs: marks?.commitPaintedMs ?? null,
     frameP50Ms: p.frames.p50Ms ?? null,
     frameP95Ms: p.frames.p95Ms ?? null,
     frameMaxMs: p.frames.maxMs ?? null,
@@ -248,24 +263,27 @@ export class ScenarioRunner {
       const record = (v: Verdict) => result.checks.push({ ...v, step: index });
 
       if ('pointer' in step || 'key' in step) {
-        const view = needsView(step) ? await this.readView() : null;
         let opName: string;
         let args: Record<string, unknown>;
         if ('pointer' in step) {
           const { target, to, path, ...rest } = step.pointer;
           opName = 'debug_pointer';
-          args = {
-            ...rest,
-            target: resolveTargetRef(target, view, scope),
-            ...(to ? { to: resolveTargetRef(to, view, scope) } : {}),
-            ...(path ? { path: path.map((p) => resolveTargetRef(p, view, scope)) } : {}),
-          };
+          // H11 - every target is checked against the VISIBLE edit area first.
+          args = await this.resolvePointer(rest, target, to, path, scope);
         } else {
           opName = 'debug_key';
           args = { ...step.key };
         }
         args.mode = this.opts.mode;
-        if (step.measure) args.measure = true;
+        let watchDropped = false;
+        if (step.measure) {
+          args.measure = true;
+          // F6 - no rect watch, a gesture long enough for a p95, a quiet page first.
+          const m = measuredArgs(args, this.opts.evidence === true);
+          args = m.args;
+          watchDropped = m.watchDropped;
+          await this.client.op('debug_perf_entries', { prefix: EDIT_PERF_PREFIX, clear: true, waitIdleMs: IDLE_QUIET_MS }, IDLE_OP_TIMEOUT_MS).catch(() => undefined);
+        }
         const label = step.label ?? `${opName} ${'pointer' in step ? step.pointer.action : (step.key.keys ?? [step.key.text]).join(' ')}`;
         let reply: Record<string, unknown>;
         try {
@@ -276,12 +294,13 @@ export class ScenarioRunner {
           record({ ok: false, message: `${label}: ${String((e as Error).message)}` });
           return;
         }
-        scope.last = reply;
+        scope.last = watchDropped ? { ...reply, watchDropped: true } : reply;
         this.checkDelivery(step, reply, label, record);
         if (step.measure && reply.perf) {
           const budget = { ...DEFAULT_PERF_BUDGET, ...(typeof step.measure === 'object' ? step.measure : {}) };
           const verdict = checkBudget(reply.perf as PerfReport, budget);
-          result.perf.push({ label, ok: verdict.ok, misses: verdict.misses, numbers: perfNumbers(reply.perf as PerfReport) });
+          const marks = await this.readEditMarks();
+          result.perf.push({ label, ok: verdict.ok, misses: verdict.misses, numbers: perfNumbers(reply.perf as PerfReport, marks) });
         }
         continue;
       }
@@ -386,6 +405,63 @@ export class ScenarioRunner {
     } else if ('key' in step && step.key.phase !== 'up' && !(counts.keydown > 0)) {
       record({ ok: false, message: `${label}: the page received no keydown — the input never arrived (mode ${String(reply.mode)})` });
     }
+  }
+
+  /** The `apelles:edit:*` marks the last gesture wrote (null in a production web bundle). */
+  private async readEditMarks(): Promise<ReturnType<typeof summarizeEditMarks>> {
+    try {
+      const r = await this.client.op<{ entries?: MarkEntry[] }>('debug_perf_entries', { prefix: EDIT_PERF_PREFIX, clear: true });
+      return summarizeEditMarks(r.entries ?? []);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Resolve one frame-addressed target; a frame outside the visible edit area is
+   *  brought into view by zooming out (H11), then resolved again. */
+  private async resolveVisible(t: TargetRef, scope: Scope): Promise<Record<string, unknown>> {
+    let view = isFrameTarget(t) || isFrameOffset(t) ? await this.readView() : null;
+    try {
+      return resolveTargetRef(t, view, scope);
+    } catch (e) {
+      if (!(e instanceof OutsideVisibleArea) || e.frame === null || !view) throw e;
+      const zoom = zoomToShowFrame(view, e.frame);
+      if (zoom === null) throw new Error(`${e.message}; frame ${e.frame} does not fit even at the lowest timeline zoom`);
+      await this.client.op('editor_set_timeline_view', { zoom });
+      view = await this.readView();
+      return resolveTargetRef(t, view, scope);
+    }
+  }
+
+  /** An element target on a clip is moved onto the part of it that is visible (H11):
+   *  a clip whose centre is under the Inspector is pressed at its visible edge. */
+  private async clampElement(t: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const sel = typeof t.selector === 'string' ? t.selector : null;
+    if (!sel || !sel.includes('data-chroma-clip-id')) return t;
+    const tree = await this.client.op<{ root: { rect?: Rect } | null }>('debug_dom_tree', { selector: sel, maxDepth: 0, styles: [], text: false });
+    const rect = tree.root?.rect;
+    if (!rect) return t; // not on screen: the press reports that itself
+    const view = await this.readView();
+    const c = clampAtToVisible(rect, t.at as At | undefined, view);
+    if ('error' in c) throw new Error(`${sel}: ${c.error}`);
+    return c.clamped ? { ...t, at: c.at } : t;
+  }
+
+  private async resolvePointer(
+    rest: Record<string, unknown>,
+    target: TargetRef,
+    to: TargetRef | undefined,
+    path: TargetRef[] | undefined,
+    scope: Scope,
+  ): Promise<Record<string, unknown>> {
+    const one = async (t: TargetRef) => this.clampElement(await this.resolveVisible(t, scope));
+    // `byFrames` / `byX` offsets are relative to the previous point, resolved by the app.
+    return {
+      ...rest,
+      target: await one(target),
+      ...(to ? { to: await one(to) } : {}),
+      ...(path ? { path: await Promise.all(path.map((p) => one(p))) } : {}),
+    };
   }
 
   private async readView(): Promise<ViewSnap> {

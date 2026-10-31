@@ -274,6 +274,13 @@ Each line is a landed fix. None is re-profiled against the live app yet (that ne
   {prefix?, clear?, waitIdleMs?}` (frontend op + MCP tool in both servers) reads them, also
   reports `build.dev`, and can wait for the page to go idle first. Used by the harness
   (`ui-harness.md`, H17).
+- **F6 done in code (harness), not run on a production build.** See `ui-harness.md` "Perf
+  method": no rect watch on measured steps (`--evidence` for the live checks), measured gestures
+  stretched to >= 1.5 s, move and release frames split at the `pointerup` and judged
+  separately (`phases` in `debug_pointer`'s `perf`), an idle wait first, the app's own marks
+  attached, and the report names the web bundle. The `tauri build --debug` recipe is written
+  down; no run against it has happened, so there are no post-fix numbers yet. **That run is the
+  next step**: it is what confirms F1-F4's expected gains.
 
 ## Instrument next (exact additions; debug-only) - DONE, kept as the design record
 

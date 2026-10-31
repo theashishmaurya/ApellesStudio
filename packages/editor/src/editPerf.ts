@@ -18,23 +18,9 @@
  * through React's own dev tracks, never ours).
  */
 
-/** Every mark / measure name, under one prefix so one read takes them all. */
-export const EDIT_PERF_PREFIX = 'apelles:edit:';
+import { EDIT_PERF, EDIT_PERF_PREFIX } from './editPerfNames';
 
-export const EDIT_PERF = {
-  /** mark: the press claimed an edit gesture. */
-  press: `${EDIT_PERF_PREFIX}press`,
-  /** mark: a preview started. */
-  previewStart: `${EDIT_PERF_PREFIX}preview:start`,
-  /** measure: one preview (the op on a copy plus the style writes). */
-  preview: `${EDIT_PERF_PREFIX}preview`,
-  /** mark: the release is about to call the op. */
-  commit: `${EDIT_PERF_PREFIX}commit`,
-  /** measure: commit -> React has rendered the result. */
-  commitRendered: `${EDIT_PERF_PREFIX}commit-rendered`,
-  /** measure: commit -> the frame after it. */
-  commitPainted: `${EDIT_PERF_PREFIX}commit-painted`,
-} as const;
+export { EDIT_PERF, EDIT_PERF_PREFIX };
 
 const enabled = (): boolean => import.meta.env.DEV && typeof performance !== 'undefined' && typeof performance.mark === 'function';
 

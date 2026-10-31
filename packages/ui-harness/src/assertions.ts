@@ -154,7 +154,13 @@ interface WatchFrame {
   cursor?: string;
 }
 
+/** A measured step runs without the per-frame rect watch (it would skew the frame
+ *  numbers, B-347 F6); its live-feedback and cursor checks are then skipped, and
+ *  say so, until a run with `--evidence` takes them. */
+const WATCH_DROPPED = 'skipped: the rect watch is off on measured steps so the frame numbers are honest (rerun with --evidence for the live-feedback check)';
+
 function evaluateLive(l: LiveExpect['live'], scope: Scope): Verdict {
+  if (getPath(scope, 'last.watchDropped') === true) return { ok: true, message: `${l.label ? `${l.label}: ` : ''}${WATCH_DROPPED}` };
   const frames = (getPath(scope, 'last.watch') as WatchFrame[] | undefined) ?? [];
   const label = l.label ? `${l.label}: ` : '';
   if (!frames.length) {
@@ -175,6 +181,7 @@ function evaluateLive(l: LiveExpect['live'], scope: Scope): Verdict {
 }
 
 function evaluateCursor(c: CursorExpect['cursor'], scope: Scope): Verdict {
+  if (getPath(scope, 'last.watchDropped') === true) return { ok: true, message: `${c.label ? `${c.label}: ` : ''}${WATCH_DROPPED}` };
   const frames = (getPath(scope, 'last.watch') as WatchFrame[] | undefined) ?? [];
   const seen = [...new Set(frames.map((f) => f.cursor).filter((x): x is string => !!x))];
   const ok = seen.some((s) => c.anyOf.includes(s));

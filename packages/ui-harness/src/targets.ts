@@ -60,13 +60,13 @@ export const clipEdge = (name: string, side: 'left' | 'right', px: number = EDGE
 
 /** The ruler at a fraction of its width. */
 export const ruler = (fx = 0.5): TargetRef => selector(LIB.ruler, { fx, fy: 0.5 });
-/** Where a human grabs the playhead to scrub (H4): the ruler at the playhead's
- *  own frame. The library's head `svg` sits UNDER its 16 px hit strip, so aiming
- *  at the svg always reports "the press lands on the strip"; and the redesign
- *  (B-346) is shrinking that strip to the ruler. A press in the ruler at the
- *  playhead's x reaches the scrub handler in both layouts, so callers pass
- *  `expectHit: false` (the press may land on the ruler or on the strip). */
-export const playheadGrab = (frame: Value): TargetRef => atFrame(frame, 'ruler');
+/** Where a human grabs the playhead to scrub (H16): its head band, the strip
+ *  under the ruler (`.timeline-editor-cursor-area`, B-346: the only part of the
+ *  playhead that takes the pointer, B-349). A drag from there scrubs live; the
+ *  ruler itself only seeks on release (B-350), so aiming at the ruler (H4) never
+ *  measured scrubbing. The band is centred on the playhead wherever it is, so the
+ *  press lands on it exactly and `expectHit` can stay on. */
+export const playheadGrab = (): TargetRef => selector(LIB.playheadBand, { fx: 0.5, fy: 0.5 });
 
 export const trackHeader = (track: number, at?: { fx?: number; fy?: number }) =>
   selector(`[data-testid="${ID.trackHeader}"][data-chroma-track="${track}"]`, at);

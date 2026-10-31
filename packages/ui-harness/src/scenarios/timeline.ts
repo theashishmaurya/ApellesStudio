@@ -74,14 +74,12 @@ export const TIMELINE_SCENARIOS: Scenario[] = [
       {
         pointer: {
           action: 'drag',
-          target: playheadGrab(30),
+          target: playheadGrab(),
           to: atFrame(200, 'ruler'),
           steps: 20,
           durationMs: 600,
           watch: { selectors: [TIMELINE_LIBRARY_SELECTORS.playhead] },
         },
-        // H4: the press may land on the ruler or on the playhead's hit strip.
-        expectHit: false,
         measure: true,
       },
       { expect: { live: { selector: TIMELINE_LIBRARY_SELECTORS.playhead, prop: 'x', minDistinct: 6, label: 'the playhead line moves during the scrub' } } },
@@ -247,7 +245,7 @@ export const TIMELINE_SCENARIOS: Scenario[] = [
     id: 'linked-av-select-one-half',
     title: 'Clicking the picture of a linked A/V clip selects that half, outlines its partner, and Delete takes both',
     area: 'linked A/V',
-    reference: 'D-129 option (b): one half selects, the partner gets a dashed outline, and edits act on the whole group (Premiere linked selection / Resolve linked clips)',
+    reference: 'D-129 option (b): one half selects, the partner gets a solid 1 px outline (D-432 §4.3), and edits act on the whole group (Premiere linked selection / Resolve linked clips)',
     fixture: { tracks: [{ kind: 'video', clips: [{ name: 'v', media: 'av', duration: 90, startFrame: 0 }] }, { kind: 'audio', clips: [] }] },
     steps: [
       FPS_GUARD,
@@ -257,8 +255,10 @@ export const TIMELINE_SCENARIOS: Scenario[] = [
       { expect: { path: 'state.selection.0.id', op: 'eq', value: '@clip:v' } },
       {
         reachable: {
-          selector: `[data-testid="${TIMELINE_TEST_IDS.clip}"][class*="outline-dashed"]`,
-          reason: 'the linked partner of the selected half has no dashed outline',
+          // H13: a stable hook on the partner (`data-chroma-link-partner`), not the
+          // outline's class string, which P2 changed from dashed to a solid 1 px.
+          selector: `[data-testid="${TIMELINE_TEST_IDS.clip}"][data-chroma-link-partner]`,
+          reason: 'the linked partner of the selected half has no outline (data-chroma-link-partner)',
         },
       },
       { key: { keys: ['Delete'] } },
@@ -435,7 +435,10 @@ export const TIMELINE_SCENARIOS: Scenario[] = [
     fixture: THREE_CLIPS,
     steps: [
       { capture: 'dom', selector: headerSel(0), as: 'before' },
-      { pointer: { action: 'drag', target: headerResize(), to: { byX: 60 }, steps: 10, durationMs: 300 }, measure: true },
+      // H14: react-resizable-panels resolves its separator by proximity, so the 1 px
+      // separator is not the element under the press (`elementFromPoint` is the lane
+      // beside it). What this scenario judges is the column's width change, below.
+      { pointer: { action: 'drag', target: headerResize(), to: { byX: 60 }, steps: 10, durationMs: 300 }, measure: true, expectHit: false },
       { capture: 'dom', selector: headerSel(0), as: 'after' },
       { expect: { path: 'after.rect.width', op: 'gt', value: { ref: 'before.rect.width', plus: 30 }, label: 'the header column grew' } },
     ],
