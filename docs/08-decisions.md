@@ -22,6 +22,8 @@ Status: `open` · `decided` · `revisit`
 
 **Why not a package for the culling.** It is about 30 lines of pure, unit-tested interval math over sorted clips. CLAUDE.md's "check for a package first" rule explicitly loses to "a genuinely small, stable need". List virtualizers (`@tanstack/react-virtual`, `react-window`) virtualize rows of a list, not variable-position items along time. Vertical track virtualization is not needed at today's track counts.
 
+**Build plan:** `docs/notes/timeline-lanes.md` (2026-11-01). It covers the inventory, the lane/playhead design, paint isolation after harness run 4, the selector map, perf targets and steps S0–S9.
+
 **Constraints for the build.** Keep every `data-testid` and the harness scenarios working (`timelineTestIds.ts`, retire `TIMELINE_LIBRARY_SELECTORS`); keep `editor_set_timeline_view` as the one view tool; measure with the harness (production React build, F6) before and after, against the B-347 budgets.
 
 ## D-436 — The Sources panel's folder list collapses behind a caret; the list / grid split is resizable
