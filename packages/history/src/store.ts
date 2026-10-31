@@ -136,8 +136,8 @@ interface HistoryState {
   /** Redo the most recently undone action. Returns the entry redone, or
    *  `null` if the redo stack is empty. */
   redo: () => HistoryEntry | null;
-  /** Drop everything — both stacks. Not currently called by app code (no
-   *  "clear history" UI this pass); exposed for tests and future use. */
+  /** Drop everything — both stacks. Called when a project opens, is created
+   *  or closes (B-343: an undo must never reach across projects). */
   clear: () => void;
   /** Drop every entry a given source pushed, from both stacks, leaving the
    *  rest in order. The UI harness calls it with `'harness'` after each
