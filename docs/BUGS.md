@@ -4,6 +4,15 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-340 — the segmented export picks its parallel-chunk count from CPU cores only, not memory, so a 4K export can over-commit RAM on a 16 GB Mac
+
+status: **open, deferred** (owner, 2026-10-31: "log it, we will do it later") · severity: medium · area: `app/src-tauri/src/chroma/edit_render.rs` (`MAX_SEGMENTS`, the segment-count function)
+
+- **What:** D-360/D-369 split an export into up to `MAX_SEGMENTS = 6` parallel segments, bounded by the work, by cores ÷ processes-per-segment, and by the constant. Nothing bounds it by memory. Each segment holds its own encoder plus one `decode_pipe` ffmpeg per visible video track (~385 MB per 4K decoder after B-230's cap), plus the `WRITE_AHEAD = 4` frame buffer (133 MB at 4K).
+- **Measured so far:** a single-stream 4K export of a 79-clip project ran at ~3.2 GB (`docs/notes/export-gpu-compositor.md` §9.1). The segmented 4K case is **unmeasured**: the constant's own doc says so. Estimated 5–8 GB at 4K with several video tracks.
+- **Risk:** a 16 GB Mac with many cores can go into compression/swap during a 4K export; B-229/B-230 and the B-274-era stall show what that does (slow or hung exports).
+- **Fix when picked up:** add a memory bound to the segment count (available RAM ÷ an estimated per-segment cost at the output size and track count), then measure peak RSS for 1080p and 4K exports with the UI harness and record the numbers as the app's system requirements.
+
 ## B-339 — adding a marker does not open its editor popover
 
 status: **fixed** (2026-10-31) · severity: **minor** · area: `@apelles/editor` (`TimelineMarkers.tsx`, `TimelinePane.tsx`, `timelineStore`), `@apelles/keymap`, `editor_add_marker`
