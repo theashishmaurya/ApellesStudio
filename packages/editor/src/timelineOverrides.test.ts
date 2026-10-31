@@ -32,4 +32,8 @@ describe('timeline-overrides.css', () => {
     expect(css).toMatch(/\.timeline-editor-cursor\s*\{\s*pointer-events:\s*none/);
     expect(css).toMatch(/\.timeline-editor-cursor-top,\s*\.timeline-editor-cursor-area\s*\{\s*pointer-events:\s*auto/);
   });
+
+  it('shows the arrow, not the role=button hand, on the clip body only (B-351)', () => {
+    expect(css).toMatch(/\n\[data-chroma-clip-drag\]\s*\{\s*cursor:\s*default;/);
+  });
 });

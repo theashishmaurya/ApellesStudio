@@ -6,7 +6,7 @@ Issues once public.
 ```
 ## B-351 — a clip body shows the hand (`pointer`) cursor with the Select tool, not the arrow D-432 specifies
 
-status: **open** · severity: minor (feel, not function) · area: `packages/editor/src/TimelinePane.tsx` `ClipBody` (spreads dnd-kit's `useDraggable` `attributes`, which include `role="button"`), `app/src/styles.css:184` (`@layer base { :where(button, [role='button']):not([disabled]) { cursor: pointer } }`)
+status: **fixed 2026-11-01** — `timeline-overrides.css`: `[data-chroma-clip-drag] { cursor: default }`. It matches the `ClipBody` element only (so a real button inside a clip keeps its pointer, and no `TimelinePane.tsx` edit was needed); the inline cursors the trim hover and the gestures write still win. Pinned by `timelineOverrides.test.ts` and `TimelinePane.cssOverrides.dom.test.tsx` (computed cursor `default` on a `role="button"` body). Not re-checked live · was: severity: minor (feel, not function) · area: `packages/editor/src/TimelinePane.tsx` `ClipBody` (spreads dnd-kit's `useDraggable` `attributes`, which include `role="button"`), `app/src/styles.css:184` (`@layer base { :where(button, [role='button']):not([disabled]) { cursor: pointer } }`)
 
 - **found:** 2026-11-01, second live harness run, `clip-body-hover-cursor` (SKIP in the run, H15; rerun with Apelles frontmost): the cursor over clip `b` is `pointer` both while hovering and in the computed style (`body.cursor = "pointer"`). D-432 §5 "Cursors" (owner-approved) and P2's "as built" say the default arrow, as Final Cut Pro and Premiere's Selection tool show.
 - **cause:** P2 removed the old `cursor-grab` class but not the cursor that dnd-kit's `role="button"` picks up from the global base rule.

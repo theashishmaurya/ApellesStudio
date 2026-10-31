@@ -69,6 +69,19 @@
 }
 
 /*
+ * B-351 / D-432 §5 "Cursors" — a clip body is the plain arrow with the Select
+ * tool (Final Cut, Premiere). dnd-kit's `useDraggable` gives `ClipBody` a
+ * `role="button"`, which the app's base rule (`app/src/styles.css`,
+ * `:where(button, [role='button']) { cursor: pointer }`) turns into the hand.
+ * Only the body element itself is matched (`data-chroma-clip-drag`), so a real
+ * button drawn inside a clip keeps its own pointer; the trim-edge and tool
+ * cursors `useEditGesture` writes inline still win over this.
+ */
+[data-chroma-clip-drag] {
+  cursor: default;
+}
+
+/*
  * B-349 — B-346 cut the 16 px strip down to the head band, but the 1 px line
  * itself (the library's interact.js drag target, `.timeline-editor-cursor`) still
  * ran the full height and caught any press exactly on it: a click or trim on a

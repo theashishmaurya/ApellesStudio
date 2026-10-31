@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 /**
- * @apelles/editor — the playhead is grabbed by its head only (B-349, B-346).
+ * @apelles/editor — the playhead is grabbed by its head only (B-349, B-346), and a
+ * clip body shows the arrow (B-351).
  *
  * jsdom has no hit testing, so this applies the REAL `timeline-overrides.css` to
  * the REAL rendered pane and asks what the pointer can reach: the 1 px line the
@@ -119,5 +120,24 @@ describe('the playhead line does not grab (B-349)', () => {
     expect(band).not.toBeNull();
     expect(getComputedStyle(head!).pointerEvents).toBe('auto');
     expect(getComputedStyle(band!).pointerEvents).toBe('auto');
+  });
+});
+
+describe('the clip body cursor (B-351)', () => {
+  it('is the default arrow although dnd-kit gives the body role="button"', () => {
+    const clip = mounted!.container.querySelector<HTMLElement>(`[data-testid="${TIMELINE_TEST_IDS.clip}"]`);
+    expect(clip).not.toBeNull();
+    expect(clip!.getAttribute('role')).toBe('button');
+    expect(getComputedStyle(clip!).cursor).toBe('default');
+  });
+
+  it('leaves a real button drawn inside the clip its own cursor', () => {
+    const clip = mounted!.container.querySelector<HTMLElement>(`[data-testid="${TIMELINE_TEST_IDS.clip}"]`)!;
+    const inner = document.createElement('button');
+    clip.appendChild(inner);
+    // the override selects the body element only, never its descendants
+    // (jsdom loads no base stylesheet, so the descendant's cursor is not asserted)
+    expect(inner.matches('[data-chroma-clip-drag]')).toBe(false);
+    expect(clip.matches('[data-chroma-clip-drag]')).toBe(true);
   });
 });
