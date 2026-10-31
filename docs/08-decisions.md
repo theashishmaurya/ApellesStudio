@@ -6,6 +6,24 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-437 — Replace `@xzdarcy/react-timeline-editor` with Apelles' own lane renderer (memoised clips, horizontal culling), no new dependency
+
+**decided 2026-11-01** (the owner delegated it: "don't bring the library decision, make the best decision which is cheap and fast, do a search") · evidence: `docs/notes/timeline-drag-perf.md` (B-347) · implementation: after redesign P3 lands, sequential on `TimelinePane.tsx`
+
+**Context.** The second live harness run's profiling (`timeline-drag-perf.md`) showed the release of every edit re-renders every clip: 178–337 ms on the owner's 288-clip "Voiceover v2", 60–103 ms at 3–50 clips. The library has no `memo` anywhere, wraps every clip in an interact.js instance it no longer uses for gestures (P2 took trim/roll/slip/slide/ripple into `useEditGesture.ts`), renders every clip regardless of what is on screen, and its playhead line is the source of B-346/B-349. After P2 the library only lays clips out and draws the ruler and the playhead; the clip block, the gesture engine, the overlays and the trim zones are already ours.
+
+**Options.**
+- **(a) Keep it and patch around it.** It is a dependency: `memo` and culling cannot be added from outside, so this means vendoring a fork. That fork costs maintenance and still carries interact.js per clip. Its 1.0.0 (Jan 2026) did not change this structure.
+- **(b) `dnd-timeline`** (MIT, v3.1.1, May 2026, ~250 stars, headless on dnd-kit, transforms during drags). It overlaps with what P2 already owns and adds a second drag model next to `useEditGesture`. It has no virtualization of its own (its "Virtual" example delegates to an external library), so we would still write the culling.
+- **(c) A canvas timeline engine** (e.g. TechSquidTV's Canvas-Timeline, which claims 60+ fps, from its author's own benchmark). It would throw away the DOM clip block, trim zones, overlays, test ids and the harness's DOM assertions that P2/P3 just built. It is the most expensive option and the least mature.
+- **(d) Our own lane renderer.** Absolutely positioned clip blocks per track, `React.memo` on the clip block keyed on clip identity (which F4's structural-sharing `applyOp` preserves), horizontal culling (a binary search on each track's start-sorted clips for the visible window plus overscan: a small pure function), our own ruler, and a playhead whose only hit target is the head.
+
+**Choice: (d).** It is the cheapest (no new dependency, roughly the layout and ruler code the library still does for us, on top of components we already own) and the fastest: a release re-renders only the clips whose objects changed, plus culling bounds the DOM to what is visible. The expected result is the release under 30 ms at 300 clips (per the profiling doc's estimate), zoom getting cheaper (culled), and B-349's class of bug going away with the library's cursor element. It also removes interact.js from the bundle.
+
+**Why not a package for the culling.** It is about 30 lines of pure, unit-tested interval math over sorted clips. CLAUDE.md's "check for a package first" rule explicitly loses to "a genuinely small, stable need". List virtualizers (`@tanstack/react-virtual`, `react-window`) virtualize rows of a list, not variable-position items along time. Vertical track virtualization is not needed at today's track counts.
+
+**Constraints for the build.** Keep every `data-testid` and the harness scenarios working (`timelineTestIds.ts`, retire `TIMELINE_LIBRARY_SELECTORS`); keep `editor_set_timeline_view` as the one view tool; measure with the harness (production React build, F6) before and after, against the B-347 budgets.
+
 ## D-436 — The Sources panel's folder list collapses behind a caret; the list / grid split is resizable
 
 - **Context.** The bin tree (All media > Music, SFX, ...) was always expanded above the media grid, capped at a fixed `max-h-32`, taking vertical space the grid needs (owner screenshot `scratch/bug-refs/2026-11-01-sources-folders.png`: "a way to collapse the folders"). Folders nest (`FolderNode.children`), so per-folder carets already existed but defaulted open and their state died with the row.
