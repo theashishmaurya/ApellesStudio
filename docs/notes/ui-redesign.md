@@ -637,7 +637,7 @@ Defects closed: 15, 16, 17 and the token half of 4 and 20. Left for later phases
 Every new GUI capability gets its MCP surface in the same phase (standing rule):
 
 - Per-track height → `editor_set_track_height(track, height)`. The GUI zone and the `DotsThree` menu use the same store action.
-- Clip Appearance (clip height, band ratio, names/badges) → `editor_set_timeline_view({clip_height, band_ratio, show_names, show_badges})`, reported in `editor_get_state`. It is a view setting, stored with the UI prefs, not in the timeline document, as FCP does.
+- Clip Appearance (clip height, band ratio, names/badges) → `editor_set_timeline_view({clip_height, band_ratio, show_names, show_badges})`, reported in `editor_get_state`. **Landed first (2026-10-31, D-434 H2): the tool exists with one field, `zoom` (a multiplier of the default, or `"default"`), backed by `useTimelineViewStore` (`packages/editor/src/timelineView.ts`) and reported as `editor_get_state.timelineView`; the redesign adds its fields to this tool and store rather than a second one.** It is a view setting, stored with the UI prefs, not in the timeline document, as FCP does.
 - The marker popover maps onto the existing `editor_add_marker` / `editor_set_marker` / `editor_remove_marker`; nothing new.
 - The tool segmented control, snapping and linked selection map onto existing or new `editor_set_tool` / `editor_set_snapping` / `editor_set_linked_selection` where they don't exist yet. Phase 2 audits this.
 - The debug tools (`debug_screenshot`, `debug_dom_tree`) need no change. Phase 2 adds stable `data-chroma-*` hooks to the new strip, bracket and band elements so the harness can assert geometry.

@@ -27,7 +27,7 @@ import { checkBudget, DEFAULT_PERF_BUDGET, PLAYBACK_PAINT_MIN_FPS, PLAYBACK_RAF_
 import type { OpClient } from './client.ts';
 import { buildFixture, teardownFixture, type BuiltFixture, type ScratchProject } from './fixture.ts';
 import type { FrameOffset, FrameTarget, Scenario, Step, TargetRef } from './scenario.ts';
-import { TIMELINE_LIBRARY_SELECTORS } from '@apelles/editor/src/timelineTestIds.ts';
+import { TIMELINE_LIBRARY_SELECTORS, TIMELINE_TEST_IDS } from '@apelles/editor/src/timelineTestIds.ts';
 import { framesToPx, pointAtFrame, timelineSnapshot, VIEW_QUERY, viewSnapshot, type ViewSnap } from './snapshot.ts';
 
 export type Status = 'PASS' | 'FAIL' | 'SKIP' | 'ERROR';
@@ -66,6 +66,20 @@ const DEFAULT_WAIT_FOR_MS = 2000;
 const WAIT_FOR_POLL_MS = 100;
 /** Input ops carry a whole gesture; mirror the MCP servers' budget. */
 const INPUT_OP_TIMEOUT_MS = 90_000;
+
+/** The timeline parts every scenario presses: lanes, the track-header column and
+ *  the toolbar controls the dock used to cover. A part that is not on screen is
+ *  skipped by the check, so scenarios on an empty timeline still pass it. */
+const COVER_CHECK_PARTS = [
+  `[data-testid="${TIMELINE_TEST_IDS.editArea}"]`,
+  `[data-testid="${TIMELINE_TEST_IDS.trackHeader}"]`,
+  `[data-testid="${TIMELINE_TEST_IDS.split}"]`,
+  `[data-testid="${TIMELINE_TEST_IDS.addMarker}"]`,
+  `[data-testid="${TIMELINE_TEST_IDS.zoomIn}"]`,
+] as const;
+
+/** How far (CSS px) a wheel may land from its aim: sub-pixel rounding only. */
+const WHEEL_LANDING_TOLERANCE_PX = 3;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -161,6 +175,7 @@ export class ScenarioRunner {
     let fixture: BuiltFixture | null = null;
     try {
       fixture = await buildFixture(this.client, this.project, scenario.id, scenario.fixture);
+      await this.assertNothingCoversTheTimeline();
       await this.runSteps(scenario, fixture, result);
       if (result.checks.some((c) => !c.ok)) result.status = 'FAIL';
     } catch (e) {
@@ -184,6 +199,23 @@ export class ScenarioRunner {
     }
     result.durationMs = Date.now() - started;
     return result;
+  }
+
+  /** H1 — fail fast, with the cause named, when a fixed overlay (a dock, a
+   *  toast, a banner) sits over a part the scenarios press. Without this each
+   *  press reports "the press lands on …" three steps in and the real cause
+   *  (one overlay) is rediscovered per scenario. A harness defect, not an app
+   *  finding: the harness's own ops no longer open the Agent activity dock. */
+  private async assertNothingCoversTheTimeline(): Promise<void> {
+    const check = await this.client.op<{ ok?: boolean; overlays?: { part: string; hit: string | null; overlay: string | null }[] }>('debug_overlay_check', {
+      parts: COVER_CHECK_PARTS,
+    });
+    if (check.ok !== false) return;
+    const first = check.overlays?.[0];
+    throw new Error(
+      `a fixed overlay covers the timeline before the scenario starts: ${first?.overlay ?? 'unknown'} sits over ${first?.part ?? 'a timeline part'}` +
+        ` (${check.overlays?.length ?? 0} sampled points). Close it (the Agent activity dock, a toast, a dialog) and rerun.`,
+    );
   }
 
   private async screenshot(name: string, result: ScenarioResult): Promise<void> {
@@ -322,15 +354,32 @@ export class ScenarioRunner {
 
   /** The gesture really reached the page and landed where it aimed. */
   private checkDelivery(step: Step, reply: Record<string, unknown>, label: string, record: (v: Verdict) => void): void {
-    const observed = reply.observed as { counts?: Record<string, number> } | undefined;
+    const observed = reply.observed as { counts?: Record<string, number>; lastWheel?: { x: number; y: number } | null } | undefined;
     const counts = observed?.counts ?? {};
+    const native = reply.native as { windowKey?: boolean; madeKeyForMove?: boolean } | undefined;
     if ('pointer' in step) {
       const action = step.pointer.action;
       const want = action === 'wheel' ? 'wheel' : action === 'pinch' ? null : action === 'move' ? 'pointermove' : 'pointerdown';
+      if (action === 'move' && !(counts.pointermove > 0) && native?.windowKey === false) {
+        // H5 — WebKit drops a buttonless move while the window is not key. That
+        // says nothing about the app, so skip rather than fail the hover check.
+        throw new SkipScenario(
+          `hover needs a key window: WebKit dropped the buttonless move (the window was not key${native.madeKeyForMove ? ', and making it key for the move did not help' : ''}); bring Apelles to the front and rerun`,
+        );
+      }
       if (want && action !== 'up' && !(counts[want] > 0)) {
         record({ ok: false, message: `${label}: the page received no ${want} — the input never arrived (mode ${String(reply.mode)})` });
       }
-      const first = (reply.targets as { hitInside: boolean | null; element: string | null; hit: string | null }[] | undefined)?.[0];
+      const first = (reply.targets as { x: number; y: number; hitInside: boolean | null; element: string | null; hit: string | null }[] | undefined)?.[0];
+      const landed = observed?.lastWheel;
+      if (action === 'wheel' && first && landed && Math.hypot(landed.x - first.x, landed.y - first.y) > WHEEL_LANDING_TOLERANCE_PX) {
+        // H8 — a wheel built without its window arrives offset by the window's
+        // screen origin; scenarios used to pass only because the window sat at 0,0.
+        record({
+          ok: false,
+          message: `${label}: the wheel landed at (${landed.x}, ${landed.y}) but aimed at (${first.x}, ${first.y}) — the native wheel's location is in the wrong coordinate space`,
+        });
+      }
       if ((step.expectHit ?? true) && first && first.hitInside === false) {
         record({ ok: false, message: `${label}: aimed at ${first.element} but the press lands on ${first.hit} (something is on top of it)` });
       }

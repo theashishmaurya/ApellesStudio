@@ -13,11 +13,12 @@ import { describe, expect, it } from 'vitest';
 import { TIMELINE_VIEW_ATTRS } from '@apelles/editor/src/timelineTestIds.ts';
 
 import { checkBudget, DEFAULT_PERF_BUDGET, type PerfReport } from './budgets.ts';
-import type { OpClient } from './client.ts';
+import { ControlClient, HARNESS_SOURCE, type OpClient } from './client.ts';
 import { mediaArgs, type ScratchProject } from './fixture.ts';
 import { renderReport } from './report.ts';
 import { resolveTargetRef, ScenarioRunner, substituteIds } from './runner.ts';
 import { EDIT_TOOL_SCENARIOS } from './scenarios/editTools.ts';
+import { THREE_CLIPS } from './scenarios/common.ts';
 import { SCENARIOS } from './scenarios/index.ts';
 import type { ViewSnap } from './snapshot.ts';
 
@@ -37,6 +38,8 @@ class FakeApp implements OpClient {
   tool = 'select';
   playhead = 0;
   calls: string[] = [];
+  /** What `debug_overlay_check` reports; empty = nothing covers the timeline. */
+  overlays: { part: string; hit: string; overlay: string }[] = [];
   private nextId = 1;
 
   private readonly buggy: boolean;
@@ -127,6 +130,10 @@ class FakeApp implements OpClient {
         case 'editor_roll_edit':
           this.roll(Number(args.track), Number(args.clip), Number(args.delta));
           return {};
+        case 'debug_overlay_check':
+          return this.overlays.length ? { ok: false, overlays: this.overlays } : { ok: true, overlays: [] };
+        case 'editor_set_timeline_view':
+        case 'debug_clear_harness_history':
         case 'editor_delete_timeline':
         case 'editor_set_playing':
         case 'debug_screenshot':
@@ -181,7 +188,7 @@ describe('ScenarioRunner (against a fake app)', () => {
     expect(result.perf).toHaveLength(1);
     expect(result.perf[0].ok).toBe(true);
     expect(app.calls).toContain('editor_roll_edit');
-    expect(app.calls[app.calls.length - 1]).toBe('editor_delete_timeline');
+    expect(app.calls.slice(-2)).toEqual(['editor_delete_timeline', 'debug_clear_harness_history']);
   });
 
   it('a broken roll FAILS with the specific findings, and gets a failure screenshot', async () => {
@@ -205,7 +212,131 @@ describe('ScenarioRunner (against a fake app)', () => {
     });
     expect(result.status).toBe('ERROR');
     expect(result.reason).toMatch(/unexpected op nonesuch/);
-    expect(app.calls[app.calls.length - 1]).toBe('editor_delete_timeline');
+    expect(app.calls.slice(-2)).toEqual(['editor_delete_timeline', 'debug_clear_harness_history']);
+  });
+});
+
+describe('harness defects the runner now guards (H1, H2)', () => {
+  it('H2: every scenario starts from the default zoom, before any clip is placed', async () => {
+    const app = new FakeApp(false);
+    await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp' }).run({ id: 'x', title: 'x', area: 'x', reference: 'x', fixture: THREE_CLIPS, steps: [{ wait: 0 }] });
+    const zoom = app.calls.indexOf('editor_set_timeline_view');
+    expect(zoom).toBeGreaterThan(app.calls.indexOf('editor_create_timeline'));
+    expect(zoom).toBeLessThan(app.calls.indexOf('editor_add_clip'));
+  });
+
+  it('H1: a fixed overlay over the timeline fails the scenario up front, naming the overlay, and presses nothing', async () => {
+    const app = new FakeApp(false);
+    app.overlays = [{ part: '[data-testid="timeline-split"]', hit: 'span.text-[10px]', overlay: 'div.fixed.left-3.bottom-3' }];
+    const result = await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp' }).run(roll);
+    expect(result.status).toBe('ERROR');
+    expect(result.reason).toMatch(/fixed overlay covers the timeline.*div\.fixed\.left-3\.bottom-3 sits over \[data-testid="timeline-split"\]/);
+    expect(app.calls).not.toContain('debug_pointer');
+    expect(app.calls.slice(-2)).toEqual(['editor_delete_timeline', 'debug_clear_harness_history']);
+  });
+
+  it('H1: every request the client sends is stamped source "harness"', async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const client = new ControlClient(19788, async (_url, init) => {
+      bodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      return { ok: true, status: 200, json: async () => ({ ok: true, result: {} }) };
+    });
+    await client.op('editor_add_marker', { frame: 1 });
+    expect(bodies[0]).toMatchObject({ op: 'editor_add_marker', source: HARNESS_SOURCE });
+    expect(HARNESS_SOURCE).toBe('harness');
+  });
+});
+
+/** A FakeApp whose `debug_pointer` answers with a canned reply. */
+class CannedPointer extends FakeApp {
+  private readonly reply: Record<string, unknown>;
+  constructor(reply: Record<string, unknown>) {
+    super(false);
+    this.reply = reply;
+  }
+  override async op<T>(op: string, args: Record<string, unknown> = {}): Promise<T> {
+    if (op === 'debug_pointer') {
+      this.calls.push(op);
+      return this.reply as T;
+    }
+    return super.op<T>(op, args);
+  }
+}
+
+describe('delivery checks (H5, H8)', () => {
+  const aimed = [{ x: 400, y: 200, element: 'el', hit: 'el', hitInside: true }];
+  const run = (reply: Record<string, unknown>, action: 'wheel' | 'move') =>
+    new ScenarioRunner(new CannedPointer(reply), project, { mode: 'native', shotsDir: '/tmp' }).run({
+      id: 'x',
+      title: 'x',
+      area: 'x',
+      reference: 'x',
+      steps: [{ pointer: { action, target: { x: 400, y: 200 } } }],
+    });
+
+  it('H8: a wheel that lands away from where it aimed FAILS, naming both points', async () => {
+    const result = await run({ mode: 'native', targets: aimed, observed: { counts: { wheel: 3 }, lastWheel: { x: 400, y: 260 } } }, 'wheel');
+    expect(result.status).toBe('FAIL');
+    expect(result.checks.map((c) => c.message).join('\n')).toMatch(/landed at \(400, 260\) but aimed at \(400, 200\)/);
+  });
+
+  it('H8: a wheel that lands on its aim passes the delivery check', async () => {
+    const result = await run({ mode: 'native', targets: aimed, observed: { counts: { wheel: 3 }, lastWheel: { x: 400.5, y: 200 } } }, 'wheel');
+    expect(result.status).toBe('PASS');
+  });
+
+  it('H5: a dropped hover in a non-key window is a SKIP with the reason, not a FAIL', async () => {
+    const result = await run({ mode: 'native', targets: aimed, observed: { counts: {} }, native: { windowKey: false, madeKeyForMove: true } }, 'move');
+    expect(result.status).toBe('SKIP');
+    expect(result.reason).toMatch(/hover needs a key window.*making it key for the move did not help/);
+  });
+
+  it('H5: the same missing move in a KEY window is still a FAIL (the input really never arrived)', async () => {
+    const result = await run({ mode: 'native', targets: aimed, observed: { counts: {} }, native: { windowKey: true } }, 'move');
+    expect(result.status).toBe('FAIL');
+  });
+});
+
+describe('scenario expectations that follow decided behaviour (H3, H4, H6, H9)', () => {
+  const byId = (id: string) => {
+    const s = SCENARIOS.find((x) => x.id === id);
+    if (!s) throw new Error(`no scenario ${id}`);
+    return s;
+  };
+
+  it('H3: the MCP replay shortens an END edge with a NEGATIVE delta (B-337: delta moves the edge)', () => {
+    for (const id of ['trim-right-edge-select-tool', 'ripple-trim-tool']) {
+      const step = byId(id).steps.find((x) => 'op' in x && x.op === 'editor_trim_clip');
+      if (!step || !('op' in step) || typeof step.args !== 'function') throw new Error(`${id} has no editor_trim_clip replay`);
+      const args = step.args({ before: { clips: { b: { index: 1 } } } });
+      expect(args).toMatchObject({ edge: 'end' });
+      expect(Number(args.delta)).toBeLessThan(0);
+    }
+  });
+
+  it('H4: the scrub starts from the ruler at the playhead, not the head svg, and does not insist on the hit', () => {
+    const step = byId('scrub-playhead-drag').steps.find((x) => 'pointer' in x && x.pointer.action === 'drag');
+    if (!step || !('pointer' in step)) throw new Error('no scrub drag');
+    expect(step.pointer.target).toEqual({ frame: 30, track: 'ruler' });
+    expect(step.expectHit).toBe(false);
+  });
+
+  it('H6: the shift test is a range, Cmd-click toggles, and linked select expects ONE half selected (D-107, D-129)', () => {
+    expect(SCENARIOS.some((s) => s.id === 'select-shift-multi')).toBe(false);
+    const range = byId('select-shift-click-range').steps.find((x) => 'waitFor' in x && 'path' in x.waitFor && x.waitFor.path === 'state.selection.length');
+    expect(range && 'waitFor' in range && range.waitFor).toMatchObject({ value: 3 });
+    const linked = byId('linked-av-select-one-half').steps.find((x) => 'waitFor' in x && 'path' in x.waitFor && x.waitFor.path === 'state.selection.length');
+    expect(linked && 'waitFor' in linked && linked.waitFor).toMatchObject({ value: 1 });
+  });
+
+  it('H6: no scenario clicks to seek past the end of a 180-frame GAPPED timeline', () => {
+    const lane = byId('seek-empty-lane-click').steps.find((x) => 'pointer' in x && x.pointer.action === 'click' && 'frame' in (x.pointer.target as object) && (x.pointer.target as { track: unknown }).track === 1);
+    expect(lane && 'pointer' in lane && (lane.pointer.target as { frame: number }).frame).toBeLessThan(180);
+  });
+
+  it('H9: the slip scenario checks live feedback (it fails against today’s app by design, B-345)', () => {
+    const live = byId('slip-tool').steps.find((x) => 'expect' in x && !Array.isArray(x.expect) && 'live' in x.expect);
+    expect(live).toBeDefined();
   });
 });
 

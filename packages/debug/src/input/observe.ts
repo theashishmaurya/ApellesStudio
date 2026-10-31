@@ -73,6 +73,11 @@ export interface ObserveSummary {
   eventsTruncated: boolean;
   /** The last pointer position the page saw. */
   lastPointer: { x: number; y: number } | null;
+  /** Where the last `wheel` event landed (H8): the page's own `clientX/Y`, to
+   *  compare with where the gesture aimed. A wheel built from a `CGEvent` that
+   *  lost its window arrives offset by the window's screen origin, and
+   *  nothing else in the reply would show it. */
+  lastWheel: { x: number; y: number } | null;
   /** Input timestamps (every observed event) — used for latency. */
   inputTimes: number[];
 }
@@ -96,6 +101,7 @@ export function startObserver(win: Window = window): Observer {
   let untrusted = 0;
   let truncated = false;
   let lastPointer: { x: number; y: number } | null = null;
+  let lastWheel: { x: number; y: number } | null = null;
   const now = () => win.performance?.now() ?? Date.now();
 
   const onEvent = (raw: Event) => {
@@ -116,6 +122,7 @@ export function startObserver(win: Window = window): Observer {
       rec.x = e.clientX;
       rec.y = e.clientY;
       if (raw.type.startsWith('pointer') || raw.type.startsWith('mouse')) lastPointer = { x: e.clientX, y: e.clientY };
+      if (raw.type === 'wheel') lastWheel = { x: e.clientX, y: e.clientY };
     }
     if (typeof e.buttons === 'number') rec.buttons = e.buttons;
     if (typeof e.button === 'number') rec.button = e.button;
@@ -136,7 +143,7 @@ export function startObserver(win: Window = window): Observer {
     lastPointer: () => lastPointer,
     stop() {
       for (const type of OBSERVED_TYPES) win.removeEventListener(type, onEvent, { capture: true });
-      return { counts, trusted, untrusted, events, eventsTruncated: truncated, lastPointer, inputTimes };
+      return { counts, trusted, untrusted, events, eventsTruncated: truncated, lastPointer, lastWheel, inputTimes };
     },
   };
 }

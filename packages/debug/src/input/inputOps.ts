@@ -142,6 +142,7 @@ async function runPlan(
     events: observed.events,
     eventsTruncated: observed.eventsTruncated,
     lastPointer: observed.lastPointer,
+    lastWheel: observed.lastWheel,
   };
   return {
     ok: true,

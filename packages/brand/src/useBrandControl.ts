@@ -13,7 +13,7 @@
 import { useEffect } from 'react';
 import { emit, listen } from '@tauri-apps/api/event';
 import { assertRequestLive, newBridgeClaim } from '@apelles/bridge';
-import { runAsAgent } from '@apelles/history';
+import { runForRequest } from '@apelles/history';
 import { assertProjectIdentity } from '@apelles/store';
 import { applyBrandKit, availableBrandTabs } from './appliers';
 import { createBrandOps, type BrandOpsContext } from './brandOps';
@@ -76,7 +76,7 @@ export function useBrandControl(): void {
       try {
         await assertProjectIdentity(op);
         assertRequestLive(payload); // B-314
-        const result = await runAsAgent(() => fn(args || {}));
+        const result = await runForRequest(payload, () => fn(args || {}));
         const error = typeof result.error === 'string' ? result.error : null;
         void respond({ ok: error === null, error, result });
       } catch (e) {

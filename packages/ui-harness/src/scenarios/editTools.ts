@@ -26,8 +26,9 @@ import { clipIs, clipUnchanged, FPS_GUARD, pickTool, sameAsGui, THREE_CLIPS, too
 
 const num = (scope: Scope, path: string) => Number(getPath(scope, path));
 
-/** Drag a target by `frames`, watching `watch` clips and the cursor, measured. */
-const drag = (target: TargetRef, frames: number, watch: string[], label: string, modifiers?: string[]): Step => ({
+/** Drag a target by `frames`, watching `watch` clips (plus any `extraSelectors`
+ *  verbatim) and the cursor, measured. */
+const drag = (target: TargetRef, frames: number, watch: string[], label: string, modifiers?: string[], extraSelectors: string[] = []): Step => ({
   pointer: {
     action: 'drag',
     target,
@@ -35,7 +36,7 @@ const drag = (target: TargetRef, frames: number, watch: string[], label: string,
     steps: 15,
     durationMs: 450,
     ...(modifiers ? { modifiers } : {}),
-    watch: { selectors: watch.map(clipSelector), cursor: true },
+    watch: { selectors: [...watch.map(clipSelector), ...extraSelectors], cursor: true },
   },
   label,
   measure: true,
@@ -46,6 +47,14 @@ const undoToBefore = (names: string[]): Step[] => [
   { op: 'undo', label: 'undo the GUI edit before replaying it through MCP' },
   ...names.map((n): Step => ({ waitFor: clipIs(n, 'duration', { ref: `before.clips.${n}.duration` }), label: `undo restored ${n}` })),
 ];
+
+/** `editor_trim_clip`'s `delta` MOVES the edge (B-337, fixed docstring): for
+ *  `edge: 'end'`, negative = earlier = shorter. A 15-frame shortening is -15. */
+const TRIM_END_SHORTEN_15 = -15;
+
+/** The filmstrip tiles inside a clip body: they are laid out from the clip's
+ *  source window, so they are what slip must visibly move. */
+const SLIP_PICTURE = (name: string) => `${clipSelector(name)} img`;
 
 const ROLL_FIELDS = ['startFrame', 'duration', 'sourceStart'] as const;
 
@@ -86,7 +95,7 @@ export const EDIT_TOOL_SCENARIOS: Scenario[] = [
       { expect: [clipIs('b', 'end', 165), clipUnchanged('b', 'startFrame'), clipUnchanged('c', 'startFrame'), { path: 'timeline.durationFrames', op: 'unchanged', from: 'before' }] },
       { capture: 'timeline', as: 'gui' },
       ...undoToBefore(['b']),
-      { op: 'editor_trim_clip', args: (s) => ({ track: 0, clip: num(s, 'before.clips.b.index'), edge: 'end', delta: 15 }) },
+      { op: 'editor_trim_clip', args: (s) => ({ track: 0, clip: num(s, 'before.clips.b.index'), edge: 'end', delta: TRIM_END_SHORTEN_15 }) },
       { waitFor: clipIs('b', 'duration', 75) },
       { expect: sameAsGui('b', ROLL_FIELDS) },
     ],
@@ -125,7 +134,7 @@ export const EDIT_TOOL_SCENARIOS: Scenario[] = [
       { expect: [clipIs('c', 'startFrame', 165), clipUnchanged('c', 'duration'), { path: 'timeline.durationFrames', op: 'eq', value: { ref: 'before.durationFrames', plus: -15 } }] },
       { capture: 'timeline', as: 'gui' },
       ...undoToBefore(['b']),
-      { op: 'editor_trim_clip', args: (s) => ({ track: 0, clip: num(s, 'before.clips.b.index'), edge: 'end', delta: 15, ripple: true }) },
+      { op: 'editor_trim_clip', args: (s) => ({ track: 0, clip: num(s, 'before.clips.b.index'), edge: 'end', delta: TRIM_END_SHORTEN_15, ripple: true }) },
       { waitFor: clipIs('b', 'duration', 75) },
       { expect: [...sameAsGui('b', ROLL_FIELDS), ...sameAsGui('c', ROLL_FIELDS)] },
     ],
@@ -188,7 +197,11 @@ export const EDIT_TOOL_SCENARIOS: Scenario[] = [
       { capture: 'timeline', as: 'before' },
       pickTool('slip'),
       toolActive('slip', 'the Slip tool button did not activate'),
-      drag(clip('b'), 15, ['a', 'b', 'c'], 'slip b by 15 frames'),
+      drag(clip('b'), 15, ['a', 'b', 'c'], 'slip b by 15 frames', undefined, [SLIP_PICTURE('b')]),
+      // H9 / B-345: the clip body stays put while slipping, so what must move
+      // live is the PICTURE inside it (the filmstrip tiles slide as the source
+      // window moves). Expected to FAIL until redesign P2 builds live slip.
+      { expect: { live: { selector: SLIP_PICTURE('b'), prop: 'x', minDistinct: 4, label: 'b’s filmstrip visibly slides inside the clip during the slip' } } },
       { waitFor: { path: 'timeline.clips.b.sourceStart', op: 'in', value: [15, 45] } },
       {
         expect: [

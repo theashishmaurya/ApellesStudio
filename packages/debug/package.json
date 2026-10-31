@@ -12,6 +12,7 @@
   "dependencies": {
     "@apelles/bridge": "*",
     "@apelles/editor": "*",
+    "@apelles/history": "*",
     "@apelles/motion": "*",
     "@apelles/shell": "*",
     "@apelles/ui": "*",

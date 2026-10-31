@@ -100,7 +100,7 @@ import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { listen, emit } from '@tauri-apps/api/event';
 import { assertRequestLive, newBridgeClaim } from '@apelles/bridge';
-import { runAsAgent } from '@apelles/history';
+import { runForRequest } from '@apelles/history';
 // B-217/D-358 — the cross-store project-identity guard; see the dispatcher below.
 import { assertProjectIdentity } from '@apelles/store';
 import type { PlayerRef } from '@remotion/player';
@@ -303,7 +303,7 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
         // instrumentation: one wrapper at the dispatcher, not a line in each
         // of the ~90 handlers. The shell-level feed reads those entries, so
         // work an agent does here is finally visible from any tab.
-        const result = await runAsAgent(() => fn(args || {}));
+        const result = await runForRequest(payload, () => fn(args || {}));
         void respond({ ok: !result?.error, error: result?.error ?? null, result });
       } catch (e) {
         void respond({ ok: false, error: e instanceof Error ? e.message : String(e), result: null });

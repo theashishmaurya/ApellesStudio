@@ -13,7 +13,9 @@
  *   - `buildFixture` creates one fresh timeline per scenario inside the scratch
  *     project, lays out the scenario's tracks / clips / markers through the
  *     same `editor_*` ops an agent uses, and maps the fixture's clip NAMES to
- *     the ids the app assigned; `teardownFixture` deletes that timeline.
+ *     the ids the app assigned, starting each from the default zoom (a previous
+ *     scenario's pinch must not leak); `teardownFixture` deletes that timeline
+ *     and the history entries its ops left.
  *
  * What it does NOT do: touch any project but the one it created, or leave the
  *   app on it — every path out of a run goes through `restore`.
@@ -153,6 +155,10 @@ export async function buildFixture(client: OpClient, project: ScratchProject, sc
   const created = await client.op<{ timeline: { id: string } }>('editor_create_timeline', { name: `ui-harness ${scenarioId}`, activate: true });
   const timelineId = created.timeline.id;
   const built: BuiltFixture = { timelineId, clipNames: {}, markerNames: {}, clipIds: {}, markerIds: {} };
+  // H2 — view state outlives a timeline: a pinch scenario left 480 px/s and
+  // pushed every later frame-addressed target off screen. Start each scenario
+  // at the default zoom, through the same tool an agent uses.
+  await client.op('editor_set_timeline_view', { zoom: 'default' });
   if (!spec) return built;
 
   // Tracks, top to bottom: insert any the new timeline lacks at its index.
@@ -201,6 +207,10 @@ export async function buildFixture(client: OpClient, project: ScratchProject, sc
 export async function teardownFixture(client: OpClient, built: BuiltFixture): Promise<void> {
   await client.op('editor_set_playing', { playing: false }).catch(() => undefined);
   await client.op('editor_delete_timeline', { id: built.timelineId });
+  // H1 — the fixture ops left entries on the shared undo stack (stamped
+  // `harness`, so the activity dock ignores them); they belong to a timeline
+  // that no longer exists.
+  await client.op('debug_clear_harness_history').catch(() => undefined);
 }
 
 /** The run's output directory layout. */

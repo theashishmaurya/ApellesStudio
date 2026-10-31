@@ -35,7 +35,12 @@ export const THREE_CLIPS: FixtureSpec = {
   ],
 };
 
-/** Two clips with a 60-frame gap between them, and one on the track below. */
+/** Two clips with a 60-frame gap between them (60-120), and one on the track
+ *  below that sits wholly BEFORE the gap's end. Closing a gap ripples every
+ *  sync-locked track from the gap's end, and `checkRemoveGap` rightly refuses
+ *  when a clip straddles that point (B-033), so a clip spanning frame 120 on
+ *  track 1 would make the close scenario test the refusal, not the close (H6).
+ *  The timeline is 180 frames long: nothing is at frame 200. */
 export const GAPPED: FixtureSpec = {
   tracks: [
     {
@@ -45,7 +50,7 @@ export const GAPPED: FixtureSpec = {
         { name: 'b', duration: 60, startFrame: 120 },
       ],
     },
-    { kind: 'video', clips: [{ name: 'c', duration: 120, startFrame: 30 }] },
+    { kind: 'video', clips: [{ name: 'c', duration: 60, startFrame: 30 }] },
   ],
 };
 

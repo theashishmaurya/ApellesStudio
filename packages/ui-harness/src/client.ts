@@ -8,12 +8,19 @@
  *   and their wire arguments, needs no MCP session, and must not depend on
  *   which MCP server happens to be configured.
  *
+ * Every request carries `source: 'harness'` (H1) so the app never mistakes the
+ *   harness's fixture ops for an agent's work.
+ *
  * What it does NOT do: retry, interpret results, or know any op. An op the app
  *   answers with `ok: false` becomes an `OpError` carrying the app's own
  *   message; the runner decides whether that fails the scenario.
  */
 
 export const DEFAULT_CONTROL_PORT = 19788;
+/** Stamped on every request (H1): the control server forwards it and the app
+ *  records the resulting history entries as the harness's, not the agent's —
+ *  so the Agent activity dock stays empty and a person's undo is not flooded. */
+export const HARNESS_SOURCE = 'harness';
 /** The app's own default budget for an op that does not name one. */
 export const DEFAULT_OP_TIMEOUT_MS = 20_000;
 /** Client-side slack on top of the app-side budget, so a real app timeout
@@ -54,7 +61,7 @@ export class ControlClient implements OpClient {
       const res = await this.fetchImpl(`${this.baseUrl}/op`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ op, args, timeout_ms: timeoutMs }),
+        body: JSON.stringify({ op, args, timeout_ms: timeoutMs, source: HARNESS_SOURCE }),
         signal: controller.signal,
       });
       const body = (await res.json().catch(() => null)) as { ok?: boolean; error?: string | null; result?: unknown } | null;

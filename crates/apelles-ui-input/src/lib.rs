@@ -162,7 +162,11 @@ pub struct InjectReport {
     pub dispatched: usize,
     /// `simulateMouseMove` (WebKit's testing SPI) or `mouseMoved`.
     pub mouse_move_path: String,
-    /// Whether `+[NSEvent pressedMouseButtons]` reported the injected buttons.
+    /// Whether `+[NSEvent pressedMouseButtons]` was actually reporting an
+    /// injected button during this call (H10): true only when a button was
+    /// held when the call began or an event in it holds one. The override is
+    /// installed on every call, but on a plain move, key or wheel it reports
+    /// nothing held, and saying `true` there described the install, not a use.
     pub pressed_buttons_override: bool,
     pub window_key: bool,
     /// `_windowOcclusionDetectionEnabled`; `None` when the SPI is absent.
@@ -173,8 +177,47 @@ pub struct InjectReport {
     /// associated with this window (if not, WebKit reads its location as
     /// screen coordinates and the wheel lands elsewhere).
     pub wheel_window_matched: Option<bool>,
+    /// For wheel events built without a window (H8): whether the CGEvent
+    /// location was rewritten into window space so WebKit's conversion lands
+    /// on the aimed point instead of reading it as screen coordinates.
+    pub wheel_location_corrected: Option<bool>,
+    /// For a buttonless move delivered to a window that was not key (H5):
+    /// whether the window was made key first, because WebKit drops a plain
+    /// mouse move for an inactive window. `None` when no such move was sent.
+    pub made_key_for_move: Option<bool>,
     /// For pinch events: whether the built event really is `NSEventTypeMagnify`.
     pub magnify_built: Option<bool>,
+}
+
+/// Whether `+[NSEvent pressedMouseButtons]` is reporting a held button for
+/// this call (H10): a button was already down when it began (`held_at_start`,
+/// the continuing half of a `down` / `up` pair), or any mouse event in it
+/// leaves one down.
+pub fn override_in_effect(events: &[LowEvent], held_at_start: bool) -> bool {
+    held_at_start
+        || events
+            .iter()
+            .any(|e| matches!(e, LowEvent::Mouse { buttons, .. } if *buttons != 0))
+}
+
+/// Whether a mouse event is a buttonless move into a window that is not key
+/// (H5). WebKit ignores those, while a drag (a button held) is delivered either
+/// way, so only this case makes the window key first.
+pub fn move_needs_key_window(phase: MousePhase, buttons_after: u32, window_key: bool) -> bool {
+    matches!(phase, MousePhase::Move) && buttons_after == 0 && !window_key
+}
+
+/// The CGEvent location (global, origin top-left of the primary display) that
+/// makes an `NSEvent` built WITHOUT a window report `locationInWindow ==
+/// window_point` (H8). With no window, AppKit reports the screen position
+/// (origin bottom-left) as `locationInWindow`, and WebKit then converts that as
+/// if it were window space; handing it the window-space point directly, in the
+/// flipped global convention, makes the conversion a no-op that lands right.
+pub fn windowless_event_location(
+    window_point: (f64, f64),
+    primary_screen_height: f64,
+) -> (f64, f64) {
+    (window_point.0, primary_screen_height - window_point.1)
 }
 
 /// Refuse a plan this module should not play: too many events, a non-finite
@@ -443,6 +486,60 @@ mod tests {
         ));
         assert!(matches!(events[1], LowEvent::Wheel { delta_y, .. } if delta_y == -20.0));
         assert!(validate(&events).is_ok());
+    }
+
+    #[test]
+    fn the_buttons_override_is_only_reported_when_a_button_is_involved() {
+        let plain_move = [mouse(MousePhase::Move, 0, 0.0)];
+        assert!(
+            !override_in_effect(&plain_move, false),
+            "a hover holds nothing"
+        );
+        assert!(!override_in_effect(&[], false));
+        assert!(override_in_effect(
+            &[mouse(MousePhase::Down, 1, 0.0)],
+            false
+        ));
+        assert!(
+            override_in_effect(&[mouse(MousePhase::Move, 1, 0.0)], false),
+            "a drag move"
+        );
+        // The `up` half of a continued gesture: nothing held after it, but one
+        // was held when the call began.
+        assert!(override_in_effect(&[mouse(MousePhase::Up, 0, 0.0)], true));
+        let key = LowEvent::Key {
+            phase: KeyPhase::Down,
+            code: "KeyZ".into(),
+            key: "z".into(),
+            modifiers: Modifiers::default(),
+            delay_ms: 0.0,
+        };
+        assert!(!override_in_effect(&[key], false));
+    }
+
+    #[test]
+    fn only_a_buttonless_move_into_a_non_key_window_needs_the_window_made_key() {
+        assert!(move_needs_key_window(MousePhase::Move, 0, false));
+        assert!(
+            !move_needs_key_window(MousePhase::Move, 0, true),
+            "already key"
+        );
+        assert!(
+            !move_needs_key_window(MousePhase::Move, 1, false),
+            "a drag is delivered anyway"
+        );
+        assert!(!move_needs_key_window(MousePhase::Down, 1, false));
+        assert!(!move_needs_key_window(MousePhase::Up, 0, false));
+    }
+
+    #[test]
+    fn a_windowless_wheel_event_is_located_so_appkit_reports_the_window_point() {
+        // 900-high primary display; the wanted window-space point is (100, 250)
+        // from the window's bottom-left. AppKit reports screen y from the bottom,
+        // i.e. 900 - cg_y, which must come back as 250.
+        let (x, cg_y) = windowless_event_location((100.0, 250.0), 900.0);
+        assert_eq!(x, 100.0);
+        assert_eq!(900.0 - cg_y, 250.0);
     }
 
     #[test]

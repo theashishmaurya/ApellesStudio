@@ -100,7 +100,7 @@ status: **open** · severity: **minor** · area: caption clips (D-228/D-229) und
 
 ## B-337 — `editor_trim_clip`'s docstring has the sign of `delta` backwards for `edge="end"`
 
-status: **open** · severity: **minor** · area: `editor_trim_clip` contract (`mcp/server.py`, `crates/apelles-mcp/src/tools/edit.rs`) vs `checkTrim` (`packages/editor/src/timeline.ts`)
+status: **fixed 2026-10-31** (the docstring now states that `delta` moves the edge: positive = later, so `end` + extends and `start` + shortens; fixed identically in `mcp/server.py` and `crates/apelles-mcp/src/tools/edit.rs`, corpus re-captured, and the harness replays use the reducer's sign) · severity: **minor** · area: `editor_trim_clip` contract (`mcp/server.py`, `crates/apelles-mcp/src/tools/edit.rs`) vs `checkTrim` (`packages/editor/src/timeline.ts`)
 
 - **found:** 2026-10-30, Nemotron shorts. `editor_trim_clip(edge="end", delta=-85)` on a 222-frame still SHORTENED it to 137; `delta=+170` then extended it to 307.
 - **what happens:** the reducer treats `delta` as a signed move of the edge (end edge: + is later, so longer; start edge: + is later, so shorter). The docstring says "positive shortens the clip, negative extends it" for both edges, which is only true of `start`.

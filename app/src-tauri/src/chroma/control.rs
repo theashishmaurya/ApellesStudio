@@ -185,6 +185,7 @@ pub fn serve(app: tauri::AppHandle) {
                 &registry,
                 "get_state",
                 serde_json::json!({}),
+                None,
                 HEALTH_TIMEOUT,
                 Duration::ZERO,
             )
@@ -213,7 +214,7 @@ pub fn serve(app: tauri::AppHandle) {
 
         // Two shapes: `POST /op {op, args, timeout_ms?}` (the generic one) or
         // `POST /<op> {..args}`.
-        let (op, args, timeout) = if path.is_empty() || path == "op" {
+        let (op, args, timeout, source) = if path.is_empty() || path == "op" {
             let v: serde_json::Value =
                 serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
             let op = v
@@ -225,10 +226,15 @@ pub fn serve(app: tauri::AppHandle) {
                 .get("args")
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!({}));
-            (op, args, bridge_timeout(v.get("timeout_ms")))
+            (
+                op,
+                args,
+                bridge_timeout(v.get("timeout_ms")),
+                request_source(v.get("source")),
+            )
         } else {
             let args = serde_json::from_str(&body).unwrap_or_else(|_| serde_json::json!({}));
-            (path.clone(), args, BRIDGE_TIMEOUT)
+            (path.clone(), args, BRIDGE_TIMEOUT, None)
         };
 
         if op.is_empty() {
@@ -242,7 +248,15 @@ pub fn serve(app: tauri::AppHandle) {
             continue;
         }
 
-        match dispatch(&app, &registry, &op, args, timeout, BRIDGE_READY_TIMEOUT) {
+        match dispatch(
+            &app,
+            &registry,
+            &op,
+            args,
+            source,
+            timeout,
+            BRIDGE_READY_TIMEOUT,
+        ) {
             Ok(payload) => {
                 let _ = req.respond(json_response(200, payload));
             }
@@ -296,6 +310,19 @@ fn bridge_timeout(requested: Option<&serde_json::Value>) -> Duration {
     match requested.and_then(|v| v.as_u64()) {
         Some(ms) => Duration::from_millis(ms).clamp(MIN_BRIDGE_TIMEOUT, MAX_BRIDGE_TIMEOUT),
         None => BRIDGE_TIMEOUT,
+    }
+}
+
+/// The only request `source` the frontend is told about (D-434 / H1): the UI
+/// harness marks its own fixture ops `"harness"` so they are not recorded as
+/// the agent's work (the Agent activity dock, the shared undo history). Any
+/// other value, or none, is an ordinary agent request. An allow-list, not a
+/// pass-through: this server does not know the op list and must not become a
+/// way to forge arbitrary attributions.
+fn request_source(requested: Option<&serde_json::Value>) -> Option<&'static str> {
+    match requested.and_then(|v| v.as_str()) {
+        Some("harness") => Some("harness"),
+        _ => None,
     }
 }
 
@@ -655,6 +682,7 @@ fn dispatch(
     registry: &BridgeRegistry,
     op: &str,
     args: serde_json::Value,
+    source: Option<&'static str>,
     timeout: Duration,
     ready_wait: Duration,
 ) -> Result<String, BridgeErr> {
@@ -685,6 +713,7 @@ fn dispatch(
             "id": id,
             "op": op,
             "args": args,
+            "source": source,
             "target": registry.target_for(op),
             "deadline_ms": request_deadline_ms(timeout),
         }),
@@ -839,6 +868,17 @@ mod tests {
             serde_json::from_str(r#"{"prefix":"editor_"}"#).expect("prefix-only claim");
         reg.announce(legacy);
         assert_eq!(reg.target_for("editor_add_marker"), None);
+    }
+
+    /// H1 — only the harness may name itself; anything else is an agent request.
+    #[test]
+    fn only_the_harness_source_is_forwarded() {
+        let harness = serde_json::json!("harness");
+        let agent = serde_json::json!("user");
+        assert_eq!(request_source(Some(&harness)), Some("harness"));
+        assert_eq!(request_source(Some(&agent)), None);
+        assert_eq!(request_source(Some(&serde_json::json!(7))), None);
+        assert_eq!(request_source(None), None);
     }
 
     #[test]
