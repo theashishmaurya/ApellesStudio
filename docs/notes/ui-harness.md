@@ -256,7 +256,7 @@ is `elementFromPoint` at resolve time, before any event is sent, and that elemen
 the Agent activity dock (`fixed left-3 bottom-3 z-40 w-[340px]`, up to 45 vh tall), which the
 harness's own setup ops had filled. The trim buttons sit where the layout puts them
 (x 104–240, y 643–675 at 1470×923); P1's type scale did not move or overlap them. A human with
-an agent working hits the same dock: B-341.
+an agent working hits the same dock: B-341 (fixed afterwards by D-435: the dock is now a top-bar popover that never opens by itself, so the runs no longer need to collapse it).
 
 ### Harness defects and the fix each needs
 

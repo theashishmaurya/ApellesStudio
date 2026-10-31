@@ -610,7 +610,13 @@ Why it is a real gap rather than an annoyance:
   occluded caption is simply not visible, so "verified by screenshot" quietly
   means "verified everywhere except where captions go".
 
-The missing piece is a `debug_set_agent_dock(false)` in the same family as the
+**Resolved 2026-10-31 (B-341, D-435).** The dock became a top-bar button + popover, so it no
+longer occludes anything while closed, and its open flag is in the shell store:
+`debug_set_popover_open {id: 'agent-activity', open}` opens or closes it and
+`debug_get_ui_state` reports `shell.agentActivityOpen`. No separate op was added. The original
+analysis follows.
+
+The missing piece was a `debug_set_agent_dock(false)` in the same family as the
 existing piece-2 setters — compile-gated out of a production build like
 everything else here. Until it exists, screenshot verification of the lower-left
 of any canvas is incomplete, and a verification pass should say so rather than

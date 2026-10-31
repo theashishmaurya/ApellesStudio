@@ -51,6 +51,14 @@ interface ShellStore {
   setWgpuSurfaceActive: (active: boolean) => void;
   sourcesPanelOpen: boolean;
   setSourcesPanelOpen: (open: boolean) => void;
+  /** B-341 — whether the chrome bar's Agent activity popover is open.
+   *  Session-only. Lives here, not in the app's agent store, so that
+   *  `debug_ui_state` / `debug_set_popover_open` (which depend on the shell
+   *  but never on `app/`) can read and drive the very flag the button's
+   *  `onOpenChange` writes. Nothing but a click or a debug op sets it: new
+   *  agent activity never does. */
+  agentActivityOpen: boolean;
+  setAgentActivityOpen: (open: boolean) => void;
 }
 
 export const useShellStore = create<ShellStore>((set) => ({
@@ -60,6 +68,8 @@ export const useShellStore = create<ShellStore>((set) => ({
   setWgpuSurfaceActive: (active) => set({ wgpuSurfaceActive: active }),
   sourcesPanelOpen: false,
   setSourcesPanelOpen: (open) => set({ sourcesPanelOpen: open }),
+  agentActivityOpen: false,
+  setAgentActivityOpen: (open) => set({ agentActivityOpen: open }),
 }));
 
 /** Convenience selector hook — returns just the active tab id. */
