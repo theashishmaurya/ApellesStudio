@@ -37,14 +37,13 @@
 // checkbox for a real multi-select "Select all" / "Delete N" bulk action
 // (`chroma_media_remove` takes a batch of ids for exactly this, one disk
 // write for the whole selection rather than one per item).
-import { useEffect, useMemo, useState, type DragEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'react-toastify';
 import {
   WarningIcon,
   CheckIcon,
   CheckSquareIcon,
-  CaretDownIcon,
   CaretRightIcon,
   FilmStripIcon,
   FolderIcon,
@@ -73,6 +72,8 @@ import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
+  TreeItem,
+  TreeView,
   cn,
 } from '@apelles/ui';
 import { useShellStore } from '@apelles/shell';
@@ -214,7 +215,6 @@ function setCompactDragImage(e: DragEvent, label: string): void {
 
 function FolderRow({
   node,
-  depth,
   activeFolder,
   setActiveFolder,
   closedFolders,
@@ -223,7 +223,6 @@ function FolderRow({
   onNewFolder,
 }: {
   node: FolderNode;
-  depth: number;
   activeFolder: string | null;
   setActiveFolder: (p: string | null) => void;
   closedFolders: ReadonlySet<string>;
@@ -231,102 +230,68 @@ function FolderRow({
   onDropMedia: (mediaId: string, folder: string) => void;
   onNewFolder: (parentPath: string) => void;
 }) {
-  const open = !closedFolders.has(node.path);
   const [dragOver, setDragOver] = useState(false);
-  const hasChildren = node.children.length > 0;
+  const selected = activeFolder === node.path;
 
   return (
-    <div>
-      <ContextMenu>
-        <ContextMenuTrigger>
-          <div
-            role="button"
-            tabIndex={0}
-            aria-expanded={hasChildren ? open : undefined}
-            onClick={() => setActiveFolder(activeFolder === node.path ? null : node.path)}
-            onKeyDown={(e) => {
-              // Tree-view keys: Left collapses an open folder, Right expands
-              // a closed one; Enter / Space select, as a click does.
-              if (e.key === 'ArrowLeft' && hasChildren && open) {
-                e.preventDefault();
-                toggleFolder(node.path, false);
-              } else if (e.key === 'ArrowRight' && hasChildren && !open) {
-                e.preventDefault();
-                toggleFolder(node.path, true);
-              } else if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                setActiveFolder(activeFolder === node.path ? null : node.path);
-              }
-            }}
-            onDragOver={(e) => {
-              if (!isMediaDrag(e)) return;
-              e.preventDefault();
-              setDragOver(true);
-            }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => {
-              setDragOver(false);
-              const raw = e.dataTransfer.getData(CHROMA_MEDIA_DRAG_MIME);
-              if (!raw) return;
-              e.preventDefault();
-              try {
-                const media = JSON.parse(raw) as { id: string };
-                onDropMedia(media.id, node.path);
-              } catch {
-                /* ignore malformed payload */
-              }
-            }}
-            className={cn(
-              'flex items-center gap-1 py-1 pr-2 rounded text-[11px] cursor-pointer select-none',
-              activeFolder === node.path
-                ? 'bg-accent/15 text-text-primary'
-                : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
-              dragOver && 'ring-1 ring-accent bg-accent/10',
-            )}
-            style={{ paddingLeft: 6 + depth * 14 }}
-          >
-            <span
-              onClick={(e) => {
-                if (!hasChildren) return;
-                e.stopPropagation();
-                toggleFolder(node.path, !open);
-              }}
-              className={cn('shrink-0', !hasChildren && 'opacity-0')}
-            >
-              <CaretRightIcon className={cn('size-3 transition-transform', open && 'rotate-90')} />
-            </span>
-            {activeFolder === node.path ? (
-              <FolderOpenIcon className="size-3 shrink-0" />
-            ) : (
-              <FolderIcon className="size-3 shrink-0" />
-            )}
-            <span className="truncate">{node.name}</span>
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onClick={() => onNewFolder(node.path)}>
-            <FolderPlusIcon className="size-3.5" /> New folder
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-      {open && hasChildren && (
-        <div>
-          {node.children.map((c) => (
-            <FolderRow
-              key={c.path}
-              node={c}
-              depth={depth + 1}
-              activeFolder={activeFolder}
-              setActiveFolder={setActiveFolder}
-              closedFolders={closedFolders}
-              toggleFolder={toggleFolder}
-              onDropMedia={onDropMedia}
-              onNewFolder={onNewFolder}
-            />
-          ))}
-        </div>
+    <TreeItem
+      label={node.name}
+      icon={
+        selected ? (
+          <FolderOpenIcon className="size-3 shrink-0" />
+        ) : (
+          <FolderIcon className="size-3 shrink-0" />
+        )
+      }
+      selected={selected}
+      onSelect={() => setActiveFolder(selected ? null : node.path)}
+      open={!closedFolders.has(node.path)}
+      onOpenChange={(open) => toggleFolder(node.path, open)}
+      rowProps={{
+        onDragOver: (e) => {
+          if (!isMediaDrag(e)) return;
+          e.preventDefault();
+          setDragOver(true);
+        },
+        onDragLeave: () => setDragOver(false),
+        onDrop: (e) => {
+          setDragOver(false);
+          const raw = e.dataTransfer.getData(CHROMA_MEDIA_DRAG_MIME);
+          if (!raw) return;
+          e.preventDefault();
+          try {
+            const media = JSON.parse(raw) as { id: string };
+            onDropMedia(media.id, node.path);
+          } catch {
+            /* ignore malformed payload */
+          }
+        },
+        className: dragOver ? 'ring-1 ring-accent bg-accent/10' : undefined,
+      }}
+      wrapRow={(row) => (
+        <ContextMenu>
+          <ContextMenuTrigger>{row}</ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem onClick={() => onNewFolder(node.path)}>
+              <FolderPlusIcon className="size-3.5" /> New folder
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
       )}
-    </div>
+    >
+      {node.children.map((c) => (
+        <FolderRow
+          key={c.path}
+          node={c}
+          activeFolder={activeFolder}
+          setActiveFolder={setActiveFolder}
+          closedFolders={closedFolders}
+          toggleFolder={toggleFolder}
+          onDropMedia={onDropMedia}
+          onNewFolder={onNewFolder}
+        />
+      ))}
+    </TreeItem>
   );
 }
 
@@ -354,6 +319,19 @@ export function SourcesPanel() {
   // re-expanding the whole list does not forget them.
   const foldersOpen = useShellStore((s) => s.sourcesFoldersOpen);
   const setFoldersOpen = useShellStore((s) => s.setSourcesFoldersOpen);
+  // Collapsing moves the tree between the resizable pane and the fixed header
+  // slot, which remounts it; a keyboard user would lose focus (and the Right
+  // key that re-expands). Put focus back on the root row after the swap.
+  const refocusRoot = useRef(false);
+  const changeFoldersOpen = (open: boolean) => {
+    refocusRoot.current = true;
+    setFoldersOpen(open);
+  };
+  useEffect(() => {
+    if (!refocusRoot.current) return;
+    refocusRoot.current = false;
+    document.querySelector<HTMLElement>('[data-chroma-folders-header]')?.focus();
+  }, [foldersOpen]);
   const [closedFolders, setClosedFolders] = useState<ReadonlySet<string>>(new Set());
   const toggleFolder = (path: string, open: boolean) =>
     setClosedFolders((prev) => {
@@ -520,6 +498,77 @@ export function SourcesPanel() {
   };
 
   if (!projectOpen) return null;
+
+  // D-436 — the bin list as a `@apelles/ui` TreeView: "All media" is the root
+  // item (caret = collapse the whole list, FCP's Libraries sidebar / Resolve's
+  // Media Pool bin list; label = select), its children are the folders. While
+  // collapsed the root row names the selected folder so the grid is never
+  // unexplained.
+  const folderTree = (
+    <ContextMenu>
+      <ContextMenuTrigger>
+        <TreeView>
+          <TreeItem
+            label={
+              <>
+                All media
+                {!foldersOpen && activeFolder !== null && (
+                  <span
+                    data-chroma-active-folder
+                    className="flex min-w-0 items-center gap-1 text-text-primary"
+                    title={activeFolder}
+                  >
+                    <CaretRightIcon className="size-2.5 shrink-0 text-text-secondary" />
+                    <FolderOpenIcon className="size-3 shrink-0" />
+                    <span className="truncate">{activeFolder.split('/').pop()}</span>
+                  </span>
+                )}
+              </>
+            }
+            icon={<FilmStripIcon className="size-3" />}
+            selected={activeFolder === null}
+            onSelect={() => setActiveFolder(null)}
+            open={foldersOpen}
+            onOpenChange={changeFoldersOpen}
+            expandable
+            rowProps={{ 'data-chroma-folders-header': '' }}
+            trailing={
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setNewFolderParent(null);
+                }}
+                title="New folder"
+                aria-label="New folder"
+                className="size-5 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover"
+              >
+                <FolderPlusIcon className="size-3" />
+              </button>
+            }
+          >
+            {tree.map((n) => (
+              <FolderRow
+                key={n.path}
+                node={n}
+                activeFolder={activeFolder}
+                setActiveFolder={setActiveFolder}
+                closedFolders={closedFolders}
+                toggleFolder={toggleFolder}
+                onDropMedia={doMove}
+                onNewFolder={setNewFolderParent}
+              />
+            ))}
+            {tree.length === 0 && <p className="px-2 py-1 text-[11px] text-text-secondary">No folders yet.</p>}
+          </TreeItem>
+        </TreeView>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onClick={() => setNewFolderParent(null)}>
+          <FolderPlusIcon className="size-3.5" /> New folder
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
 
   const mediaGrid = (
       <div className="h-full min-h-0 overflow-y-auto p-2" data-chroma-media-grid>
@@ -746,72 +795,6 @@ export function SourcesPanel() {
         </div>
       )}
 
-      {/* D-436 — the folder header row is always visible: a disclosure caret
-          (collapses the whole bin list, FCP's Libraries sidebar / Resolve's
-          Media Pool bin list), the "All media" root (selects), and — while the
-          list is collapsed — the selected folder's name, so the grid is never
-          unexplained. */}
-      <div
-        className="shrink-0 flex items-center px-1 py-1 border-b border-border-color"
-        data-chroma-folders-header
-      >
-        <button
-          type="button"
-          onClick={() => setFoldersOpen(!foldersOpen)}
-          aria-expanded={foldersOpen}
-          aria-label={foldersOpen ? 'Collapse folders' : 'Expand folders'}
-          title={foldersOpen ? 'Collapse folders' : 'Expand folders'}
-          className="shrink-0 size-5 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover"
-        >
-          {foldersOpen ? <CaretDownIcon className="size-3" /> : <CaretRightIcon className="size-3" />}
-        </button>
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={() => setActiveFolder(null)}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowLeft') {
-              e.preventDefault();
-              setFoldersOpen(false);
-            } else if (e.key === 'ArrowRight') {
-              e.preventDefault();
-              setFoldersOpen(true);
-            } else if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              setActiveFolder(null);
-            }
-          }}
-          className={cn(
-            'flex items-center gap-1 py-1 pl-1 pr-2 rounded text-[11px] cursor-pointer select-none',
-            activeFolder === null
-              ? 'bg-accent/15 text-text-primary'
-              : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
-          )}
-        >
-          <FilmStripIcon className="size-3" /> All media
-        </div>
-        {!foldersOpen && activeFolder !== null && (
-          <span
-            data-chroma-active-folder
-            className="flex min-w-0 items-center gap-1 text-[11px] text-text-primary"
-            title={activeFolder}
-          >
-            <CaretRightIcon className="size-2.5 shrink-0 text-text-secondary" />
-            <FolderOpenIcon className="size-3 shrink-0" />
-            <span className="truncate">{activeFolder.split('/').pop()}</span>
-          </span>
-        )}
-        <span className="flex-1" />
-        <button
-          onClick={() => setNewFolderParent(null)}
-          title="New folder"
-          aria-label="New folder"
-          className="shrink-0 size-5 mr-1 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover"
-        >
-          <FolderPlusIcon className="size-3" />
-        </button>
-      </div>
-
       {newFolderParent !== undefined && (
         <NewFolderDialog
           parentPath={newFolderParent}
@@ -828,39 +811,16 @@ export function SourcesPanel() {
             minSize={FOLDERS_PANE_MIN}
             maxSize={FOLDERS_PANE_MAX}
           >
-            <ContextMenu>
-              <ContextMenuTrigger>
-                <div className="h-full min-h-8 overflow-y-auto px-1 py-1">
-                  {tree.map((n) => (
-                    <FolderRow
-                      key={n.path}
-                      node={n}
-                      depth={0}
-                      activeFolder={activeFolder}
-                      setActiveFolder={setActiveFolder}
-                      closedFolders={closedFolders}
-                      toggleFolder={toggleFolder}
-                      onDropMedia={doMove}
-                      onNewFolder={setNewFolderParent}
-                    />
-                  ))}
-                  {tree.length === 0 && (
-                    <p className="px-2 py-1 text-[11px] text-text-secondary">No folders yet.</p>
-                  )}
-                </div>
-              </ContextMenuTrigger>
-              <ContextMenuContent>
-                <ContextMenuItem onClick={() => setNewFolderParent(null)}>
-                  <FolderPlusIcon className="size-3.5" /> New folder
-                </ContextMenuItem>
-              </ContextMenuContent>
-            </ContextMenu>
+            <div className="h-full overflow-y-auto px-1 py-1">{folderTree}</div>
           </ResizablePanel>
           <ResizableHandle />
           <ResizablePanel>{mediaGrid}</ResizablePanel>
         </ResizablePanelGroup>
       ) : (
-        <div className="flex-1 min-h-0">{mediaGrid}</div>
+        <>
+          <div className="shrink-0 px-1 py-1 border-b border-border-color">{folderTree}</div>
+          <div className="flex-1 min-h-0">{mediaGrid}</div>
+        </>
       )}
     </div>
   );

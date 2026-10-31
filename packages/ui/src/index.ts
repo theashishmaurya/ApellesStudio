@@ -149,6 +149,8 @@ export type {
 export { Textarea } from './components/ui/textarea';
 export { Label } from './components/ui/label';
 export { Collapsible, CollapsibleTrigger, CollapsibleContent } from './components/ui/collapsible';
+export { TreeView, TreeItem } from './tree-view';
+export type { TreeItemProps } from './tree-view';
 export { Toaster } from './components/ui/sonner';
 
 // ── rebuilt RapidRAW composites (shim targets) ────────────────────────────────

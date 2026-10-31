@@ -54,8 +54,10 @@ afterEach(() => {
   restoreRO();
 });
 
-const caret = () => screen.getByRole('button', { name: /(Collapse|Expand) folders/ });
-const folderRow = (name: string) => screen.getByText(name).closest('[role="button"]') as HTMLElement;
+const rootRow = () => document.querySelector('[data-chroma-folders-header]') as HTMLElement;
+/** The root row's disclosure caret (the whole-list toggle). */
+const caret = () => rootRow().querySelector('[data-tree-caret]') as HTMLElement;
+const folderRow = (name: string) => screen.getByText(name).closest('[data-tree-row]') as HTMLElement;
 const pane = () => document.querySelector('[data-chroma-folders-pane]');
 
 describe('SourcesPanel folder list (D-436)', () => {
@@ -63,12 +65,12 @@ describe('SourcesPanel folder list (D-436)', () => {
     render(<SourcesPanel />);
     expect(pane()).toBeTruthy();
     expect(screen.getByText('Music')).toBeTruthy();
-    expect(caret().getAttribute('aria-expanded')).toBe('true');
+    expect(rootRow().closest('[role="treeitem"]')?.getAttribute('aria-expanded')).toBe('true');
 
     fireEvent.click(caret());
     expect(pane()).toBeNull();
     expect(screen.queryByText('SFX')).toBeNull();
-    expect(caret().getAttribute('aria-expanded')).toBe('false');
+    expect(rootRow().closest('[role="treeitem"]')?.getAttribute('aria-expanded')).toBe('false');
     expect(useShellStore.getState().sourcesFoldersOpen).toBe(false);
 
     fireEvent.click(caret());
@@ -78,10 +80,11 @@ describe('SourcesPanel folder list (D-436)', () => {
   it('clicking a label still selects the folder, and does not collapse the list', () => {
     render(<SourcesPanel />);
     fireEvent.click(folderRow('SFX'));
-    expect(folderRow('SFX').className).toContain('bg-accent/15');
+    expect(folderRow('SFX').getAttribute('data-selected')).toBe('true');
     expect(pane()).toBeTruthy();
-    fireEvent.click(screen.getByText('All media'));
-    expect(folderRow('SFX').className).not.toContain('bg-accent/15');
+    fireEvent.click(rootRow());
+    expect(folderRow('SFX').hasAttribute('data-selected')).toBe(false);
+    expect(rootRow().getAttribute('data-selected')).toBe('true');
   });
 
   it('the collapsed header shows the selected folder, and nothing for All media', () => {
@@ -104,9 +107,10 @@ describe('SourcesPanel folder list (D-436)', () => {
 
   it('ArrowLeft / ArrowRight on All media collapse and expand the whole list', () => {
     render(<SourcesPanel />);
-    fireEvent.keyDown(screen.getByText('All media'), { key: 'ArrowLeft' });
+    fireEvent.keyDown(rootRow(), { key: 'ArrowLeft' });
     expect(pane()).toBeNull();
-    fireEvent.keyDown(screen.getByText('All media'), { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(rootRow());
+    fireEvent.keyDown(rootRow(), { key: 'ArrowRight' });
     expect(pane()).toBeTruthy();
   });
 

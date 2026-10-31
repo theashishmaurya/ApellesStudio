@@ -17,6 +17,9 @@
       "default": "./src/hooks/use-number-scrub.ts"
     }
   },
+  "scripts": {
+    "test": "vitest run"
+  },
   "dependencies": {
     "@base-ui/react": "1.7.0",
     "@phosphor-icons/react": "^2.1.10",
