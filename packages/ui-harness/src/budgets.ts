@@ -30,6 +30,10 @@ export interface PerfBudget {
   inputToFrameP95Ms: number;
   /** From the first input to the first store commit it caused (null = not checked). */
   firstCommitMs: number | null;
+  /** Worst frame in the RELEASE phase (the commit's render and paint), judged on
+   *  its own because it is one big frame, not part of the drag's steady state
+   *  (B-347 F6). `null` = not checked. Applies only when the gesture had a release. */
+  releaseMaxMs: number | null;
 }
 
 /** p95 within two refreshes: an occasional missed frame is tolerated, a
@@ -57,12 +61,19 @@ export const DEFAULT_PERF_BUDGET: PerfBudget = {
   droppedRatio: DROPPED_RATIO_BUDGET,
   inputToFrameP95Ms: INPUT_TO_FRAME_P95_BUDGET_MS,
   firstCommitMs: null,
+  releaseMaxMs: FRAME_MAX_BUDGET_MS,
 };
 
 /** The shape of `debug_pointer` / `debug_key`'s `perf` block. */
+/** One phase of a gesture's frames (the same fields as `PerfReport['frames']`). */
+export type FrameSummary = { samples: number; p50Ms?: number; p95Ms?: number; maxMs?: number; dropped?: number };
+
 export interface PerfReport {
   frameBudgetMs: number;
-  frames: { samples: number; p50Ms?: number; p95Ms?: number; maxMs?: number; dropped?: number };
+  frames: FrameSummary;
+  /** `frames` split at the `pointerup` (B-347 F6): when present, the move phase
+   *  is held to the frame budgets and the release phase to `releaseMaxMs`. */
+  phases?: { move: FrameSummary | null; release: FrameSummary | null };
   inputToFrame: { samples: number; p95Ms: number } | null;
   store: { commits: number; firstCommitAfterInputMs: number | null; lastCommitAfterLastInputMs: number | null };
 }
@@ -79,7 +90,7 @@ const fmt = (n: number) => `${Math.round(n * 10) / 10} ms`;
  *  it means the window was throttled and nothing was measured. */
 export function checkBudget(perf: PerfReport, budget: PerfBudget = DEFAULT_PERF_BUDGET): BudgetResult {
   const misses: string[] = [];
-  const f = perf.frames;
+  const f = perf.phases ? (perf.phases.move ?? { samples: 0 }) : perf.frames;
   if (!f.samples) {
     misses.push('no frames were sampled — the window is throttled (debug_set_occlusion_throttling(false)) or rAF is stalled');
     return { ok: false, misses };
@@ -92,6 +103,10 @@ export function checkBudget(perf: PerfReport, budget: PerfBudget = DEFAULT_PERF_
   }
   if (perf.inputToFrame && perf.inputToFrame.p95Ms > budget.inputToFrameP95Ms) {
     misses.push(`input→frame p95 ${fmt(perf.inputToFrame.p95Ms)} > ${fmt(budget.inputToFrameP95Ms)}`);
+  }
+  const release = perf.phases?.release;
+  if (budget.releaseMaxMs !== null && release?.maxMs !== undefined && release.maxMs > budget.releaseMaxMs) {
+    misses.push(`release frame ${fmt(release.maxMs)} > ${fmt(budget.releaseMaxMs)}`);
   }
   if (budget.firstCommitMs !== null) {
     const first = perf.store.firstCommitAfterInputMs;

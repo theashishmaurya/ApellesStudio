@@ -19,7 +19,7 @@ render  →  { rendered frame, histogram, adjustments, scopes }
 
 **Two HTTP hops, opposite directions**, and it is worth keeping them straight: 19790 is
 how a *client reaches this server* (`src/serve.rs`); 19788 is how a *tool reaches the app*
-(`src/transport.rs`). Both transports above expose the identical 264 tools off the same
+(`src/transport.rs`). Both transports above expose the identical 266 tools off the same
 `ApellesMcp` — nothing in `src/tools/` knows which one it is running on.
 
 ## Boundary
@@ -39,7 +39,7 @@ it.**
 
 ## Status
 
-The Rust replacement for `mcp/server.py` (D-020). **All 264 tools are ported and pass the
+The Rust replacement for `mcp/server.py` (D-020). **All 266 tools are ported and pass the
 parity gate** — both servers publish an identical tool set over a real MCP session.
 `tests/golden/ported.json` is the ledger, and the tests check the live server against it
 in both directions, so a tool cannot be dropped or added unnoticed.
@@ -99,9 +99,9 @@ Either way the Apelles app must be running (the control server binds on app star
 something open. `CHROMA_CONTROL_PORT` overrides *that* port; default 19788, the same
 default the app and the Python server use.
 
-A **debug** build publishes 264 tools. A **release** build drops the fifteen `debug_*`
+A **debug** build publishes 266 tools. A **release** build drops the sixteen `debug_*`
 ones, which are behind a real `#[cfg(debug_assertions)]` gate because internal debug
-tooling is never shipped (249; `src/tools/debug.rs`'s test pins the gate — D-434 added
+tooling is never shipped (250; `src/tools/debug.rs`'s test pins the gate — D-434 added
 `debug_pointer`, `debug_key` and `debug_set_occlusion_throttling`, and re-counted these
 figures off the tool attributes, which had drifted). The **`motion`** Cargo feature
 (default on) carries the 72 `motion_*` tools (69 editing tools plus D-417's three runtime
@@ -120,11 +120,11 @@ mcp/.venv/bin/python crates/apelles-mcp/parity/live_smoke.py     # against a run
 ```
 
 `tests/parity.rs` replays a golden corpus captured from the Python server — every tool's
-name, description and schema, and for 396 recorded calls the exact ops emitted and content
+name, description and schema, and for 412 recorded calls the exact ops emitted and content
 rendered. It needs no Apelles app. `tests/http_transport.rs` (D-313) covers what parity
 structurally cannot: it binds the real router on an ephemeral port, dials it with a real
 streamable-HTTP client, and checks the surface reached *by URL* is the identical one —
-same instructions, same 264 tools, same op emitted, same content back — plus that
+same instructions, same 266 tools, same op emitted, same content back — plus that
 `/health` answers in the shape the supervisor polls for. `parity/live_smoke.py` covers the
 remaining gap: that this really reaches the real control server. All three, and what each
 compares how, are documented in `docs/notes/mcp-rust-port.md`.

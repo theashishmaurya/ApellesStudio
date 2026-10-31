@@ -20,4 +20,20 @@ describe('startObserver (H8)', () => {
     window.dispatchEvent(new MouseEvent('pointerdown', { clientX: 1, clientY: 2 }));
     expect(observer.stop().lastWheel).toBeNull();
   });
+
+  it('records when the last pointerup arrived, on the same clock as the input times (B-347 F6)', () => {
+    const observer = startObserver(window);
+    window.dispatchEvent(new MouseEvent('pointerdown', { clientX: 1, clientY: 2 }));
+    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 5, clientY: 2 }));
+    window.dispatchEvent(new MouseEvent('pointerup', { clientX: 9, clientY: 2 }));
+    const summary = observer.stop();
+    expect(summary.releaseAt).not.toBeNull();
+    expect(summary.releaseAt).toBe(summary.inputTimes[summary.inputTimes.length - 1]);
+  });
+
+  it('has no release time when no pointerup came', () => {
+    const observer = startObserver(window);
+    window.dispatchEvent(new MouseEvent('pointerdown', { clientX: 1, clientY: 2 }));
+    expect(observer.stop().releaseAt).toBeNull();
+  });
 });

@@ -186,6 +186,35 @@ describe('editor_rename_track / editor_set_track_height (D-432 P3)', () => {
   });
 });
 
+describe('editor_set_tool (H12, the AI half of the tool palette)', () => {
+  it('sets the tool in the SAME store the toolbar reads, and editor_get_state reports it', async () => {
+    const res = await callOp('editor_set_tool', { tool: 'ripple' });
+    expect(res.ok).toBe(true);
+    expect(res.result).toMatchObject({ ok: true, tool: 'ripple', previous: 'select' });
+    expect(useTimelineViewStore.getState().trimTool).toBe('ripple');
+    expect((await callOp('editor_get_state', {})).result.trimTool).toBe('ripple');
+  });
+
+  it('with no tool it only reads, and lists the palette', async () => {
+    useTimelineViewStore.getState().setTrimTool('slip');
+    const res = await callOp('editor_set_tool', {});
+    expect(res.result.tool).toBe('slip');
+    expect(res.result.tools).toEqual(['select', 'ripple', 'roll', 'slip', 'slide', 'blade']);
+    expect(useTimelineViewStore.getState().trimTool).toBe('slip');
+  });
+
+  it('refuses an unknown tool by naming the valid ones, and changes nothing', async () => {
+    const res = await callOp('editor_set_tool', { tool: 'razor' });
+    expect(res.result.error).toMatch(/select \| ripple \| roll \| slip \| slide \| blade/);
+    expect(useTimelineViewStore.getState().trimTool).toBe('select');
+  });
+
+  it('is UI state: it never lands on the undo stack', async () => {
+    await callOp('editor_set_tool', { tool: 'blade' });
+    expect(useHistoryStore.getState().undoStack).toHaveLength(0);
+  });
+});
+
 describe('request source (H1)', () => {
   const sources = () => useHistoryStore.getState().undoStack.map((e) => e.source);
 

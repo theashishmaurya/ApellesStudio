@@ -18,6 +18,23 @@
 }
 
 /*
+ * B-347 F2 — contain a clip's size change. A trim writes `width` on the clip
+ * BODY (`useEditGesture.ts`), whose box then overflows the library's
+ * absolutely-positioned action wrapper; that overflow change propagated to the
+ * `overflow: overlay` edit-area scroller and re-laid-out its flex boxes and
+ * scrollbars (57-78 % of a ripple's move-phase main thread, measured in
+ * `docs/notes/timeline-drag-perf.md`). The wrapper's own size is set inline by
+ * the library (left / width / row height), so size containment is safe, and
+ * layout containment keeps its subtree's layout (and overflow) inside it. Not
+ * `paint`: the clip body already paints inside its own `contain: layout paint
+ * style` box (`TimelinePane.tsx`), and a paint clip here would cut whatever a
+ * future overlay draws outside the wrapper.
+ */
+.timeline-editor-action {
+  contain: layout size style;
+}
+
+/*
  * D-432 §4.6 — the playhead: a crisp 1 px `--color-playhead` line (the library
  * drew two blue `#5297FF` borders and scaled them by half, which renders
  * blurry), above clips and markers in the timeline's own layer scale.
@@ -68,6 +85,37 @@
  */
 .timeline-editor-cursor-area {
   height: var(--chroma-marker-strip-height, 10px);
+}
+
+/*
+ * B-351 / D-432 §5 "Cursors" — a clip body is the plain arrow with the Select
+ * tool (Final Cut, Premiere). dnd-kit's `useDraggable` gives `ClipBody` a
+ * `role="button"`, which the app's base rule (`app/src/styles.css`,
+ * `:where(button, [role='button']) { cursor: pointer }`) turns into the hand.
+ * Only the body element itself is matched (`data-chroma-clip-drag`), so a real
+ * button drawn inside a clip keeps its own pointer; the trim-edge and tool
+ * cursors `useEditGesture` writes inline still win over this.
+ */
+[data-chroma-clip-drag] {
+  cursor: default;
+}
+
+/*
+ * B-349 — B-346 cut the 16 px strip down to the head band, but the 1 px line
+ * itself (the library's interact.js drag target, `.timeline-editor-cursor`) still
+ * ran the full height and caught any press exactly on it: a click or trim on a
+ * clip the playhead sits over scrubbed the playhead instead. The line is now
+ * transparent to the pointer and only its two children, the head (the SVG
+ * pentagon) and the band under the ruler, take it back. interact.js resolves a
+ * drag by the press target's ancestry, so a press on either child still drags
+ * the line. Final Cut and Resolve grab the playhead by its head only.
+ */
+.timeline-editor-cursor {
+  pointer-events: none;
+}
+.timeline-editor-cursor-top,
+.timeline-editor-cursor-area {
+  pointer-events: auto;
 }
 
 /*

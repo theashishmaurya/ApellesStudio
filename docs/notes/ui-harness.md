@@ -401,18 +401,47 @@ B-346 fix, and B-351 is a P2 spec item not reached.
 
 | # | defect | fix |
 |---|---|---|
-| H11 | Frame and element targets are not checked against the edit area's **visible** rect. At 1470×923 with Sources and the Inspector open, the edit area is x 490–1149 (frames ≈ 0–209 at 90 px/s). The hard-coded "focus" frames 400 / 260, the marquee start (220) and a partly hidden clip's centre land outside the viewport or on the Inspector. It hit 11 scenarios (the first run's "PASS on rerun" for these was at a different window/layout) | `resolveTargetRef`: fail with "outside the timeline's visible area" when a resolved point is outside the edit area rect; clamp an element target's `fx` to the part of it that is inside; pick focus and empty-space points from the fixture (an empty track, a frame just past the last clip) rather than fixed far frames |
-| H12 | The trim tool leaks between scenarios (`TimelinePane`'s `useState` outlives timeline and project switches): Roll stayed active from `trim-two-up-viewer` to the end of the run | `buildFixture` resets the tool: press V, or a new `editor_set_tool` MCP op (already a parity gap in `ui-redesign.md` §7) |
-| H13 | `linked-av-select-one-half` matches a class substring that P2 changed | a stable hook on the partner (`data-chroma-link-partner` on `ClipBody`, an app change) and target that |
-| H14 | The separator press check cannot pass for `react-resizable-panels` (proximity hit) | `expectHit: false` on that drag; keep the width assertion |
-| H15 | H5's `makeKeyWindow` does not take while Apelles is not the active app (`madeKeyForMove: false`); with Apelles frontmost the moves arrive | the CLI activates the app at start and restores the previous front app at the end, through a debug-gated op (`NSApp activate` + `makeKeyAndOrderFront`) |
-| H16 | `playheadGrab` aims at the ruler, which only seeks on release | aim at `.timeline-editor-cursor-area` (the head band) until B-350 / P3's ruler scrubs |
-| H17 | Perf method: the rect `watch` forces a layout per frame (+5–25 ms p95); ~40 frames per gesture makes p95 the second-worst frame; no wait for idle after a big fixture; dev build | `docs/notes/timeline-drag-perf.md` F6 |
+| H11 | Frame and element targets are not checked against the edit area's **visible** rect. At 1470×923 with Sources and the Inspector open, the edit area is x 490–1149 (frames ≈ 0–209 at 90 px/s). The hard-coded "focus" frames 400 / 260, the marquee start (220) and a partly hidden clip's centre land outside the viewport or on the Inspector. It hit 11 scenarios (the first run's "PASS on rerun" for these was at a different window/layout) | `resolveTargetRef`: fail with "outside the timeline's visible area" when a resolved point is outside the edit area rect; clamp an element target's `fx` to the part of it that is inside; pick focus and empty-space points from the fixture (an empty track, a frame just past the last clip) rather than fixed far frames **Status 2026-11-01: done.** `visibility.ts` + `ScenarioRunner`: a frame-addressed target outside the visible edit area (the edit-area rect inset 16 px) is brought into view by `editor_set_timeline_view` (zoom out) and resolved again; a clip target whose press point is outside is moved onto the visible part of the clip; anything that cannot be shown is an ERROR naming the visible area, never a blind press. `resolveTargetRef` itself throws `OutsideVisibleArea`. Unit-tested (`method.test.ts`, `runner.test.ts`); not run live. The fixed far frames (400 / 260 / 220) now zoom the timeline out for the rest of that scenario rather than being rewritten. |
+| H12 | The trim tool leaks between scenarios (`TimelinePane`'s `useState` outlives timeline and project switches): Roll stayed active from `trim-two-up-viewer` to the end of the run | `buildFixture` resets the tool: press V, or a new `editor_set_tool` MCP op (already a parity gap in `ui-redesign.md` §7) **Status 2026-11-01: done.** `editor_set_tool` (both MCP servers, parity corpus, tool count 264 on its branch, 266 once merged with D-432 P3's two) reads or sets the tool through `useTimelineViewStore.trimTool`, the store the toolbar and the V/B/T/Y/U/C shortcuts now use (Roll is T since D-432 P3); `buildFixture` also resets zoom, clip height, balance, names, badges, snapping and skimming through `editor_set_timeline_view`. ; `buildFixture` sets Select through it for every scenario. |
+| H13 | `linked-av-select-one-half` matches a class substring that P2 changed | a stable hook on the partner (`data-chroma-link-partner` on `ClipBody`, an app change) and target that **Status 2026-11-01: done.** `ClipBody` carries `data-chroma-link-partner` on the selected clip's linked A/V partner (4 lines in `TimelinePane.tsx`); the scenario targets it. |
+| H14 | The separator press check cannot pass for `react-resizable-panels` (proximity hit) | `expectHit: false` on that drag; keep the width assertion **Status 2026-11-01: done.** The drag sets `expectHit: false`; the width assertion stays. |
+| H15 | H5's `makeKeyWindow` does not take while Apelles is not the active app (`madeKeyForMove: false`); with Apelles frontmost the moves arrive | the CLI activates the app at start and restores the previous front app at the end, through a debug-gated op (`NSApp activate` + `makeKeyAndOrderFront`) **Status 2026-11-01: done in code, not run live.** `debug_activate_app` (native, `chroma::debug_input`, compile-gated like the rest; control op only, no MCP tool, like `debug_clear_harness_history`) activates the app and makes its window key and reports the previous front app; the CLI calls it after switching to the Edit tab and again with `restorePid` at the end (`--no-activate` skips it). `activation.ts`. |
+| H16 | `playheadGrab` aims at the ruler, which only seeks on release | aim at `.timeline-editor-cursor-area` (the head band) until B-350 / P3's ruler scrubs **Status 2026-11-01: done.** `playheadGrab()` is `.timeline-editor-cursor-area` (new `TIMELINE_LIBRARY_SELECTORS.playheadBand`); the scrub scenario no longer sets `expectHit: false`. B-350 (ruler drag does not scrub) is still open. |
+| H17 | Perf method: the rect `watch` forces a layout per frame (+5–25 ms p95); ~40 frames per gesture makes p95 the second-worst frame; no wait for idle after a big fixture; dev build | `docs/notes/timeline-drag-perf.md` F6 **Status 2026-11-01: done.** See "Perf method" below. |
 
 **Window note:** one triage batch run with the Inspector closed
 (`debug_set_editor_inspector {open:false}`) sampled 0 frames on every measured step. A
 direct check right after it (same calls) sampled frames normally, so it is recorded as not
 reproduced, not as a defect.
+
+### Perf method (B-347 F6, H17: what a measured step does now)
+
+- **No rect watch on a measured step.** The per-frame `getBoundingClientRect` forced a layout
+  every frame (+5-25 ms of p95). A step with both `watch` and `measure` runs without the watch;
+  its `live` / `cursor` checks pass as "skipped" and say so. `--evidence` keeps the watch
+  (and the scenario's own gesture shape) to take those checks; its frame numbers are then
+  inflated and the report says so.
+- **A gesture long enough for a p95.** A measured drag or path move is stretched to at least
+  1.5 s at about 33 moves a second (~90 frames instead of ~40), endpoints unchanged
+  (`perfMethod.ts`).
+- **Move and release are judged apart.** `debug_pointer`'s `perf` now carries `phases.move` and
+  `phases.release`, split at the `pointerup` (`observe.ts` records it, `stats.splitFramePhases`
+  divides the frames). The move phase is held to the p95 / worst / dropped budgets, the release
+  frame to `releaseMaxMs` (50 ms) on its own, so one commit spike no longer decides p95.
+- **Idle first.** Before a measured step the runner calls `debug_perf_entries {waitIdleMs: 400,
+  clear: true}`: it waits (at most 5 s) for 400 ms of on-time frames, so the filmstrip and
+  waveform requests a big fixture queued do not land in the measurement.
+- **Exact per-phase numbers.** After the step the runner reads the `apelles:edit:*` marks
+  (`editPerf.ts`) and attaches `previews`, `previewP50Ms`, `previewP95Ms`, `commitRenderedMs`,
+  `commitPaintedMs`, plus `moveP95Ms`, `moveMaxMs`, `releaseMaxMs` to the step. They are null
+  in a production web bundle (no marks are written).
+- **Measure what ships.** The report names the web bundle it saw (`debug_perf_entries
+  build.dev`). A `tauri dev` app serves the Vite DEVELOPMENT bundle: React dev Performance
+  Tracks (~22 % of the release at 200 clips) and StrictMode's double render. For shipping
+  numbers build `cd app && npm run tauri build -- --debug` (Rust debug, so the `debug_*` ops
+  exist, with the production web bundle), start that app with `CHROMA_CONTROL_PORT=<free port>`
+  if the dev app is running, and point the harness at it with `--port`. **Not done here:** that
+  build was not made or run, so no number in this repo is from it yet.
 
 ### Perf picture (second run)
 

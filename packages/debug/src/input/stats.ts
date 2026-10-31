@@ -69,3 +69,29 @@ export function intervals(timestamps: readonly number[]): number[] {
   for (let i = 1; i < timestamps.length; i += 1) out.push(timestamps[i] - timestamps[i - 1]);
   return out;
 }
+
+/** A gesture's frame intervals, split at the release (B-347 F6). */
+export interface FramePhases<T> {
+  /** Frames up to and including the one the release (`pointerup`) landed in:
+   *  the gesture's moving part. */
+  move: T | null;
+  /** Frames after the release: the commit's render and paint. The move phase is
+   *  judged on its own and the release on its own, because the release is one
+   *  big frame and a handful of move frames: mixed, the worst frame decides p95. */
+  release: T | null;
+}
+
+/** Split ascending frame timestamps at `releaseAt` (same clock) into the
+ *  interval lists of the two phases. An interval belongs to the phase its END
+ *  frame is in, so the frame that paints the commit is a release frame. No
+ *  release time means everything is the move phase. */
+export function splitFramePhases(frameTimes: readonly number[], releaseAt: number | null): FramePhases<number[]> {
+  const all = intervals(frameTimes);
+  if (releaseAt === null || !Number.isFinite(releaseAt)) return { move: all, release: null };
+  const move: number[] = [];
+  const release: number[] = [];
+  for (let i = 1; i < frameTimes.length; i += 1) {
+    (frameTimes[i] >= releaseAt ? release : move).push(frameTimes[i] - frameTimes[i - 1]);
+  }
+  return { move, release };
+}

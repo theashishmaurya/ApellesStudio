@@ -38,6 +38,9 @@
 //!     detection for the window, a switch on the webview rather than store
 //!     state; it is what lets a covered window keep running rAF for the UI
 //!     harness's measurements.
+//!   - `debug_activate_app` (D-434 / H15) — bring the app to the front (or hand
+//!     the front back), because WebKit only delivers a buttonless move to a key
+//!     window; harness-only, no MCP tool.
 //!   - `ai_env_status` / `ai_env_retry` (D-315) — the AI-environment bootstrap
 //!     is a Rust state machine (`apelles_ai::ai_env`) with no store copy, and it
 //!     is running at its most interesting *during* startup, before the frontend
@@ -572,6 +575,15 @@ fn debug_native_op(app: &tauri::AppHandle, op: &str, args: &serde_json::Value) -
         // own occlusion detection), not a fact about the store — and the
         // moment it matters is precisely when the frontend's rAF has been
         // throttled to a stop.
+        // D-434 / H15. Native for the same reason: activation is a fact about
+        // the process and the window server, not the store. Harness-only (no
+        // MCP tool, like `debug_clear_harness_history`): the CLI calls it to
+        // make a hover scenario possible and again, with `restorePid`, to give
+        // the front back to the app that had it.
+        "debug_activate_app" => activate_app_args(args).and_then(|(restore_pid, window)| {
+            super::debug_input::activate_app(app, window.as_deref(), restore_pid)
+                .and_then(|report| serde_json::to_value(report).map_err(|e| e.to_string()))
+        }),
         "debug_set_occlusion_throttling" => match args.get("enabled").and_then(|v| v.as_bool()) {
             Some(enabled) => super::debug_input::set_occlusion_detection(
                 app,
@@ -603,6 +615,26 @@ fn debug_native_op(
     _args: &serde_json::Value,
 ) -> Option<String> {
     None
+}
+
+/// `{restorePid?, window?}` for `debug_activate_app` (H15): with `restorePid` the
+/// front goes back to that process, without it this app takes the front.
+#[cfg(debug_assertions)]
+fn activate_app_args(args: &serde_json::Value) -> Result<(Option<i32>, Option<String>), String> {
+    let restore_pid = match args.get("restorePid") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(v) => Some(
+            v.as_i64()
+                .and_then(|n| i32::try_from(n).ok())
+                .filter(|n| *n > 0)
+                .ok_or("'restorePid' must be a positive process id")?,
+        ),
+    };
+    let window = args
+        .get("window")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    Ok((restore_pid, window))
 }
 
 /// `{duration_secs, out_path?, window?, fps?, width?}` for
@@ -768,6 +800,32 @@ mod tests {
 
     fn ms(v: u64) -> serde_json::Value {
         serde_json::json!(v)
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn activate_app_args_default_to_taking_the_front() {
+        assert_eq!(activate_app_args(&serde_json::json!({})), Ok((None, None)));
+        assert_eq!(
+            activate_app_args(&serde_json::json!({ "restorePid": 4242, "window": "main" })),
+            Ok((Some(4242), Some("main".to_string())))
+        );
+        assert_eq!(
+            activate_app_args(&serde_json::json!({ "restorePid": null })),
+            Ok((None, None))
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn activate_app_args_refuse_a_pid_that_cannot_be_one() {
+        for bad in [
+            serde_json::json!({ "restorePid": 0 }),
+            serde_json::json!({ "restorePid": -5 }),
+            serde_json::json!({ "restorePid": "firefox" }),
+        ] {
+            assert!(activate_app_args(&bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

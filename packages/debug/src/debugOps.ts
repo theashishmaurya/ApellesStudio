@@ -76,6 +76,11 @@
  *   `debug_key`                   — D-434. Real key presses / combos / text.
  *   `debug_overlay_check`         — D-434. Is a fixed overlay over these parts?
  *   `debug_clear_harness_history` — D-434. Drop the harness's own undo entries.
+ *   `debug_perf_entries`          — B-347 / D-434. The app's own `performance`
+ *                                   marks for the edit gestures (preview /
+ *                                   commit-rendered / commit-painted), plus an
+ *                                   optional wait for the page to go idle
+ *                                   (`perfEntries.ts`).
  *   `debug_set_fps_overlay`       — D-330. Burn that live paint/raf readout
  *                                   into the window itself, so a screenshot
  *                                   or a `debug_record_video` recording
@@ -118,6 +123,7 @@ import {
 import { isParseError, parseBool, parseShellTab, SHELL_TABS } from './uiState';
 import { debugKey, debugPointer } from './input/inputOps';
 import { findOverlays } from './input/overlay';
+import { browserIdleDeps, DEFAULT_PERF_PREFIX, readPerfEntries, waitForIdle } from './perfEntries';
 
 /** One op's arguments, straight off the untyped `chroma://request` payload —
  *  the same `any` every other registry in this repo uses for the same reason
@@ -366,6 +372,22 @@ export const DEBUG_OPS: Record<string, OpHandler> = {
     const cleared = [...before.undoStack, ...before.redoStack].filter((e) => e.source === 'harness').length;
     before.clearSource('harness');
     return { ok: true, cleared };
+  },
+
+  // B-347 / D-434 - exact per-phase edit-gesture numbers (the marks
+  // `@apelles/editor`'s `editPerf.ts` writes) and an idle wait for the harness.
+  // `build.dev` says whether the web bundle is a development one: a production
+  // bundle writes no marks, and the harness labels its report accordingly.
+  debug_perf_entries: async (a) => {
+    const prefix = a?.prefix === undefined || a.prefix === null ? DEFAULT_PERF_PREFIX : String(a.prefix);
+    let idle: { waitedMs: number; reached: boolean } | undefined;
+    if (a?.waitIdleMs !== undefined && a.waitIdleMs !== null) {
+      const ms = Math.round(Number(a.waitIdleMs));
+      if (!Number.isFinite(ms) || ms < 0) return { error: "'waitIdleMs' must be a non-negative number of milliseconds" };
+      idle = await waitForIdle(browserIdleDeps(), ms);
+    }
+    const entries = readPerfEntries(performance, prefix, a?.clear === true);
+    return { ok: true, prefix, entries, build: { dev: import.meta.env.DEV }, ...(idle ? { idle } : {}) };
   },
 
   debug_set_fps_overlay: (a) => {

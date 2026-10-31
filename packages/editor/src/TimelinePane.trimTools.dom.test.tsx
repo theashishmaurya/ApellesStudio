@@ -52,6 +52,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import { useKeymapStore } from '@apelles/keymap';
 import { useEditorTimelineStore } from './timelineStore';
+import { useTimelineViewStore } from './timelineView';
 import { TimelinePane } from './TimelinePane';
 import { TRIM_TOOLS, type TrimTool } from './trimMode';
 import type { Timeline } from './timeline';
@@ -230,6 +231,18 @@ describe('the trim palette (D-261)', () => {
     await pickTool('select');
     expect(toolButton('select').getAttribute('aria-pressed')).toBe('true');
     expect(toolButton('roll').getAttribute('aria-pressed')).toBe('false');
+  });
+});
+
+describe('the palette and editor_set_tool share one store (H12)', () => {
+  it('a tool set through the store lights its toolbar button and arms the gesture engine', async () => {
+    actSync(() => useTimelineViewStore.getState().setTrimTool('ripple'));
+    await waitFrames(2);
+    expect(toolButton('ripple').getAttribute('aria-pressed')).toBe('true');
+    expect(toolButton('select').getAttribute('aria-pressed')).toBe('false');
+    // …and a button click writes the store back, so a read through MCP agrees
+    await pickTool('roll');
+    expect(useTimelineViewStore.getState().trimTool).toBe('roll');
   });
 });
 

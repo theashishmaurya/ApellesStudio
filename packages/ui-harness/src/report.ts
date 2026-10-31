@@ -51,7 +51,7 @@ export function renderReport(results: readonly ScenarioResult[], meta: RunMeta, 
   );
   lines.push(`Input mode \`${meta.mode}\` · control port ${meta.port} · scratch project \`${meta.project}\``, '');
   lines.push(
-    `Budgets (D-434, \`packages/ui-harness/src/budgets.ts\`): frame ${r1(FRAME_BUDGET_MS)} ms; p95 ≤ ${r1(FRAME_P95_BUDGET_MS)} ms; worst ≤ ${FRAME_MAX_BUDGET_MS} ms; dropped ≤ ${DROPPED_RATIO_BUDGET * 100}%; input→frame p95 ≤ ${INPUT_TO_FRAME_P95_BUDGET_MS} ms; input→store ≤ ${FIRST_COMMIT_BUDGET_MS} ms where checked; playback paint ≥ ${PLAYBACK_PAINT_MIN_FPS} fps, play loop ≥ ${PLAYBACK_RAF_MIN_FPS} fps.`,
+    `Budgets (D-434, \`packages/ui-harness/src/budgets.ts\`): frame ${r1(FRAME_BUDGET_MS)} ms; p95 ≤ ${r1(FRAME_P95_BUDGET_MS)} ms; worst ≤ ${FRAME_MAX_BUDGET_MS} ms (the move phase of a gesture; the release frame is held to the same ${FRAME_MAX_BUDGET_MS} ms on its own); dropped ≤ ${DROPPED_RATIO_BUDGET * 100}%; input→frame p95 ≤ ${INPUT_TO_FRAME_P95_BUDGET_MS} ms; input→store ≤ ${FIRST_COMMIT_BUDGET_MS} ms where checked; playback paint ≥ ${PLAYBACK_PAINT_MIN_FPS} fps, play loop ≥ ${PLAYBACK_RAF_MIN_FPS} fps.`,
     '',
   );
   if (meta.notes.length) {

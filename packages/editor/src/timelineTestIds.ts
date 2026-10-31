@@ -148,6 +148,8 @@ export const TIMELINE_LIBRARY_SELECTORS = {
   /** The playhead line, and the grab handle at its top. */
   playhead: '.timeline-editor-cursor',
   playheadHandle: '.timeline-editor-cursor-top',
+  /** The playhead's head band under the ruler: the only part of it that takes the pointer (B-346, B-349). */
+  playheadBand: '.timeline-editor-cursor-area',
   /** The wrapper the library draws around each clip. */
   action: '.timeline-editor-action',
   /** The library's own scroll container (its native scrollbars live here). */

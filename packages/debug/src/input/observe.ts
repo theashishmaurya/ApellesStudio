@@ -80,6 +80,9 @@ export interface ObserveSummary {
   lastWheel: { x: number; y: number } | null;
   /** Input timestamps (every observed event) — used for latency. */
   inputTimes: number[];
+  /** When the last `pointerup` arrived (same clock as `inputTimes`), or `null`
+   *  — where the frame sampler splits a gesture's move phase from its release. */
+  releaseAt: number | null;
 }
 
 function modifierString(e: { shiftKey?: boolean; ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean }): string | undefined {
@@ -102,6 +105,7 @@ export function startObserver(win: Window = window): Observer {
   let truncated = false;
   let lastPointer: { x: number; y: number } | null = null;
   let lastWheel: { x: number; y: number } | null = null;
+  let releaseAt: number | null = null;
   const now = () => win.performance?.now() ?? Date.now();
 
   const onEvent = (raw: Event) => {
@@ -109,7 +113,9 @@ export function startObserver(win: Window = window): Observer {
     if (raw.isTrusted) trusted += 1;
     else untrusted += 1;
     const t = now();
-    inputTimes.push(raw.timeStamp > 0 ? raw.timeStamp : t);
+    const stamp = raw.timeStamp > 0 ? raw.timeStamp : t;
+    inputTimes.push(stamp);
+    if (raw.type === 'pointerup') releaseAt = stamp;
     const rec: ObservedEvent = {
       type: raw.type,
       t: Math.round(t * 10) / 10,
@@ -143,7 +149,7 @@ export function startObserver(win: Window = window): Observer {
     lastPointer: () => lastPointer,
     stop() {
       for (const type of OBSERVED_TYPES) win.removeEventListener(type, onEvent, { capture: true });
-      return { counts, trusted, untrusted, events, eventsTruncated: truncated, lastPointer, lastWheel, inputTimes };
+      return { counts, trusted, untrusted, events, eventsTruncated: truncated, lastPointer, lastWheel, inputTimes, releaseAt };
     },
   };
 }

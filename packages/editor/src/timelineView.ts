@@ -47,6 +47,7 @@ import {
   TRACK_HEIGHT_MIN,
   TRACK_HEIGHT_PRESETS,
 } from './trackHeight';
+import type { TrimTool } from './trimMode';
 
 /** `pxPerSec` clamped into the zoom range the ruler's tick ladder is sized for. */
 export function clampPxPerSec(pxPerSec: number): number {
@@ -92,9 +93,18 @@ export const DEFAULT_TIMELINE_VIEW: TimelineViewSettings = {
   skimming: false,
 };
 
+/** The tool a fresh session / the harness's per-scenario reset starts on. */
+export const DEFAULT_TRIM_TOOL: TrimTool = 'select';
+
 interface TimelineViewState extends TimelineViewSettings {
   /** Always clamped, so no caller can leave the ruler outside its ladder. */
   setPxPerSec: (pxPerSec: number) => void;
+  /** The timeline's active edit tool (the trim palette, D-261): the ONE store the
+   *  toolbar buttons, the tool shortcuts and `editor_set_tool` all read and write.
+   *  Not part of `TimelineViewSettings` (not in `editor_set_timeline_view`), but
+   *  `resetView` puts it back too. */
+  trimTool: TrimTool;
+  setTrimTool: (tool: TrimTool) => void;
   /** Any subset of the settings; numbers are clamped on the way in. */
   setView: (patch: Partial<TimelineViewSettings>) => void;
   /** Back to `DEFAULT_TIMELINE_VIEW` (the harness's per-scenario reset). */
@@ -196,6 +206,8 @@ function snakeName(key: string): string {
 export const useTimelineViewStore = create<TimelineViewState>((set) => ({
   ...DEFAULT_TIMELINE_VIEW,
   setPxPerSec: (pxPerSec) => set({ pxPerSec: clampPxPerSec(pxPerSec) }),
+  trimTool: DEFAULT_TRIM_TOOL,
+  setTrimTool: (trimTool) => set({ trimTool }),
   setView: (patch) =>
     set({
       ...patch,
@@ -203,5 +215,5 @@ export const useTimelineViewStore = create<TimelineViewState>((set) => ({
       ...(patch.clipHeight !== undefined ? { clipHeight: clampTrackHeight(patch.clipHeight) } : {}),
       ...(patch.bandRatio !== undefined ? { bandRatio: clampBandRatio(patch.bandRatio) } : {}),
     }),
-  resetView: () => set({ ...DEFAULT_TIMELINE_VIEW }),
+  resetView: () => set({ ...DEFAULT_TIMELINE_VIEW, trimTool: DEFAULT_TRIM_TOOL }),
 }));

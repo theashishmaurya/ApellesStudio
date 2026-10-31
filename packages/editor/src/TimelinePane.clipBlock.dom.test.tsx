@@ -126,8 +126,9 @@ const clipOf = (id: string) => {
   }
   throw new Error(id);
 };
+/** A moved clip body's x offset; neighbours use a 2D `translate` (B-347 F3). */
 const tx = (el: HTMLElement) => {
-  const m = /translate3d\((-?[\d.]+)px/.exec(el.style.transform);
+  const m = /translate(?:3d)?\((-?[\d.]+)px/.exec(el.style.transform);
   return m ? Number(m[1]) : 0;
 };
 const brackets = () => qa(`[data-testid="${ID.editBracket}"]`).filter((b) => !b.hidden);
@@ -155,6 +156,21 @@ async function drag(el: HTMLElement, fromX: number, dxFrames: number, sample: st
   return frames;
 }
 const distinct = (xs: unknown[]) => new Set(xs.map((x) => JSON.stringify(x))).size;
+
+describe('the linked partner hook (harness H13)', () => {
+  it("marks ONLY the selected clip's linked A/V partner with data-chroma-link-partner", async () => {
+    actSync(() => {
+      const tl = buildFixture();
+      tl.tracks[0].clips[0].link_group = 'g';
+      tl.tracks[1].clips[0].link_group = 'g';
+      useEditorTimelineStore.setState({ timeline: tl, selection: [{ track: 0, id: 'a' }] });
+    });
+    await waitFrames(2);
+    expect(body('m').hasAttribute('data-chroma-link-partner')).toBe(true);
+    expect(body('a').hasAttribute('data-chroma-link-partner')).toBe(false);
+    expect(body('b').hasAttribute('data-chroma-link-partner')).toBe(false);
+  });
+});
 
 describe('the clip block (§4.3)', () => {
   it('a video clip at the default 52 px track: 14 px strip, 25 px filmstrip, 11 px waveform band', () => {
@@ -268,6 +284,15 @@ describe('edit tools: live motion on every move, exact result on release (B-344,
     live.c.forEach((f, i) => expect(f.x).toBeCloseTo(-15 * PX_PER_FRAME * ((i + 1) / 5), 0));
     expect(clipOf('b').duration).toBe(33);
     expect(clipOf('c').start_frame).toBe(81);
+  });
+
+  it('Ripple: neighbours move by a 2D translate, never translate3d (no per-clip layer promotion, B-347 F3)', async () => {
+    await pickTool('ripple');
+    await drag(zone('b', 'end'), 390, -15, ['c'], {}, false);
+    expect(body('c').style.transform).toMatch(/^translate\(-?[\d.]+px, 0(px)?\)$/);
+    expect(body('c').style.transform).not.toContain('3d');
+    firePointerEvent(window, 'pointerup', { x: 390 - 15 * PX_PER_FRAME, y: ROW_Y });
+    await nextFrame();
   });
 
   it('Roll: both sides of the cut move together, live; total length unchanged', async () => {

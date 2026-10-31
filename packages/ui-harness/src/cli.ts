@@ -7,11 +7,18 @@
  * `<out>/runs/<timestamp>/`. Exit code 0 when every scenario passed, 1 when
  * any failed or errored, 2 when the run could not start.
  *
- * Setup it does, and undoes: switches to the Edit tab, turns WebKit's
- * occlusion throttling off (so a covered window still runs frames to
- * measure), creates and opens a scratch project with generated test media,
- * and on the way out restores the throttling, reopens the project the app had
- * open, and deletes the scratch project. See docs/notes/ui-harness.md.
+ * Setup it does, and undoes: switches to the Edit tab, brings Apelles to the
+ * front (hover needs a key window, H15) and hands the front back at the end,
+ * turns WebKit's occlusion throttling off (so a covered window still runs
+ * frames to measure), creates and opens a scratch project with generated test
+ * media, and on the way out restores the throttling, reopens the project the
+ * app had open, and deletes the scratch project. See docs/notes/ui-harness.md.
+ *
+ * Measuring what ships (B-347 F6): run it against a `tauri build --debug` app
+ * (Rust debug, so the `debug_*` ops exist, with the PRODUCTION web bundle: no
+ * React dev tracks, no StrictMode double render). The report says which web
+ * build it saw. Measured steps run with no per-frame rect watch (it skews the
+ * numbers); `--evidence` keeps the watch to take the live-feedback checks.
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -19,6 +26,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
+import { activateApp, restoreFront } from './activation.ts';
 import { ControlClient, DEFAULT_CONTROL_PORT } from './client.ts';
 import { ensureMedia, openScratchProject, restore, runDirs } from './fixture.ts';
 import { renderReport, summarize } from './report.ts';
@@ -28,6 +36,23 @@ import { SCENARIOS } from './scenarios/index.ts';
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** `<repo>/scratch/ui-harness` — gitignored, per the repo's scratch convention. */
 const DEFAULT_OUT = resolve(HERE, '../../../scratch/ui-harness');
+
+/** Which web bundle the app runs, for the report: dev numbers include React's dev-only costs. */
+async function describeBuild(client: ControlClient, evidence: boolean): Promise<string> {
+  const mode = evidence
+    ? 'evidence run: the per-frame rect watch is ON for measured steps, so their frame numbers are inflated'
+    : 'perf run: measured steps have no rect watch and run >= 1.5 s; live-feedback and cursor checks on them are skipped (use --evidence)';
+  try {
+    const r = await client.op<{ build?: { dev?: boolean } }>('debug_perf_entries', {});
+    if (r.build?.dev === true) {
+      return `web bundle: DEVELOPMENT (React dev build with Performance Tracks and StrictMode double render); the release phase is inflated (estimated 0.5-0.7x in production, not yet measured). For shipping numbers run against \`tauri build --debug\`. ${mode}`;
+    }
+    if (r.build?.dev === false) return `web bundle: production (React production build, no StrictMode). ${mode}`;
+  } catch {
+    // an older app: no debug_perf_entries
+  }
+  return `web bundle: unknown (this app has no debug_perf_entries). ${mode}`;
+}
 
 async function main(): Promise<number> {
   const { values } = parseArgs({
@@ -39,6 +64,8 @@ async function main(): Promise<number> {
       ffmpeg: { type: 'string', default: 'ffmpeg' },
       'keep-project': { type: 'boolean', default: false },
       'keep-throttling': { type: 'boolean', default: false },
+      'no-activate': { type: 'boolean', default: false },
+      evidence: { type: 'boolean', default: false },
       list: { type: 'boolean', default: false },
     },
   });
@@ -68,6 +95,9 @@ async function main(): Promise<number> {
   }
 
   await client.op('debug_set_active_tab', { tab: 'edit' });
+  const front = values['no-activate'] ? { restorePid: null, notes: [] as string[] } : await activateApp(client);
+  notes.push(...front.notes);
+  notes.push(await describeBuild(client, values.evidence === true));
   let throttlingBefore: boolean | null = null;
   try {
     const r = await client.op<{ before: boolean }>('debug_set_occlusion_throttling', { enabled: false });
@@ -81,7 +111,7 @@ async function main(): Promise<number> {
   console.log(`scratch project ${project.path}; ${selected.length} scenario(s)`);
 
   const results: ScenarioResult[] = [];
-  const runner = new ScenarioRunner(client, project, { mode: values.mode, shotsDir: dirs.shots });
+  const runner = new ScenarioRunner(client, project, { mode: values.mode, shotsDir: dirs.shots, evidence: values.evidence });
   try {
     for (const scenario of selected) {
       const r = await runner.run(scenario);
@@ -94,6 +124,7 @@ async function main(): Promise<number> {
     if (throttlingBefore !== null && !values['keep-throttling']) {
       await client.op('debug_set_occlusion_throttling', { enabled: throttlingBefore }).catch(() => undefined);
     }
+    notes.push(...(await restoreFront(client, front)));
   }
 
   const meta = { startedAt: stamp, mode: values.mode, port, project: project.path, notes };

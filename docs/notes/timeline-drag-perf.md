@@ -228,7 +228,61 @@ The order that pays off fastest: F6 (so every other fix is judged on real number
 together, F3-2D, then F4. F5 is the structural fix and the one that makes 300-clip timelines
 meet the D-432 §8 target (p95 ≤ 8 ms, zero layout during `pointermove`).
 
-## Instrument next (exact additions; debug-only)
+## Progress (quick-win pass, 2026-11-01)
+
+Each line is a landed fix. None is re-profiled against the live app yet (that needs a
+`tauri build --debug` run, F6); the gain column is the plan's expectation.
+
+- **F1 done.** `EditFeedbackLayer` no longer reads `offsetWidth` in `readout()`. A hidden
+  10-glyph probe is measured once by `measure()`, which `useEditGesture` calls at the claim
+  before its first write; the pill is monospace, so `width = text.length x glyph + padding`
+  and clamps with no layout read. Pinned by `EditFeedbackLayer.dom.test.tsx` (a spy on
+  `offsetWidth` counts one read per gesture). Expected: the forced layout leaves the input
+  handler (-1 layout per extra move at 120 Hz).
+- **F2 done.** `.timeline-editor-action { contain: layout size style }` in
+  `timeline-overrides.css` (not `paint`). Nothing legitimately draws outside the wrapper:
+  its only child is the `ClipBlock` body, which already has its own `contain: layout paint
+  style`, and the brackets, readout, snap guide, transitions, markers and the playhead all
+  live in the pane's overlay layers, not in the action. Pinned as text in
+  `timelineOverrides.test.ts` (jsdom applies no CSS). Expected: move-phase layout
+  ~8 ms -> < 1 ms per preview; **unverified live**: re-profile with the F6 build.
+- **F3 (2D part) done.** Moved neighbours get `translate(dx, 0)` instead of
+  `translate3d(dx, 0, 0)` in `useEditGesture.ts`, so no clip is promoted to its own
+  compositing layer mid-drag (transform-only, nothing else changed). The slip picture's
+  `media` shift keeps `translate3d`: it is one element per gesture. Pinned by a
+  `TimelinePane.clipBlock.dom.test.tsx` case. The per-track group transform stays with F5.
+  Expected: 200-clip ripple/slide move p95 66 -> ~25 ms; **unverified live**.
+- **F4 (domain part) done.** `applyOp` is now `shareUnchanged(tl, applyOpCopy(tl, op))`
+  (`timeline.ts`): the ~60 op bodies are untouched and still deep-copy, then a reconcile pass
+  hands back the original node for every deeply-equal subtree (arrays of id'd records, i.e. a
+  track's clips, are matched by id so an insert or remove does not misalign the rest). An
+  untouched clip, track or array is `===` to the input's; a no-op is the input itself. Chosen
+  over a copy-on-write rewrite of every op because the copy costs <= 1 % and the exhaustive
+  op suite then holds by construction (2760 editor tests green, results `toEqual`-identical).
+  It exposed one real aliasing hazard: `rippleDeleteOneRange` mutated the result of the
+  composed `applyOp` calls in place, which now shares clips with the input, so it clones
+  first (caught by `rippleDeleteRanges.property.test.ts`). Pinned by `timelineShare.test.ts`.
+  **Not done here (after P3):** memoising `ClipBlock` in `TimelinePane.tsx`'s
+  `getActionRender` on the now-stable clip identity. That memo is what turns the identity
+  into the release-time win (expected -40-60 % at 200 clips); until it lands the library
+  still re-renders every wrapper.
+- **Instrumentation done (the "Instrument next" list below).** `editPerf.ts` writes the
+  `apelles:edit:*` marks (`press`, `preview` measure per move, `commit`, `commit-rendered`,
+  `commit-painted`), all behind `import.meta.env.DEV` (a production bundle has none).
+  `committedRendered()` already runs in the pane's layout effect, so the two commit measures
+  live in `useEditGesture.ts` with **no `TimelinePane.tsx` change**. `debug_perf_entries
+  {prefix?, clear?, waitIdleMs?}` (frontend op + MCP tool in both servers) reads them, also
+  reports `build.dev`, and can wait for the page to go idle first. Used by the harness
+  (`ui-harness.md`, H17).
+- **F6 done in code (harness), not run on a production build.** See `ui-harness.md` "Perf
+  method": no rect watch on measured steps (`--evidence` for the live checks), measured gestures
+  stretched to >= 1.5 s, move and release frames split at the `pointerup` and judged
+  separately (`phases` in `debug_pointer`'s `perf`), an idle wait first, the app's own marks
+  attached, and the report names the web bundle. The `tauri build --debug` recipe is written
+  down; no run against it has happened, so there are no post-fix numbers yet. **That run is the
+  next step**: it is what confirms F1-F4's expected gains.
+
+## Instrument next (exact additions; debug-only) - DONE, kept as the design record
 
 Sampling gave proportions. Exact per-phase times need marks the harness can read back:
 

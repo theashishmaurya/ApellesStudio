@@ -20,6 +20,7 @@ import { resolveTargetRef, ScenarioRunner, substituteIds } from './runner.ts';
 import { EDIT_TOOL_SCENARIOS } from './scenarios/editTools.ts';
 import { THREE_CLIPS } from './scenarios/common.ts';
 import { SCENARIOS } from './scenarios/index.ts';
+import type { Scenario } from './scenario.ts';
 import type { ViewSnap } from './snapshot.ts';
 
 const PX_PER_SEC = 90;
@@ -40,6 +41,10 @@ class FakeApp implements OpClient {
   calls: string[] = [];
   /** What `debug_overlay_check` reports; empty = nothing covers the timeline. */
   overlays: { part: string; hit: string; overlay: string }[] = [];
+  /** What `debug_perf_entries` returns (the app's `apelles:edit:*` marks). */
+  pxPerSec = PX_PER_SEC;
+  lastPointerArgs: Record<string, unknown> | null = null;
+  markEntries: { name: string; entryType: string; startTime: number; duration: number }[] = [];
   private nextId = 1;
 
   private readonly buggy: boolean;
@@ -105,7 +110,7 @@ class FakeApp implements OpClient {
               root: {
                 rect: { x: 0, y: 0, width: 1200, height: 400 },
                 attrs: {
-                  [TIMELINE_VIEW_ATTRS.pxPerSec]: String(PX_PER_SEC),
+                  [TIMELINE_VIEW_ATTRS.pxPerSec]: String(this.pxPerSec),
                   [TIMELINE_VIEW_ATTRS.scrollLeft]: '0',
                   [TIMELINE_VIEW_ATTRS.scrollTop]: '0',
                   [TIMELINE_VIEW_ATTRS.fps]: String(FPS),
@@ -119,6 +124,7 @@ class FakeApp implements OpClient {
           // A pressed tool button exists only for the active tool.
           return { root: String(args.selector).includes(`"${this.tool}"][aria-pressed="true"]`) ? { rect: {} } : null };
         case 'debug_pointer':
+          this.lastPointerArgs = args;
           return this.pointer(args);
         case 'debug_key':
           return { observed: { counts: { keydown: 1 } }, mode: 'native' };
@@ -132,7 +138,14 @@ class FakeApp implements OpClient {
           return {};
         case 'debug_overlay_check':
           return this.overlays.length ? { ok: false, overlays: this.overlays } : { ok: true, overlays: [] };
+        case 'editor_set_tool':
+          this.tool = String(args.tool);
+          return { ok: true, tool: this.tool };
+        case 'debug_perf_entries':
+          return { ok: true, entries: this.markEntries, build: { dev: false } };
         case 'editor_set_timeline_view':
+          this.pxPerSec = (args.zoom === 'default' ? 1 : Number(args.zoom)) * PX_PER_SEC;
+          return {};
         case 'debug_clear_harness_history':
         case 'editor_delete_timeline':
         case 'editor_set_playing':
@@ -182,9 +195,10 @@ if (!roll) throw new Error('roll-edit-tool scenario missing');
 describe('ScenarioRunner (against a fake app)', () => {
   it('a correct roll passes every check: store, live feedback, cursor, MCP parity, perf', async () => {
     const app = new FakeApp(false);
-    const result = await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp' }).run(roll);
+    const result = await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp', evidence: true }).run(roll);
     expect(result.checks.filter((c) => !c.ok).map((c) => c.message)).toEqual([]);
     expect(result.status).toBe('PASS');
+    expect(result.checks.some((c) => /skipped/.test(c.message))).toBe(false);
     expect(result.perf).toHaveLength(1);
     expect(result.perf[0].ok).toBe(true);
     expect(app.calls).toContain('editor_roll_edit');
@@ -193,7 +207,7 @@ describe('ScenarioRunner (against a fake app)', () => {
 
   it('a broken roll FAILS with the specific findings, and gets a failure screenshot', async () => {
     const app = new FakeApp(true);
-    const result = await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp', waitForTimeoutMs: 50 }).run(roll);
+    const result = await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp', waitForTimeoutMs: 50, evidence: true }).run(roll);
     expect(result.status).toBe('FAIL');
     const failed = result.checks.filter((c) => !c.ok).map((c) => c.message).join('\n');
     expect(failed).toMatch(/b’s head visibly moves during the roll/);
@@ -216,7 +230,103 @@ describe('ScenarioRunner (against a fake app)', () => {
   });
 });
 
-describe('harness defects the runner now guards (H1, H2)', () => {
+describe('the perf method (F6, H17)', () => {
+  it('a measured step runs without the rect watch, stretched to >= 1.5 s, and the live check says it was skipped', async () => {
+    const app = new FakeApp(false);
+    const result = await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp' }).run(roll);
+    const rollDrag = app.lastPointerArgs;
+    expect(rollDrag).not.toBeNull();
+    expect(rollDrag).not.toHaveProperty('watch');
+    expect(Number(rollDrag?.durationMs)).toBeGreaterThanOrEqual(1500);
+    expect(Number(rollDrag?.steps)).toBeGreaterThanOrEqual(40);
+    expect(result.status).toBe('PASS');
+    expect(result.checks.some((c) => /skipped: the rect watch is off/.test(c.message))).toBe(true);
+  });
+
+  it('--evidence keeps the watch and the scenario\'s own gesture shape', async () => {
+    const app = new FakeApp(false);
+    await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp', evidence: true }).run(roll);
+    expect(app.lastPointerArgs).toHaveProperty('watch');
+    expect(Number(app.lastPointerArgs?.durationMs)).toBeLessThan(1500);
+  });
+
+  it('waits for idle before a measured step and clears the marks it will read', async () => {
+    const app = new FakeApp(false);
+    const seen: Record<string, unknown>[] = [];
+    const original = app.op.bind(app);
+    app.op = (async (op: string, args: Record<string, unknown> = {}) => {
+      if (op === 'debug_perf_entries') seen.push(args);
+      return original(op, args);
+    }) as typeof app.op;
+    await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp' }).run(roll);
+    expect(seen[0]).toMatchObject({ prefix: 'apelles:edit:', clear: true, waitIdleMs: 400 });
+    // the measured drag is the scenario's last pointer step; the idle wait comes right before it
+    expect(app.calls.indexOf('debug_perf_entries')).toBeLessThan(app.calls.lastIndexOf('debug_pointer'));
+  });
+
+  it('attaches the app\'s own per-phase marks and the move / release split to the step', async () => {
+    const app = new FakeApp(false);
+    app.markEntries = [
+      ...[2, 3, 4, 5].map((d, i) => ({ name: 'apelles:edit:preview', entryType: 'measure', startTime: i, duration: d })),
+      { name: 'apelles:edit:commit-rendered', entryType: 'measure', startTime: 9, duration: 31 },
+      { name: 'apelles:edit:commit-painted', entryType: 'measure', startTime: 9, duration: 44 },
+    ];
+    const result = await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp' }).run(roll);
+    expect(result.perf[0].numbers).toMatchObject({ previews: 4, previewP95Ms: 5, commitRenderedMs: 31, commitPaintedMs: 44 });
+  });
+});
+
+describe('visible targets (H11)', () => {
+  const frameClick = (frame: number): Scenario => ({
+    id: 'far-frame',
+    title: 'x',
+    area: 'x',
+    reference: 'x',
+    fixture: THREE_CLIPS,
+    steps: [{ pointer: { action: 'click', target: { frame, track: 0 } }, expectHit: false }],
+  });
+
+  it('a frame outside the edit area is brought into view by zooming out, then pressed', async () => {
+    const app = new FakeApp(false);
+    // frame 600 at 90 px/s is x = 32 + 20 * 90 = 1832, past the 1200 px area
+    const result = await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp' }).run(frameClick(600));
+    expect(result.status).toBe('PASS');
+    expect(app.pxPerSec).toBeLessThan(PX_PER_SEC);
+    const target = app.lastPointerArgs?.target as { x: number };
+    expect(target.x).toBeGreaterThan(0);
+    expect(target.x).toBeLessThan(1200);
+  });
+
+  it('a frame already in view is pressed without touching the zoom', async () => {
+    const app = new FakeApp(false);
+    await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp' }).run(frameClick(60));
+    expect(app.pxPerSec).toBe(PX_PER_SEC);
+  });
+
+  it('a frame no zoom can show is an ERROR naming the visible area, never a blind press', async () => {
+    const app = new FakeApp(false);
+    const result = await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp' }).run(frameClick(2_000_000));
+    expect(result.status).toBe('ERROR');
+    expect(result.reason).toMatch(/outside the timeline's visible area/);
+    expect(app.calls).not.toContain('debug_pointer');
+  });
+
+  it('resolveTargetRef refuses a point past the edit area on its own', () => {
+    const v: ViewSnap = { pxPerSec: 90, scrollLeft: 0, scrollTop: 0, fps: 30, startLeft: 32, rowHeight: 52, rowsTop: 50, rect: { x: 0, y: 0, width: 1200, height: 400 } };
+    expect(() => resolveTargetRef({ frame: 600, track: 0 }, v, {})).toThrow(/visible area/);
+    expect(() => resolveTargetRef({ frame: 60, track: 0 }, v, {})).not.toThrow();
+  });
+});
+
+describe('harness defects the runner now guards (H1, H2, H12)', () => {
+  it('H12: every scenario starts on the Select tool, set through editor_set_tool', async () => {
+    const app = new FakeApp(false);
+    app.tool = 'roll';
+    await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp' }).run({ id: 'x', title: 'x', area: 'x', reference: 'x', steps: [{ wait: 0 }] });
+    expect(app.tool).toBe('select');
+    expect(app.calls.indexOf('editor_set_tool')).toBeGreaterThan(app.calls.indexOf('editor_create_timeline'));
+  });
+
   it('H2: every scenario starts from the default zoom, before any clip is placed', async () => {
     const app = new FakeApp(false);
     await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp' }).run({ id: 'x', title: 'x', area: 'x', reference: 'x', fixture: THREE_CLIPS, steps: [{ wait: 0 }] });
@@ -314,11 +424,21 @@ describe('scenario expectations that follow decided behaviour (H3, H4, H6, H9)',
     }
   });
 
-  it('H4: the scrub starts from the ruler at the playhead, not the head svg, and does not insist on the hit', () => {
+  it('H16: the scrub starts from the playhead head band (the only part that grabs), and insists on the hit', () => {
     const step = byId('scrub-playhead-drag').steps.find((x) => 'pointer' in x && x.pointer.action === 'drag');
     if (!step || !('pointer' in step)) throw new Error('no scrub drag');
-    expect(step.pointer.target).toEqual({ frame: 30, track: 'ruler' });
-    expect(step.expectHit).toBe(false);
+    expect(step.pointer.target).toEqual({ selector: '.timeline-editor-cursor-area', at: { fx: 0.5, fy: 0.5 } });
+    expect(step.expectHit).toBeUndefined();
+  });
+
+  it('H13: the linked-partner check targets the stable hook, not an outline class', () => {
+    const step = byId('linked-av-select-one-half').steps.find((x) => 'reachable' in x);
+    expect(step && 'reachable' in step && step.reachable.selector).toContain('[data-chroma-link-partner]');
+  });
+
+  it('H14: the header-divider drag does not insist the press lands on the 1 px separator', () => {
+    const step = byId('track-header-resize').steps.find((x) => 'pointer' in x);
+    expect(step && 'pointer' in step && step.expectHit).toBe(false);
   });
 
   it('H6: the shift test is a range, Cmd-click toggles, and linked select expects ONE half selected (D-107, D-129)', () => {

@@ -2613,7 +2613,9 @@ function rippleDeleteOneRange(
       );
     }
   }
-  const out = next === tl ? clone(tl) : next;
+  // `next` shares untouched clips with `tl` (`shareUnchanged`), so the in-place
+  // shifts below need their own copy, never a mutation of the caller's timeline.
+  const out = clone(next);
   for (const ti of rippled) shiftClipsAtOrAfter(out.tracks[ti], end, start - end);
   rippleTimelineMarkers(out, { kind: 'delete', start, end });
   return { timeline: out, result: { start, end, applied: true } };
@@ -5702,7 +5704,73 @@ function trimEndClampReason(tr: Track, track: number, clipIdx: number, delta: nu
   );
 }
 
+/**
+ * B-347 F4 - structural sharing for an op's result. Every op below works on a
+ * deep copy of the timeline (`clone`), so before this pass NO clip kept its object
+ * identity across an edit and every consumer that compares by identity (React
+ * rendering `ClipBlock`s, the gesture preview's index, selectors) saw the whole
+ * timeline as changed. `shareUnchanged` walks the copy against the timeline it
+ * was made from and hands back the ORIGINAL node for every subtree that is deeply
+ * equal, so an op that changes one clip leaves every other clip, track and array
+ * identical (`===`) to the input. The result is always structurally equal to
+ * `next` and nothing is mutated: only the containers on the path to a change are
+ * copied.
+ *
+ * Why a reconcile and not a copy-on-write rewrite of the ~60 op bodies: the bodies
+ * are the edit model's core and are covered by an exhaustive suite; this wraps them
+ * without touching one, so "identical results" holds by construction, and the deep
+ * copy it keeps costs <= 1 % of a gesture (`docs/notes/timeline-drag-perf.md`).
+ * Timelines are plain JSON, so a generic walk is exact.
+ */
+export function shareUnchanged<T>(prev: T, next: T): T {
+  if (prev === next) return prev;
+  if (typeof prev !== 'object' || typeof next !== 'object' || prev === null || next === null) return next;
+  const nextIsArray = Array.isArray(next);
+  if (nextIsArray !== Array.isArray(prev)) return next;
+  const p = prev as Record<string, unknown>;
+  const n = next as Record<string, unknown>;
+  const keys = Object.keys(n);
+  // An array of id'd records (a track's clips) is matched BY ID, so a clip an op
+  // inserts or removes does not shift every later clip out of alignment.
+  const byId = nextIsArray ? indexById(prev as unknown[]) : null;
+  let out: Record<string, unknown> | null = null; // copied lazily, only on the path to a change
+  let same = keys.length === Object.keys(p).length;
+  for (const k of keys) {
+    const was = byId ? byId.get(idOf(n[k])) : p[k];
+    const child = shareUnchanged(was, n[k]);
+    if (child !== n[k]) {
+      out ??= nextIsArray ? ([...next] as unknown as Record<string, unknown>) : { ...n };
+      out[k] = child;
+    }
+    if (same && (child !== p[k] || !(k in p))) same = false;
+  }
+  if (same) return prev;
+  return (out ?? next) as T;
+}
+
+const idOf = (v: unknown): string | undefined =>
+  typeof v === 'object' && v !== null && typeof (v as { id?: unknown }).id === 'string' ? (v as { id: string }).id : undefined;
+
+/** id -> element for an array whose elements ALL carry distinct string ids; `null`
+ *  for any other array (tracks, keyframes), which is then matched by position. */
+function indexById(list: readonly unknown[]): Map<string | undefined, unknown> | null {
+  if (list.length === 0) return null;
+  const map = new Map<string | undefined, unknown>();
+  for (const v of list) {
+    const id = idOf(v);
+    if (id === undefined || map.has(id)) return null;
+    map.set(id, v);
+  }
+  return map;
+}
+
+/** Apply `op` to `tl`; untouched clips, tracks and arrays keep their identity
+ *  ([`shareUnchanged`]). The reducer both the store and the gesture preview use. */
 export function applyOp(tl: Timeline, op: EditOp): Timeline {
+  return shareUnchanged(tl, applyOpCopy(tl, op));
+}
+
+function applyOpCopy(tl: Timeline, op: EditOp): Timeline {
   // B-077 — the project's own timeline-frame rate, needed by every op below
   // that combines a `start_frame`-space position with a `duration`/
   // `source_start`-space (source-frame) quantity. Computed once, from the

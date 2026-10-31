@@ -13,8 +13,8 @@
  *   - `buildFixture` creates one fresh timeline per scenario inside the scratch
  *     project, lays out the scenario's tracks / clips / markers through the
  *     same `editor_*` ops an agent uses, and maps the fixture's clip NAMES to
- *     the ids the app assigned, starting each from the default zoom (a previous
- *     scenario's pinch must not leak); `teardownFixture` deletes that timeline
+ *     the ids the app assigned, starting each from the default zoom and the Select
+ *     tool (a previous scenario's pinch or Roll must not leak); `teardownFixture` deletes that timeline
  *     and the history entries its ops left.
  *
  * What it does NOT do: touch any project but the one it created, or leave the
@@ -169,6 +169,10 @@ export async function buildFixture(client: OpClient, project: ScratchProject, sc
     snapping: true,
     skimming: false,
   });
+  // H12 - the edit tool outlives a timeline too (Roll stayed active from one
+  // scenario to the end of a run). Start every scenario on Select, through the
+  // same tool an agent uses.
+  await client.op('editor_set_tool', { tool: 'select' });
   if (!spec) return built;
 
   // Tracks, top to bottom: insert any the new timeline lacks at its index.

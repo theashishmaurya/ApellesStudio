@@ -2168,6 +2168,31 @@ def editor_set_preview_zoom(
 
 
 @mcp.tool()
+def editor_set_tool(tool: str | None = None) -> str:
+    """Read or set the Edit tab's active EDIT TOOL: the same palette as the
+    timeline toolbar's tool buttons and their keys (V select, B ripple, T roll,
+    Y slip, U slide, C blade; D-261, D-432).
+
+    `tool`: one of `select`, `ripple`, `roll`, `slip`, `slide`, `blade`. Omit it to
+    only READ the current tool. The tool decides what the NEXT drag on a clip does
+    (a tool other than `select` wins over the pointer's position and over Alt), so
+    set it before a `debug_pointer` edit gesture and put it back to `select`
+    afterwards: a leftover Roll or Blade turns a later plain move into something
+    else.
+
+    This is the one store the toolbar reads, so the button lights up exactly as if
+    a human had clicked it. UI state, not part of the document: nothing is saved
+    and nothing lands on the undo stack. The current tool is also reported by
+    `editor_get_state` as `trimTool`. Returns `{tool, previous, tools}`."""
+    import json
+
+    args: dict = {}
+    if tool is not None:
+        args["tool"] = tool
+    return json.dumps(_op("editor_set_tool", **args), indent=2, default=str)
+
+
+@mcp.tool()
 def editor_set_timeline_view(
     zoom: float | str | None = None,
     clip_height: float | str | None = None,
@@ -8237,6 +8262,52 @@ def debug_key(
     return json.dumps(
         _op("debug_key", timeout_ms=INPUT_OP_TIMEOUT_MS, **args), indent=2, default=str
     )
+
+
+@mcp.tool()
+def debug_perf_entries(
+    prefix: str | None = None,
+    clear: bool = False,
+    wait_idle_ms: int | None = None,
+) -> str:
+    """Read the app's own timing marks for the Edit timeline's edit gestures
+    (`performance.mark` / `performance.measure` entries named `apelles:*`), so a
+    gesture's phases are exact numbers instead of a profiler's proportions
+    (docs/notes/timeline-drag-perf.md).
+
+    Marks the app writes during a trim / ripple / slide / slip / roll gesture
+    (development builds of the web layer only; a production web bundle writes
+    none and says so in `build`):
+      * `apelles:edit:press` - the press claimed the gesture.
+      * `apelles:edit:preview` (measure) - one live preview: the op applied to a
+        copy plus the style writes, per pointer move.
+      * `apelles:edit:commit` - the release called the op.
+      * `apelles:edit:commit-rendered` (measure) - from the commit to React
+        having rendered the result.
+      * `apelles:edit:commit-painted` (measure) - from the commit to the frame
+        after it.
+
+    Args:
+        prefix: keep only entries whose name starts with this (default
+            `apelles:`).
+        clear: also delete the matching entries after reading, so the next read
+            holds only the next gesture.
+        wait_idle_ms: before reading, wait until the page has been idle (frames
+            on time, no long task) for about this long, at most five seconds;
+            use it between building a fixture and measuring.
+
+    Returns {entries: [{name, entryType, startTime, duration}], build: {dev},
+    idle?: {waitedMs, reached}}."""
+    import json
+
+    args: dict[str, Any] = {}
+    if prefix is not None:
+        args["prefix"] = prefix
+    if clear:
+        args["clear"] = True
+    if wait_idle_ms is not None:
+        args["waitIdleMs"] = wait_idle_ms
+    return json.dumps(_op("debug_perf_entries", **args), indent=2, default=str)
 
 
 @mcp.tool()

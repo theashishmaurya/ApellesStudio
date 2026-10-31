@@ -672,9 +672,13 @@ function ClipBody({
   style,
   children,
   onPointerDownCapture,
+  linkPartner,
 }: {
   track: number;
   clipId: string;
+  /** This clip is the linked A/V partner of the selected one (its outline is drawn
+   *  in `className`); exposed as `data-chroma-link-partner` for the UI harness. */
+  linkPartner?: boolean;
   className: string;
   style?: CSSProperties;
   children: ReactNode;
@@ -711,6 +715,7 @@ function ClipBody({
       // same pair, but it is not exposed on the DOM node in any documented way.
       data-chroma-track={track}
       data-chroma-clip-id={clipId}
+      data-chroma-link-partner={linkPartner ? '' : undefined}
       // D-250 — where the smart trim tool is announced when it is NOT armed.
       // D-235's four edits are reachable only by already knowing to hold
       // Alt/Option, and its readout appears only once that key is down, so
@@ -1271,11 +1276,17 @@ export function TimelinePane() {
   // listener does not have to re-bind (and so `useEffect` does not have to
   // carry a dependency) every time the tool changes. `selectTrimTool` is the
   // only writer, so the two can never drift.
-  const [trimTool, setTrimToolState] = useState<TrimTool>('select');
-  const trimToolRef = useRef<TrimTool>('select');
+  // The tool lives in the timeline view store so `editor_set_tool` drives the same state.
+  const trimTool = useTimelineViewStore((s) => s.trimTool);
+  const trimToolRef = useRef<TrimTool>(trimTool);
+  useEffect(() => {
+    trimToolRef.current = trimTool;
+  }, [trimTool]);
+  // The palette starts on Select each time the pane mounts (as it did when this was local state).
+  useEffect(() => () => useTimelineViewStore.getState().setTrimTool('select'), []);
   const selectTrimTool = (tool: TrimTool) => {
     trimToolRef.current = tool;
-    setTrimToolState((prev) => (prev === tool ? prev : tool));
+    useTimelineViewStore.getState().setTrimTool(tool);
   };
 
   /** Whether ANY non-default trim behaviour is live right now — a tool chosen
@@ -2318,6 +2329,7 @@ export function TimelinePane() {
         <ClipBody
           track={ti}
           clipId={action.id}
+          linkPartner={isAvLinked}
           onPointerDownCapture={(e) => editGesture.onClipPointerDownCapture(e, ti, action.id)}
           className={
             // D-432 §4.3 — the FCP clip: opaque kind colour, a 2 px radius, a

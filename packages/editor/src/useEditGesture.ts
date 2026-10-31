@@ -62,6 +62,7 @@ import { TIMELINE_TEST_IDS } from './timelineTestIds';
 import { rowHeightAt, rowTopAt } from './trackHeight';
 import { usePreviewPeekStore } from './previewPeek';
 import { twoUpView } from './twoUp';
+import { EDIT_PERF, perfMark, perfMeasure, perfMeasureAfterPaint } from './editPerf';
 
 /** Snap threshold, px at any zoom (Palmier Pro's 8 px, spec §5). */
 export const EDIT_SNAP_PX = 8;
@@ -218,7 +219,9 @@ export function createEditGesture(
       if (!el) continue;
       moved.add(s.id);
       const before = g.index.get(s.id);
-      el.body.style.transform = s.dStart !== 0 ? `translate3d(${px(s.dStart)}px, 0, 0)` : '';
+      // 2D `translate`, not `translate3d`: the latter promotes every moved clip to its
+      // own compositing layer, created mid-drag and torn down at release (B-347 F3).
+      el.body.style.transform = s.dStart !== 0 ? `translate(${px(s.dStart)}px, 0)` : '';
       // The one clip-level layout write: a clip whose length changes takes its
       // new width (spec §5.1 allows width "on that one clip only"); every
       // neighbour that only shifts is a pure transform.
@@ -270,10 +273,12 @@ export function createEditGesture(
     feedbackRef.current?.snapGuide(snapX);
     if (delta === g.lastDelta) return;
     g.lastDelta = delta;
+    perfMark(EDIT_PERF.previewStart);
     g.preview = previewEdit(g.tl, g.target, delta, g.index);
     paint(g);
     // D-432 P3 — the two-up viewer follows the edit (roll / slip / slide).
     usePreviewPeekStore.getState().setTwoUp(twoUpView(g.tl, g.target, g.preview.after));
+    perfMeasure(EDIT_PERF.preview, EDIT_PERF.previewStart);
   };
 
   const finish = (commit: boolean) => {
@@ -300,6 +305,7 @@ export function createEditGesture(
     const v = viewRef.current;
     const op = commit ? editOpFor(g.tl, g.target, g.preview.delta) : null;
     if (op) {
+      perfMark(EDIT_PERF.commit);
       v.applyOp(op);
       const edited = g.tl.tracks[g.target.track]?.clips[g.target.clip];
       if (edited) v.selectClip(g.target.track, edited.id);
@@ -435,6 +441,9 @@ export function createEditGesture(
       area.dataset.chromaEditGesture = target.mode;
       area.style.cursor = GESTURE_CURSOR[target.mode];
     }
+    perfMark(EDIT_PERF.press);
+    // The readout's one layout read, before this gesture writes anything (F1).
+    feedbackRef.current?.measure();
     showBrackets(tl, target, false);
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -498,6 +507,8 @@ export function createEditGesture(
       if (!pending) return;
       pendingClearRef.current = null;
       resetStyles(pending);
+      perfMeasure(EDIT_PERF.commitRendered, EDIT_PERF.commit);
+      perfMeasureAfterPaint(EDIT_PERF.commitPainted, EDIT_PERF.commit);
     },
   };
 }
