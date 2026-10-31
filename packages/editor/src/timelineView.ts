@@ -20,6 +20,7 @@
 import { create } from 'zustand';
 
 import { DEFAULT_PX_PER_SEC, MAX_PX_PER_SEC, MIN_PX_PER_SEC } from './ruler';
+import type { TrimTool } from './trimMode';
 
 /** `pxPerSec` clamped into the zoom range the ruler's tick ladder is sized for. */
 export function clampPxPerSec(pxPerSec: number): number {
@@ -35,9 +36,15 @@ interface TimelineViewState {
   pxPerSec: number;
   /** Always clamped, so no caller can leave the ruler outside its ladder. */
   setPxPerSec: (pxPerSec: number) => void;
+  /** The timeline's active edit tool (the trim palette, D-261): the ONE store the
+   *  toolbar buttons, the tool shortcuts and `editor_set_tool` all read and write. */
+  trimTool: TrimTool;
+  setTrimTool: (tool: TrimTool) => void;
 }
 
 export const useTimelineViewStore = create<TimelineViewState>((set) => ({
   pxPerSec: DEFAULT_PX_PER_SEC,
   setPxPerSec: (pxPerSec) => set({ pxPerSec: clampPxPerSec(pxPerSec) }),
+  trimTool: 'select',
+  setTrimTool: (trimTool) => set({ trimTool }),
 }));

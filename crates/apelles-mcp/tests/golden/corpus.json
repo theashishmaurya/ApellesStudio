@@ -1053,6 +1053,45 @@
       }
     },
     {
+      "name": "debug_perf_entries",
+      "description": "Read the app's own timing marks for the Edit timeline's edit gestures\n    (`performance.mark` / `performance.measure` entries named `apelles:*`), so a\n    gesture's phases are exact numbers instead of a profiler's proportions\n    (docs/notes/timeline-drag-perf.md).\n\n    Marks the app writes during a trim / ripple / slide / slip / roll gesture\n    (development builds of the web layer only; a production web bundle writes\n    none and says so in `build`):\n      * `apelles:edit:press` - the press claimed the gesture.\n      * `apelles:edit:preview` (measure) - one live preview: the op applied to a\n        copy plus the style writes, per pointer move.\n      * `apelles:edit:commit` - the release called the op.\n      * `apelles:edit:commit-rendered` (measure) - from the commit to React\n        having rendered the result.\n      * `apelles:edit:commit-painted` (measure) - from the commit to the frame\n        after it.\n\n    Args:\n        prefix: keep only entries whose name starts with this (default\n            `apelles:`).\n        clear: also delete the matching entries after reading, so the next read\n            holds only the next gesture.\n        wait_idle_ms: before reading, wait until the page has been idle (frames\n            on time, no long task) for about this long, at most five seconds;\n            use it between building a fixture and measuring.\n\n    Returns {entries: [{name, entryType, startTime, duration}], build: {dev},\n    idle?: {waitedMs, reached}}.",
+      "inputSchema": {
+        "properties": {
+          "prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Prefix"
+          },
+          "clear": {
+            "default": false,
+            "title": "Clear",
+            "type": "boolean"
+          },
+          "wait_idle_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Wait Idle Ms"
+          }
+        },
+        "type": "object",
+        "title": "debug_perf_entriesArguments"
+      }
+    },
+    {
       "name": "debug_pointer",
       "description": "Drive the running app with REAL pointer input \u2014 move, press, release,\n    click, double-click, drag along a path, wheel, pinch \u2014 the way a hand on\n    the trackpad does, and get back what it hit and what the page received.\n\n    This is for testing the INPUT HANDLING itself (hit zones, drag thresholds,\n    trim handles, snapping, marquee, scrubbing). To merely put the UI into a\n    state, the `debug_set_*` and `editor_*` tools are the honest route.\n\n    HOW IT IS DELIVERED (`mode`):\n      * \"native\" \u2014 real NSEvents delivered to the window's WKWebView through\n        AppKit's own responder methods (WebKit's test-runner pattern). The page\n        sees `isTrusted` events with real hit-testing, pointer capture and\n        default actions. No macOS permission is needed, the real cursor does\n        not move, and the window need not be in front.\n      * \"synthetic\" \u2014 DOM events made inside the page. `isTrusted` is false\n        and the browser runs none of its own behaviour for them; a handler that\n        works this way can still be broken for a human.\n      * \"auto\" (default) \u2014 native inside the app, synthetic elsewhere. The\n        reply's `mode` says which ran, and `fallbackReason` why, if it fell back.\n\n    TARGETS never need hard-coded pixels: `{\"testid\": \"timeline-clip\"}`,\n    `{\"selector\": \"[data-chroma-clip-id='c1']\", \"at\": {\"fx\": 1, \"dx\": -3}}`\n    (3 px inside the right edge), `{\"nodeId\": \"1.0.3\"}` from debug_dom_tree,\n    raw `{\"x\": 400, \"y\": 300}` CSS px, or \u2014 for `to`/`path` \u2014 `{\"byX\": 40}`,\n    40 px right of the previous point. The timeline's stable test ids are\n    listed in docs/notes/ui-harness.md. A target that matches nothing, has no\n    box, or lies off-screen is refused with the reason and nothing is sent.\n\n    READ THE REPLY:\n      * `targets[]` \u2014 each resolved point, the element named, and `hit`: what\n        `elementFromPoint` reports there. `hitInside: false` means something\n        else (an overlay) is on top and will take the press.\n      * `observed` \u2014 what the page actually received: per-type `counts`,\n        `trusted`/`untrusted`, and each down/up/click/key with its target.\n        Zero `pointerdown`s after a click means the input never arrived.\n      * `native` \u2014 how delivery went (`windowKey`, `occlusionDetection`, the\n        mouse-move path, whether DOM `buttons` was made truthful).\n      * `perf` (with `measure`) \u2014 frame times p50/p95/max and dropped frames\n        against 16.7 ms, input-to-next-frame latency, and store commits after\n        the input. `frames.samples: 0` means rAF never ran: the window is\n        throttled \u2014 call debug_set_occlusion_throttling(enabled=False).\n      * `watch` (with `watch`) \u2014 per-frame rects of the watched elements and\n        the cursor under the pointer: whether the UI moved DURING the drag,\n        not just where it ended up.\n\n    Args:\n        action: move, down, up, click, doubleClick, drag, wheel or pinch.\n            `down` and `up` may be separate calls; the button stays held between.\n        target: where it starts (or, for click/wheel/pinch, where it happens).\n        to: where a drag ends.\n        path: waypoints a drag (or a move) passes through before `to`.\n        button: left (default), right or middle.\n        modifiers: held for the whole gesture, e.g. [\"alt\"], [\"meta\", \"shift\"]\n            (meta = Cmd). The modifier KEYS are pressed before and released\n            after, as a hand does it.\n        steps: interpolated moves per path segment (drag/move, default 12),\n            or events for a wheel (5) or pinch (8).\n        duration_ms: how long the moves take (drag default 300).\n        hold_ms: pause after pressing before moving (default 50), or how long\n            a click holds the button (default 40).\n        delta_x: wheel horizontal CSS px.\n        delta_y: wheel vertical CSS px; negative scrolls up. With\n            modifiers=[\"ctrl\"] this is the timeline's zoom gesture.\n        scale: pinch zoom factor, e.g. 1.5 in, 0.5 out (native mode only\n            sends a real trackpad magnify).\n        mode: auto (default), native or synthetic.\n        measure: also return `perf`.\n        watch: {selectors, cursor, maxFrames} to sample every frame.\n        settle_ms: keep observing this long after the last event (default\n            120, max 5000).",
       "inputSchema": {
@@ -7941,6 +7980,28 @@
         ],
         "type": "object",
         "title": "editor_set_timeline_viewArguments"
+      }
+    },
+    {
+      "name": "editor_set_tool",
+      "description": "Read or set the Edit tab's active EDIT TOOL: the same palette as the\n    timeline toolbar's tool buttons and their keys (V select, R ripple, N roll,\n    Y slip, U slide, B blade; D-261, D-432).\n\n    `tool`: one of `select`, `ripple`, `roll`, `slip`, `slide`, `blade`. Omit it to\n    only READ the current tool. The tool decides what the NEXT drag on a clip does\n    (a tool other than `select` wins over the pointer's position and over Alt), so\n    set it before a `debug_pointer` edit gesture and put it back to `select`\n    afterwards: a leftover Roll or Blade turns a later plain move into something\n    else.\n\n    This is the one store the toolbar reads, so the button lights up exactly as if\n    a human had clicked it. UI state, not part of the document: nothing is saved\n    and nothing lands on the undo stack. The current tool is also reported by\n    `editor_get_state` as `trimTool`. Returns `{tool, previous, tools}`.",
+      "inputSchema": {
+        "properties": {
+          "tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tool"
+          }
+        },
+        "type": "object",
+        "title": "editor_set_toolArguments"
       }
     },
     {
@@ -15838,6 +15899,52 @@
       ]
     },
     {
+      "tool": "debug_perf_entries",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "debug_perf_entries",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "debug_perf_entries",
+      "case": "full",
+      "arguments": {
+        "prefix": "v_debug_perf_entries.prefix",
+        "clear": true,
+        "wait_idle_ms": 32
+      },
+      "requests": [
+        {
+          "op": "debug_perf_entries",
+          "args": {
+            "prefix": "v_debug_perf_entries.prefix",
+            "clear": true,
+            "waitIdleMs": 32
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "debug_pointer",
       "case": "minimal",
       "arguments": {
@@ -21189,6 +21296,48 @@
           "op": "editor_set_timeline_view",
           "args": {
             "zoom": 5.35
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_set_tool",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "editor_set_tool",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_set_tool",
+      "case": "full",
+      "arguments": {
+        "tool": "v_editor_set_tool.tool"
+      },
+      "requests": [
+        {
+          "op": "editor_set_tool",
+          "args": {
+            "tool": "v_editor_set_tool.tool"
           },
           "timeout_ms": 20000
         }

@@ -266,8 +266,16 @@ Each line is a landed fix. None is re-profiled against the live app yet (that ne
   `getActionRender` on the now-stable clip identity. That memo is what turns the identity
   into the release-time win (expected -40-60 % at 200 clips); until it lands the library
   still re-renders every wrapper.
+- **Instrumentation done (the "Instrument next" list below).** `editPerf.ts` writes the
+  `apelles:edit:*` marks (`press`, `preview` measure per move, `commit`, `commit-rendered`,
+  `commit-painted`), all behind `import.meta.env.DEV` (a production bundle has none).
+  `committedRendered()` already runs in the pane's layout effect, so the two commit measures
+  live in `useEditGesture.ts` with **no `TimelinePane.tsx` change**. `debug_perf_entries
+  {prefix?, clear?, waitIdleMs?}` (frontend op + MCP tool in both servers) reads them, also
+  reports `build.dev`, and can wait for the page to go idle first. Used by the harness
+  (`ui-harness.md`, H17).
 
-## Instrument next (exact additions; debug-only)
+## Instrument next (exact additions; debug-only) - DONE, kept as the design record
 
 Sampling gave proportions. Exact per-phase times need marks the harness can read back:
 

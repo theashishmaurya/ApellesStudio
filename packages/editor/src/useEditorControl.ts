@@ -352,6 +352,10 @@ import {
 } from './previewZoom';
 // D-434 / H2 — the timeline's own zoom, settable over MCP like the preview's.
 import { clampPxPerSec, timelineZoomPct, useTimelineViewStore } from './timelineView';
+import { TRIM_TOOLS, type TrimTool } from './trimMode';
+
+/** The tool ids `editor_set_tool` accepts: the palette's own list, never a second one. */
+const TRIM_TOOL_IDS: readonly TrimTool[] = TRIM_TOOLS.map((t) => t.tool);
 import { DEFAULT_PX_PER_SEC, MAX_PX_PER_SEC, MIN_PX_PER_SEC } from './ruler';
 
 const EDITOR_OP_PREFIX = 'editor_';
@@ -2278,6 +2282,8 @@ export function useEditorControl(): void {
           // a frame number cannot be turned into a screen position, and a
           // harness run could not tell a leaked zoom from a layout bug.
           timelineView: timelineViewReport(),
+          // The active edit tool — the read half of `editor_set_tool`.
+          trimTool: useTimelineViewStore.getState().trimTool,
           previewZoom: {
             zoom: s.previewView.zoom,
             pct: previewZoomPct(s.previewView.zoom),
@@ -2896,6 +2902,23 @@ export function useEditorControl(): void {
       // carry the Clip Appearance view settings too; zoom is its first field.
       // Display-only and NOT undoable (D-216's reasoning, as for
       // `editor_set_preview_zoom`): a view setting, never in `Timeline`.
+      /**
+       * The AI half of the timeline toolbar's tool palette and its V / R / N / Y / U /
+       * B shortcuts (D-261, D-432): read or set the active edit tool. It is the
+       * one store the toolbar reads (`useTimelineViewStore.trimTool`), so a tool
+       * set here lights the same button. UI state, not part of the document.
+       */
+      editor_set_tool: (a) => {
+        const view = useTimelineViewStore.getState();
+        const raw = a?.tool;
+        if (raw === undefined || raw === null) return { ok: true, tool: view.trimTool, tools: TRIM_TOOL_IDS };
+        if (typeof raw !== 'string' || !(TRIM_TOOL_IDS as readonly string[]).includes(raw)) {
+          return { error: `tool must be one of ${TRIM_TOOL_IDS.join(' | ')}` };
+        }
+        const previous = view.trimTool;
+        view.setTrimTool(raw as TrimTool);
+        return { ok: true, tool: raw, previous, tools: TRIM_TOOL_IDS };
+      },
       editor_set_timeline_view: (a) => {
         const raw = a?.zoom;
         if (raw === undefined) return { error: 'pass zoom (a multiplier, 1 = the default 100 %) or zoom="default"' };

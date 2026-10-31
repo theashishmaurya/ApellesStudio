@@ -1613,11 +1613,17 @@ export function TimelinePane() {
   // listener does not have to re-bind (and so `useEffect` does not have to
   // carry a dependency) every time the tool changes. `selectTrimTool` is the
   // only writer, so the two can never drift.
-  const [trimTool, setTrimToolState] = useState<TrimTool>('select');
-  const trimToolRef = useRef<TrimTool>('select');
+  // The tool lives in the timeline view store so `editor_set_tool` drives the same state.
+  const trimTool = useTimelineViewStore((s) => s.trimTool);
+  const trimToolRef = useRef<TrimTool>(trimTool);
+  useEffect(() => {
+    trimToolRef.current = trimTool;
+  }, [trimTool]);
+  // The palette starts on Select each time the pane mounts (as it did when this was local state).
+  useEffect(() => () => useTimelineViewStore.getState().setTrimTool('select'), []);
   const selectTrimTool = (tool: TrimTool) => {
     trimToolRef.current = tool;
-    setTrimToolState((prev) => (prev === tool ? prev : tool));
+    useTimelineViewStore.getState().setTrimTool(tool);
   };
 
   /** Whether ANY non-default trim behaviour is live right now — a tool chosen

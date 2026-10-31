@@ -357,6 +357,12 @@ pub struct EditorSetPreviewZoomArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorSetToolArgs {
+    #[serde(default)]
+    pub tool: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EditorSetTimelineViewArgs {
     pub zoom: ZoomSpec,
 }
@@ -2749,6 +2755,33 @@ impl ApellesMcp {
             .put("panX", p.pan_x)
             .put("panY", p.pan_y);
         let env = self.op("editor_set_preview_zoom", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_set_tool",
+        description = r#"Read or set the Edit tab's active EDIT TOOL: the same palette as the
+    timeline toolbar's tool buttons and their keys (V select, R ripple, N roll,
+    Y slip, U slide, B blade; D-261, D-432).
+
+    `tool`: one of `select`, `ripple`, `roll`, `slip`, `slide`, `blade`. Omit it to
+    only READ the current tool. The tool decides what the NEXT drag on a clip does
+    (a tool other than `select` wins over the pointer's position and over Alt), so
+    set it before a `debug_pointer` edit gesture and put it back to `select`
+    afterwards: a leftover Roll or Blade turns a later plain move into something
+    else.
+
+    This is the one store the toolbar reads, so the button lights up exactly as if
+    a human had clicked it. UI state, not part of the document: nothing is saved
+    and nothing lands on the undo stack. The current tool is also reported by
+    `editor_get_state` as `trimTool`. Returns `{tool, previous, tools}`."#
+    )]
+    pub async fn editor_set_tool(
+        &self,
+        Parameters(p): Parameters<EditorSetToolArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().put("tool", p.tool);
+        let env = self.op("editor_set_tool", args).await?;
         Ok(render::json_text(&env))
     }
 

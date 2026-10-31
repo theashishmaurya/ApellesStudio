@@ -34,7 +34,7 @@ status: **open, feature gap: for the roadmap, not a bug fix** · severity: mediu
 
 - **found:** 2026-10-31, the first live run of the D-434 harness (`docs/notes/ui-harness.md` § "First live run"). Each one FAILs by design until built; absence confirmed by reading the code, not just by the failing scenario.
 - **missing:** a Blade/Razor tool (`razor-blade-tool`: the trim palette is select/ripple/roll/slip/slide only); a two-up trim viewer during roll/slip (`trim-two-up-viewer`, D-432 P2 §5.1 plans it); J/K/L shuttle, I/O in/out marks, ↑/↓ edit-point navigation, Shift+Delete ripple delete, `=`/`-` keyboard zoom, a snapping toggle (`key-jkl-shuttle`, `key-in-out-marks`, `key-edit-point-navigation`, `ripple-delete-shortcut`, `zoom-keyboard`, `move-snapping-toggle`: none of these ids exist in `SHORTCUTS`; D-432 puts snapping on N and skimming on S); dragging a marker flag (`marker-drag-move`: the flag only stops propagation, `TimelineMarkers.tsx:252`, no drag handler).
-- **parity note:** each needs its MCP side in the same pass (CLAUDE.md human + AI rule). Timeline zoom already has a GUI and no MCP tool at all; `editor_set_snapping` / `editor_set_tool` are named in `ui-redesign.md` §7 and do not exist yet.
+- **parity note:** each needs its MCP side in the same pass (CLAUDE.md human + AI rule). Timeline zoom already has a GUI and no MCP tool at all; `editor_set_tool` landed 2026-11-01 (D-434, H12); `editor_set_snapping` is named in `ui-redesign.md` §7 and does not exist yet.
 
 ## B-347 — edit-tool drags and zoom gestures miss the frame budget (worst frames 53–90 ms, 12–20 % dropped)
 

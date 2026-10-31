@@ -255,6 +255,11 @@ several rounds of the owner's own screenshots before an agent could even confirm
      WebKitTestRunner's own pattern — so the page gets trusted events without any TCC
      permission and without the window being frontmost. In-page synthetic dispatch is
      the labelled fallback (jsdom, non-macOS).
+   - **`debug_perf_entries`** (B-347, frontend op + MCP tool): the app's own
+     `performance` marks for the edit gestures (`apelles:edit:*`, written by
+     `@apelles/editor`'s `editPerf.ts`) with `build.dev`, and an optional `waitIdleMs`
+     that waits for on-time frames before a measurement starts. Exact per-phase numbers
+     where `sample` only gave proportions.
    - **`debug_set_occlusion_throttling`** (native control op): WebKit's
      `_setWindowOcclusionDetectionEnabled:`, so a covered window keeps running rAF.
      This is the first tool aimed at the throttling wall the sections below keep

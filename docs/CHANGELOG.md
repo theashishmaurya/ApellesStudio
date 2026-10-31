@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-01** — **`editor_set_tool` + `debug_perf_entries` (D-434, B-347, harness H12):** two new MCP tools in both servers (264 tools; 248 in a release build). `editor_set_tool` reads or sets the timeline's edit tool through the store the toolbar buttons use (the tool moved out of `TimelinePane`'s local state into `useTimelineViewStore`; `editor_get_state` reports `trimTool`). `debug_perf_entries` reads the `apelles:edit:*` marks the edit gestures now write (dev builds) and can wait for the page to go idle.
 - **2026-11-01** — **B-351 fixed:** a clip body shows the default arrow, not the hand dnd-kit's `role="button"` picked up from the global base rule (`[data-chroma-clip-drag] { cursor: default }`).
 - **2026-11-01** — **B-349 fixed:** the playhead's 1 px line is pointer-transparent (`timeline-overrides.css`); only the head and the band under the ruler grab, so a press on the line over a clip selects/trims the clip.
 - **2026-11-01** — **Timeline drag perf, F4 domain part (D-434, B-347):** `applyOp` keeps the identity of every clip/track an op does not change (`shareUnchanged` reconcile, matched by id); `ClipBlock` memoisation waits for the P3 TimelinePane work.

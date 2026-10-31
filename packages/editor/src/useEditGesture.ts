@@ -54,6 +54,7 @@ import {
 import { endFrame, type EditOp, type Timeline } from './timeline';
 import { edgeIsEditPoint, resolveTrimMode, type TrimTool, type TrimZone } from './trimMode';
 import { TIMELINE_TEST_IDS } from './timelineTestIds';
+import { EDIT_PERF, perfMark, perfMeasure, perfMeasureAfterPaint } from './editPerf';
 
 /** Snap threshold, px at any zoom (Palmier Pro's 8 px, spec §5). */
 export const EDIT_SNAP_PX = 8;
@@ -255,8 +256,10 @@ export function createEditGesture(
     feedbackRef.current?.snapGuide(snapX);
     if (delta === g.lastDelta) return;
     g.lastDelta = delta;
+    perfMark(EDIT_PERF.previewStart);
     g.preview = previewEdit(g.tl, g.target, delta, g.index);
     paint(g);
+    perfMeasure(EDIT_PERF.preview, EDIT_PERF.previewStart);
   };
 
   const finish = (commit: boolean) => {
@@ -282,6 +285,7 @@ export function createEditGesture(
     const v = viewRef.current;
     const op = commit ? editOpFor(g.tl, g.target, g.preview.delta) : null;
     if (op) {
+      perfMark(EDIT_PERF.commit);
       v.applyOp(op);
       const edited = g.tl.tracks[g.target.track]?.clips[g.target.clip];
       if (edited) v.selectClip(g.target.track, edited.id);
@@ -415,6 +419,7 @@ export function createEditGesture(
       area.dataset.chromaEditGesture = target.mode;
       area.style.cursor = GESTURE_CURSOR[target.mode];
     }
+    perfMark(EDIT_PERF.press);
     // The readout's one layout read, before this gesture writes anything (F1).
     feedbackRef.current?.measure();
     showBrackets(tl, target, false);
@@ -480,6 +485,8 @@ export function createEditGesture(
       if (!pending) return;
       pendingClearRef.current = null;
       resetStyles(pending);
+      perfMeasure(EDIT_PERF.commitRendered, EDIT_PERF.commit);
+      perfMeasureAfterPaint(EDIT_PERF.commitPainted, EDIT_PERF.commit);
     },
   };
 }

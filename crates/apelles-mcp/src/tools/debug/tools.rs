@@ -194,6 +194,16 @@ pub struct DebugKeyArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct DebugPerfEntriesArgs {
+    #[serde(default)]
+    pub prefix: Option<String>,
+    #[serde(default)]
+    pub clear: bool,
+    #[serde(default)]
+    pub wait_idle_ms: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct DebugSetOcclusionThrottlingArgs {
     pub enabled: bool,
     #[serde(default)]
@@ -880,6 +890,51 @@ impl ApellesMcp {
             .put("watch", p.watch)
             .put("settleMs", p.settle_ms);
         let env = self.op_with("debug_key", INPUT_OP_TIMEOUT_MS, args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "debug_perf_entries",
+        description = r#"Read the app's own timing marks for the Edit timeline's edit gestures
+    (`performance.mark` / `performance.measure` entries named `apelles:*`), so a
+    gesture's phases are exact numbers instead of a profiler's proportions
+    (docs/notes/timeline-drag-perf.md).
+
+    Marks the app writes during a trim / ripple / slide / slip / roll gesture
+    (development builds of the web layer only; a production web bundle writes
+    none and says so in `build`):
+      * `apelles:edit:press` - the press claimed the gesture.
+      * `apelles:edit:preview` (measure) - one live preview: the op applied to a
+        copy plus the style writes, per pointer move.
+      * `apelles:edit:commit` - the release called the op.
+      * `apelles:edit:commit-rendered` (measure) - from the commit to React
+        having rendered the result.
+      * `apelles:edit:commit-painted` (measure) - from the commit to the frame
+        after it.
+
+    Args:
+        prefix: keep only entries whose name starts with this (default
+            `apelles:`).
+        clear: also delete the matching entries after reading, so the next read
+            holds only the next gesture.
+        wait_idle_ms: before reading, wait until the page has been idle (frames
+            on time, no long task) for about this long, at most five seconds;
+            use it between building a fixture and measuring.
+
+    Returns {entries: [{name, entryType, startTime, duration}], build: {dev},
+    idle?: {waitedMs, reached}}."#
+    )]
+    pub async fn debug_perf_entries(
+        &self,
+        Parameters(p): Parameters<DebugPerfEntriesArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut args = WireArgs::new()
+            .put("prefix", p.prefix)
+            .put("waitIdleMs", p.wait_idle_ms);
+        if p.clear {
+            args = args.set("clear", Value::Bool(true));
+        }
+        let env = self.op("debug_perf_entries", args).await?;
         Ok(render::json_text(&env))
     }
 
