@@ -38,6 +38,16 @@ function spyLayoutReads() {
   return reads;
 }
 
+describe('EditFeedbackLayer layers (D-437 S7, plan §2.9 item 7)', () => {
+  it('every moving feedback element is its own compositor layer (hidden ones cost none)', () => {
+    const { readout } = mount();
+    const ids = [TIMELINE_TEST_IDS.editBracket, TIMELINE_TEST_IDS.snapGuide, TIMELINE_TEST_IDS.bladeLine];
+    const els = [readout, ...ids.flatMap((id) => Array.from(document.body.querySelectorAll<HTMLElement>(`[data-testid="${id}"]`)))];
+    expect(els).toHaveLength(5); // readout, two brackets, snap guide, blade line
+    for (const el of els) expect(el.className).toContain('will-change-transform');
+  });
+});
+
 describe('EditFeedbackLayer readout', () => {
   it('reads layout only in measure(), never in readout()', () => {
     const reads = spyLayoutReads();
