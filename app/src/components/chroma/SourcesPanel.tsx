@@ -49,7 +49,6 @@ import {
   FolderIcon,
   FolderOpenIcon,
   FolderPlusIcon,
-  ImageIcon,
   PlusIcon,
   ArrowsClockwiseIcon,
   MagnifyingGlassIcon,
@@ -77,6 +76,7 @@ import { CHROMA_MEDIA_DRAG_MIME } from '@apelles/editor';
 
 import { useSessionStore, type ProjectOpenDto } from '../../store/useSessionStore';
 import { pickClips } from './ProjectLauncher';
+import { MediaTileThumb } from './MediaTileThumb';
 
 // --- bin tree, built from the known folder-path strings (D-059) ------------
 
@@ -666,21 +666,7 @@ export function SourcesPanel() {
                       )}
                     >
                       <div className="aspect-video w-full rounded bg-black/30 flex items-center justify-center relative overflow-hidden">
-                        {it.thumb ? (
-                          <img
-                            src={it.thumb}
-                            alt=""
-                            draggable={false}
-                            className="absolute inset-0 h-full w-full object-cover"
-                          />
-                        ) : it.image ? (
-                          // D-292 — a still that has no cached thumbnail yet
-                          // says so honestly: the film icon would claim it is
-                          // footage.
-                          <ImageIcon className="size-4 text-text-secondary/50" />
-                        ) : (
-                          <FilmStripIcon className="size-4 text-text-secondary/50" />
-                        )}
+                        <MediaTileThumb item={it} />
                         {it.offline ? (
                           <div className="absolute top-1 right-1 text-amber-400" title="Media offline">
                             <WifiSlashIcon className="size-3" />

@@ -12,7 +12,7 @@
  * (`./beats`), which the Edit and Motion tabs share.
  */
 
-export { useMediaPoolStore } from './media';
+export { useMediaPoolStore, isAudioOnlyItem } from './media';
 
 export { beatEntry, beatKey, detectBeats, useBeatStore, useBeats } from './beats';
 export type { BeatEntry, BeatQuery } from './beats';
