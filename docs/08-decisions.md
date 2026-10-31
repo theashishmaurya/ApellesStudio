@@ -55,6 +55,13 @@ Every component has a perf note: transform/opacity only, no box-shadow/filter/ba
 
 Not asked, taken as the spec's defaults: dark theme only for v0.4 (light follows), a thin 3 px viewer scrub bar, arithmetic in number fields, flat panels.
 
+**Progress.**
+- **P1 (tokens and type) done 2026-10-31.**
+  - The accent is terracotta `#c4502f` in the dark theme: the brand `#a6432c` lifted until a focus ring and active controls clear 3:1 on `surface`, with white button text at 4.63:1. Terracotta as text on dark takes the new `accent-text` `#e8896b`.
+  - Colour values moved into `@apelles/tokens`; `themes.ts` imports them.
+  - Type scale, radii and shadows went into `@theme`; the system font is the default.
+  - Details and the destructive-red deviation from the spec: `docs/notes/ui-redesign.md` "P1 as built".
+
 **Not decided here.** Replacing `@xzdarcy/react-timeline-editor`. If the P2 harness shows its interact.js drag (which writes `left` on every move) cannot reach zero layout during a drag, that gets its own D-NNN.
 
 ## D-429 — A `fit` / `fill` footprint starts centred: `position` stays the top-left corner, plus a derived origin

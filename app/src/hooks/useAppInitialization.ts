@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'react-toastify';
+import { resolveUiFontStack } from '@apelles/tokens';
 import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useUIStore, reconcileWorkspace } from '../store/useUIStore';
@@ -311,11 +312,8 @@ export const useAppInitialization = ({
       root.style.setProperty(key, value as string);
     });
 
-    const fontFamily = appSettings?.fontFamily || 'poppins';
-    const fontStack =
-      fontFamily === 'system'
-        ? '-apple-system, BlinkMacSystemFont, system-ui, sans-serif'
-        : "'Poppins', system-ui, sans-serif";
+    // D-432 P1: the system stack (SF Pro) is the default; Poppins is an opt-in setting.
+    const fontStack = resolveUiFontStack(appSettings?.fontFamily);
     root.style.setProperty('--font-family', fontStack);
   }, [theme, appSettings?.fontFamily]);
 };

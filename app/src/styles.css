@@ -13,6 +13,8 @@
 @source "../../packages/keymap/src";
 
 @theme {
+  /* D-432 P1: every colour VALUE lives in @apelles/tokens; `app/src/utils/themes.ts`
+     writes them onto :root as --app-*. These are only the Tailwind aliases. */
   --color-bg-primary: var(--app-bg-primary);
   --color-bg-secondary: var(--app-bg-secondary);
   --color-surface: var(--app-surface);
@@ -24,12 +26,62 @@
   --color-border-color: var(--app-border-color);
   --color-hover-color: var(--app-hover-color);
 
+  --color-text-tertiary: var(--app-text-tertiary);
+  --color-divider: var(--app-divider);
+  --color-surface-raised: var(--app-surface-raised);
+  --color-accent-text: var(--app-accent-text);
+  --color-focus-ring: var(--app-focus-ring);
+
+  /* timeline */
+  --color-timeline-bg: var(--app-timeline-bg);
+  --color-lane-alt: var(--app-lane-alt);
+  --color-selection: var(--app-selection);
+  --color-playhead: var(--app-playhead);
+  --color-skimmer: var(--app-skimmer);
+
+  /* clips (opaque media colours, same in every theme) */
+  --color-clip-label: var(--app-clip-label);
+  --color-clip-video: var(--app-clip-video);
+  --color-clip-video-strip: var(--app-clip-video-strip);
+  --color-clip-video-wave: var(--app-clip-video-wave);
+  --color-clip-video-wave-ink: var(--app-clip-video-wave-ink);
+  --color-clip-audio: var(--app-clip-audio);
+  --color-clip-audio-strip: var(--app-clip-audio-strip);
+  --color-clip-audio-wave-ink: var(--app-clip-audio-wave-ink);
+  --color-clip-text: var(--app-clip-text);
+  --color-clip-text-strip: var(--app-clip-text-strip);
+  --color-clip-caption: var(--app-clip-caption);
+  --color-clip-caption-strip: var(--app-clip-caption-strip);
+  --color-clip-adjustment: var(--app-clip-adjustment);
+  --color-clip-adjustment-strip: var(--app-clip-adjustment-strip);
+  --color-clip-motion: var(--app-clip-motion);
+  --color-clip-motion-strip: var(--app-clip-motion-strip);
+  --color-clip-gap: var(--app-clip-gap);
+
   --font-sans: var(--font-family);
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Type scale (D-432 §3.4): one scale, SF Pro sizes. Overrides Tailwind's defaults. */
+  --text-2xs: 10px;
+  --text-2xs--line-height: 12px;
+  --text-xs: 11px;
+  --text-xs--line-height: 14px;
+  --text-sm: 12px;
+  --text-sm--line-height: 16px;
+  --text-base: 13px;
+  --text-base--line-height: 18px;
+  --text-lg: 15px;
+  --text-lg--line-height: 20px;
 
   --shadow-shiny: 0 0 24px rgba(255, 255, 255, 0.12);
+  /* Panels are flat; only floating surfaces get elevation (D-432 §3.5). */
+  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-dialog: 0 20px 60px rgba(0, 0, 0, 0.55);
 
-  --radius-md: 8px;
-  --radius-lg: 15px;
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
 }
 
 @layer base {
