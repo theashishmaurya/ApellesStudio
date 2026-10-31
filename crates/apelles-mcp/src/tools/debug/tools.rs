@@ -224,6 +224,16 @@ pub struct DebugSetOcclusionThrottlingArgs {
     pub window: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DebugSetWebkitLayerDebugArgs {
+    #[serde(default)]
+    pub borders: Option<bool>,
+    #[serde(default)]
+    pub repaint_counters: Option<bool>,
+    #[serde(default)]
+    pub window: Option<String>,
+}
+
 #[tool_router(router = debug_router, vis = "pub")]
 impl ApellesMcp {
     #[tool(
@@ -1029,6 +1039,50 @@ impl ApellesMcp {
             .set("enabled", Value::Bool(p.enabled))
             .put("window", p.window);
         let env = self.op("debug_set_occlusion_throttling", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "debug_set_webkit_layer_debug",
+        description = r#"Show or hide WebKit's compositing debug overlays on the app window.
+
+    Two switches, the ones Safari calls "Show compositing borders" and "Show
+    repaint counters": a coloured border round every COMPOSITED layer (so you can
+    see which elements the browser promoted to their own layer and which it
+    paints into a shared one), and a repaint count in each layer's corner that
+    rises every time WebKit repaints it. They answer a paint-isolation question
+    ("does this clip repaint while another is dragged?") that frame times only
+    hint at: take a `debug_screenshot` mid-gesture and read the counters.
+
+    Pass only the flags you want to change; with neither it is a pure read.
+    Both default to off and you should turn them off again afterwards: they
+    paint on top of the page and change what a pixel probe or a screenshot sees.
+    Whether `debug_screenshot` (a WKWebView snapshot) includes the overlays
+    depends on how WebKit draws them; if a screenshot shows none, capture the
+    window instead (`debug_record_video` frames).
+
+    These are WebKit SPI (`-[WKPreferences _setCompositingBordersVisible:]` and
+    `_setCompositingRepaintCountersVisible:`), checked with `respondsToSelector:`
+    first; a WebKit without them returns an error naming the missing selector.
+    Debug builds only, like every `debug_*` tool.
+
+    Args:
+        borders: True = draw layer borders, False = hide them, omitted = leave.
+        repaint_counters: True = draw repaint counters, False = hide them,
+            omitted = leave.
+        window: which window by Tauri label. Default: the focused one, else main.
+
+    Returns {borders: {before, after}, repaintCounters: {before, after}, window}."#
+    )]
+    pub async fn debug_set_webkit_layer_debug(
+        &self,
+        Parameters(p): Parameters<DebugSetWebkitLayerDebugArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .put("borders", p.borders)
+            .put("repaintCounters", p.repaint_counters)
+            .put("window", p.window.filter(|s| !s.is_empty()));
+        let env = self.op("debug_set_webkit_layer_debug", args).await?;
         Ok(render::json_text(&env))
     }
 }

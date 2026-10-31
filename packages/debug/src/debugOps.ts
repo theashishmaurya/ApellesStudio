@@ -428,7 +428,7 @@ export const DEBUG_OPS: Record<string, OpHandler> = {
       idle = await waitForIdle(browserIdleDeps(), ms);
     }
     const entries = readPerfEntries(performance, prefix, a?.clear === true);
-    return { ok: true, prefix, entries, build: { dev: import.meta.env.DEV }, ...(idle ? { idle } : {}) };
+    return { ok: true, prefix, entries, build: { dev: import.meta.env.DEV, perfMarks: import.meta.env.APELLES_PERF_MARKS === 'true' }, ...(idle ? { idle } : {}) };
   },
 
   debug_set_fps_overlay: (a) => {

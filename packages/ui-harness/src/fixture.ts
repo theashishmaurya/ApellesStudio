@@ -214,6 +214,9 @@ export async function buildFixture(client: OpClient, project: ScratchProject, sc
       }
     }
   }
+  for (const t of spec.transitions ?? []) {
+    await client.op('editor_add_transition', { track: t.track, kind: 'cross_dissolve', atFrame: t.atFrame });
+  }
   await client.op('editor_set_playhead', { frame: spec.playhead ?? 0 });
   return built;
 }

@@ -30,6 +30,7 @@ budgets, test ids, known limits: **`docs/notes/ui-harness.md`**.
 | `src/cli.ts` | the entry point: setup, run, restore, write `report.md` / `report.json` / `shots/` |
 | `src/client.ts` | `POST /op` to the app's control server (19788) |
 | `src/fixture.ts` | test media, the scratch project, per-scenario fixture timelines |
+| `src/bigFixture.ts` | `bigFixtureSpec({clips, tracks})`, the deterministic 300-clip / 8-track perf fixture (D-437 S0c) |
 | `src/runner.ts` | plays a scenario's steps and judges them (PASS / FAIL / SKIP / ERROR + perf) |
 | `src/assertions.ts` | the pure judge: paths, references, operators, live feedback, cursor |
 | `src/snapshot.ts` | timeline / view state shaped for assertions; frame ↔ pixel arithmetic |
@@ -40,7 +41,7 @@ budgets, test ids, known limits: **`docs/notes/ui-harness.md`**.
 | `src/visibility.ts` | keeps targets inside the visible edit area (H11) |
 | `src/activation.ts` | brings the app to the front for a run and hands it back (H15) |
 | `src/scenario.ts` | the scenario / step types |
-| `src/scenarios/` | the starter suite: `editTools.ts` (trim, ripple, roll, slip, slide, split, blade, two-up) and `timeline.ts` (seek, selection, moves, linked A/V, delete/undo, zoom, scroll, header column, markers, keyboard transport, playback) |
+| `src/scenarios/` | the starter suite: `editTools.ts` (trim, ripple, roll, slip, slide, split, blade, two-up) `perf300.ts` (the opt-in 300-clip baseline, `--filter perf-300`) and `timeline.ts` (seek, selection, moves, linked A/V, delete/undo, zoom, scroll, header column, markers, keyboard transport, playback) |
 
 ## Boundary
 

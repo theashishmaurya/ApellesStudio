@@ -5,6 +5,8 @@
 
 import type { Scenario } from '../scenario.ts';
 import { EDIT_TOOL_SCENARIOS } from './editTools.ts';
+import { PERF_300_SCENARIOS } from './perf300.ts';
 import { TIMELINE_SCENARIOS } from './timeline.ts';
 
-export const SCENARIOS: readonly Scenario[] = [...EDIT_TOOL_SCENARIOS, ...TIMELINE_SCENARIOS];
+/** `perf-300` is opt-in (`--filter perf-300`): it builds a 300-clip timeline per scenario and only measures. */
+export const SCENARIOS: readonly Scenario[] = [...EDIT_TOOL_SCENARIOS, ...TIMELINE_SCENARIOS, ...PERF_300_SCENARIOS];

@@ -33,6 +33,8 @@ export interface FixtureSpec {
   /** Tracks top to bottom; each is created if the new timeline lacks it. */
   tracks: { kind: 'video' | 'audio'; clips: FixtureClip[] }[];
   markers?: { name: string; frame: number }[];
+  /** Transitions on exact cut frames (a cross dissolve; the fixture media has handles). */
+  transitions?: { track: number; atFrame: number }[];
   playhead?: number;
 }
 
@@ -187,5 +189,7 @@ export interface Scenario {
   /** The NLE behaviour this expects, with its source. */
   reference: string;
   fixture?: FixtureSpec;
+  /** Left out of a run that names no `--filter` (a slow or measurement-only family, e.g. `perf-300`). */
+  optIn?: boolean;
   steps: Step[];
 }

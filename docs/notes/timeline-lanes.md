@@ -506,6 +506,19 @@ moves new code to `lanes/`.
 | S9 | Verification run at 3 + 300 clips, production bundle; Results section; D-437 status; roadmap tick | S | S5–S8 | — | Sonnet |
 
 ### S0a — perf marks that mean what they say
+
+**Done 2026-11-01.** The gate is `import.meta.env.APELLES_PERF_MARKS` (not a bare global, so
+an unconfigured vitest run gets no marks instead of a ReferenceError), defined by
+`app/perfMarks.mjs` from Tauri's own `TAURI_ENV_DEBUG` (`"true"` for `tauri build --debug` and
+`tauri dev`, `"false"` for release) instead of the plan's `APELLES_PERF_MARKS=1` env switch, which
+survives only as an override for a plain `vite build`. The name table is plain string literals
+(a template literal was not dropped by the bundler and left `apelles:edit:` in the release
+bundle). The helpers stay as inert branches behind a constant-false guard. Side fix: the Vite
+config's `minify`/`sourcemap` tested `TAURI_ENV_DEBUG` for truthiness, which `"false"` satisfies,
+so release builds were never minified; fixed in the same file. Tests: `editPerf.test.ts`,
+`editPerf.bundle.test.ts` (bundles `editPerf.ts` both ways), `app/perfMarks.test.mjs`,
+harness `method.test.ts`/`runner.test.ts`. Verified with a real `vite build` of the app:
+`TAURI_ENV_DEBUG=false` has no `apelles:edit:`, `=true` has it.
 - `editPerf.ts`: gate on a Vite `define` (`__APELLES_PERF_MARKS__`) instead of
   `import.meta.env.DEV`. Set it true for `vite dev` and when `APELLES_PERF_MARKS=1` (the
   debug-tauri build recipe in `ui-harness.md`). A release build defines it false, so the
@@ -520,6 +533,18 @@ moves new code to `lanes/`.
   `apelles:edit:` string (a grep in a test or in the build check).
 
 ### S0b — WebKit layer debug toggle
+
+**Done 2026-11-01 (code, tests and parity; the live screenshot is pending).** The op is
+`debug_set_webkit_layer_debug {borders?, repaintCounters?, window?}` (MCP: `repaint_counters`),
+tool count 266 -> 267 (debug) / 250 -> 251 (release). The SPI was verified before use: the Xcode
+SDK exports the C twins and a runtime probe finds all four `WKPreferences` selectors with BOOL
+encodings (details in `debug-tooling.md`). All four are checked with `respondsToSelector:`
+before any call. **Deviations from the plan:** (1) `debug_get_ui_state` does not report the
+flags: they are native webview state the frontend cannot read, so the op reports `before`/`after`
+itself and a call with no flag is a read; (2) the live screenshot with borders on, and the answer
+to "does `debug_screenshot` include the overlays", need a running debug build and were not
+produced in this pass (the running dev app is off limits to the builder agent and the disk was
+short of a second debug build). Whoever runs S0c step 3 records both here.
 - Native op `debug_set_webkit_layer_debug {borders?, repaint_counters?}` in
   `app/src-tauri` behind `#[cfg(debug_assertions)]`. It calls the `WKPreferences` SPI
   `_setCompositingBordersVisible:` / `_setCompositingRepaintCountersVisible:` through
@@ -535,6 +560,21 @@ moves new code to `lanes/`.
   under `scratch/` and cited in this note.
 
 ### S0c — big fixture + baseline
+
+**Done 2026-11-01 (fixture, scenarios and recipe); the baseline run is NOT done.** See
+`docs/notes/ui-harness.md` "Baseline recipe" for the exact commands (dev bundle; production
+bundle via `tauri build --debug` with its own identifier and control port, because the
+single-instance plugin would otherwise hand a second launch over to the dev app). The plan's
+`buildBigFixture({clips, tracks})` is `bigFixtureSpec` (exported under both names); the linked
+A/V pairs' audio halves count towards the 300. The "Baseline" section below stays empty until a
+run fills it.
+
+#### Baseline
+
+_Not run yet. Fill in from `scratch/perf-baseline/dev` and `scratch/perf-baseline/prod`: commit
+rendered / effects / frame / painted, move p95 / worst, zoom, scroll, a `sample` split of a release
+and a ripple move phase, and the answer to section 0's question (how much of the 30-43 ms move p95
+is paint)._
 - `buildBigFixture({ clips: 300, tracks: 8 })` in `packages/ui-harness` (mixed lengths,
   linked A/V on two tracks, 4 markers, 2 transitions) and the `perf-300` scenario set.
   Scenarios assert little; they measure.

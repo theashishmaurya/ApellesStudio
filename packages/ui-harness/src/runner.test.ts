@@ -269,10 +269,12 @@ describe('the perf method (F6, H17)', () => {
     app.markEntries = [
       ...[2, 3, 4, 5].map((d, i) => ({ name: 'apelles:edit:preview', entryType: 'measure', startTime: i, duration: d })),
       { name: 'apelles:edit:commit-rendered', entryType: 'measure', startTime: 9, duration: 31 },
+      { name: 'apelles:edit:commit-effects', entryType: 'measure', startTime: 9, duration: 33 },
+      { name: 'apelles:edit:commit-frame', entryType: 'measure', startTime: 9, duration: 38 },
       { name: 'apelles:edit:commit-painted', entryType: 'measure', startTime: 9, duration: 44 },
     ];
     const result = await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp' }).run(roll);
-    expect(result.perf[0].numbers).toMatchObject({ previews: 4, previewP95Ms: 5, commitRenderedMs: 31, commitPaintedMs: 44 });
+    expect(result.perf[0].numbers).toMatchObject({ previews: 4, previewP95Ms: 5, commitRenderedMs: 31, commitEffectsMs: 33, commitFrameMs: 38, commitPaintedMs: 44, paintMs: 6 });
   });
 });
 

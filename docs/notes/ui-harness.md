@@ -17,9 +17,14 @@ Three layers, all debug-only (compiled out of a release build, see
 
 Plus `debug_set_occlusion_throttling(enabled)` — WebKit's own switch that keeps a covered
 window running `requestAnimationFrame`. Without it, every frame number from a window that
-is not frontmost reads zero (B-124 / D-217 / D-330's standing blocker).
+is not frontmost reads zero (B-124 / D-217 / D-330's standing blocker). And
+`debug_set_webkit_layer_debug({borders, repaint_counters})` (D-437 S0b), which draws WebKit's
+compositing borders and per-layer repaint counters on the page, so a paint-isolation change can
+be seen in a screenshot; turn it off again after, it paints over what you are measuring.
 
 ## Running the suite against the live app
+
+(The `perf-300` family is opt-in: it only runs with `--filter perf-300`. See "Baseline recipe".)
 
 The app must be a **debug** build (`npm run tauri:dev`), with nothing modal open. From the
 repo root:
@@ -433,15 +438,90 @@ reproduced, not as a defect.
   waveform requests a big fixture queued do not land in the measurement.
 - **Exact per-phase numbers.** After the step the runner reads the `apelles:edit:*` marks
   (`editPerf.ts`) and attaches `previews`, `previewP50Ms`, `previewP95Ms`, `commitRenderedMs`,
-  `commitPaintedMs`, plus `moveP95Ms`, `moveMaxMs`, `releaseMaxMs` to the step. They are null
-  in a production web bundle (no marks are written).
+  `commitEffectsMs`, `commitFrameMs`, `commitPaintedMs`, `paintMs` (= painted - frame, the
+  paint+composite estimate), plus `moveP95Ms`, `moveMaxMs`, `releaseMaxMs` to the step. D-437
+  S0a made the marks mean what they say: `commitPaintedMs` used to stop at the next rAF
+  callback (before that frame's style/layout/paint) and is now rAF then a `MessageChannel`
+  task; the old measure is `commitFrameMs`. The marks exist in `vite dev` and in a
+  `tauri build --debug` bundle (production React); a release build writes none. They are null
+  only in a release bundle.
 - **Measure what ships.** The report names the web bundle it saw (`debug_perf_entries
   build.dev`). A `tauri dev` app serves the Vite DEVELOPMENT bundle: React dev Performance
   Tracks (~22 % of the release at 200 clips) and StrictMode's double render. For shipping
   numbers build `cd app && npm run tauri build -- --debug` (Rust debug, so the `debug_*` ops
   exist, with the production web bundle), start that app with `CHROMA_CONTROL_PORT=<free port>`
-  if the dev app is running, and point the harness at it with `--port`. **Not done here:** that
-  build was not made or run, so no number in this repo is from it yet.
+  if the dev app is running, and point the harness at it with `--port`. See "Baseline recipe" below for
+  the exact commands (D-437 S0c).
+
+### Baseline recipe (D-437 S0c: the 300-clip perf run, dev and production bundle)
+
+**What is measured.** `perf-300-*` (12 scenarios in `src/scenarios/perf300.ts`: select trim,
+ripple, roll, slip, slide, a clip move, three zooms, both scrolls, playback) on `BIG_300`
+(`src/bigFixture.ts`: 300 clips on 8 tracks: 5 video, 3 audio; mixed lengths 30-150 frames with
+small gaps, the first four clips of every track butted; 20 linked A/V pairs on video track 0
+whose audio halves land on the first audio track; 4 markers; 2 cross dissolves; clip names
+`t<track>c<index>`). `bigFixtureSpec({clips, tracks})` makes other sizes. The family is opt-in
+(`optIn`): a run with no `--filter` leaves it out; `--filter perf-300` runs it. It builds the
+300-clip timeline once per scenario (about 300 `editor_add_clip` calls), so expect a minute or
+two per scenario. The scenarios assert almost nothing: they measure. Each step's numbers
+(frame p95 / worst / dropped, `moveP95Ms`, `releaseMaxMs`, `commitRenderedMs`, `commitEffectsMs`,
+`commitFrameMs`, `commitPaintedMs`, `paintMs`) are in `report.md` / `report.json`.
+
+**1. The development bundle (the running `npm run tauri:dev`, control port 19788).** From the
+repo root, with Apelles open and nothing modal:
+
+```sh
+mkdir -p scratch/perf-baseline
+npm run harness --workspace @apelles/ui-harness -- --filter perf-300 \
+  --out "$PWD/scratch/perf-baseline/dev"
+```
+
+The report's notes say `web bundle: DEVELOPMENT`.
+
+**2. The production bundle (`tauri build --debug`: Rust debug, so the `debug_*` ops exist; the
+web bundle is production React).** Needs about 8 GB free (the workspace `target/debug`, opt-level
+3 dependencies) and network for `build.rs`'s pinned `uv`/`ffmpeg` fetch on a fresh checkout. Two
+things stop a second Apelles from simply running next to the dev one, and the recipe handles both:
+the single-instance plugin (a second launch hands over to the first and exits, keyed on the bundle
+identifier) and the control port. So the build gets its own identifier, and is started on its own
+port. The default `beforeBuildCommand` also builds a release `apelles-mcp` and the Motion pack,
+neither of which a debug bundle uses; the override keeps only the web build.
+
+```sh
+# from the repo root
+npm run tauri --workspace app -- build --debug --bundles app \
+  --config '{"identifier":"studio.apelles.perf","build":{"beforeBuildCommand":"npm run build"}}'
+
+# prove the bundle carries the perf marks (Tauri sets TAURI_ENV_DEBUG=true for the before-command)
+grep -l 'apelles:edit:' app/dist/assets/*.js
+
+# start it beside the dev app, on its own control port
+open -n --env CHROMA_CONTROL_PORT=19790 target/debug/bundle/macos/Apelles.app
+
+# confirm which bundle answers: build.dev must be false, build.perfMarks true
+curl -s -X POST localhost:19790/op -d '{"op":"debug_perf_entries","args":{}}' | grep -o '"build":{[^}]*}'
+
+npm run harness --workspace @apelles/ui-harness -- --filter perf-300 --port 19790 \
+  --out "$PWD/scratch/perf-baseline/prod"
+
+# quit the perf build (by its identifier, so the dev app is untouched)
+osascript -e 'tell application id "studio.apelles.perf" to quit'
+```
+
+(The control server's `/op` request shape is whatever `ControlClient` in `src/client.ts` sends;
+the `curl` line is a convenience, the harness's own first note says the same thing.) A release
+`npm run tauri:build` bundle writes no marks and has no `debug_*` ops, so it cannot be measured
+this way: that is the gate working.
+
+**3. Paint evidence for the same gestures** (S0b): `debug_set_webkit_layer_debug(borders=true,
+repaint_counters=true)`, start a gesture with `debug_pointer`, `debug_screenshot` mid-gesture,
+then turn both flags off. For the paint / layer-flush / JS split of a release and a ripple move,
+`sample` the WebContent process during a 1.5 s gesture as in `docs/notes/timeline-drag-perf.md`.
+
+**Status 2026-11-01:** the fixture, the scenarios and the recipe are in; no baseline was run in
+this pass (the machine's free disk was below the 8 GB the production build needs, and the running
+dev app was off limits for the agent that wrote this). The numbers go in the "Baseline" section
+of `docs/notes/timeline-lanes.md` with the run directories above.
 
 ### Perf picture (second run)
 

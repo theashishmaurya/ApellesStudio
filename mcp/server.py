@@ -8388,6 +8388,53 @@ def debug_set_occlusion_throttling(enabled: bool, window: str | None = None) -> 
     return json.dumps(_op("debug_set_occlusion_throttling", **args), indent=2, default=str)
 
 
+@mcp.tool()
+def debug_set_webkit_layer_debug(
+    borders: bool | None = None,
+    repaint_counters: bool | None = None,
+    window: str | None = None,
+) -> str:
+    """Show or hide WebKit's compositing debug overlays on the app window.
+
+    Two switches, the ones Safari calls "Show compositing borders" and "Show
+    repaint counters": a coloured border round every COMPOSITED layer (so you can
+    see which elements the browser promoted to their own layer and which it
+    paints into a shared one), and a repaint count in each layer's corner that
+    rises every time WebKit repaints it. They answer a paint-isolation question
+    ("does this clip repaint while another is dragged?") that frame times only
+    hint at: take a `debug_screenshot` mid-gesture and read the counters.
+
+    Pass only the flags you want to change; with neither it is a pure read.
+    Both default to off and you should turn them off again afterwards: they
+    paint on top of the page and change what a pixel probe or a screenshot sees.
+    Whether `debug_screenshot` (a WKWebView snapshot) includes the overlays
+    depends on how WebKit draws them; if a screenshot shows none, capture the
+    window instead (`debug_record_video` frames).
+
+    These are WebKit SPI (`-[WKPreferences _setCompositingBordersVisible:]` and
+    `_setCompositingRepaintCountersVisible:`), checked with `respondsToSelector:`
+    first; a WebKit without them returns an error naming the missing selector.
+    Debug builds only, like every `debug_*` tool.
+
+    Args:
+        borders: True = draw layer borders, False = hide them, omitted = leave.
+        repaint_counters: True = draw repaint counters, False = hide them,
+            omitted = leave.
+        window: which window by Tauri label. Default: the focused one, else main.
+
+    Returns {borders: {before, after}, repaintCounters: {before, after}, window}."""
+    import json
+
+    args: dict[str, Any] = {}
+    if borders is not None:
+        args["borders"] = borders
+    if repaint_counters is not None:
+        args["repaintCounters"] = repaint_counters
+    if window is not None:
+        args["window"] = window
+    return json.dumps(_op("debug_set_webkit_layer_debug", **args), indent=2, default=str)
+
+
 
 
 # --------------------------------------------------------------------------- #

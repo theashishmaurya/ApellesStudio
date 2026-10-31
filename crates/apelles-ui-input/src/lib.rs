@@ -446,9 +446,91 @@ pub struct OcclusionReport {
     pub window: String,
 }
 
+/// One WebKit layer-debug flag, before and after a `debug_set_webkit_layer_debug` call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct FlagChange {
+    pub before: bool,
+    pub after: bool,
+}
+
+/// `debug_set_webkit_layer_debug`'s answer (D-437 S0b): the two compositing
+/// debug flags WebKit paints onto the page (a coloured border round every
+/// composited layer, and a repaint count in each layer's corner).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LayerDebugReport {
+    pub borders: FlagChange,
+    pub repaint_counters: FlagChange,
+    pub window: String,
+}
+
+/// What `debug_set_webkit_layer_debug` was asked to change. A flag that is
+/// `None` is left as it is, so a call with neither is a pure read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LayerDebugRequest {
+    pub borders: Option<bool>,
+    pub repaint_counters: Option<bool>,
+}
+
+impl LayerDebugRequest {
+    /// The value a flag should hold afterwards: the request's, else the current one.
+    pub fn target(requested: Option<bool>, current: bool) -> bool {
+        requested.unwrap_or(current)
+    }
+
+    /// True when the call changes nothing (a read).
+    pub fn is_read(&self) -> bool {
+        self.borders.is_none() && self.repaint_counters.is_none()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_layer_debug_request_leaves_an_unnamed_flag_alone() {
+        assert!(LayerDebugRequest::target(None, true));
+        assert!(!LayerDebugRequest::target(None, false));
+        assert!(!LayerDebugRequest::target(Some(false), true));
+        assert!(LayerDebugRequest::target(Some(true), false));
+    }
+
+    #[test]
+    fn a_layer_debug_request_with_no_flag_is_a_read() {
+        assert!(LayerDebugRequest::default().is_read());
+        assert!(
+            !LayerDebugRequest {
+                borders: Some(true),
+                repaint_counters: None
+            }
+            .is_read()
+        );
+    }
+
+    #[test]
+    fn a_layer_debug_report_serialises_camel_case() {
+        let report = LayerDebugReport {
+            borders: FlagChange {
+                before: false,
+                after: true,
+            },
+            repaint_counters: FlagChange {
+                before: false,
+                after: false,
+            },
+            window: "main".into(),
+        };
+        let v = serde_json::to_value(&report).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "borders": { "before": false, "after": true },
+                "repaintCounters": { "before": false, "after": false },
+                "window": "main",
+            })
+        );
+    }
 
     fn mouse(phase: MousePhase, buttons: u32, delay_ms: f64) -> LowEvent {
         LowEvent::Mouse {

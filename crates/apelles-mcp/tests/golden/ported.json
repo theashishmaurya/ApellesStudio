@@ -44,6 +44,7 @@
     "debug_set_library_mode",
     "debug_perf_entries",
     "debug_set_occlusion_throttling",
+    "debug_set_webkit_layer_debug",
     "debug_set_sources_panel",
     "debug_ui_state",
     "delete_mask",

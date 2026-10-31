@@ -43,11 +43,12 @@ async function describeBuild(client: ControlClient, evidence: boolean): Promise<
     ? 'evidence run: the per-frame rect watch is ON for measured steps, so their frame numbers are inflated'
     : 'perf run: measured steps have no rect watch and run >= 1.5 s; live-feedback and cursor checks on them are skipped (use --evidence)';
   try {
-    const r = await client.op<{ build?: { dev?: boolean } }>('debug_perf_entries', {});
+    const r = await client.op<{ build?: { dev?: boolean; perfMarks?: boolean } }>('debug_perf_entries', {});
+    const marks = r.build?.perfMarks === false ? ' The app writes NO edit perf marks (a release web bundle), so the commit numbers read null.' : '';
     if (r.build?.dev === true) {
-      return `web bundle: DEVELOPMENT (React dev build with Performance Tracks and StrictMode double render); the release phase is inflated (estimated 0.5-0.7x in production, not yet measured). For shipping numbers run against \`tauri build --debug\`. ${mode}`;
+      return `web bundle: DEVELOPMENT (React dev build with Performance Tracks and StrictMode double render); the release phase is inflated (estimated 0.5-0.7x in production, not yet measured). For shipping numbers run against \`tauri build --debug\` (docs/notes/ui-harness.md "Baseline recipe").${marks} ${mode}`;
     }
-    if (r.build?.dev === false) return `web bundle: production (React production build, no StrictMode). ${mode}`;
+    if (r.build?.dev === false) return `web bundle: production (React production build, no StrictMode).${marks} ${mode}`;
   } catch {
     // an older app: no debug_perf_entries
   }
@@ -70,7 +71,7 @@ async function main(): Promise<number> {
     },
   });
   const filters = values.filter ?? [];
-  const selected = SCENARIOS.filter((s) => filters.length === 0 || filters.some((f) => s.id.includes(f) || s.area.includes(f)));
+  const selected = SCENARIOS.filter((s) => (filters.length === 0 ? !s.optIn : filters.some((f) => s.id.includes(f) || s.area.includes(f))));
   if (values.list) {
     for (const s of selected) console.log(`${s.id.padEnd(44)} ${s.area.padEnd(14)} ${s.title}`);
     return 0;
