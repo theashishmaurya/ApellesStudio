@@ -37,9 +37,16 @@
  * math — it is handed a resolved landing (`resolveClipLanding`'s answer) and
  * draws it. It does not decide whether a preview should be shown; that is
  * `onDndDragMove`/`onDragOver` in `TimelinePane`. It owns no geometry constants
- * either: `startLeftPx`/`rowHeight`/`rulerAndMarginPx` come in as props, the
- * same way `TransitionBadges` already takes them, so this file cannot drift out
- * of the pane's coordinate space and there is no import cycle.
+ * either: `startLeftPx`/`rowHeight`/`rowTops` come in as props, the same way
+ * `TransitionBadges` already takes them, so this file cannot drift out of the
+ * pane's coordinate space and there is no import cycle.
+ *
+ * **Coordinates (D-437 S8).** Rendered inside the lanes' scroller, so every box
+ * is in the lanes' CONTENT coordinates (`startLeft + frame/fps*pxPerSec`, a
+ * row's own top): a scroll mid-drag (dnd-kit's autoscroll) moves the ghosts
+ * with the clips natively, with no JS and no render. One visible consequence: a
+ * new-track ghost above the first row, centred on the scroller's top edge, shows
+ * only its lower half (the upper half is outside the scroller).
  */
 
 import { rowHeightAt, rowTopAt } from './trackHeight';
@@ -84,18 +91,15 @@ export interface TimelineDragPreviewProps {
   tracks: Track[];
   fps: number;
   pxPerSec: number;
-  scrollLeft: number;
-  scrollTop: number;
   startLeftPx: number;
   /** the default row height (every row, when `rowTops` is absent) */
   rowHeight: number;
   /** D-432 P3 — each row's top when tracks have their own heights
    *  (`trackHeight.ts` `trackTops`) */
   rowTops?: readonly number[];
-  rulerAndMarginPx: number;
 }
 
-/** One ghost box, in the pane's own `editAreaRef`-relative coordinate space. */
+/** One ghost box, in the lanes' content coordinates. */
 interface Ghost {
   id: string;
   track: number;
@@ -106,7 +110,7 @@ interface Ghost {
 
 export const TimelineDragPreview = forwardRef<TimelineDragPreviewHandle, TimelineDragPreviewProps>(
   function TimelineDragPreview(
-    { timeline, tracks, fps, pxPerSec, scrollLeft, scrollTop, startLeftPx, rowHeight, rowTops, rulerAndMarginPx },
+    { timeline, tracks, fps, pxPerSec, startLeftPx, rowHeight, rowTops },
     ref,
   ) {
     // D-432 P3 — a row's top and height at any mix of track heights.
@@ -207,15 +211,14 @@ export const TimelineDragPreview = forwardRef<TimelineDragPreviewHandle, Timelin
             line snapped to a clip edge, or a ghost row at a track-insertion
             boundary. `pointer-events-none` so it never steals the drag's own
             dragover/drop targeting from the library/edit-area underneath —
-            purely visual, positioned in the same `editAreaRef`-relative
-            coordinate space `xToFrame`/`dropTargetTrack` already compute
-            against. */}
+            purely visual, positioned in the lanes' content coordinates (the
+            same frame/row math `xToFrame`/`dropTargetTrack` invert). */}
         {insert?.kind === 'edge' && (
           <div
             className="pointer-events-none absolute z-(--z-timeline-overlay) bg-accent"
             style={{
-              left: startLeftPx + (insert.frame / fps) * pxPerSec - scrollLeft,
-              top: rulerAndMarginPx + topOf(insert.track) - scrollTop,
+              left: startLeftPx + (insert.frame / fps) * pxPerSec,
+              top: topOf(insert.track),
               width: 2,
               height: heightOf(insert.track),
             }}
@@ -237,11 +240,7 @@ export const TimelineDragPreview = forwardRef<TimelineDragPreviewHandle, Timelin
               // the ghost ON the boundary line, half-overlapping each
               // neighboring row — the standard "squeeze a new row in here" NLE
               // affordance.
-              top:
-                rulerAndMarginPx +
-                topOf(insert.index) -
-                (insert.index === tracks.length ? 0 : rowHeight / 2) -
-                scrollTop,
+              top: topOf(insert.index) - (insert.index === tracks.length ? 0 : rowHeight / 2),
               height: rowHeight,
             }}
           />
@@ -256,9 +255,9 @@ export const TimelineDragPreview = forwardRef<TimelineDragPreviewHandle, Timelin
             key={`sync-ghost-${g.id}`}
             className="pointer-events-none absolute z-(--z-timeline-overlay) rounded border-2 border-dashed border-text-secondary/70 bg-text-secondary/10"
             style={{
-              left: startLeftPx + (g.shiftedStart / fps) * pxPerSec - scrollLeft,
+              left: startLeftPx + (g.shiftedStart / fps) * pxPerSec,
               width: (g.duration / fps) * pxPerSec,
-              top: rulerAndMarginPx + topOf(g.track) - scrollTop,
+              top: topOf(g.track),
               height: heightOf(g.track),
             }}
           />
@@ -276,9 +275,9 @@ export const TimelineDragPreview = forwardRef<TimelineDragPreviewHandle, Timelin
             data-chroma-link-drag-ghost={g.id}
             className="pointer-events-none absolute z-(--z-timeline-overlay) rounded border-2 border-dashed border-accent/70 bg-accent/10"
             style={{
-              left: startLeftPx + (g.shiftedStart / fps) * pxPerSec - scrollLeft,
+              left: startLeftPx + (g.shiftedStart / fps) * pxPerSec,
               width: (g.duration / fps) * pxPerSec,
-              top: rulerAndMarginPx + topOf(g.track) - scrollTop,
+              top: topOf(g.track),
               height: heightOf(g.track),
             }}
           />

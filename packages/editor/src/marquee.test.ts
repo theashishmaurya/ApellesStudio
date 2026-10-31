@@ -30,7 +30,7 @@ import {
   composeMarqueeSelection,
   marqueeActivated,
   marqueeAnchorFromPoint,
-  marqueeOverlayBox,
+  marqueeContentBox,
   marqueeRect,
   type MarqueeHitTarget,
   type MarqueeViewport,
@@ -314,27 +314,23 @@ describe('pixel ↔ timeline conversion', () => {
     expect(marqueeAnchorFromPoint(20, 42, scrolled)).toEqual({ frame: 50, row: 1 });
   });
 
-  it('marqueeOverlayBox is the exact inverse of marqueeAnchorFromPoint', () => {
-    const a = marqueeAnchorFromPoint(60, 100, v);
-    const b = marqueeAnchorFromPoint(300, 220, v);
-    const box = marqueeOverlayBox(marqueeRect(a, b), v);
-    expect(box).toEqual({ left: 60, top: 100, width: 240, height: 120 });
+  it('marqueeContentBox is the inverse of marqueeAnchorFromPoint, in content px', () => {
+    const scrolled = { ...v, scrollLeft: 100, scrollTop: 52 };
+    const a = marqueeAnchorFromPoint(60, 100, scrolled);
+    const b = marqueeAnchorFromPoint(300, 220, scrolled);
+    const box = marqueeContentBox(marqueeRect(a, b), v);
+    // content px = edit-area px + scroll, minus the scroller's top (`rulerPx`)
+    expect(box).toEqual({ left: 160, top: 100 - 42 + 52, width: 240, height: 120 });
   });
 
-  it('the overlay follows a mid-drag scroll, since the rect is in timeline units', () => {
+  it('the box does not depend on scroll at all: the scroller moves it natively (D-437 S8)', () => {
     const rect = { frameStart: 0, frameEnd: 48, rowStart: 0, rowEnd: 1 };
-    const before = marqueeOverlayBox(rect, v);
-    const after = marqueeOverlayBox(rect, { ...v, scrollLeft: 96, scrollTop: 52 });
-    expect(after.left).toBe(before.left - 96);
-    expect(after.top).toBe(before.top - 52);
-    // …and it does not change SIZE just because the view scrolled.
-    expect(after.width).toBe(before.width);
-    expect(after.height).toBe(before.height);
+    expect(marqueeContentBox(rect, v)).toEqual({ left: 20, top: 0, width: 96, height: 52 });
   });
 
-  it('the overlay rescales with zoom without moving the enclosed frames', () => {
+  it('the box rescales with zoom without moving the enclosed frames', () => {
     const rect = { frameStart: 24, frameEnd: 48, rowStart: 0, rowEnd: 1 };
-    const zoomed = marqueeOverlayBox(rect, { ...v, pxPerSec: 96 });
+    const zoomed = marqueeContentBox(rect, { ...v, pxPerSec: 96 });
     expect(zoomed.left).toBe(20 + 96); // frame 24 = 1s at 96px/s
     expect(zoomed.width).toBe(96);
   });

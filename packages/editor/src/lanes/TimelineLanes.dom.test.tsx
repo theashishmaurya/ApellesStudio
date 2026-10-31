@@ -9,8 +9,8 @@
  * boundary (see the `react` mock). Counts run un-StrictMode'd (StrictMode doubles
  * every render in dev); the StrictMode mount is checked separately.
  *
- * jsdom has no layout, so culling is exercised through `viewportWidth` and
- * `windowLeft` props. Fixture: 24 fps, 100 px/s, `startLeftPx` 32, one track of
+ * jsdom has no layout, so culling is exercised through `viewportWidth` and the
+ * scroll store (`timelineScroll.ts`, D-437 S8: the lanes subscribe to it). Fixture: 24 fps, 100 px/s, `startLeftPx` 32, one track of
  * 100 back-to-back 1 s clips `c0..c99` (clip n spans x 32+100n .. 132+100n) and a
  * second track `d0`.
  */
@@ -50,7 +50,7 @@ vi.mock('../ClipFadeOverlay', () => ({ ClipFadeOverlay: () => null }));
 import { TIMELINE_TEST_IDS as ID } from '../timelineTestIds';
 import type { Clip, Track } from '../timeline';
 import { clipLeftPx, clipWidthPx, contentWidth } from './laneLayout';
-import { windowScrollLeft } from './laneWindow';
+import { createTimelineScrollStore, setTimelineScroll, type TimelineScrollStore } from './timelineScroll';
 import { TimelineLanes, type TimelineLanesProps } from './TimelineLanes';
 import { useLaneActions, type LaneActions } from './useLaneActions';
 
@@ -70,6 +70,9 @@ function makeTracks(): Track[] {
 }
 
 const calls: string[] = [];
+let scroll: TimelineScrollStore = createTimelineScrollStore();
+/** Scroll the lanes the way the pane does: a write to its scroll store. */
+const scrollTo = (left: number) => actSync(() => setTimelineScroll(scroll, left, 0));
 const actions: LaneActions = {
   onClipPointerDownCapture: (_e, t, id) => calls.push(`down:${t}:${id}`),
   onClipClick: (_e, t, id) => calls.push(`click:${t}:${id}`),
@@ -88,7 +91,7 @@ function baseProps(tracks: Track[]): TimelineLanesProps {
     rowHeights: [52, 40],
     topPx: 34,
     viewportWidth: VW,
-    windowLeft: 0,
+    scroll,
     bandRatio: 0.3,
     showClipNames: true,
     showClipBadges: true,
@@ -107,6 +110,7 @@ afterEach(() => {
   mounted = null;
   renders.byId.clear();
   calls.length = 0;
+  scroll = createTimelineScrollStore();
 });
 
 /** Mount lanes whose props the test can replace. */
@@ -155,10 +159,10 @@ describe('what is mounted', () => {
     expect(ids.length).toBeLessThan(40); // about 25 of 101, not all
   });
 
-  it('moves the window with windowLeft and unmounts what left it', () => {
+  it('moves the window with the scroll store and unmounts what left it', () => {
     const tracks = makeTracks();
-    const ui = setup(baseProps(tracks));
-    ui.update({ ...baseProps(tracks), windowLeft: windowScrollLeft(5000, VW) });
+    setup(baseProps(tracks));
+    scrollTo(5000);
     const ids = clipIds();
     expect(ids).toContain('c50');
     expect(ids).toContain('c45'); // viewport starts near x=5000 → clip 49; one viewport of overscan back
@@ -193,10 +197,10 @@ describe('what is mounted', () => {
 
   it('keeps the focused clip mounted after the window moves away from it', () => {
     const tracks = makeTracks();
-    const ui = setup(baseProps(tracks));
+    setup(baseProps(tracks));
     const c3 = document.body.querySelector<HTMLElement>(`[data-chroma-clip-id="c3"]`)!;
     actSync(() => c3.focus());
-    ui.update({ ...baseProps(tracks), windowLeft: windowScrollLeft(8000, VW) });
+    scrollTo(8000);
     expect(clipIds()).toContain('c3');
     expect(document.activeElement).toBe(document.body.querySelector(`[data-chroma-clip-id="c3"]`));
     actSync(() => (document.activeElement as HTMLElement).blur());
@@ -362,17 +366,17 @@ describe('render counts (the memoised design)', () => {
     expect([...renders.byId.values()]).toEqual([1, 1]);
   });
 
-  it('a scroll inside the window bucket is not a prop change: nothing re-renders', () => {
-    const { tracks, ui } = mountedBaseline();
+  it('a scroll inside the window bucket re-renders no clip', () => {
+    mountedBaseline();
     for (const scrollLeft of [40, 200, 499]) {
-      ui.update({ ...baseProps(tracks), windowLeft: windowScrollLeft(scrollLeft, VW) });
+      scrollTo(scrollLeft);
     }
     expect(total()).toBe(0);
   });
 
   it('crossing the bucket mounts the newcomers and re-renders no clip that stayed fully visible', () => {
-    const { tracks, ui } = mountedBaseline();
-    ui.update({ ...baseProps(tracks), windowLeft: windowScrollLeft(500, VW) });
+    mountedBaseline();
+    scrollTo(500);
     expect(renders.byId.get('c8')).toBeUndefined(); // inside both viewports: same slice
     expect(renders.byId.get('c14')).toBeUndefined();
     expect(renders.byId.get('c27')).toBe(1); // newly mounted
@@ -408,6 +412,24 @@ describe('paint containment (D-437 S7, plan §2.9 items 1 and 2)', () => {
 });
 
 describe('scroller wiring', () => {
+  it('renders content-space overlays (children) inside the scroller content, after the lanes', () => {
+    const tracks = makeTracks();
+    function Host() {
+      return (
+        <DndContext>
+          <TimelineLanes {...baseProps(tracks)}>
+            <div data-overlay="" />
+          </TimelineLanes>
+        </DndContext>
+      );
+    }
+    mounted = mount(<Host />, { strictMode: false });
+    const overlay = document.body.querySelector('[data-overlay]')!;
+    const scroller = document.body.querySelector(`[data-testid="${ID.scroller}"]`)!;
+    expect(overlay.parentElement?.parentElement).toBe(scroller);
+    expect(overlay.previousElementSibling?.getAttribute('data-testid')).toBe(ID.trackRow);
+  });
+
   it('forwards scrollerRef and onScroll', () => {
     const ref = createRef<HTMLDivElement>();
     const onScroll = vi.fn();

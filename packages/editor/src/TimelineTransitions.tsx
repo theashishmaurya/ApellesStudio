@@ -30,8 +30,9 @@
  * **What it does NOT do.** It owns no state that outlives a gesture: every
  * commit goes straight to `useEditorTimelineStore.applyOp`, so a transition edit
  * is persisted and undoable like any other. It computes no timeline geometry of
- * its own either — `pxPerSec`/`scrollLeft`/`startLeftPx`/`rowHeight` come from
- * `TimelinePane`, which is the one place that math lives.
+ * its own either — `pxPerSec`/`startLeftPx`/`rowHeight`/`rowTops` come from
+ * `TimelinePane`, which is the one place that math lives (content coordinates
+ * since D-437 S8: the badges live inside the lanes' scroller).
  */
 import { rowHeightAt, rowTopAt } from './trackHeight';
 import { useMemo, useState } from 'react';
@@ -173,32 +174,27 @@ export function editPointHoleClip(widthPx: number, cutXPx: number): string | nul
  *  it (the mark every reference NLE uses for a dissolve). Click to open its
  *  editor.
  *
- *  Positioned with exactly the `startLeft + frame/fps*pxPerSec - scrollLeft`
- *  arithmetic every other overlay in `TimelinePane` uses — this component does
- *  no geometry of its own. */
+ *  Positioned in the lanes' CONTENT coordinates (`startLeft + frame/fps*pxPerSec`,
+ *  the row's own top): since D-437 S8 it is rendered inside the lanes' scroller,
+ *  so native scrolling moves it with no JS and a scroll never re-renders it. This
+ *  component does no geometry of its own. */
 export function TransitionBadges({
   tracks,
   fps,
   pxPerSec,
-  scrollLeft,
-  scrollTop,
   startLeftPx,
   rowHeight,
   rowTops,
-  rulerAndMarginPx,
   onChange,
   onRemove,
 }: {
   tracks: Track[];
   fps: number;
   pxPerSec: number;
-  scrollLeft: number;
-  scrollTop: number;
   startLeftPx: number;
   rowHeight: number;
   /** D-432 P3 — each row's top when tracks have their own heights */
   rowTops?: readonly number[];
-  rulerAndMarginPx: number;
   onChange: (track: number, id: string, patch: TransitionPatch) => void;
   onRemove: (track: number, id: string) => void;
 }) {
@@ -218,11 +214,11 @@ export function TransitionBadges({
   return (
     <>
       {badges.map(({ trackIndex, transition, start, end }) => {
-        const left = startLeftPx + (start / fps) * pxPerSec - scrollLeft;
+        const left = startLeftPx + (start / fps) * pxPerSec;
         const width = Math.max(6, ((end - start) / fps) * pxPerSec);
         const rowTop = rowTops ? rowTopAt(rowTops, trackIndex, rowHeight) : trackIndex * rowHeight;
         const rowH = rowTops ? rowHeightAt(rowTops, trackIndex, rowHeight) : rowHeight;
-        const badgeTop = rulerAndMarginPx + rowTop - scrollTop + rowH * 0.15;
+        const badgeTop = rowTop + rowH * 0.15;
         const badgeHeight = rowH * 0.7;
         return (
           <Popover key={`${trackIndex}:${transition.id}`}>

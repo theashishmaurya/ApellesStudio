@@ -166,6 +166,11 @@ function clips() {
   return tl.tracks[0].clips;
 }
 
+/** Each clip's source window by id: what a slip or a slide changes and a plain move does not. */
+function sourceWindows(list: readonly { id: string; source_start: number; duration: number }[]) {
+  return Object.fromEntries(list.map((c) => [c.id, { source_start: c.source_start, duration: c.duration }]));
+}
+
 function clipById(id: string) {
   const c = clips().find((x) => x.id === id);
   if (!c) throw new Error(`no clip ${id}`);
@@ -209,19 +214,19 @@ describe('armed body drag — real DOM, real PointerEvents (D-235)', () => {
     // The regression this feature must not cause, stated as what is actually
     // provable in this tier: an unarmed drag NEVER slips or slides.
     //
-    // It deliberately does not assert where the clip lands. dnd-kit resolves
-    // no drop target at all under jsdom (its collision detection never yields
-    // an `over`), so the pre-existing move path cannot be driven here — the
-    // same gap `TimelinePane.marquee.dom.test.tsx` discloses about dnd-kit,
-    // and it predates this pass. What IS driven, and what matters here, is
+    // It deliberately does not assert where the clip lands: whether dnd-kit
+    // resolves a drop target under jsdom depends on the rect stub (since D-437
+    // S8 the drop zones sit inside the lanes' content box, whose inline size
+    // the stub reads, so a plain move may really land). What matters here is
     // that the identical gesture minus the Alt key leaves every clip's source
-    // window and every neighbour's duration exactly as they were — i.e. it
-    // did not fall into either armed branch.
-    const before = clips().map((c) => ({ ...c }));
+    // window and duration exactly as they were — i.e. it did not fall into
+    // either armed branch (a slip changes `source_start`, a slide a
+    // neighbour's `duration`).
+    const before = sourceWindows(clips());
 
     await bodyDrag(bodies()[1], 200, 290, 26);
 
-    expect(clips()).toEqual(before);
+    expect(sourceWindows(clips())).toEqual(before);
   });
 
   it('2. Alt + drag on the UPPER half of a clip slips it — new source window, same position', async () => {

@@ -13,25 +13,34 @@
  * Culling: only the clips in the scroll window (`laneWindow.ts`: one viewport of
  * overscan each side, re-render threshold half a viewport) plus the pinned ones
  * (selection, the drag source, the gesture target — passed in — and the focused
- * clip, tracked here) are mounted. The caller passes `windowLeft`, the scroll
- * position already floored to the window bucket (`windowScrollLeft`), so a scroll
- * inside a bucket is not a prop change and re-renders nothing here. A
- * `viewportWidth` of 0 (not measured: hidden tab, jsdom) means no culling.
+ * clip, tracked here) are mounted. D-437 S8: the lanes subscribe to the pane's
+ * scroll store (`timelineScroll.ts`) themselves, selecting only the scroll
+ * position floored to the window bucket (`windowScrollLeft`), so a scroll inside
+ * a bucket re-renders nothing here and a bucket crossing re-renders the lanes
+ * alone, never the pane. A `viewportWidth` of 0 (not measured: hidden tab,
+ * jsdom) means no culling.
+ *
+ * Content-space overlays (`children`): the pane's overlays that belong to rows
+ * and frames (transitions, the gap highlight, drag ghosts, the marquee, the drop
+ * zones, the height zones) are rendered inside the content box, after the lanes,
+ * in content coordinates, so they scroll natively with the clips (D-437 S8).
  *
  * Accessibility: the scroller is `tabIndex={-1}` (it never steals Tab) and a
  * labelled group; each lane is a group labelled with its track label. Off-screen
  * clips are not in the accessibility tree, like any virtualised list.
  *
  * Rendered by `TimelinePane` since D-437 S4 (in place of the library). What it
- * does NOT do: own selection or editing (`actions`), draw overlays (ruler,
- * markers, transitions, the playhead — `Playhead.tsx` — stay separate), or read
- * the store.
+ * does NOT do: own selection or editing (`actions`), draw the pinned strips
+ * (ruler, markers, the playhead — `Playhead.tsx` — stay outside the scroller),
+ * write the scroll store (the pane's `onScroll` does), or read the timeline
+ * store.
  */
-import { memo, useState, type FocusEvent, type Ref, type UIEventHandler } from 'react';
+import { memo, useState, type FocusEvent, type ReactNode, type Ref, type UIEventHandler } from 'react';
 import type { Selection, CurveEditorTarget } from '../timelineStore';
 import type { Track } from '../timeline';
 import { contentWidth } from './laneLayout';
-import { laneIndexOf, laneWindow, laneWindowParams } from './laneWindow';
+import { laneIndexOf, laneWindow, laneWindowParams, windowScrollLeft } from './laneWindow';
+import { useTimelineScroll, type TimelineScrollStore } from './timelineScroll';
 import { TrackLane } from './TrackLane';
 import type { LaneActions } from './useLaneActions';
 import { TIMELINE_TEST_IDS } from '../timelineTestIds';
@@ -53,8 +62,8 @@ export interface TimelineLanesProps {
   topPx: number;
   /** The scroller's measured width (0 = unmeasured → no culling). */
   viewportWidth: number;
-  /** `scrollLeft` floored to the window bucket — `windowScrollLeft(scrollLeft, viewportWidth)`. */
-  windowLeft: number;
+  /** The pane's scroll store; the lanes select the window bucket from it. */
+  scroll: TimelineScrollStore;
   bandRatio: number;
   showClipNames: boolean;
   showClipBadges: boolean;
@@ -71,6 +80,8 @@ export interface TimelineLanesProps {
   /** The scroller element, for imperative scroll writes and its scroll listener. */
   scrollerRef?: Ref<HTMLDivElement>;
   onScroll?: UIEventHandler<HTMLDivElement>;
+  /** Content-space overlays, drawn over the lanes inside the scroller's content. */
+  children?: ReactNode;
 }
 
 const NO_PINS: ReadonlySet<string> = new Set();
@@ -90,7 +101,7 @@ export const TimelineLanes = memo(function TimelineLanes({
   rowHeights,
   topPx,
   viewportWidth,
-  windowLeft,
+  scroll,
   bandRatio,
   showClipNames,
   showClipBadges,
@@ -103,7 +114,10 @@ export const TimelineLanes = memo(function TimelineLanes({
   actions,
   scrollerRef,
   onScroll,
+  children,
 }: TimelineLanesProps) {
+  // The only scroll value the lanes depend on: re-renders once per window bucket.
+  const windowLeft = useTimelineScroll(scroll, (s) => windowScrollLeft(s.left, viewportWidth));
   // The focused clip must not be unmounted by culling (it would drop keyboard focus).
   const [focusedId, setFocusedId] = useState<string | null>(null);
 
@@ -187,6 +201,7 @@ export const TimelineLanes = memo(function TimelineLanes({
             actions={actions}
           />
         ))}
+        {children}
       </div>
     </div>
   );

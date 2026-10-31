@@ -88,8 +88,10 @@ export interface EditGestureView {
   timeline: Timeline | null;
   fps: number;
   pxPerSec: number;
-  scrollLeft: number;
-  scrollTop: number;
+  /** The lanes' scroll position NOW (D-437 S8: the pane's scroll store, not
+   *  React state, so it is read at the moment of each pointer event rather
+   *  than refreshed by a render). */
+  scroll: () => { left: number; top: number };
   startLeft: number;
   rowsTop: number;
   /** the default row height (every row, when `rowTops` is absent) */
@@ -201,11 +203,11 @@ export function createEditGesture(
   };
   const frameX = (frame: number) => {
     const v = viewRef.current;
-    return v.startLeft + px(frame) - v.scrollLeft;
+    return v.startLeft + px(frame) - v.scroll().left;
   };
   const rowTop = (track: number) => {
     const v = viewRef.current;
-    return v.rowsTop + (v.rowTops ? rowTopAt(v.rowTops, track, v.rowHeight) : track * v.rowHeight) - v.scrollTop;
+    return v.rowsTop + (v.rowTops ? rowTopAt(v.rowTops, track, v.rowHeight) : track * v.rowHeight) - v.scroll().top;
   };
   const rowH = (track: number) => {
     const v = viewRef.current;
@@ -284,7 +286,7 @@ export function createEditGesture(
 
   const update = (g: Gesture, clientX: number, suspendSnap: boolean) => {
     const v = viewRef.current;
-    const raw = Math.round((((clientX - g.originX) + (v.scrollLeft - g.originScrollLeft)) / v.pxPerSec) * v.fps);
+    const raw = Math.round((((clientX - g.originX) + (v.scroll().left - g.originScrollLeft)) / v.pxPerSec) * v.fps);
     let delta = raw;
     let snapX: number | null = null;
     if (g.edgeFrame0 !== null && !suspendSnap && v.snapping !== false) {
@@ -409,7 +411,7 @@ export function createEditGesture(
     const area = editAreaRef.current;
     if (!area) return null;
     const v = viewRef.current;
-    const x = clientX - area.getBoundingClientRect().left + v.scrollLeft - v.startLeft;
+    const x = clientX - area.getBoundingClientRect().left + v.scroll().left - v.startLeft;
     return Math.round((x / v.pxPerSec) * v.fps);
   };
 
@@ -452,7 +454,7 @@ export function createEditGesture(
       pointerId: e.pointerId,
       captureEl: body,
       originX: e.clientX,
-      originScrollLeft: v.scrollLeft,
+      originScrollLeft: v.scroll().left,
       edgeFrame0,
       snapTargets: edgeFrame0 === null ? [] : snapTargets(tl, { track, clipId: moving.id }, v.snapExtras()),
       sticky: null,

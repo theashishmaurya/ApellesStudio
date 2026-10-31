@@ -146,6 +146,14 @@ function timelineNow(): Timeline {
   return tl;
 }
 
+/** Each clip's source window by id, across tracks: what a slip or a slide
+ *  changes and a plain move (which may really land, D-437 S8) does not. */
+function sourceWindows(tl: Timeline) {
+  return Object.fromEntries(
+    tl.tracks.flatMap((t) => t.clips.map((c) => [c.id, { source_start: c.source_start, duration: c.duration }])),
+  );
+}
+
 /** The palette's button for one tool, as a user would find it. */
 function toolButton(tool: TrimTool): HTMLButtonElement {
   const el = mounted!.container.querySelector<HTMLButtonElement>(`[data-chroma-trim-tool="${tool}"]`);
@@ -377,24 +385,24 @@ describe('the palette leaves the default surface alone (D-261)', () => {
   it('7. with Select active, a plain body drag still slips and slides nothing', async () => {
     // The pre-D-235 guarantee, re-asserted now that a second thing can change
     // what a drag means. (As in the D-235 file, this does not assert where the
-    // clip lands: dnd-kit resolves no drop target under jsdom, a gap that
-    // predates both passes.)
-    const before = timelineNow().tracks;
+    // clip lands — a plain move may really land under jsdom's rect stub since
+    // D-437 S8 — only that no clip's source window or duration changed.)
+    const before = sourceWindows(timelineNow());
     await bodyDrag(bodies()[1], 200, 290, ROW_HEIGHT_PX * 0.25);
-    expect(timelineNow().tracks).toEqual(before);
+    expect(sourceWindows(timelineNow())).toEqual(before);
   });
 
   it('8. an edge-only tool leaves BODY drags as plain moves — Ripple never slips a clip', async () => {
     // Ripple and Roll own the two edges and nothing else, precisely so that
     // choosing one does not take away the ability to reposition a clip.
-    const before = timelineNow().tracks;
+    const before = sourceWindows(timelineNow());
     await pickTool('ripple');
     await bodyDrag(bodies()[1], 200, 290, ROW_HEIGHT_PX * 0.25);
-    expect(timelineNow().tracks).toEqual(before);
+    expect(sourceWindows(timelineNow())).toEqual(before);
 
     await pickTool('roll');
     await bodyDrag(bodies()[1], 200, 290, ROW_HEIGHT_PX * 0.75);
-    expect(timelineNow().tracks).toEqual(before);
+    expect(sourceWindows(timelineNow())).toEqual(before);
   });
 
   it('9. Alt still works, and still means what it meant, while Select is active', async () => {

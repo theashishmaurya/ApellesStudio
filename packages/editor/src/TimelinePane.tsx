@@ -18,6 +18,16 @@
  * `setTime`. D-437 S5 rewrites these notes when it deletes the package. Plan:
  * `docs/notes/timeline-lanes.md`.
  *
+ * Scroll (D-437 S8): the scroll position is NOT React state. A per-pane store
+ * (`lanes/timelineScroll.ts`) mirrors the native scroller; a scroll renders
+ * this pane zero times. Handlers read it at event time, `applyScrollSinks`
+ * writes the header column's `translateY`, the playhead and the view
+ * attributes, the lanes and the pinned strips (ruler, beat lane, markers,
+ * curve lane) subscribe for themselves, and the row/frame overlays
+ * (transitions, gap highlight, drag ghosts, marquee, drop and height zones)
+ * are rendered inside the scroller's content so they scroll natively. Where
+ * the notes below say "`scrollLeft` state", read: the scroll store.
+ *
  * `@xzdarcy/react-timeline-editor` with one row PER TRACK (D-080 — was one
  * fixed row, the video track, before this pass). Each clip is an "action".
  * Drag the body → `move` (same-track only, see below); drag an edge →
@@ -364,7 +374,7 @@ import { beginScrub, endScrub, updateScrub } from './scrubAudio';
 import { TimelineLanes } from './lanes/TimelineLanes';
 import { Playhead, type PlayheadHandle } from './lanes/Playhead';
 import { useLaneActions } from './lanes/useLaneActions';
-import { windowScrollLeft } from './lanes/laneWindow';
+import { createTimelineScrollStore, setTimelineScroll, WithScrollLeft, type TimelineScrollState } from './lanes/timelineScroll';
 // D-432 P2 — the clip block's anatomy (the drag ghost), the edit gestures and their feedback layer.
 import { ClipBlock, CLIP_KIND_CLASSES } from './ClipBlock';
 import { clipKindOf, cutStyleAt, CLIP_VERTICAL_INSET_PX } from './clipAnatomy';
@@ -454,11 +464,11 @@ import {
   composeMarqueeSelection,
   marqueeActivated,
   marqueeAnchorFromPoint,
-  marqueeOverlayBox,
+  marqueeContentBox,
   marqueeRect,
   type MarqueeAnchor,
   type MarqueeRect,
-  type MarqueeViewport,
+  type MarqueeGeometry,
 } from './marquee';
 import { useViewportWidth } from './useViewportWidth';
 import { trackBadges, trackLabels } from './trackOps';
@@ -719,19 +729,14 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
   const setCurveEditor = useEditorTimelineStore((s) => s.setCurveEditor);
   const pxPerSec = useTimelineViewStore((s) => s.pxPerSec);
   const setPxPerSec = useTimelineViewStore((s) => s.setPxPerSec);
-  const [scrollTop, setScrollTop] = useState(0);
-  // D-095 — horizontal scroll, needed alongside `scrollTop` to convert a
-  // drop's `clientX` into a timeline frame (`xToFrame` below); the library
-  // reports both through the same `onScroll` callback (`OnScrollParams`,
-  // `react-virtualized`), `scrollTop` just never needed `scrollLeft` before
-  // this pass since nothing read a horizontal drop position.
-  const [scrollLeft, setScrollLeft] = useState(0);
-  /** B-145 — the live scroll offset, readable from a handler that cannot see
-   *  the state (`onDndDragStart` is memoized with no deps). Synced by an
-   *  effect rather than written next to each `setScrollLeft`/`setScrollTop`
-   *  call, so there is exactly ONE writer and a future third setter cannot
-   *  silently leave it stale. */
-  const scrollRef = useRef<ScrollOffset>({ left: 0, top: 0 });
+  /** D-437 S8 — the lanes' scroll position, OUT of React state: a per-pane
+   *  store (`lanes/timelineScroll.ts`) mirroring the native scroller. A scroll
+   *  renders this pane zero times. Handlers (drops, clicks, drags — D-095's
+   *  `xToFrame`, B-145's drag origin) read `scroll.getState()` at the moment
+   *  of the event; the header column, the playhead and the view attributes are
+   *  written by `applyScrollSinks`; the lanes and the pinned strips subscribe
+   *  for themselves; content-space overlays live inside the scroller. */
+  const [scroll] = useState(createTimelineScrollStore);
   // B-326 — playback view-follow bookkeeping (see the store subscription).
   const followGeomRef = useRef({ pxPerSec: DEFAULT_PX_PER_SEC, viewportWidth: 0 });
   const followWriteAtRef = useRef(Number.NEGATIVE_INFINITY);
@@ -903,7 +908,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
         frame: last,
         fps,
         pxPerSec: geom.pxPerSec,
-        scrollLeft: scrollRef.current.left,
+        scrollLeft: scroll.getState().left,
         viewportWidth: geom.viewportWidth,
         startLeftPx: START_LEFT_PX,
       });
@@ -911,7 +916,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
       followWriteAtRef.current = performance.now();
       if (scrollerRef.current) scrollerRef.current.scrollLeft = next;
     });
-  }, [fps]);
+  }, [fps, scroll]);
 
   // D-232 — unmounting mid-drag (a tab switch, a project close) still ends the
   // scrub gesture (the ruler's; the playhead's own ends itself on unmount). A drag-end handler cannot fire for a component that is gone,
@@ -919,6 +924,29 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
   // open for the rest of the session. `endScrub` is idempotent, so this costs
   // nothing on an ordinary unmount.
   useEffect(() => endScrub, []);
+
+  /** D-437 S8 — everything outside React that follows the scroll position,
+   *  written in one place: the header column's `translateY` (spec §4.8; it
+   *  used to be a `top` from React state, R3: written by the same listener as
+   *  every other sink, so headers and lanes move in the same frame), the
+   *  playhead's transform, and the edit area's view attributes (D-434's
+   *  `data-chroma-scroll-left/-top`, which the UI harness reads; React does not
+   *  own these two attributes, so a render never resets them). Runs from the
+   *  store's listener (any write: a scroll, the zoom anchor) and from the mount
+   *  adoption below. Reads refs only, so its identity is stable. */
+  const applyScrollSinks = useCallback((pos: TimelineScrollState) => {
+    const header = headerColumnRef.current;
+    if (header) header.style.transform = pos.top ? `translateY(${-pos.top}px)` : '';
+    playheadRef.current?.setScroll(pos.left);
+    const area = editAreaRef.current;
+    if (area) {
+      area.setAttribute(TIMELINE_VIEW_ATTRS.scrollLeft, String(Math.round(pos.left)));
+      area.setAttribute(TIMELINE_VIEW_ATTRS.scrollTop, String(Math.round(pos.top)));
+    }
+  }, []);
+  // A LAYOUT effect, declared before the zoom anchor's and the mount
+  // adoption's, so the listener exists before either writes the store.
+  useLayoutEffect(() => scroll.subscribe(applyScrollSinks), [scroll, applyScrollSinks]);
 
   // Scroll-wheel zoom (D-051, pan/zoom split D-072) — the library has no
   // wheel handling of its own (checked before writing this), so this is a
@@ -971,11 +999,31 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
         return;
       }
       e.preventDefault();
-      const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
-      zoomByRef.current(factor, e.clientX);
+      // D-437 S8 — coalesced to ONE zoom step per animation frame. A trackpad
+      // pinch delivers several ctrl-wheel events per frame, and each used to be
+      // a full zoom (a store write → a synchronous render of the pane and every
+      // visible clip), so one pinch frame paid for 3–6 zoom renders (the
+      // 181–247 ms pinch frames measured live at 300 clips). The factors
+      // multiply, the latest pointer x is the anchor, and the zoom lands once,
+      // in the next frame.
+      pendingZoom.factor *= e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+      pendingZoom.clientX = e.clientX;
+      if (zoomRaf === 0) zoomRaf = requestAnimationFrame(flushZoom);
+    };
+    const pendingZoom = { factor: 1, clientX: 0 };
+    let zoomRaf = 0;
+    const flushZoom = () => {
+      zoomRaf = 0;
+      const { factor, clientX } = pendingZoom;
+      pendingZoom.factor = 1;
+      // In-then-out within one frame multiplies back to ~1: no zoom at all.
+      if (Math.abs(factor - 1) > 1e-9) zoomByRef.current(factor, clientX);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      if (zoomRaf !== 0) cancelAnimationFrame(zoomRaf);
+    };
     // B-123 — `editArea`, not `[]`: this node mounts LATE on the real app's
     // own startup path (see its declaration), and an empty array bound this
     // listener to nothing at all for the whole session.
@@ -997,12 +1045,14 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
    *  A LAYOUT effect, so the write lands in the zoom's own commit, before
    *  paint: `TimelineLanes` (a child) has already laid its content out at the
    *  new width, and the playhead (also a child) has already re-placed itself
-   *  for the new zoom — at the OLD scroll, which `setScroll` below corrects in
-   *  the same frame. D-437 S4: the scroller is one native element, the single
-   *  source of the scroll position, so B-291's two-copy echo loop (the
-   *  library's `ScrollSync` state vs. its `Grid`) cannot exist any more; the
-   *  write is one assignment, and the browser's own `scroll` event brings the
-   *  React state along (`onTimelineScroll`). */
+   *  for the new zoom — at the OLD scroll, which the scroll store's sinks
+   *  correct in the same frame. D-437 S4: the scroller is one native element,
+   *  the single source of the scroll position, so B-291's two-copy echo loop
+   *  (the library's `ScrollSync` state vs. its `Grid`) cannot exist any more;
+   *  the write is one assignment. D-437 S8: the store is updated right here
+   *  rather than waiting for the browser's `scroll` event, so every reader
+   *  (the sinks, the lanes' window, the ruler) has the anchored position in
+   *  this same commit; the event's echo is then a no-op. */
   useLayoutEffect(() => {
     const anchor = zoomAnchorRef.current;
     if (!anchor) return;
@@ -1012,36 +1062,25 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
     if (scroller) scroller.scrollLeft = wanted;
     // What the scroller really took (clamped to its range); jsdom keeps the value as written.
     const next = scroller ? scroller.scrollLeft : wanted;
-    playheadRef.current?.setScroll(next);
-    // Kept in step directly rather than waiting for the scroller's own
-    // `scroll` event to echo it back: every drop/drag/overlay conversion in
-    // this file reads this state, and a zoom must not leave them a frame behind.
-    setScrollLeft((prev) => (prev === next ? prev : next));
-  }, [pxPerSec, fps]);
+    setTimelineScroll(scroll, next, scroller ? scroller.scrollTop : scroll.getState().top);
+  }, [pxPerSec, fps, scroll]);
 
-  // B-145 — `scrollRef`'s single writer. Both real setters (`onTimelineScroll`
-  // and the zoom-anchor effect just above) funnel through the state, so
-  // mirroring the state itself is what keeps this honest — writing the ref at
-  // each call site would be one more thing to remember.
-  useEffect(() => {
-    scrollRef.current = { left: scrollLeft, top: scrollTop };
-  }, [scrollLeft, scrollTop]);
-
-  // B-357 — the scroll state outlives the scroller element. The pane renders
+  // B-357 — the scroll position outlives the scroller element. The pane renders
   // nothing while no timeline is open (a switch or a project close), which
   // unmounts the lanes' scroller; the next one mounts at 0 and fires no
-  // `scroll` event, so `scrollLeft`/`scrollTop` kept the OLD element's
-  // position: the ruler, the overlays and every drop/drag conversion read a
-  // position the lanes were not at (the harness's `byFrames` targets land
-  // hundreds of px off). Adopt the scroller's real position whenever the edit
-  // area (its parent) mounts.
+  // `scroll` event, so the mirror kept the OLD element's position: the ruler,
+  // the overlays and every drop/drag conversion read a position the lanes
+  // were not at (the harness's `byFrames` targets land hundreds of px off).
+  // Adopt the scroller's real position whenever the edit area (its parent)
+  // mounts, and write the sinks explicitly: the header column and the edit
+  // area are NEW nodes even when the position is unchanged (when the store's
+  // own write is a no-op and its listener does not run).
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
-    playheadRef.current?.setScroll(scroller.scrollLeft);
-    setScrollLeft((prev) => (prev === scroller.scrollLeft ? prev : scroller.scrollLeft));
-    setScrollTop((prev) => (prev === scroller.scrollTop ? prev : scroller.scrollTop));
-  }, [editArea]);
+    setTimelineScroll(scroll, scroller.scrollLeft, scroller.scrollTop);
+    applyScrollSinks(scroll.getState());
+  }, [editArea, scroll, applyScrollSinks]);
 
 
   // D-128 — keep `viewportWidth` honest across window and panel resizes. The
@@ -1570,30 +1609,37 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
    *  timing-wise: the ref is seeded with the first render's values at
    *  `useRef` time and refreshed after every commit, and a pointer event can
    *  only ever be dispatched between frames, i.e. after a commit. */
-  const marqueeViewport: MarqueeViewport = {
+  const marqueeGeometry: MarqueeGeometry = {
     fps,
     pxPerSec,
-    scrollLeft,
-    scrollTop,
     startLeftPx: START_LEFT_PX,
-    rulerPx: RULER_AND_MARGIN_PX,
     rowHeight: viewClipHeight,
     rowTops,
   };
-  const marqueeLatestRef = useRef<{ viewport: MarqueeViewport; timeline: Timeline | null }>({
-    viewport: marqueeViewport,
+  const marqueeLatestRef = useRef<{ geometry: MarqueeGeometry; timeline: Timeline | null }>({
+    geometry: marqueeGeometry,
     timeline,
   });
   useEffect(() => {
-    marqueeLatestRef.current = { viewport: marqueeViewport, timeline };
+    marqueeLatestRef.current = { geometry: marqueeGeometry, timeline };
   });
 
-  /** Pointer position → timeline units, against the CURRENT viewport. */
-  const marqueePointTo = useCallback((clientX: number, clientY: number): MarqueeAnchor | null => {
-    const rect = editAreaRef.current?.getBoundingClientRect();
-    if (!rect) return null;
-    return marqueeAnchorFromPoint(clientX - rect.left, clientY - rect.top, marqueeLatestRef.current.viewport);
-  }, []);
+  /** Pointer position → timeline units, against the CURRENT viewport (the
+   *  scroll is read from the store at this moment, D-437 S8). */
+  const marqueePointTo = useCallback(
+    (clientX: number, clientY: number): MarqueeAnchor | null => {
+      const rect = editAreaRef.current?.getBoundingClientRect();
+      if (!rect) return null;
+      const pos = scroll.getState();
+      return marqueeAnchorFromPoint(clientX - rect.left, clientY - rect.top, {
+        ...marqueeLatestRef.current.geometry,
+        scrollLeft: pos.left,
+        scrollTop: pos.top,
+        rulerPx: RULER_AND_MARGIN_PX,
+      });
+    },
+    [scroll],
+  );
 
   const onEditAreaPointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -1784,7 +1830,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
    *  source — see `START_LEFT_PX`'s own doc for why this reduces to a plain
    *  `/ pxPerSec` divide rather than needing `scale`/`scaleWidth`). */
   const xToFrame = (e: DragEvent, rect: DOMRect): number => {
-    const contentX = e.clientX - rect.left + scrollLeft;
+    const contentX = e.clientX - rect.left + scroll.getState().left;
     return Math.round(((contentX - START_LEFT_PX) / pxPerSec) * fps);
   };
 
@@ -1833,7 +1879,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
   const dropTargetTrack = (e: DragEvent): number => {
     const rect = editAreaRef.current?.getBoundingClientRect();
     if (!rect || tracks.length === 0) return timeline ? videoTrackIndex(timeline) : 0;
-    const y = e.clientY - rect.top - RULER_AND_MARGIN_PX + scrollTop;
+    const y = e.clientY - rect.top - RULER_AND_MARGIN_PX + scroll.getState().top;
     // Gap-on-add fix: this used to silently fall back to `videoTrackIndex`
     // for `y < 0`, while `onDragOver`'s own preview showed NOTHING for that
     // same case - a real drop could land on a track the user was never shown
@@ -1886,7 +1932,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
       dragPreviewRef.current?.setInsert((prev) => (prev === null ? prev : null));
       return;
     }
-    const y = e.clientY - rect.top - RULER_AND_MARGIN_PX + scrollTop;
+    const y = e.clientY - rect.top - RULER_AND_MARGIN_PX + scroll.getState().top;
     const boundary = trackInsertBoundary(y, tracks.length);
     if (boundary !== null) {
       dragPreviewRef.current?.setInsert((prev) =>
@@ -1938,7 +1984,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
     generator: DraggedGenerator['kind'] | null,
   ) => {
     const rect = editAreaRef.current?.getBoundingClientRect();
-    const y = rect ? e.clientY - rect.top - RULER_AND_MARGIN_PX + scrollTop : -1;
+    const y = rect ? e.clientY - rect.top - RULER_AND_MARGIN_PX + scroll.getState().top : -1;
     const boundary = rect && tracks.length > 0 ? trackInsertBoundary(y, tracks.length) : null;
     if (boundary !== null) {
       // D-096/D-097 — dropped at a real track-insertion boundary: past the
@@ -2071,8 +2117,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
     timeline,
     fps,
     pxPerSec,
-    scrollLeft,
-    scrollTop,
+    scroll: scroll.getState,
     startLeft: START_LEFT_PX,
     rowsTop: RULER_AND_MARGIN_PX,
     rowHeight: viewClipHeight,
@@ -2186,25 +2231,28 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
       setSelection([{ track, id }]);
     };
 
-  /** D-437 S4 — the lanes' scroller's `scroll` event: the one reader of the
-   *  native scroll position. Moves the playhead (imperatively) and brings the
-   *  React state along (S8 takes scroll out of React state). */
-  const onTimelineScroll = useCallback((e: UIEvent<HTMLDivElement>) => {
-    const sl = e.currentTarget.scrollLeft;
-    const st = e.currentTarget.scrollTop;
-    playheadRef.current?.setScroll(sl);
-    // B-326 — a horizontal scroll that is not the echo of the playback
-    // follower's own write is the user taking the wheel: stop following.
-    if (
-      useEditorTimelineStore.getState().playing &&
-      sl !== scrollRef.current.left &&
-      performance.now() - followWriteAtRef.current > FOLLOW_ECHO_WINDOW_MS
-    ) {
-      userScrolledDuringPlayRef.current = true;
-    }
-    setScrollTop(st);
-    setScrollLeft(sl);
-  }, []);
+  /** D-437 S4/S8 — the lanes' scroller's `scroll` event: the one reader of
+   *  the native scroll position. Writes the scroll store (its listener moves
+   *  the header column, the playhead and the view attributes; the lanes and
+   *  the pinned strips re-render themselves if their selected value changed).
+   *  Sets no React state here: a scroll renders this pane zero times. */
+  const onTimelineScroll = useCallback(
+    (e: UIEvent<HTMLDivElement>) => {
+      const sl = e.currentTarget.scrollLeft;
+      const st = e.currentTarget.scrollTop;
+      // B-326 — a horizontal scroll that is not the echo of the playback
+      // follower's own write is the user taking the wheel: stop following.
+      if (
+        useEditorTimelineStore.getState().playing &&
+        sl !== scroll.getState().left &&
+        performance.now() - followWriteAtRef.current > FOLLOW_ECHO_WINDOW_MS
+      ) {
+        userScrolledDuringPlayRef.current = true;
+      }
+      setTimelineScroll(scroll, sl, st);
+    },
+    [scroll],
+  );
 
   // D-080: split now requires a selection — with N tracks, "at the
   // playhead" alone no longer says which track's clip. Standard-NLE
@@ -2417,9 +2465,9 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
    * viewer (it fetches through its own latest-wins path). Suspended while a
    * button is held (a drag, a trim) and cleared when the pointer leaves.
    */
-  const skimViewRef = useRef({ fps, pxPerSec, scrollLeft });
+  const skimViewRef = useRef({ fps, pxPerSec });
   useEffect(() => {
-    skimViewRef.current = { fps, pxPerSec, scrollLeft };
+    skimViewRef.current = { fps, pxPerSec };
   });
   useEffect(() => {
     const el = editArea;
@@ -2437,12 +2485,13 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
       raf = 0;
       if (lastX === null) return;
       const v = skimViewRef.current;
+      const scrollLeft = scroll.getState().left;
       const x = lastX - el.getBoundingClientRect().left;
-      const frame = Math.max(0, Math.round(((x + v.scrollLeft - START_LEFT_PX) / v.pxPerSec) * v.fps));
+      const frame = Math.max(0, Math.round(((x + scrollLeft - START_LEFT_PX) / v.pxPerSec) * v.fps));
       const line = skimLineRef.current;
       if (line) {
         line.hidden = false;
-        line.style.transform = `translate3d(${START_LEFT_PX + (frame / v.fps) * v.pxPerSec - v.scrollLeft}px, 0, 0)`;
+        line.style.transform = `translate3d(${START_LEFT_PX + (frame / v.fps) * v.pxPerSec - scrollLeft}px, 0, 0)`;
       }
       usePreviewPeekStore.getState().setSkimFrame(frame);
     };
@@ -2598,7 +2647,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
         `[data-testid="${TIMELINE_TEST_IDS.trackHeader}"][data-chroma-track="${track}"]`,
       ) ?? null;
     const guide = heightGuideRef.current;
-    const top = RULER_AND_MARGIN_PX + rowTops[track] - scrollTop;
+    const top = RULER_AND_MARGIN_PX + rowTops[track] - scroll.getState().top;
     let height = start;
     const show = (h: number) => {
       if (header) header.style.height = `${h}px`;
@@ -2673,7 +2722,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
     // but its drop still resolves through `dragPx`, and a drag whose origin
     // was never captured would fall back to `{0,0}` and reintroduce exactly
     // the offset this bug was.
-    dragScrollOriginRef.current = { ...scrollRef.current };
+    dragScrollOriginRef.current = { ...scroll.getState() };
     const next = clip ?? header;
     if (!next) return; // a transitions-palette drag — no overlay ghost of its own
     setActiveDrag(next);
@@ -2685,7 +2734,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
     // Promoted to state only now, once there is a real drag to render a ghost
     // for. See `dragGhost.ts` for what it is used for.
     setClipGrab(clip ? clipGrabRef.current : null);
-  }, []);
+  }, [scroll]);
 
   const onDndDragCancel = useCallback(() => {
     setActiveDrag(null);
@@ -2703,10 +2752,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
    *  new-track drop, the slip/slide body drag and the transition drop — goes
    *  through this, so none of them can drift from the others again. */
   const dragPx = (event: DragMoveEvent | DragEndEvent): DragDelta | null =>
-    dragDelta(event.active.rect.current, dragScrollOriginRef.current ?? scrollRef.current, {
-      left: scrollLeft,
-      top: scrollTop,
-    });
+    dragDelta(event.active.rect.current, dragScrollOriginRef.current ?? scroll.getState(), scroll.getState());
 
   // D-113 — live landing preview, the drag-tick-sensitive twin of
   // `onDndDragEnd`'s own landing computation below (same math, same
@@ -2782,7 +2828,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
     // translated top edge, which is what the user actually sees lining up
     // with a row. The pointer above answers "is this drop on the timeline at
     // all"; this answers "which line is it on".
-    const y = translated.top - rect.top - RULER_AND_MARGIN_PX + scrollTop;
+    const y = translated.top - rect.top - RULER_AND_MARGIN_PX + scroll.getState().top;
     return trackInsertBoundary(y, tracks.length);
   };
 
@@ -2900,7 +2946,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
         const activator = event.activatorEvent as PointerEvent | MouseEvent | undefined;
         const rect = editAreaRef.current?.getBoundingClientRect();
         if (!rect || !moved || typeof activator?.clientX !== 'number') return;
-        const contentX = activator.clientX + moved.screenX - rect.left + scrollLeft;
+        const contentX = activator.clientX + moved.screenX - rect.left + scroll.getState().left;
         const frame = Math.round(((contentX - START_LEFT_PX) / pxPerSec) * fps);
         const snapFrames = Math.max(1, Math.round((TRANSITION_SNAP_PX / pxPerSec) * fps));
         const cuts = tr.kind === 'video' ? cutFrames(tr, fps) : [];
@@ -3068,12 +3114,12 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
             useEditorTimelineStore.getState().playhead,
             fps,
             pxPerSec,
-            scrollLeft,
+            scroll.getState().left,
             START_LEFT_PX,
             width,
           );
     zoomAnchorRef.current = {
-      frame: frameAtViewportX(viewportX, fps, pxPerSec, scrollLeft, START_LEFT_PX),
+      frame: frameAtViewportX(viewportX, fps, pxPerSec, scroll.getState().left, START_LEFT_PX),
       viewportX,
     };
     setPxPerSec(next);
@@ -3632,10 +3678,10 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
         onDrop={onDrop}
       >
         {/* Track header sidebar (D-080) — not a library feature, see the
-            module doc. `translateY` keeps it in step with the library's own
-            vertical scroll (tracked via `onScroll` below), offset by the
-            same ruler+margin the edit area itself is offset by so a
-            header's block lines up with its row, not the ruler. */}
+            module doc. Offset by the same ruler+margin the lanes' scroller
+            starts at, so a header's block lines up with its row, not the
+            ruler. D-437 S8: its vertical scroll is a `translateY` written by
+            `applyScrollSinks` (no React render per scroll frame). */}
         <ResizablePanel
           defaultSize={HEADER_WIDTH}
           minSize={HEADER_MIN_WIDTH}
@@ -3645,7 +3691,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
           <div
             ref={headerColumnRef}
             className="absolute left-0 right-0"
-            style={{ top: RULER_AND_MARGIN_PX - scrollTop }}
+            style={{ top: RULER_AND_MARGIN_PX }}
           >
             {/* D-098 — real `@dnd-kit/sortable` list, replacing D-094's
                 native HTML5 `draggable` track-reorder handle + hand-rolled
@@ -3723,14 +3769,13 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
           <div
             ref={attachEditArea}
             data-testid={TIMELINE_TEST_IDS.editArea}
-            // D-434 — the view state that lives in this component's own React
-            // state rather than a store (zoom, scroll), readable by a UI test
-            // without reaching into the component. Plain attributes React
-            // already diffs: no extra render, no subscriber.
+            // D-434 — the view state, readable by a UI test without reaching
+            // into the component. Plain attributes React already diffs: no
+            // extra render, no subscriber. The two scroll attributes are NOT
+            // here: D-437 S8 writes them imperatively (`applyScrollSinks`), as
+            // a scroll no longer renders this pane.
             {...{
               [TIMELINE_VIEW_ATTRS.pxPerSec]: pxPerSec,
-              [TIMELINE_VIEW_ATTRS.scrollLeft]: Math.round(scrollLeft),
-              [TIMELINE_VIEW_ATTRS.scrollTop]: Math.round(scrollTop),
               [TIMELINE_VIEW_ATTRS.fps]: fps,
               [TIMELINE_VIEW_ATTRS.startLeft]: START_LEFT_PX,
               [TIMELINE_VIEW_ATTRS.rowHeight]: viewClipHeight,
@@ -3789,6 +3834,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
               if ((e.target as HTMLElement).closest('[data-chroma-clip-slot]')) return;
               const rect = editAreaRef.current?.getBoundingClientRect();
               if (rect) {
+                const { left: scrollLeft, top: scrollTop } = scroll.getState();
                 const y = e.clientY - rect.top - RULER_AND_MARGIN_PX + scrollTop;
                 const trackIdx = trackAtY(rowTops, y);
                 // B-326 — a click on empty track space (not a clip — that
@@ -3828,7 +3874,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
               rowHeights={rowHeights}
               topPx={RULER_AND_MARGIN_PX}
               viewportWidth={viewportWidth}
-              windowLeft={windowScrollLeft(scrollLeft, viewportWidth)}
+              scroll={scroll}
               bandRatio={bandRatio}
               showClipNames={showClipNames}
               showClipBadges={showClipBadges}
@@ -3841,7 +3887,146 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
               actions={laneActions}
               scrollerRef={scrollerRef}
               onScroll={onTimelineScroll}
-            />
+            >
+              {/* D-437 S8 — the content-space overlays: inside the scroller's
+                  content, in content coordinates (`START_LEFT_PX + sec ×
+                  pxPerSec`, a row's own top), so they ride native scrolling
+                  with the clips and a scroll re-renders none of them. */}
+              {/* D-105 — the selected gap's own persistent highlight (not a
+                  live drag preview like the two overlays above — this stays
+                  up until the selection changes). `gapAt` re-derives the exact
+                  pixel span from the SAME `selectedGap.frame` the toolbar/
+                  keyboard delete action reads — recomputed from the live
+                  `tracks[selectedGap.track]` on every render rather than
+                  cached at selection time, so the highlight always matches
+                  what a delete would actually close (e.g. if an unrelated edit
+                  elsewhere shifted this gap's bounds since it was selected). */}
+              {selectedGap &&
+                (() => {
+                  const t = tracks[selectedGap.track];
+                  const gap = t && gapAt(t, selectedGap.frame, fps);
+                  if (!gap) return null;
+                  return (
+                    <div
+                      // Owner feedback, 2026-09-10: the old dashed outline read
+                      // as an unstyled placeholder ("this looks bad"). A glassy
+                      // translucent fill — soft gradient, backdrop blur, a
+                      // hairline border instead of a dashed one, rounded
+                      // corners — reads as a real selection state rather than
+                      // scaffolding, matching this kit's other glass surfaces
+                      // (e.g. the transport bar's own popovers).
+                      data-testid={TIMELINE_TEST_IDS.gapSelection}
+                      className="pointer-events-none absolute z-(--z-timeline-overlay) rounded-xs border border-selection/60 bg-selection/10"
+                      style={{
+                        left: START_LEFT_PX + (gap.gapStart / fps) * pxPerSec,
+                        width: ((gap.gapEnd - gap.gapStart) / fps) * pxPerSec,
+                        top: rowTops[selectedGap.track],
+                        height: rowHeights[selectedGap.track],
+                      }}
+                    />
+                  );
+                })()}
+              {/* D-226 — one badge per transition, spanning its own window and
+                  centred on its cut. Rendered in the same content layer as the
+                  gap highlight and the drag previews, because a
+                  transition belongs to the EDIT POINT between two clips and not to
+                  either of them — drawing it inside a clip's own `LaneClip`
+                  would tie it to one of the two and make it vanish when that
+                  clip is culled. */}
+              <TransitionBadges
+                tracks={tracks}
+                fps={fps}
+                pxPerSec={pxPerSec}
+                startLeftPx={START_LEFT_PX}
+                rowHeight={viewClipHeight}
+                rowTops={rowTops}
+                onChange={(track, id, patch: TransitionPatch) =>
+                  applyOp({ kind: 'set_transition', track, id, patch })
+                }
+                onRemove={(track, id) => applyOp({ kind: 'remove_transition', track, id })}
+              />
+              {/* B-160 / D-304 — the four live drag-preview overlays (the
+                  snapped insertion line, the new-track ghost row, the sync-lock
+                  ripple ghosts and the A/V-link ghosts) moved into their own
+                  component, which OWNS the state driving them. They update on
+                  every pointer-move tick of a drag; keeping that state here made
+                  each of those ticks re-render this whole pane. All four are
+                  still `z-30`, still absolutely positioned (in the lanes'
+                  content space since D-437 S8), and still painted in the same
+                  order relative to each other — see that file's own doc.
+
+                  D-113 originally also rendered a filled dashed box at the
+                  clip-move landing frame, matching the new-track ghost's visual
+                  language. Owner, live, after D-119 gave the `DragOverlay` ghost
+                  real filmstrip content: "we have 3 things — the previous place,
+                  the new thumbnail preview, and the dotted line — let's remove
+                  the dot." With a real picture-content ghost already following
+                  the cursor at the resolved landing position, that second box was
+                  drawing the same information twice, so only the ghosts derived
+                  from the landing remain. */}
+              <TimelineDragPreview
+                ref={dragPreviewRef}
+                timeline={timeline}
+                tracks={tracks}
+                fps={fps}
+                pxPerSec={pxPerSec}
+                startLeftPx={START_LEFT_PX}
+                rowHeight={viewClipHeight}
+                rowTops={rowTops}
+              />
+              {/* D-098 — one real `useDroppable` target per track, always
+                  mounted (see `TrackDropZone`'s own doc for why — a real
+                  mid-drag droppable-registration timing bug found live), only
+                  pointer-interactive while a clip-type `@dnd-kit/core` drag is
+                  active. In the lanes' content coordinates (D-437 S8). */}
+              {/* D-137 — the marquee itself. `pointer-events-none` for the same
+                  reason every other overlay in this file is: it must never
+                  become a hit target, least of all one covering the clips its
+                  own gesture is selecting. Painted above the drag ghosts
+                  (`z-40`) since it is the thing the user is actively drawing.
+                  Its geometry is derived from the rect's TIMELINE units on every
+                  render (`marqueeContentBox`), not stored in pixels, so a
+                  ctrl-wheel zoom mid-drag rescales the band with the content it
+                  actually encloses, and (inside the scroller, D-437 S8) a scroll
+                  moves it natively. */}
+              {marquee && (
+                <div
+                  data-testid={TIMELINE_TEST_IDS.marquee}
+                  className="pointer-events-none absolute z-(--z-timeline-overlay) rounded-xs border border-accent bg-accent/15"
+                  style={marqueeContentBox(marquee, marqueeGeometry)}
+                />
+              )}
+              {tracks.map((_, i) => (
+                <TrackDropZone key={i} track={i} top={rowTops[i]} height={rowHeights[i]} />
+              ))}
+              {/* D-432 P3 — each lane's bottom edge drags its track's height, as
+                  the header's does (§4.8). A thin band straddling the line
+                  between two rows: a clip sits 1 px inside its lane, so this
+                  takes at most a pixel of either clip. Double-click resets. */}
+              {tracks.map((_, i) => (
+                <div
+                  key={`height-${i}`}
+                  data-testid={TIMELINE_TEST_IDS.laneHeightResize}
+                  data-chroma-track={i}
+                  data-chroma-no-marquee=""
+                  aria-hidden
+                  className="absolute left-0 right-0 z-(--z-timeline-clip-controls) cursor-row-resize"
+                  style={{
+                    top: rowTops[i + 1] - LANE_HEIGHT_ZONE_PX / 2,
+                    height: LANE_HEIGHT_ZONE_PX,
+                  }}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    startTrackHeightDrag(e, i);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    applyOp({ kind: 'set_track_height', track: i, height: null });
+                  }}
+                />
+              ))}
+            </TimelineLanes>
             {/* D-437 S4 — our own playhead (transform-only, its own layer,
                 driven through `playheadRef`; never a render per frame, D-325).
                 Only its head (in the ruler) and the band under it take the
@@ -3873,32 +4058,40 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
             {/* D-432 P3 / B-350 — our own ruler: press seeks (a running
                 transport keeps running, B-326), press-and-drag scrubs (pausing,
                 with scrub audio — the same calls as the playhead head's drag). */}
-            <TimelineRuler
-              fps={fps}
-              pxPerSec={pxPerSec}
-              scrollLeft={scrollLeft}
-              startLeftPx={START_LEFT_PX}
-              viewportWidth={viewportWidth}
-              tickSeconds={tickSeconds}
-              snapFrame={snapFrameToBeat}
-              onScrubStart={(frame) => {
-                rulerScrubRef.current = false;
-                seekPlayhead(frame);
-              }}
-              onScrub={(frame) => {
-                if (!rulerScrubRef.current) {
-                  rulerScrubRef.current = true;
-                  setPlaying(false);
-                  beginScrub(frame);
-                }
-                setPlayhead(frame);
-                updateScrub(frame);
-              }}
-              onScrubEnd={() => {
-                if (rulerScrubRef.current) endScrub();
-                rulerScrubRef.current = false;
-              }}
-            />
+            {/* D-437 S8 — the pinned strips (ruler, beat lane, markers, curve
+                lane) draw in viewport coordinates; each reads the live
+                `scrollLeft` through `WithScrollLeft`, which re-renders it (and
+                not this pane) on a horizontal scroll. */}
+            <WithScrollLeft store={scroll}>
+              {(scrollLeft) => (
+                <TimelineRuler
+                  fps={fps}
+                  pxPerSec={pxPerSec}
+                  scrollLeft={scrollLeft}
+                  startLeftPx={START_LEFT_PX}
+                  viewportWidth={viewportWidth}
+                  tickSeconds={tickSeconds}
+                  snapFrame={snapFrameToBeat}
+                  onScrubStart={(frame) => {
+                    rulerScrubRef.current = false;
+                    seekPlayhead(frame);
+                  }}
+                  onScrub={(frame) => {
+                    if (!rulerScrubRef.current) {
+                      rulerScrubRef.current = true;
+                      setPlaying(false);
+                      beginScrub(frame);
+                    }
+                    setPlayhead(frame);
+                    updateScrub(frame);
+                  }}
+                  onScrubEnd={() => {
+                    if (rulerScrubRef.current) endScrub();
+                    rulerScrubRef.current = false;
+                  }}
+                />
+              )}
+            </WithScrollLeft>
             {/* D-250 — the armed trim mode, named AT THE POINTER. Resolve's own
                 copy for this feature is explicit that the signal belongs there
                 ("You'll see the cursor change to different types of trim tools
@@ -3925,147 +4118,6 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
                 <span className="ml-1.5 text-text-secondary">{trimModeHint(hoverTrimMode)}</span>
               )}
             </div>
-            {/* D-105 — the selected gap's own persistent highlight (not a
-                live drag preview like the two overlays above — this stays
-                up until the selection changes). `gapAt` re-derives the exact
-                pixel span from the SAME `selectedGap.frame` the toolbar/
-                keyboard delete action reads — recomputed from the live
-                `tracks[selectedGap.track]` on every render rather than
-                cached at selection time, so the highlight always matches
-                what a delete would actually close (e.g. if an unrelated edit
-                elsewhere shifted this gap's bounds since it was selected). */}
-            {selectedGap &&
-              (() => {
-                const t = tracks[selectedGap.track];
-                const gap = t && gapAt(t, selectedGap.frame, fps);
-                if (!gap) return null;
-                return (
-                  <div
-                    // Owner feedback, 2026-09-10: the old dashed outline read
-                    // as an unstyled placeholder ("this looks bad"). A glassy
-                    // translucent fill — soft gradient, backdrop blur, a
-                    // hairline border instead of a dashed one, rounded
-                    // corners — reads as a real selection state rather than
-                    // scaffolding, matching this kit's other glass surfaces
-                    // (e.g. the transport bar's own popovers).
-                    data-testid={TIMELINE_TEST_IDS.gapSelection}
-                    className="pointer-events-none absolute z-(--z-timeline-overlay) rounded-xs border border-selection/60 bg-selection/10"
-                    style={{
-                      left: START_LEFT_PX + (gap.gapStart / fps) * pxPerSec - scrollLeft,
-                      width: ((gap.gapEnd - gap.gapStart) / fps) * pxPerSec,
-                      top: RULER_AND_MARGIN_PX + rowTops[selectedGap.track] - scrollTop,
-                      height: rowHeights[selectedGap.track],
-                    }}
-                  />
-                );
-              })()}
-            {/* D-226 — one badge per transition, spanning its own window and
-                centred on its cut. Rendered here, in the same overlay layer as
-                the gap highlight and the drag previews above, because a
-                transition belongs to the EDIT POINT between two clips and not to
-                either of them — drawing it inside a clip's own `LaneClip`
-                would tie it to one of the two and make it vanish when that
-                clip is culled. */}
-            <TransitionBadges
-              tracks={tracks}
-              fps={fps}
-              pxPerSec={pxPerSec}
-              scrollLeft={scrollLeft}
-              scrollTop={scrollTop}
-              startLeftPx={START_LEFT_PX}
-              rowHeight={viewClipHeight}
-              rowTops={rowTops}
-              rulerAndMarginPx={RULER_AND_MARGIN_PX}
-              onChange={(track, id, patch: TransitionPatch) =>
-                applyOp({ kind: 'set_transition', track, id, patch })
-              }
-              onRemove={(track, id) => applyOp({ kind: 'remove_transition', track, id })}
-            />
-            {/* B-160 / D-304 — the four live drag-preview overlays (the
-                snapped insertion line, the new-track ghost row, the sync-lock
-                ripple ghosts and the A/V-link ghosts) moved into their own
-                component, which OWNS the state driving them. They update on
-                every pointer-move tick of a drag; keeping that state here made
-                each of those ticks re-render this whole pane. All four are
-                still `z-30`, still absolutely positioned in this same
-                `editAreaRef`-relative space, and still painted in the same
-                order relative to each other — see that file's own doc.
-
-                D-113 originally also rendered a filled dashed box at the
-                clip-move landing frame, matching the new-track ghost's visual
-                language. Owner, live, after D-119 gave the `DragOverlay` ghost
-                real filmstrip content: "we have 3 things — the previous place,
-                the new thumbnail preview, and the dotted line — let's remove
-                the dot." With a real picture-content ghost already following
-                the cursor at the resolved landing position, that second box was
-                drawing the same information twice, so only the ghosts derived
-                from the landing remain. */}
-            <TimelineDragPreview
-              ref={dragPreviewRef}
-              timeline={timeline}
-              tracks={tracks}
-              fps={fps}
-              pxPerSec={pxPerSec}
-              scrollLeft={scrollLeft}
-              scrollTop={scrollTop}
-              startLeftPx={START_LEFT_PX}
-              rowHeight={viewClipHeight}
-              rowTops={rowTops}
-              rulerAndMarginPx={RULER_AND_MARGIN_PX}
-            />
-            {/* D-098 — one real `useDroppable` target per track, always
-                mounted (see `TrackDropZone`'s own doc for why — a real
-                mid-drag droppable-registration timing bug found live), only
-                pointer-interactive while a clip-type `@dnd-kit/core` drag is
-                active. Positioned in the same `editAreaRef`-relative
-                coordinate space every other overlay in this file already
-                uses. */}
-            {/* D-137 — the marquee itself. `pointer-events-none` for the same
-                reason every other overlay in this file is: it must never
-                become a hit target, least of all one covering the clips its
-                own gesture is selecting. Painted above the drag ghosts
-                (`z-40`) since it is the thing the user is actively drawing.
-                Its geometry is derived from the rect's TIMELINE units on every
-                render (`marqueeOverlayBox`), not stored in pixels, so a scroll
-                or a ctrl-wheel zoom mid-drag moves and rescales the band with
-                the content it actually encloses rather than sliding off it. */}
-            {marquee && (
-              <div
-                data-testid={TIMELINE_TEST_IDS.marquee}
-                className="pointer-events-none absolute z-(--z-timeline-overlay) rounded-xs border border-accent bg-accent/15"
-                style={marqueeOverlayBox(marquee, marqueeViewport)}
-              />
-            )}
-            {tracks.map((_, i) => (
-              <TrackDropZone key={i} track={i} top={RULER_AND_MARGIN_PX + rowTops[i] - scrollTop} height={rowHeights[i]} />
-            ))}
-            {/* D-432 P3 — each lane's bottom edge drags its track's height, as
-                the header's does (§4.8). A thin band straddling the line
-                between two rows: a clip sits 1 px inside its lane, so this
-                takes at most a pixel of either clip. Double-click resets. */}
-            {tracks.map((_, i) => (
-              <div
-                key={`height-${i}`}
-                data-testid={TIMELINE_TEST_IDS.laneHeightResize}
-                data-chroma-track={i}
-                data-chroma-no-marquee=""
-                aria-hidden
-                className="absolute left-0 right-0 z-(--z-timeline-clip-controls) cursor-row-resize"
-                style={{
-                  top: RULER_AND_MARGIN_PX + rowTops[i + 1] - scrollTop - LANE_HEIGHT_ZONE_PX / 2,
-                  height: LANE_HEIGHT_ZONE_PX,
-                }}
-                onPointerDown={(e) => {
-                  e.stopPropagation();
-                  startTrackHeightDrag(e, i);
-                }}
-                onClick={(e) => e.stopPropagation()}
-                onDoubleClick={(e) => {
-                  e.stopPropagation();
-                  applyOp({ kind: 'set_track_height', track: i, height: null });
-                }}
-              />
-            ))}
             {/* D-432 P3 — where a track-height drag will put the row's bottom
                 edge; positioned by `startTrackHeightDrag`, hidden otherwise. */}
             <div
@@ -4079,45 +4131,53 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
                 ticks and track row 0 (`RULER_AND_MARGIN_PX` reserves it). Last in this container so it paints over the
                 row lines and drag ghosts: a marker must stay visible while a
                 clip is being dragged past it. NOT scroll-offset here — it
-                takes `scrollLeft` and derives each flag's own x, exactly like
-                every other overlay above, and it is pinned vertically (a
+                takes `scrollLeft` (from the scroll store, D-437 S8) and derives
+                each flag's own x, like the ruler, and it is pinned vertically (a
                 marker belongs to the ruler, not to a scrolled track row), so
                 `scrollTop` is deliberately not applied. */}
             {/* D-413 — the beat lane, under the marker flags (a marker stays
                 the thing you can click) and over the clips. */}
             {beatView.beats.length > 0 && (
-              <BeatLane
-                beats={beatView.beats}
-                fps={fps}
-                pxPerSec={pxPerSec}
-                scrollLeft={scrollLeft}
-                startLeftPx={START_LEFT_PX}
-                viewportWidth={viewportWidth}
-              />
+              <WithScrollLeft store={scroll}>
+                {(scrollLeft) => (
+                  <BeatLane
+                    beats={beatView.beats}
+                    fps={fps}
+                    pxPerSec={pxPerSec}
+                    scrollLeft={scrollLeft}
+                    startLeftPx={START_LEFT_PX}
+                    viewportWidth={viewportWidth}
+                  />
+                )}
+              </WithScrollLeft>
             )}
             {timeline && (
-              <MarkerStrip
-                timeline={timeline}
-                fps={fps}
-                pxPerSec={pxPerSec}
-                scrollLeft={scrollLeft}
-                startLeftPx={START_LEFT_PX}
-                onJump={setPlayhead}
-                onPatch={(id, patch) => applyOp({ kind: 'set_marker', id, patch })}
-                onRemove={(id) => applyOp({ kind: 'remove_marker', id })}
-                editingId={editingMarkerId}
-                onEditingIdChange={setEditingMarkerId}
-                // D-432 P3 / B-348 — a dragged marker snaps to clip edges, the
-                // playhead and the other markers while Snapping (N) is on.
-                snapTargets={(movingId) => {
-                  const st = useEditorTimelineStore.getState();
-                  if (!useTimelineViewStore.getState().snapping || !st.timeline) return null;
-                  const others = markersOf(st.timeline)
-                    .filter((m) => m.id !== movingId)
-                    .map((m) => m.frame);
-                  return snapTargets(st.timeline, null, [st.playhead, ...others]);
-                }}
-              />
+              <WithScrollLeft store={scroll}>
+                {(scrollLeft) => (
+                  <MarkerStrip
+                    timeline={timeline}
+                    fps={fps}
+                    pxPerSec={pxPerSec}
+                    scrollLeft={scrollLeft}
+                    startLeftPx={START_LEFT_PX}
+                    onJump={setPlayhead}
+                    onPatch={(id, patch) => applyOp({ kind: 'set_marker', id, patch })}
+                    onRemove={(id) => applyOp({ kind: 'remove_marker', id })}
+                    editingId={editingMarkerId}
+                    onEditingIdChange={setEditingMarkerId}
+                    // D-432 P3 / B-348 — a dragged marker snaps to clip edges, the
+                    // playhead and the other markers while Snapping (N) is on.
+                    snapTargets={(movingId) => {
+                      const st = useEditorTimelineStore.getState();
+                      if (!useTimelineViewStore.getState().snapping || !st.timeline) return null;
+                      const others = markersOf(st.timeline)
+                        .filter((m) => m.id !== movingId)
+                        .map((m) => m.frame);
+                      return snapTargets(st.timeline, null, [st.playhead, ...others]);
+                    }}
+                  />
+                )}
+              </WithScrollLeft>
             )}
             {/* D-432 P3 — the skim line: positioned by the skimming listener
                 above, hidden unless skimming is on and the pointer is here. */}
@@ -4143,18 +4203,22 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
                   minSize={CURVE_LANE_MIN_HEIGHT}
                   className="relative min-h-0 overflow-hidden border-t border-border-color"
                 >
-                  <ClipCurveEditor
-                    clip={curveEditorClip.clip}
-                    track={curveEditorClip.track}
-                    clipIndex={curveEditorClip.index}
-                    param={curveEditorClip.param}
-                    fps={fps}
-                    pxPerSec={pxPerSec}
-                    scrollLeft={scrollLeft}
-                    startLeftPx={START_LEFT_PX}
-                    disabled={!!tracks[curveEditorClip.track]?.locked}
-                    onClose={() => setCurveEditor(null)}
-                  />
+                  <WithScrollLeft store={scroll}>
+                    {(scrollLeft) => (
+                      <ClipCurveEditor
+                        clip={curveEditorClip.clip}
+                        track={curveEditorClip.track}
+                        clipIndex={curveEditorClip.index}
+                        param={curveEditorClip.param}
+                        fps={fps}
+                        pxPerSec={pxPerSec}
+                        scrollLeft={scrollLeft}
+                        startLeftPx={START_LEFT_PX}
+                        disabled={!!tracks[curveEditorClip.track]?.locked}
+                        onClose={() => setCurveEditor(null)}
+                      />
+                    )}
+                  </WithScrollLeft>
                 </ResizablePanel>
               </>
             )}
