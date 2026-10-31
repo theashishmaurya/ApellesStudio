@@ -31,9 +31,9 @@
  *    library's own `.timeline-editor-action-right-stretch` handle (with real
  *    rects and real `pageX`/`pageY`) commits nothing, and that is equally true
  *    of the plain pre-D-235 trim, which has never been drivable in this tier
- *    either. Rather than leave that path covered by nothing, the decision it
- *    turns on was extracted to `resizeEndOp` (pure, and tested to the branch in
- *    `trimMode.test.ts`), leaving `onActionResizeEndCb` as a two-line adapter.
+ *    either. (D-432 P2 replaced that resize with Apelles' own edge gesture,
+ *    which jsdom does drive: `TimelinePane.clipBlock.dom.test.tsx` covers the
+ *    edge edits end to end.)
  *    What this file adds for those two modes is the half jsdom CAN answer: that
  *    hovering the real edge handles resolves to Roll and Ripple in the real
  *    component, through the same `resolveTrimMode`/`edgeIsEditPoint` call the
@@ -329,9 +329,9 @@ describe('mode readout — what the editor sees before pressing (D-235)', () => 
     await setAlt(true);
     // 'b' touches a clip on both sides, so both of its handles are edit points.
     const action = bodies()[1].closest('.timeline-editor-action') as HTMLElement;
-    const right = action.querySelector('.timeline-editor-action-right-stretch') as HTMLElement;
-    const left = action.querySelector('.timeline-editor-action-left-stretch') as HTMLElement;
-    expect(right, 'the library did not render its own edge handles').not.toBeNull();
+    const right = action.querySelector('[data-chroma-trim-edge="end"]') as HTMLElement;
+    const left = action.querySelector('[data-chroma-trim-edge="start"]') as HTMLElement;
+    expect(right, 'the clip did not render its own edge-trim zones').not.toBeNull();
 
     firePointerEvent(right, 'pointermove', { x: 199, y: 26 }, { altKey: true });
     await nextFrame();
@@ -349,11 +349,11 @@ describe('mode readout — what the editor sees before pressing (D-235)', () => 
     const first = bodies()[0].closest('.timeline-editor-action') as HTMLElement;
     const last = bodies()[2].closest('.timeline-editor-action') as HTMLElement;
 
-    firePointerEvent(first.querySelector('.timeline-editor-action-left-stretch')!, 'pointermove', { x: 21, y: 26 }, { altKey: true });
+    firePointerEvent(first.querySelector('[data-chroma-trim-edge="start"]')!, 'pointermove', { x: 21, y: 26 }, { altKey: true });
     await nextFrame();
     expect(hintText()).toBe('Ripple');
 
-    firePointerEvent(last.querySelector('.timeline-editor-action-right-stretch')!, 'pointermove', { x: 559, y: 26 }, { altKey: true });
+    firePointerEvent(last.querySelector('[data-chroma-trim-edge="end"]')!, 'pointermove', { x: 559, y: 26 }, { altKey: true });
     await nextFrame();
     expect(hintText()).toBe('Ripple');
   });
@@ -362,7 +362,7 @@ describe('mode readout — what the editor sees before pressing (D-235)', () => 
     await setAlt(true);
     const right = bodies()[1]
       .closest('.timeline-editor-action')!
-      .querySelector('.timeline-editor-action-right-stretch') as HTMLElement;
+      .querySelector('[data-chroma-trim-edge="end"]') as HTMLElement;
 
     firePointerEvent(right, 'pointermove', { x: 199, y: 26 }, { altKey: true, shiftKey: true });
     await nextFrame();
@@ -438,21 +438,21 @@ describe('pointer-adjacent mode badge (D-250)', () => {
       [action, { x: 200, y: ROW_HEIGHT_PX * 0.2 }, {}, 'Slip', 'change what is shown'],
       [action, { x: 200, y: ROW_HEIGHT_PX * 0.8 }, {}, 'Slide', 'neighbours absorb it'],
       [
-        action.querySelector('.timeline-editor-action-right-stretch') as HTMLElement,
+        action.querySelector('[data-chroma-trim-edge="end"]') as HTMLElement,
         { x: 199, y: 26 },
         {},
         'Roll',
         'both clips keep their length',
       ],
       [
-        first.querySelector('.timeline-editor-action-left-stretch') as HTMLElement,
+        first.querySelector('[data-chroma-trim-edge="start"]') as HTMLElement,
         { x: 21, y: 26 },
         {},
         'Ripple',
         'push everything after it',
       ],
       [
-        action.querySelector('.timeline-editor-action-right-stretch') as HTMLElement,
+        action.querySelector('[data-chroma-trim-edge="end"]') as HTMLElement,
         { x: 199, y: 26 },
         { shiftKey: true },
         'Ripple',
@@ -500,14 +500,14 @@ describe('pointer-adjacent mode badge (D-250)', () => {
       'the badge must track the pointer — a fixed position is the toolbar readout again',
     ).not.toBe(near);
 
-    // The cursor half of the same affordance: a body mode gets a move cursor,
-    // an edge mode a horizontal resize (D-250 — Resolve's own signal IS the
-    // cursor; these are the standard keywords standing in for its bitmaps).
-    expect(editArea().style.cursor).toBe('grabbing');
-    const right = action.querySelector('.timeline-editor-action-right-stretch') as HTMLElement;
+    // The cursor half of the same affordance (D-250; D-432 §5.1 keywords): a
+    // body mode slides the clip or its content (`ew-resize`), an edge mode is
+    // a trim zone (`col-resize`).
+    expect(editArea().style.cursor).toBe('ew-resize');
+    const right = action.querySelector('[data-chroma-trim-edge="end"]') as HTMLElement;
     firePointerEvent(right, 'pointermove', { x: 199, y: 26 }, { altKey: true });
     await nextFrame();
-    expect(editArea().style.cursor).toBe('ew-resize');
+    expect(editArea().style.cursor).toBe('col-resize');
 
     // Disarming puts every cursor on this surface back exactly as it was.
     await setAlt(false);

@@ -156,7 +156,7 @@ function handles(side: 'in' | 'out'): HTMLElement[] {
  *  which keeps this independent of child ordering inside the `<svg>`. */
 function fadeInRampD(track: number): string | null {
   const svg = mounted!.container.querySelectorAll('[data-chroma-fade-ramp]')[track];
-  const hit = Array.from(svg?.querySelectorAll('path') ?? []).find((p) => (p.getAttribute('d') ?? '').startsWith('M 0 52'));
+  const hit = Array.from(svg?.querySelectorAll('path') ?? []).find((p) => (p.getAttribute('d') ?? '').startsWith('M 0 36'));
   return hit?.getAttribute('d') ?? null;
 }
 
@@ -244,9 +244,9 @@ describe('on-clip fade handles — real DOM, real PointerEvents (D-207)', () => 
     await waitFrames();
 
     // The DRAWN ramp moves with the pointer, mid-gesture: 12 frames == 45px,
-    // rising from silence at the clip's own left edge (y = ROW_HEIGHT) to
+    // rising from silence at the bottom of the ramp area (D-432 P2: the clip's 50 px less its 14 px name strip = 36) to
     // unity (y = FADE_TOP_INSET_PX) at x = 45.
-    expect(fadeInRampD(0)).toMatch(/^M 0 52 C .*, 45 1( L 0 1 Z)?$/);
+    expect(fadeInRampD(0)).toMatch(/^M 0 36 C .*, 45 1( L 0 1 Z)?$/);
     const readout = mounted!.container.querySelector('[data-chroma-fade-readout]');
     expect(readout?.textContent).toBe('12f');
     expect(clipAt(0).fade_in_frames ?? 0).toBe(0); // still uncommitted
@@ -257,7 +257,7 @@ describe('on-clip fade handles — real DOM, real PointerEvents (D-207)', () => 
     expect(clipAt(0).fade_in_frames).toBe(12);
     // …and the committed field draws the same ramp the drag was showing, so
     // release is not a visual jump.
-    expect(fadeInRampD(0)).toMatch(/^M 0 52 C .*, 45 1( L 0 1 Z)?$/);
+    expect(fadeInRampD(0)).toMatch(/^M 0 36 C .*, 45 1( L 0 1 Z)?$/);
   });
 
   it('6. Escape abandons an in-flight drag with nothing committed', async () => {

@@ -47,6 +47,7 @@ import {
   ArrowsHorizontalIcon,
   SquareSplitHorizontalIcon,
   ArrowsOutLineHorizontalIcon,
+  ScissorsIcon,
 } from '@phosphor-icons/react';
 import type { Icon as PhosphorIcon } from '@phosphor-icons/react';
 import { Button, Tooltip, TooltipContent, TooltipTrigger } from '@apelles/ui';
@@ -92,6 +93,8 @@ export const TRIM_TOOL_ICONS: Record<TrimTool, PhosphorIcon> = {
   roll: SquareSplitHorizontalIcon,
   slip: FilmStripIcon,
   slide: ArrowsHorizontalIcon,
+  // D-432 P2 — the spec's Blade glyph; Split-at-playhead moved to `SplitHorizontal`.
+  blade: ScissorsIcon,
 };
 
 export interface TrimToolbarProps {
@@ -126,9 +129,10 @@ export function TrimToolbar({ active, onSelect }: TrimToolbarProps) {
             <TooltipTrigger
               render={
                 <Button
-                  // Adobe's own active state: the chosen tool is the one filled
-                  // chip in an otherwise flat strip.
-                  variant={isActive ? 'secondary' : 'ghost'}
+                  // D-432 §4.9 — the active tool is the `card-active` segment
+                  // with an accent icon, in an otherwise flat strip.
+                  variant="ghost"
+                  className={isActive ? 'bg-card-active text-accent-text hover:bg-card-active' : undefined}
                   size="icon-sm"
                   aria-pressed={isActive}
                   aria-label={shortcut ? `${label} tool (${shortcut})` : `${label} tool`}

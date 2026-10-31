@@ -172,6 +172,8 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
   { id: 'edit.tool_roll', label: 'Roll tool', category: 'trim-tools', scope: 'edit', defaultCombo: ['KeyN'] },
   { id: 'edit.tool_slip', label: 'Slip tool', category: 'trim-tools', scope: 'edit', defaultCombo: ['KeyY'] },
   { id: 'edit.tool_slide', label: 'Slide tool', category: 'trim-tools', scope: 'edit', defaultCombo: ['KeyU'] },
+  // D-432 P2 — Premiere's Razor key (Final Cut's Blade is B, which is Ripple here).
+  { id: 'edit.tool_blade', label: 'Blade tool', category: 'trim-tools', scope: 'edit', defaultCombo: ['KeyC'] },
 
   // ── Colorist — ids and defaults exactly as the fork had them ─────────────
   colorist('copy_files', 'Copy files', 'library', ['ctrl', 'shift', 'KeyC']),

@@ -17,14 +17,11 @@
  *
  * **Tier limits, inherited and unchanged.** jsdom, not real Chromium; and the
  * EDGE drags (ripple, roll) still cannot be driven from pointer events here
- * because they belong to `@xzdarcy/react-timeline-editor`'s interact.js resize,
- * which does not run under jsdom at all — see `TimelinePane.trim.dom.test.tsx`'s
- * own header for the full disclosure, which was established by probe, not
- * assumed. The palette's effect on those two is therefore asserted where it is
- * really decided: `resizeEndOp`, pure, in `trimMode.test.ts`. What this file
- * adds for them is the half jsdom CAN answer — that with a tool chosen, hovering
- * a real edge handle resolves to that tool's mode in the real component, with no
- * modifier held.
+ * (D-432 P2: those edge gestures are now Apelles' own and DO run under jsdom;
+ * their live motion and results are asserted in
+ * `TimelinePane.clipBlock.dom.test.tsx`.) What this file adds for them is that
+ * with a tool chosen, hovering a real edge zone resolves to that tool's mode in
+ * the real component, with no modifier held.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -431,8 +428,8 @@ describe('the hover readout follows the tool, not just the key (D-261)', () => {
     // why the drag itself cannot be driven here.
     await pickTool('roll');
     const action = bodies()[1].closest('.timeline-editor-action') as HTMLElement;
-    const right = action.querySelector('.timeline-editor-action-right-stretch') as HTMLElement;
-    expect(right, 'the library did not render its own edge handles').not.toBeNull();
+    const right = action.querySelector('[data-chroma-trim-edge="end"]') as HTMLElement;
+    expect(right, 'the clip did not render its own edge-trim zones').not.toBeNull();
     firePointerEvent(right, 'pointermove', { x: 199, y: 26 });
     await nextFrame();
     expect(badgeLabel()).toContain('Roll');

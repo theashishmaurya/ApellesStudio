@@ -128,7 +128,7 @@ tweaks, `undo`, the MCP side of a parity check; `args` may be a function of the 
 and hold `debug_frame_timing` to the playback budget).
 
 **Targets** (`src/targets.ts`): `clip(name, at?)`, `trimLeft(name)` / `trimRight(name)`
-(the library's 10 px edge zones), `clipEdge(name, side, px)`, `ruler(fx)`,
+(the clip's own 8 px edge-trim zones, D-432 P2), `clipEdge(name, side, px)`, `ruler(fx)`,
 `playheadHandle()`, `trackHeader(i)`, `trimTool(tool)`, `marker(name)`, `editArea(at?)`,
 `headerResize()`, `testid(id)`, `selector(css)`; frame-addressed `atFrame(frame, track |
 'ruler', fy?)` and relative `byFrames(frames, tracks?)` are resolved by the runner from the
@@ -179,6 +179,8 @@ a repeated part carries one id on every instance and its identity in `data-chrom
 | `timeline-edit-area` | the edit area; also the view readout `data-chroma-px-per-sec`, `-scroll-left`, `-scroll-top`, `-fps`, `-start-left`, `-row-height`, `-rows-top` | |
 | `timeline-clip` | a clip body (dnd-kit drag source) | `data-chroma-clip-id`, `data-chroma-track` |
 | `timeline-clip-fade-in` / `-fade-out` | fade handles | inside the clip |
+| `timeline-clip-trim-start` / `-end` | a clip's edge-trim zones (D-432 P2; replaced the library's stretch handles) | inside the clip; `data-chroma-trim-edge` |
+| `timeline-clip-strip`, `-film`, `-band`, `-keyframes-badge` | the clip anatomy (name strip, filmstrip, waveform band, curve-lane badge) | inside the clip; the picture+waveform layer is `[data-chroma-clip-media]` |
 | `timeline-track-lane` | a track's row (pointer-transparent geometry) | `data-chroma-track` |
 | `timeline-track-header` + `-lock` `-sync-lock` `-hide` `-mute` `-beats` `-remove` | header and its buttons | `data-chroma-track` on the header |
 | `timeline-header-resize`, `timeline-curve-resize` | the column / curve-lane dividers | |
@@ -187,12 +189,12 @@ a repeated part carries one id on every instance and its identity in `data-chrom
 | `timeline-marker` | a marker flag | `data-chroma-marker` |
 | `timeline-transition` | a transition badge | `data-chroma-transition` |
 | `timeline-marquee`, `timeline-gap-selection`, `timeline-drag-ghost` | overlays | |
+| `timeline-edit-bracket`, `timeline-edit-readout`, `timeline-snap-guide`, `timeline-blade-line` | the edit-gesture feedback layer (D-432 P2) | bracket: `data-chroma-bracket-side` in/out, `data-chroma-limit` |
 
 Library-rendered parts by the library's own classes (`TIMELINE_LIBRARY_SELECTORS`, pinned by
 `timelineTestIds.test.ts` against the installed stylesheet): ruler
 `.timeline-editor-time-area`, playhead `.timeline-editor-cursor` and its handle
-`.timeline-editor-cursor-top`, a clip's wrapper `.timeline-editor-action`, its trim zones
-`.timeline-editor-action-left-stretch` / `-right-stretch`, the scroll container
+`.timeline-editor-cursor-top`, a clip's wrapper `.timeline-editor-action`, the scroll container
 `.timeline-editor-edit-area`. There is no zoom SLIDER (buttons, ctrl/pinch wheel only) and
 no scrollbar element (native overflow scrolling) — scenarios scroll with the wheel.
 

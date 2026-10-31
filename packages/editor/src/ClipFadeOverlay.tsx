@@ -76,7 +76,6 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 
 import {
   FADE_HANDLE_HIT_PX,
-  FADE_HANDLE_SIZE_PX,
   FADE_MIN_HANDLE_CLIP_PX,
   clampFadeDragPx,
   fadeFramesToPx,
@@ -90,12 +89,9 @@ import { DEFAULT_EASE_CURVE, type Clip } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 import { TIMELINE_TEST_IDS } from './timelineTestIds';
 
-/** How opaque the wash over the attenuated part of the clip is. Painted in the
- *  `--color-bg-primary` token (via `currentColor`, the same trick
- *  `Waveform.tsx` uses to stay on the token system from a context that can't
- *  take a class): fading *toward the app background* is the honest reading of
- *  "this part of the clip contributes less," and needs no colour literal. */
-const FADE_WASH_OPACITY = 0.5;
+/** How opaque the wash over the attenuated part of the clip is (D-432 §4.5:
+ *  a 35 % black triangle, FCP's), painted via `currentColor` from a class. */
+const FADE_WASH_OPACITY = 0.35;
 
 /** Stroke width of the rubber-band line, px. */
 const FADE_LINE_WIDTH = 1.25;
@@ -139,7 +135,15 @@ export interface ClipFadeOverlayProps {
   /** A locked track draws its fades but offers no handles — the same posture
    *  `TransformOverlay.tsx` takes for `trackLocked`. */
   disabled?: boolean;
+  /** D-432 §4.5 — the clip's name-strip height: the ramps are drawn over the
+   *  picture/waveform under it, and the handles sit just below it. */
+  topPx?: number;
 }
+
+/** D-432 §4.5 — the handle is a 6 × 8 px tab, inset 2 px under the strip. */
+const FADE_TAB_WIDTH_PX = 6;
+const FADE_TAB_HEIGHT_PX = 8;
+const FADE_TAB_INSET_PX = 2;
 
 export function ClipFadeOverlay({
   track,
@@ -150,6 +154,7 @@ export function ClipFadeOverlay({
   fps,
   pxPerSec,
   disabled = false,
+  topPx = 0,
 }: ClipFadeOverlayProps) {
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
 
@@ -264,11 +269,13 @@ export function ClipFadeOverlay({
     };
   }, [dragSide, clip, clipIndex, track, widthPx, fps, pxPerSec, applyOp, committedIn, committedOut]);
 
-  if (!(widthPx > 0) || !(heightPx > 0)) return null;
+  // The ramps cover the area under the name strip (the strip stays legible).
+  const rampHeight = heightPx - topPx;
+  if (!(widthPx > 0) || !(rampHeight > 0)) return null;
 
-  const pathsIn = fadeRampPaths('in', widthPx, heightPx, rampInPx, clip.fade_in_curve ?? DEFAULT_EASE_CURVE);
-  const pathsOut = fadeRampPaths('out', widthPx, heightPx, rampOutPx, clip.fade_out_curve ?? DEFAULT_EASE_CURVE);
-  const unity = pathsIn || pathsOut ? fadeUnityLinePath(widthPx, heightPx, rampInPx, rampOutPx) : null;
+  const pathsIn = fadeRampPaths('in', widthPx, rampHeight, rampInPx, clip.fade_in_curve ?? DEFAULT_EASE_CURVE);
+  const pathsOut = fadeRampPaths('out', widthPx, rampHeight, rampOutPx, clip.fade_out_curve ?? DEFAULT_EASE_CURVE);
+  const unity = pathsIn || pathsOut ? fadeUnityLinePath(widthPx, rampHeight, rampInPx, rampOutPx) : null;
   const showHandles = !disabled && widthPx >= FADE_MIN_HANDLE_CLIP_PX;
 
   const onHandlePointerDown = (side: FadeSide) => (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -300,17 +307,18 @@ export function ClipFadeOverlay({
           pointer: only the handles below are grabbable, and a full-clip
           pointer target painted over a clip body is exactly B-013. */}
       <svg
-        className="pointer-events-none absolute inset-0 z-10"
+        className="pointer-events-none absolute left-0 z-(--z-timeline-clip-controls)"
+        style={{ top: topPx }}
         width={widthPx}
-        height={heightPx}
+        height={rampHeight}
         aria-hidden="true"
         data-chroma-fade-ramp=""
       >
-        <g className="text-bg-primary">
+        <g className="text-black">
           {pathsIn && <path d={pathsIn.area} fill="currentColor" fillOpacity={FADE_WASH_OPACITY} />}
           {pathsOut && <path d={pathsOut.area} fill="currentColor" fillOpacity={FADE_WASH_OPACITY} />}
         </g>
-        <g className="text-button-text" fill="none" stroke="currentColor" strokeWidth={FADE_LINE_WIDTH}>
+        <g className="text-white/70" fill="none" stroke="currentColor" strokeWidth={FADE_LINE_WIDTH}>
           {pathsIn && <path d={pathsIn.line} />}
           {pathsOut && <path d={pathsOut.line} />}
           {unity && <path d={unity} />}
@@ -338,26 +346,27 @@ export function ClipFadeOverlay({
               // grab targets sitting on its clips' trim corners. (Resolve and
               // Final Cut both reveal theirs on hover for the same reason.)
               className={
-                'absolute top-0 z-20 flex items-start justify-center transition-opacity ' +
+                'absolute z-(--z-timeline-clip-controls) flex items-start justify-center transition-opacity duration-75 ' +
                 (isDragging || frames > 0 ? 'opacity-100' : 'opacity-0 group-hover/clip:opacity-100')
               }
               style={{
+                top: topPx,
                 width: FADE_HANDLE_HIT_PX,
                 height: FADE_HANDLE_HIT_PX,
-                left: x - FADE_HANDLE_HIT_PX / 2,
+                // inset from the clip edge at rest, centred on the ramp's end once set
+                left: Math.min(Math.max(x - FADE_HANDLE_HIT_PX / 2, 0), widthPx - FADE_HANDLE_HIT_PX),
                 cursor: 'ew-resize',
               }}
               title={`Fade ${side} — ${frames} frames. Drag to adjust; fades this clip's picture and its sound together.`}
               onPointerDown={onHandlePointerDown(side)}
             >
               <div
-                // Same token pair and border treatment as
-                // `TransformOverlay.tsx`'s corner handles (`border-accent` on
-                // `bg-bg-primary`), round rather than square so the two
-                // affordances stay tellable apart at a glance — this one
-                // adjusts a duration, those resize a picture.
-                className="mt-px rounded-full border border-accent bg-bg-primary"
-                style={{ width: FADE_HANDLE_SIZE_PX, height: FADE_HANDLE_SIZE_PX }}
+                // D-432 §4.5 — FCP's fade tab: a small light pill with a dark
+                // hairline ring at rest, amber once a fade is set.
+                className={
+                  'rounded-xs ring-1 ring-black/40 ' + (frames > 0 ? 'bg-selection' : 'bg-white/85')
+                }
+                style={{ width: FADE_TAB_WIDTH_PX, height: FADE_TAB_HEIGHT_PX, marginTop: FADE_TAB_INSET_PX }}
               />
             </div>
           );
@@ -368,8 +377,9 @@ export function ClipFadeOverlay({
           Inspector's own Fade field does. */}
       {dragSide && (
         <div
-          className="pointer-events-none absolute top-0 z-20 rounded bg-bg-primary px-1 text-[10px] leading-4 text-text-primary"
+          className="pointer-events-none absolute z-(--z-timeline-clip-controls) rounded-sm bg-surface-raised px-1 font-mono text-2xs leading-4 tabular-nums text-text-primary"
           style={{
+            top: topPx + FADE_TAB_INSET_PX,
             left: Math.min(
               Math.max(fadeHandleX(dragSide, widthPx, dragSide === 'in' ? rampInPx : rampOutPx) + FADE_HANDLE_HIT_PX, 0),
               Math.max(widthPx - FADE_READOUT_WIDTH_PX, 0),

@@ -119,12 +119,11 @@
  * D-051 (mature timeline UI) additions, scoped against what
  * `@xzdarcy/react-timeline-editor` v1.0.0 already does natively — see that
  * decision for the full library-vs-custom breakdown:
- *   - **Edge-trim + snapping are native**, already wired here before this
- *     pass: `flexible: true` on every action gives interact.js-driven
- *     resize handles with an automatic `ew-resize` hover cursor on each
- *     clip's left/right 10px edge zone, and `dragLine` (already `true`)
- *     turns on the library's built-in drag/resize snap-assist against every
- *     other action's edges *and* the playhead — no code needed for either.
+ *   - **Edge-trim was native** (`flexible: true`, interact.js) until D-432
+ *     P2 replaced it with the clip's own edge zones and `useEditGesture.ts`
+ *     (B-344: the library's snap accumulator lost pointer travel; B-345: it
+ *     could not preview a ripple or a roll). Snapping for edits is now
+ *     `editGesture.ts`'s `snapFrame`.
  *   - **Scroll-wheel zoom is custom** (the library has no wheel handling at
  *     all) — a non-passive native `wheel` listener on the edit-area wrapper
  *     rescales `pxPerSec`; the toolbar's zoom in/out buttons drive the same
@@ -204,15 +203,11 @@
  * exactly what they were — `move` (D-100) and the plain gap-leaving trim
  * (D-058) — so this is additive, not a re-mapping.
  *
- * It therefore cannot collide with D-137's marquee, D-207's fades or D-222's
- * markers for a reason none of those needed: it never competes for a press.
- * Nothing about how a drag STARTS changes; only which op is committed at the
- * END of one. The mode rule itself, and the Resolve/FCP/Premiere research
- * behind it, is `trimMode.ts` — pure and unit-tested, including `resizeEndOp`/
- * `bodyDragOp`, which the two commit handlers here are thin adapters over
- * (that split is load-bearing: the timeline library's own interact.js resize
- * does not run under jsdom at all, so the edge decision is only testable as a
- * pure function — see `TimelinePane.trim.dom.test.tsx`'s header).
+ * D-432 P2: the press is resolved once (`resolveTrimMode`, `trimMode.ts`,
+ * pure and unit-tested) in the clip body's capture phase by
+ * `useEditGesture.ts`, which claims every non-move edit before dnd-kit's move
+ * can start and previews the real op live; the marquee, fade handles and
+ * marker flags are separate hit targets it stands aside for.
  *
  * D-261 — that trim tool now has a real, visible PALETTE, and it is the primary
  * way in: a Select/Ripple/Roll/Slip/Slide icon group in this toolbar
@@ -308,14 +303,7 @@ import {
   LinkIcon,
   LinkSimpleHorizontalIcon,
   LockIcon,
-  ScissorsIcon,
   TrashIcon,
-  // D-230 — the badge on an adjustment clip's own body. `MagicWand` is the
-  // closest match to the wand Resolve itself puts on its Effects tab
-  // (`scratch/resolve-reference/adjustments.jpg`). D-248: it is no longer
-  // ALSO this toolbar's Add-adjustment icon — that action, and `TextT` with
-  // it, moved to `EditLibraryRail.tsx`.
-  MagicWandIcon,
   // D-128 — the A/V-unlink action. Deliberately `LinkBreak`, not the
   // `LinkSimpleHorizontalBreak` below: that one is already the track header's
   // sync-lock toggle, and sync-lock and an A/V link are different
@@ -324,8 +312,8 @@ import {
   LinkSimpleHorizontalBreakIcon,
   LockOpenIcon,
   SpeakerHighIcon,
-  BezierCurveIcon,
   SpeakerSlashIcon,
+  SplitHorizontalIcon,
   MagnifyingGlassPlusIcon,
   MagnifyingGlassMinusIcon,
   // D-413 — the beat grid: the track header's "show beats" toggle and the
@@ -384,10 +372,13 @@ import {
   type TransitionDragData,
   type TransitionPatch,
 } from './TimelineTransitions';
-import { Waveform } from './Waveform';
 import { beginScrub, endScrub, updateScrub } from './scrubAudio';
-import { Filmstrip } from './Filmstrip';
 import { ClipFadeOverlay } from './ClipFadeOverlay';
+// D-432 P2 — the clip block's anatomy, the edit gestures and their feedback layer.
+import { ClipBlock, CLIP_KIND_CLASSES } from './ClipBlock';
+import { clipAnatomy, clipKindOf, cutStyleAt, CLIP_VERTICAL_INSET_PX } from './clipAnatomy';
+import { EditFeedbackLayer, type EditFeedbackHandle } from './EditFeedbackLayer';
+import { useEditGesture } from './useEditGesture';
 import { TIMELINE_TEST_IDS, TIMELINE_VIEW_ATTRS } from './timelineTestIds';
 import {
   niceTickIntervalSeconds,
@@ -433,7 +424,6 @@ import {
   computeInsertion,
   cutFrames,
   endFrame,
-  captionLines,
   gapAt,
   newTransition,
   linkedClipIds,
@@ -458,9 +448,7 @@ import {
   type Track,
 } from './timeline';
 import {
-  bodyDragOp,
   edgeIsEditPoint,
-  resizeEndOp,
   resolveTrimMode,
   trimModeCursor,
   trimModeHint,
@@ -473,7 +461,6 @@ import {
 } from './trimMode';
 import { TrimToolbar } from './TrimToolbar';
 import { dragGhostWindow } from './dragGhost';
-import { adjustmentSummary } from './adjustment';
 import {
   canStartMarquee,
   clipsInMarquee,
@@ -502,8 +489,15 @@ const TICK_TARGET_PX = 70;
 // long timeline can actually be zoomed out to fit the visible width.
 const ZOOM_STEP = 1.2;
 const ROW_HEIGHT = 52;
-/** how long a rippled clip's highlight stays visible (ms) */
-const RIPPLE_FLASH_MS = 550;
+/** D-432 §4.3 — a clip that an edit shifted gets ONE opacity flash this long
+ *  (ms), from `RIPPLE_FLASH_OPACITY` back to 1. No looping `animate-pulse`. */
+const RIPPLE_FLASH_MS = 160;
+const RIPPLE_FLASH_OPACITY = 0.55;
+/** D-432 §4.4 — a clip's own edge-trim zone, px inside each edge: 8 px, or a
+ *  third of a narrow clip so its body stays grabbable. Two abutting clips give
+ *  a cut 16 px of target, and the half the pointer is in decides the side. */
+const TRIM_ZONE_PX = 8;
+const TRIM_ZONE_MAX_FRACTION = 1 / 3;
 /** D-250 — how far below-right of the pointer the armed trim-mode badge sits.
  *  Clear of a standard macOS cursor's own ~16px glyph, so the badge never
  *  covers the thing it is annotating. */
@@ -538,15 +532,6 @@ const RULER_AND_MARGIN_PX = RULER_HEIGHT_PX + MARKER_STRIP_HEIGHT;
 const START_LEFT_PX = 32;
 /** B-326 — scroll events this soon after the follower's own write are its echo. */
 const FOLLOW_ECHO_WINDOW_MS = 100;
-
-/** D-233 — below this clip width (px) the curve button is not drawn.
- *
- *  Same rule, and same reason, as D-207's fade handles disappearing under
- *  36px: on a zoomed-out timeline a clip is a sliver, and a button pinned to
- *  its corner would cover the whole thing — including the edge-trim zones
- *  underneath it. A little wider than the fade threshold because this target
- *  is inset past the right trim zone rather than sitting on a corner. */
-const CURVE_BUTTON_MIN_CLIP_PX = 48;
 
 /** D-233 — the curve lane's default and minimum heights, px.
  *
@@ -635,32 +620,17 @@ function buildRows(tl: Timeline, fps: number): TimelineRow[] {
       // NLE, not part of this unification. `ClipBody` (module scope,
       // below) is now the ONLY thing that moves a clip, same-track or
       // cross-track alike.
-      flexible: true,
+      // D-432 P2 / B-344 — `flexible: false` too now: the library's interact.js
+      // edge resize is replaced by the clip's own edge zones and
+      // `useEditGesture.ts`. Its snap-to-grid accumulator discarded pointer
+      // travel (trims landed 1-2 frames short) and it moved only the dragged
+      // edge, so no ripple or roll could be previewed live.
+      flexible: false,
       movable: false,
     }));
     return { id: String(ti), actions };
   });
 }
-
-/** A clip body's fill, per its track's kind.
- *
- *  D-229 gave the subtitle lane its own entry and, in doing so, replaced the
- *  inline `kind === 'audio' ? … : …` ternary this file used in two places —
- *  a two-way ternary cannot express a third kind without silently colouring
- *  it as video, which is the bug a lookup avoids by construction.
- *
- *  These stay literal `rgba()` rather than `--color-*` tokens because they are
- *  what the pre-existing code already used here and are deliberately
- *  translucent overlays on the filmstrip beneath them; unifying the timeline's
- *  clip-body palette onto the token set is a real, separate cleanup, not
- *  something to half-do while adding a lane. */
-const CLIP_BODY_BACKGROUND: Record<'video' | 'audio' | 'subtitle', string> = {
-  video: 'rgba(90,120,180,0.55)',
-  audio: 'rgba(120,170,110,0.55)',
-  // A warm sand, the closest token-free match to the reference's own tan cue
-  // blocks, and distinct from both the blue video and green audio bodies.
-  subtitle: 'rgba(190,165,110,0.55)',
-};
 
 /** id -> timeline start frame for every clip on every track — the snapshot
  *  the ripple-highlight effect diffs against the previous one (D-080:
@@ -1070,12 +1040,17 @@ function ClipBody({
   className,
   style,
   children,
+  onPointerDownCapture,
 }: {
   track: number;
   clipId: string;
   className: string;
   style?: CSSProperties;
   children: ReactNode;
+  /** D-432 P2 — `useEditGesture`'s press handler. It runs before dnd-kit's own
+   *  `onPointerDown` (capture phase) and stops the press when it claims it for
+   *  an edit, so a trim and a move can never both start from one press. */
+  onPointerDownCapture?: (e: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `clip:${track}:${clipId}`,
@@ -1115,8 +1090,11 @@ function ClipBody({
       // read out by a screen reader. The badge (armed) and this (unarmed) are
       // the two halves of one affordance.
       title={TRIM_ARM_HINT}
-      className={className + ' cursor-grab active:cursor-grabbing ' + (isDragging ? 'opacity-30' : '')}
+      // D-432 §5 — the default arrow over a clip body (Final Cut, Premiere);
+      // `grab` is for track headers only.
+      className={className + (isDragging ? ' opacity-30' : '')}
       style={style}
+      onPointerDownCapture={onPointerDownCapture}
       {...attributes}
       {...listeners}
     >
@@ -1193,20 +1171,12 @@ function TrackDropZone({ track, top, height }: { track: number; top: number; hei
       // aimed at it lands on whatever is really there, which is the point.
       data-testid={TIMELINE_TEST_IDS.trackLane}
       data-chroma-track={track}
-      className="pointer-events-none absolute left-0 right-0 z-20"
+      className="pointer-events-none absolute left-0 right-0 z-(--z-timeline-overlay)"
       style={{ top, height }}
     />
   );
 }
 
-/** D-235/D-261 — everything about the press a gesture began from that the pure
- *  `trimMode.ts` rule cannot see for itself: the modifiers held, where in the
- *  clip's row the pointer went down, and which palette tool was active. Named
- *  once here because it is now held in two places at once (`trimPressRef`, the
- *  live capture, and `clipDragPress`, the drag-start snapshot the render reads
- *  — B-184/D-355), and two hand-copied inline object types are exactly how
- *  those two would drift apart. */
-type TrimPressCapture = { altKey: boolean; shiftKey: boolean; bodyYRatio: number; tool: TrimTool };
 
 export function TimelinePane() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
@@ -1275,7 +1245,6 @@ export function TimelinePane() {
   const setCurveEditor = useEditorTimelineStore((s) => s.setCurveEditor);
   const pxPerSec = useTimelineViewStore((s) => s.pxPerSec);
   const setPxPerSec = useTimelineViewStore((s) => s.setPxPerSec);
-  const [rippled, setRippled] = useState<Set<string>>(new Set());
   const [scrollTop, setScrollTop] = useState(0);
   // D-095 — horizontal scroll, needed alongside `scrollTop` to convert a
   // drop's `clientX` into a timeline frame (`xToFrame` below); the library
@@ -1609,38 +1578,18 @@ export function TimelinePane() {
   };
 
   // --------------------------------------------------------------------- //
-  // D-235 — the context-sensitive trim tool (roadmap item 27). A FIFTH
-  // gesture family on this surface, and like D-137's marquee and D-207's fade
-  // handles it earns a note here because the coexistence story is the whole
-  // design. It does NOT add a sixth pointer listener: it re-reads the two
-  // drags this pane already has (the library's edge resize, and `ClipBody`'s
-  // dnd-kit drag) and, when armed, commits a different op at the end of the
-  // same gesture. Nothing about how a drag STARTS changes, so nothing it
-  // could collide with changes either.
+  // D-235 — the context-sensitive trim tool (roadmap item 27), and since
+  // D-432 P2 every edit drag that is not a plain move. The mode rule lives in
+  // `trimMode.ts` (pure, unit-tested); the gesture itself — press, live
+  // preview, commit — is `useEditGesture.ts`, which claims the press on a
+  // clip's own edge zones (or on its body for slip/slide) before dnd-kit's
+  // move can start. Resolved once, at PRESS time: Resolve resolves its own
+  // mode from where the pointer is before the click, and a mode that could
+  // change halfway through a drag would commit an edit the user did not aim at.
   //
-  // The mode rule itself lives in `trimMode.ts` (pure, unit-tested) together
-  // with the reference research behind it. Two things have to be captured here
-  // that the pure part cannot see for itself:
-  //
-  //   1. `trimArmed` — whether Alt/Option is held RIGHT NOW, for the hover
-  //      affordance (the readable stand-in for Resolve's four swapped
-  //      cursors). Purely cosmetic; no gesture reads it.
-  //   2. `trimPressRef` — the modifiers and the in-row Y position of the press
-  //      a gesture actually began from. The timeline library's resize
-  //      callbacks hand back no event at all (checked in its own typings:
-  //      `onActionResizeStart/Resizing/ResizeEnd` carry only action/row/start/
-  //      end/dir), so the modifier state HAS to be captured from the raw
-  //      pointerdown. A capture-phase listener on the edit area sees that
-  //      press before either drag system claims it, and cannot swallow it —
-  //      it only reads.
-  //
-  // Resolved at PRESS time, not continuously, and deliberately: Resolve
-  // resolves its own mode from where the pointer is before the click (the
-  // cursor tells you which trim you are about to get), and a mode that could
-  // change halfway through a drag would mean the op committed was not the one
-  // the user aimed at.
+  // `trimArmed` — whether Alt/Option is held RIGHT NOW — only drives the hover
+  // affordance (the badge that names the armed mode); no gesture reads it.
   const [trimArmed, setTrimArmed] = useState(false);
-  const trimPressRef = useRef<TrimPressCapture | null>(null);
   /** B-137 — the horizontal half of the same capture-phase press: how wide the
    *  pressed clip really is on screen, and how far into it the pointer went
    *  down. Stamped by the listener below and promoted to `clipGrab` state once
@@ -1722,17 +1671,6 @@ export function TimelinePane() {
       // bundled CSS (`.timeline-editor-action`), not guessed.
       const action = target?.closest('.timeline-editor-action');
       const rect = action?.getBoundingClientRect();
-      trimPressRef.current = {
-        altKey: e.altKey,
-        shiftKey: e.shiftKey,
-        bodyYRatio: rect && rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0,
-        // D-261 — the active tool is captured with the modifiers, and for the
-        // same stated reason (see this ref's doc): the edit a gesture commits
-        // must be the one the user aimed at when they pressed, so a tool
-        // shortcut typed mid-drag cannot retarget a drag already in flight.
-        // Read from the ref, not the state, so this listener never re-binds.
-        tool: trimToolRef.current,
-      };
       // B-137 — the same press, measured horizontally, for the drag ghost.
       // Taken here rather than from dnd-kit's own `active.rect.current.initial`
       // in `onDragStart`: that ref is not yet populated when the drag-start
@@ -1748,12 +1686,8 @@ export function TimelinePane() {
     };
     el.addEventListener('pointerdown', onPointerDown, true);
     return () => el.removeEventListener('pointerdown', onPointerDown, true);
-    // B-123 — `editArea`, not `[]`. THIS is the listener whose absence made
-    // the whole D-235/D-250 smart trim tool inert in the real app: with no
-    // capture-phase press to read, `trimPressRef` stayed `null`, every
-    // gesture resolved unarmed, and Alt+drag silently fell back to the plain
-    // move/trim it has always been — while the badge and cursor (React props,
-    // bound with the JSX) kept correctly announcing "Slip"/"Roll".
+    // B-123 — `editArea`, not `[]`: the node mounts after this component's
+    // first commit (see `attachEditArea`), and a `[]` effect would never bind.
   }, [editArea]);
 
   /** D-235 — which mode a press at this pointer position would commit, or
@@ -1780,11 +1714,8 @@ export function TimelinePane() {
     if (!clipId || !Number.isInteger(ti)) return null;
     const i = idxOf(ti, clipId);
     if (i < 0) return null;
-    const zone: TrimZone = target?.closest('.timeline-editor-action-left-stretch')
-      ? 'edge-start'
-      : target?.closest('.timeline-editor-action-right-stretch')
-        ? 'edge-end'
-        : 'body';
+    const edgeEl = target?.closest<HTMLElement>('[data-chroma-trim-edge]');
+    const zone: TrimZone = !edgeEl ? 'body' : edgeEl.dataset.chromaTrimEdge === 'start' ? 'edge-start' : 'edge-end';
     const rect = action.getBoundingClientRect();
     const mode = resolveTrimMode({
       zone,
@@ -1854,6 +1785,10 @@ export function TimelinePane() {
   };
 
   const onTrimHoverMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    // D-432 P2 — the edit-point bracket on the hovered edge (any tool), the
+    // slip/slide brackets and the Blade cut line: imperative writes to the
+    // shared feedback layer, no state.
+    editGesture.onHover(e);
     // D-261 — `trimActive`, not `trimArmed`: a tool chosen in the palette gets
     // the same hover affordance a held Alt does. Still an early boolean return
     // before touching the DOM, so D-083's per-pointer-move discipline is
@@ -1876,10 +1811,12 @@ export function TimelinePane() {
     if (cursorOverrideElRef.current && cursorOverrideElRef.current !== hoveredBody) {
       cursorOverrideElRef.current.style.cursor = '';
     }
-    if (hoveredBody) hoveredBody.style.cursor = next ? trimModeCursor(next) : '';
+    // D-432 P2 — the Blade tool's crosshair over any clip (spec §5.1).
+    if (hoveredBody) hoveredBody.style.cursor = trimTool === 'blade' ? 'crosshair' : next ? trimModeCursor(next) : '';
     cursorOverrideElRef.current = hoveredBody;
   };
   const onTrimHoverLeave = () => {
+    editGesture.onHoverLeave();
     setHoverTrimMode((prev) => (prev === null ? prev : null));
     if (cursorOverrideElRef.current) {
       cursorOverrideElRef.current.style.cursor = '';
@@ -1890,8 +1827,9 @@ export function TimelinePane() {
   // Ripple visual feedback (D-051) — diff each clip id's timeline start frame
   // against the previous render; anything that moved (chiefly a `move` now,
   // since D-058 made trim/remove non-rippling by construction — see the
-  // module doc) gets a brief `animate-pulse` highlight in `getActionRender`
-  // below. A brand new track (nothing to compare against yet) or a clip that
+  // module doc) gets ONE 160 ms opacity flash (D-432 §4.3; it was a looping
+  // `animate-pulse` box-shadow, repainted every frame). Played with the Web
+  // Animations API on the clip bodies themselves, so it costs no React render. A brand new track (nothing to compare against yet) or a clip that
   // simply didn't exist before (add_clip, split's new right-hand clip) is
   // correctly excluded — `prev.get(id)` is `undefined` for those, not "shifted".
   const prevStartsRef = useRef<Map<string, number> | null>(null);
@@ -1919,9 +1857,15 @@ export function TimelinePane() {
       }
     });
     if (shifted.size === 0) return;
-    setRippled(shifted);
-    const t = setTimeout(() => setRippled(new Set()), RIPPLE_FLASH_MS);
-    return () => clearTimeout(t);
+    const area = editAreaRef.current;
+    if (!area) return;
+    for (const body of area.querySelectorAll<HTMLElement>(`[data-testid="${TIMELINE_TEST_IDS.clip}"]`)) {
+      const id = body.dataset.chromaClipId;
+      // `animate` is absent under jsdom; the flash is decoration only.
+      if (id && shifted.has(id) && typeof body.animate === 'function') {
+        body.animate([{ opacity: RIPPLE_FLASH_OPACITY }, { opacity: 1 }], { duration: RIPPLE_FLASH_MS, easing: 'ease-out' });
+      }
+    }
   }, [timeline]);
 
   const editorData = useMemo<TimelineRow[]>(
@@ -1946,29 +1890,6 @@ export function TimelinePane() {
    *  for a clip drag dnd-kit could not measure (a pane laid out to nothing).
    *  Feeds `dragGhostWindow` — see that module for why the ghost needs it. */
   const [clipGrab, setClipGrab] = useState<{ widthPx: number; offsetPx: number } | null>(null);
-  /** B-184 / D-355 — the same press, in its trim-tool aspect, and promoted to
-   *  state for the same reason and at the same instant as `clipGrab` above.
-   *
-   *  The render below has to know whether the drag now running is going to
-   *  commit a slip/slide rather than a move (B-144), and that answer comes from
-   *  the press, not from live key state. It used to read `trimPressRef.current`
-   *  straight out of the render body, which is a ref read during render — the
-   *  React Compiler (D-201) refuses to compile a component that does that and
-   *  silently dropped auto-memoization for this whole file, the Edit tab's
-   *  highest-update-frequency surface. `reactCompiler.test.ts` is the guard
-   *  that caught it.
-   *
-   *  Snapshotting at drag start rather than at press deliberately: `onDndDragStart`
-   *  only runs once dnd-kit's 4px activation constraint is satisfied, i.e. well
-   *  after the capture-phase `pointerdown` listener has stamped the ref — the
-   *  exact ordering `clipGrab` has relied on since B-137 — so the value here is
-   *  the press that started THIS drag, and nothing about that listener (which
-   *  must never re-bind, see `trimPressRef`'s own doc) changes. The alternative,
-   *  setting state from inside that listener, would re-render this entire pane
-   *  on every press anywhere in the edit area, including a plain click that
-   *  never becomes a drag — which is the cost the ref-then-promote pattern
-   *  exists to avoid. */
-  const [clipDragPress, setClipDragPress] = useState<TrimPressCapture | null>(null);
   // D-113 — owner, live: "when i drag and drop it shows whole track as
   // white make only the track length and where it is actually going to
   // go, placeholder kindda." The full-row wash `TrackDropZone` used to
@@ -2024,7 +1945,6 @@ export function TimelinePane() {
       document.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, cancelable: true }));
       setActiveDrag((prev) => (prev === null ? prev : null));
       setClipGrab((prev) => (prev === null ? prev : null));
-      setClipDragPress((prev) => (prev === null ? prev : null));
     };
     window.addEventListener('blur', onBlur);
     return () => window.removeEventListener('blur', onBlur);
@@ -2627,6 +2547,32 @@ export function TimelinePane() {
 
   const s2f = (sec: number) => Math.round(sec * fps);
 
+  // D-432 P2 — every non-move edit drag (trim, ripple, roll, slip, slide) and
+  // the Blade tool's cut; see `useEditGesture.ts`. The view is re-read on
+  // every render; nothing in a gesture sets this component's state.
+  const feedbackRef = useRef<EditFeedbackHandle>(null);
+  const editGesture = useEditGesture(editAreaRef, feedbackRef, trimToolRef, {
+    timeline,
+    fps,
+    pxPerSec,
+    scrollLeft,
+    scrollTop,
+    startLeft: START_LEFT_PX,
+    rowsTop: RULER_AND_MARGIN_PX,
+    rowHeight: ROW_HEIGHT,
+    viewportWidth,
+    snapExtras: () => {
+      const st = useEditorTimelineStore.getState();
+      return [st.playhead, ...markersOf(st.timeline).map((m) => m.frame)];
+    },
+    applyOp,
+    selectClip: (track, id) => {
+      setSelectedGap(null);
+      setSelection([{ track, id }]);
+    },
+    currentTimeline: () => useEditorTimelineStore.getState().timeline,
+  });
+
   // B-024 (root cause of the reported freeze during drag-and-drop): these 5
   // props were previously inline arrow functions in the `<TimelineEditor>`
   // JSX below — a brand new function identity on EVERY render of
@@ -2668,6 +2614,19 @@ export function TimelinePane() {
   // reintroduces a bailout in this file, so B-024 cannot come back silently.
   // If you think you need hand-written memoization here, run that test first:
   // a `useMemo`/`useCallback` the compiler cannot preserve is a net LOSS.
+  /** D-432 §4.3 — how the cut at each clip's LEFT edge is drawn (none / a
+   *  hairline / FCP's dashed through-edit), by clip id. One pass per timeline
+   *  change, so the render below is a map lookup per clip. */
+  const cutStyleById = useMemo(() => {
+    const out = new Map<string, 'none' | 'cut' | 'through'>();
+    for (const t of tracks) {
+      const endingAt = new Map<number, Clip>();
+      for (const c of t.clips) endingAt.set(endFrame(c, fps), c);
+      for (const c of t.clips) out.set(c.id, cutStyleAt(c, endingAt.get(c.start_frame) ?? null));
+    }
+    return out;
+  }, [tracks, fps]);
+
   const getActionRender =
     (action: TimelineAction, row: TimelineRow) => {
       const ti = Number(row.id);
@@ -2675,293 +2634,110 @@ export function TimelinePane() {
       const i = idxOf(ti, action.id);
       const clip = i >= 0 ? clipsOf(ti)[i] : null;
       const isSel = isInSelection(selection, ti, action.id);
-      const isRippled = rippled.has(action.id);
       // Owner, 2026-09-04: "for sync when i select one is should see all the
-      // sync selected" — a real, distinct secondary ring (never the primary
-      // `isSel` accent ring — a clip is either the selection or related to
-      // it, the two states should never look the same) for every clip
-      // `syncLinkedIds` says a ripple from the current selection would touch.
+      // sync selected" — a secondary state for every clip `syncLinkedIds` says
+      // a ripple from the current selection would touch, never the same look as
+      // the selection itself.
       const isSyncLinked = !isSel && syncLinkedIds.has(action.id);
-      // D-128 — the selected clip's own A/V-linked half. Takes precedence
-      // over the sync-lock ring when a clip is both (an A/V link is the
-      // stronger, more specific statement about that clip), and uses the
-      // accent token rather than the neutral `text-secondary` one, because a
-      // linked half is genuinely part of what the user has hold of — it will
-      // move, trim and delete with the selection.
+      // D-128 — the selected clip's own A/V-linked half: part of what the user
+      // has hold of (it moves, trims and deletes with the selection), so it
+      // takes precedence over the sync-lock state.
       const isAvLinked = !isSel && avLinkedIds.has(action.id);
-      // D-233 — which property the curve button would open, and whether this
-      // clip's lane is the one currently open. `animatedParams` is served off
-      // `clipKeyframes.ts`'s per-array `WeakMap` index (D-209), so asking it
-      // once per clip per render is a map lookup, not a re-scan.
+      // D-233 — which property the curve lane would open, and whether this
+      // clip's lane is the one open. `animatedParams` is a WeakMap lookup (D-209).
       const curveParam = clip ? (animatedParams(clip.chroma_keyframes)[0] ?? null) : null;
       const curveOpenHere = curveEditor?.track === ti && curveEditor?.id === action.id;
-      // Owner, 2026-09-04: "for locked show muted color on clip" — the same
-      // `opacity-60` treatment the track-header row already gets when
-      // `track.locked` (D-080/D-090-era), extended to the clip bodies
-      // themselves so the muted state reads at the clip level, not just from
-      // glancing at the header.
       const isLockedTrack = !!track?.locked;
       const pxWidth = (action.end - action.start) * pxPerSec;
+      const kind = clip && track ? clipKindOf(clip, track.kind) : 'video';
+      const anatomy = clipAnatomy(ROW_HEIGHT, kind);
+      const trimZonePx = Math.min(TRIM_ZONE_PX, pxWidth * TRIM_ZONE_MAX_FRACTION);
+      const clipLeftPx = START_LEFT_PX + action.start * pxPerSec;
       return (
         <ClipBody
           track={ti}
           clipId={action.id}
+          onPointerDownCapture={(e) => editGesture.onClipPointerDownCapture(e, ti, action.id)}
           className={
-            // D-207 — `group/clip` is what lets `ClipFadeOverlay`'s handles
-            // reveal themselves on hover when a clip has no fade set yet
-            // (named group, so it can never be captured by an unrelated
-            // ancestor `group` elsewhere in the tree).
-            'group/clip relative h-full w-full overflow-hidden rounded ' +
-            (isSel ? 'ring-2 ring-accent ' : '') +
-            (isRippled ? 'ring-2 ring-accent animate-pulse ' : '') +
-            // Dashed, not a second solid ring: `ring-*` has no dashed style
-            // in Tailwind, so this uses the outline utilities (v4:
-            // width + style + colour), inset so it reads inside the clip
-            // body like the rings above rather than bleeding into the row.
-            (isAvLinked ? 'outline-2 outline-dashed outline-accent/70 -outline-offset-2 ' : '') +
-            (isSyncLinked && !isAvLinked ? 'ring-2 ring-text-secondary ' : '') +
-            (isLockedTrack ? 'opacity-60 ' : '')
+            // D-432 §4.3 — the FCP clip: opaque kind colour, a 2 px radius, a
+            // 1 px inset top and bottom inside the lane. `group/clip` lets the
+            // fade handles reveal on hover (D-207). The ::after is the hover
+            // wash, pre-laid so hovering recomputes no colour.
+            'group/clip absolute inset-x-0 overflow-hidden rounded-xs ' +
+            CLIP_KIND_CLASSES[kind].body +
+            " after:pointer-events-none after:absolute after:inset-0 after:content-[''] hover:after:bg-white/5" +
+            // States (§4.3): outlines and opacity only — never a box-shadow
+            // `ring` (painted OUTSIDE the clip, over its neighbours: the
+            // owner's "thick white, heavily rounded border") and never a filter.
+            // Drawn on a pre-laid ::before above the clip's own strip and bands
+            // (an outline on the body itself is painted UNDER its positioned
+            // children, so the strip would hide the top edge of it).
+            ' before:pointer-events-none before:absolute before:inset-0 before:z-(--z-timeline-clip-controls)' +
+            " before:rounded-xs before:content-['']" +
+            (isSel ? ' before:outline-2 before:-outline-offset-2 before:outline-selection' : '') +
+            (isAvLinked ? ' before:outline-1 before:-outline-offset-1 before:outline-selection/55' : '') +
+            (isSyncLinked && !isAvLinked ? ' before:outline-1 before:-outline-offset-1 before:outline-white/35' : '') +
+            (isLockedTrack ? ' opacity-60' : '')
           }
-          style={{
-            // D-100 — selection no longer swaps the background to
-            // `var(--color-accent)`. Owner: "this make it hard to read...
-            // white selected color is not visible" — the background swap
-            // paired with the WRONG text-color token for it (see the label
-            // below) made selected clips genuinely low-contrast. The clip's
-            // own kind-based colour now stays constant; the `ring-2 ring-
-            // accent` above (already existed, already the right token per
-            // `CLAUDE.md`'s "no magic colours, use `--color-*`") is the
-            // ONLY selection indicator now — a real outline, not a
-            // background-colour gamble.
-            background: CLIP_BODY_BACKGROUND[track?.kind ?? 'video'],
-          }}
+          style={{ top: CLIP_VERTICAL_INSET_PX, bottom: CLIP_VERTICAL_INSET_PX, contain: 'layout paint style' }}
         >
-          {/* D-211 — a TEXT clip has no picture to filmstrip and no audio to
-              draw a waveform for; its content IS its visual. A tinted body
-              with the title's own text across it, which is what both
-              references show for a title/generator clip on the timeline.
-              Rendered BEFORE the media branch below, and that branch's own
-              `!clip.text` guard is what keeps `Filmstrip`/`Waveform` from
-              being handed an empty `sourcePath` (they'd no-op, but a decode
-              request for "" is a real IPC round trip per clip per zoom
-              level). */}
-          {clip?.text && (
-            <div
-              className="absolute inset-0 flex items-center justify-center overflow-hidden px-2"
-              style={{ background: 'rgba(150,120,190,0.55)' }}
-            >
-              <span className="truncate text-[11px] font-semibold tracking-wide text-button-text/90">
-                {clip.text.content || 'Title'}
-              </span>
-            </div>
-          )}
-          {/* D-229 — a CAPTION clip, like a title, has no picture and no
-              audio: its cue text IS its visual, which is exactly what the
-              reference frame shows (a tinted block with the caption written
-              across it). Same placement and same reasoning as the title
-              branch above, and the media branch's guard below excludes it for
-              the same reason. */}
-          {clip?.caption && (
-            <div
-              className="absolute inset-0 flex items-center overflow-hidden px-2"
-              style={{ background: CLIP_BODY_BACKGROUND.subtitle }}
-            >
-              <span className="truncate text-[11px] font-medium text-button-text/90">
-                {captionLines(clip.caption.text).join(' ') || 'Caption'}
-              </span>
-            </div>
-          )}
-          {/* D-230 — an ADJUSTMENT clip. Drawn from the real Resolve
-              reference (`scratch/resolve-reference/adjustments.jpg`), which
-              shows it as a flat, saturated, thumbnail-free bar carrying an
-              `fx` badge and the words "Adjustment Clip" — deliberately unlike
-              every clip around it, because it is the one clip on the timeline
-              that contributes no picture of its own. Same slot and same
-              guard structure as the text branch above (and the media branch's
-              `!clip.text` guard is extended for it) so `Filmstrip`/`Waveform`
-              are never handed this clip's empty `sourcePath`. */}
-          {clip?.adjustment && (
-            <div
-              className="absolute inset-0 flex items-center gap-1.5 overflow-hidden px-2"
-              style={{ background: 'rgba(70,110,205,0.72)' }}
-            >
-              <MagicWandIcon className="size-3 shrink-0 text-button-text/90" aria-hidden />
-              <span className="truncate text-[11px] font-semibold tracking-wide text-button-text/90">
-                {clip.name || 'Adjustment Clip'}
-              </span>
-              {/* The correction's own summary, so the timeline says what this
-                  clip actually does without a trip to the Inspector — the
-                  equivalent of the effect name Resolve shows on the body. */}
-              <span className="ml-auto truncate text-[10px] font-medium text-button-text/70">
-                {adjustmentSummary(clip.adjustment)}
-              </span>
-            </div>
-          )}
-          {clip && !clip.text && !clip.caption && !clip.adjustment && track?.kind === 'video' && (
-            <>
-              {/* D-119 — real filmstrip thumbnails, the clip's actual picture
-                  content tiled across its full width/height, replacing the
-                  flat colour fill as the visual background. Waveform (below)
-                  overlays a translucent amplitude strip anchored to the
-                  bottom edge on top of it — same layering the reference
-                  screenshot's own combined video+audio clips use — rather
-                  than splitting the clip into hard top/bottom zones, which
-                  at this project's compact `ROW_HEIGHT` (52px) would leave
-                  neither signal legible. */}
-              {/* D-128 — the visible slice of this clip, in px from its own
-                  left edge. The filmstrip fetches only the source range that
-                  covers, at a tile density matching the current zoom, instead
-                  of a fixed 64-frame summary of the whole clip stretched to
-                  fit (D-124's own named limitation, and the smeared tiles the
-                  owner screenshotted against Palmier Pro's timeline). */}
-              <Filmstrip
-                sourcePath={clip.source_path}
-                startSecs={clip.source_start / (clip.source_fps ?? fps)}
-                durationSecs={clip.duration / (clip.source_fps ?? fps)}
-                width={pxWidth}
-                height={ROW_HEIGHT}
-                visibleStartPx={filmstripScrollLeft - (START_LEFT_PX + action.start * pxPerSec)}
-                visibleEndPx={
-                  filmstripScrollLeft +
-                  viewportWidth -
-                  (START_LEFT_PX + action.start * pxPerSec)
-                }
-              />
-              <div className="absolute inset-x-0 bottom-0" style={{ height: ROW_HEIGHT * 0.4 }}>
-                {/* D-334/B-204 — the same visible slice the filmstrip above
-                    gets. Without it this fetched a real audio decode for every
-                    clip on the track, on-screen or not. */}
-                <Waveform
-                  sourcePath={clip.source_path}
-                  startSecs={clip.source_start / (clip.source_fps ?? fps)}
-                  durationSecs={clip.duration / (clip.source_fps ?? fps)}
-                  width={pxWidth}
-                  height={ROW_HEIGHT * 0.4}
-                  visibleStartPx={filmstripScrollLeft - (START_LEFT_PX + action.start * pxPerSec)}
-                  visibleEndPx={
-                    filmstripScrollLeft + viewportWidth - (START_LEFT_PX + action.start * pxPerSec)
-                  }
-                />
-              </div>
-            </>
-          )}
-          {/* D-128 — an audio-track clip gets a FULL-height waveform and no
-              filmstrip. Until this pass no audio track ever had a clip on it
-              (D-057 was mixing capability with no producer), so this branch
-              had nothing to render and didn't exist; now that dropping a clip
-              really creates one, a flat green fill would be the only thing
-              you'd see on the half that matters most to read. No `Filmstrip`
-              here on purpose: an audio clip has no picture worth showing, and
-              D-124's filmstrip decode is exactly the cost not to pay twice
-              per linked pair. */}
-          {clip && track?.kind === 'audio' && (
-            /* D-334/B-204 — the visible slice, same as the video track's two
-               strips above. This one is the more important of the pair to
-               gate: an audio clip has no filmstrip, so its waveform is the
-               ONLY per-clip fetch on this track, and an A/V-linked pair
-               resolves to a single shared cache key — so leaving this
-               ungated left the whole fan-out in place even after the video
-               side was culled. Measured exactly that way (see D-334). */
-            <Waveform
-              sourcePath={clip.source_path}
-              startSecs={clip.source_start / (clip.source_fps ?? fps)}
-              durationSecs={clip.duration / (clip.source_fps ?? fps)}
-              width={pxWidth}
-              height={ROW_HEIGHT}
-              visibleStartPx={filmstripScrollLeft - (START_LEFT_PX + action.start * pxPerSec)}
-              visibleEndPx={
-                filmstripScrollLeft + viewportWidth - (START_LEFT_PX + action.start * pxPerSec)
+          {clip && (
+            <ClipBlock
+              clip={clip}
+              kind={kind}
+              trackHeight={ROW_HEIGHT}
+              widthPx={pxWidth}
+              fps={fps}
+              // D-128/D-334 — the visible slice, so the filmstrip and waveform
+              // fetch only what is on screen.
+              visibleStartPx={filmstripScrollLeft - clipLeftPx}
+              visibleEndPx={filmstripScrollLeft + viewportWidth - clipLeftPx}
+              cut={cutStyleById.get(action.id) ?? 'none'}
+              keyframed={curveParam !== null}
+              curveOpen={curveOpenHere}
+              onToggleCurve={() =>
+                // Off when this clip's lane is already open; otherwise open on
+                // its first animated property (the lane's header switches it).
+                setCurveEditor(curveOpenHere || !curveParam ? null : { track: ti, id: action.id, param: curveParam })
               }
             />
           )}
-          {/* D-058/B-013: `pointer-events-none` is load-bearing, not
-              decorative. This label's `z-10` (needed so it paints above the
-              Waveform canvas) has no isolating stacking context between it
-              and the library's own absolutely-positioned
-              `.timeline-editor-action-{left,right}-stretch` resize handles
-              (siblings of this whole content block, rendered *after* it in
-              the DOM but `z-index: auto`) — a block-level, unconstrained-
-              width div, this label silently spans the clip's full width,
-              including both 10px edge zones, and (confirmed live: a real
-              pointer event at the handle's coordinates hit-tested to *this*
-              div, not the handle, until this was added) ate every resize-
-              handle pointerdown before interact.js ever saw it. That's why
-              edge-trim visually did nothing — not a `flexible`/`dragLine`
-              problem (D-051 was right about the library's own mechanism), a
-              hit-testing problem in what we paint on top of it.
-              D-100 — always `text-button-text` now, not conditional on
-              `isSel`. That token is this app's own established "readable
-              against `bg-accent`" colour (matches `ExportPresetsList.tsx`/
-              `ProjectLauncher.tsx`'s own `bg-accent text-button-text`
-              pairing, checked, not guessed) — the OLD code used it only
-              for the non-selected case and switched to `text-text-primary`
-              (meant for the app's default background, not an accent one)
-              specifically when selected, which was backwards and the real
-              other half of the contrast bug alongside the background
-              swap above. `button-text` already reads fine against the
-              plain video/audio clip colours too (no complaints there
-              before this pass), so one token now covers both states. */}
-          {/* D-207 — the fade rubber-band + its two draggable handles, on
-              EVERY clip regardless of track kind: one fade pair drives picture
-              and sound together in this model (`Clip::fade_in_frames`' own
-              doc), so drawing it only on audio clips would split one feature
-              into two. Rendered before the label so the label's own `z-10`
-              still wins the paint order and stays legible (D-100). Its own
-              module-scope component, so a fade drag re-renders one clip's
-              overlay rather than this whole pane — see its module doc. */}
+          {/* D-207 — the fade ramps and their handles, under the name strip
+              (§4.5). Its own component, so a fade drag re-renders one clip. */}
           {clip && (
             <ClipFadeOverlay
               track={ti}
               clipIndex={i}
               clip={clip}
               widthPx={pxWidth}
-              heightPx={ROW_HEIGHT}
+              heightPx={anatomy.height}
+              topPx={anatomy.labelsOnly ? 0 : anatomy.strip}
               fps={fps}
               pxPerSec={pxPerSec}
               disabled={isLockedTrack}
             />
           )}
-          {/* D-233 — the curve-editor toggle, at the clip's top-right, which
-              is where Resolve puts its own (`scratch/resolve-reference/
-              curve.jpg`: a curve glyph and a keyframe glyph on the clip's
-              name bar). Shown only on a clip that ACTUALLY animates
-              something: a button that opens an empty lane is a button that
-              teaches the user it does nothing.
-
-              Same hit-target discipline the fade handles (D-207) and the move
-              grip (D-094) already follow, and for the same B-013 reason: it
-              is a small, bounded, `z-20` target that `stopPropagation`s, so
-              dnd-kit's clip-move drag and the library's own right-edge trim
-              zone both keep every pixel this button does not occupy. It sits
-              inset from the right edge past that 10px trim zone. */}
-          {clip && curveParam && pxWidth >= CURVE_BUTTON_MIN_CLIP_PX && (
-            <button
-              type="button"
-              className="absolute right-3 top-0.5 z-20 rounded p-0.5 text-button-text/80 hover:bg-black/25 hover:text-button-text"
-              title={
-                curveOpenHere
-                  ? 'Close the curve editor'
-                  : `Edit ${clip.name || 'this clip'}'s ease curves`
-              }
-              aria-label="Toggle the curve editor for this clip"
-              aria-pressed={curveOpenHere}
-              onPointerDown={(e) => e.stopPropagation()}
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                // Toggling off when it is already this clip's lane; otherwise
-                // open on the clip's first animated property (declaration
-                // order — see `animatedParams`), which the lane's own header
-                // then lets you change.
-                setCurveEditor(curveOpenHere ? null : { track: ti, id: action.id, param: curveParam });
-              }}
-            >
-              <BezierCurveIcon size={11} />
-            </button>
+          {/* D-432 §4.4 — the clip's own edge-trim zones (B-344): invisible,
+              `col-resize`, ≥ 8 px. Their press is claimed by `useEditGesture`
+              in the capture phase above; the bracket that shows on hover is
+              one shared element in `EditFeedbackLayer`, not per-clip DOM. A
+              locked track offers none. */}
+          {clip && !isLockedTrack && (
+            <>
+              <div
+                data-testid={TIMELINE_TEST_IDS.clipTrimStart}
+                data-chroma-trim-edge="start"
+                className="absolute inset-y-0 left-0 z-(--z-timeline-clip-controls) cursor-col-resize"
+                style={{ width: trimZonePx }}
+              />
+              <div
+                data-testid={TIMELINE_TEST_IDS.clipTrimEnd}
+                data-chroma-trim-edge="end"
+                className="absolute inset-y-0 right-0 z-(--z-timeline-clip-controls) cursor-col-resize"
+                style={{ width: trimZonePx }}
+              />
+            </>
           )}
-          <div className="relative z-10 flex h-full items-center px-2 text-[11px] font-medium truncate pointer-events-none text-button-text">
-            {clip?.name ?? action.id}
-          </div>
         </ClipBody>
       );
     };
@@ -3030,44 +2806,6 @@ export function TimelinePane() {
   // clip now, same-track or cross-track alike. Kept as dead code this would
   // violate `CLAUDE.md`'s own "no dead code" rule, so it's removed rather
   // than left unused.
-  /** D-201 — no `useCallback` (see the note above `getActionRender`): its old
-   *  `[tracks, fps, applyOp]` array left out `s2f`, which the compiler infers
-   *  and which is enough on its own to bail the whole component out. */
-  const onActionResizeEndCb = ({
-    action,
-    row,
-    start,
-    end,
-    dir,
-  }: {
-    action: TimelineAction;
-    row: TimelineRow;
-    start: number;
-    end: number;
-    dir: 'left' | 'right';
-  }) => {
-    const ti = Number(row.id);
-    const i = idxOf(ti, action.id);
-    if (i < 0 || !timeline) return;
-    // D-235 — which edit this edge drag really was is decided by `resizeEndOp`
-    // (pure, exhaustively unit-tested — see its own doc for why the decision
-    // lives there rather than inline here). Unarmed, it returns exactly the two
-    // ops this handler has always built: the plain, gap-leaving trim of D-058,
-    // unchanged. Armed, the same drag becomes a roll at a real edit point or a
-    // ripple anywhere else. The modifiers come from `trimPressRef` because the
-    // library's resize callbacks carry no event at all (see that ref's doc).
-    // D-413 — the edge being dragged snaps to a beat (the other one never moves).
-    const op = resizeEndOp({
-      tl: timeline,
-      track: ti,
-      clip: i,
-      dir,
-      startFrame: dir === 'left' ? snapFrameToBeat(s2f(start)) : s2f(start),
-      endFrame: dir === 'right' ? snapFrameToBeat(s2f(end)) : s2f(end),
-      press: trimPressRef.current,
-    });
-    if (op) applyOp(op);
-  };
 
   // D-080: split now requires a selection — with N tracks, "at the
   // playhead" alone no longer says which track's clip. Standard-NLE
@@ -3270,6 +3008,7 @@ export function TimelinePane() {
   useShortcut('edit.tool_roll', () => selectTrimTool('roll'));
   useShortcut('edit.tool_slip', () => selectTrimTool('slip'));
   useShortcut('edit.tool_slide', () => selectTrimTool('slide'));
+  useShortcut('edit.tool_blade', () => selectTrimTool('blade'));
 
   // D-080: "Move to another track" — the library has no cross-row drag (see
   // the module doc), so this is a discoverable affordance for the same
@@ -3427,18 +3166,11 @@ export function TimelinePane() {
     // Promoted to state only now, once there is a real drag to render a ghost
     // for. See `dragGhost.ts` for what it is used for.
     setClipGrab(clip ? clipGrabRef.current : null);
-    // B-184 — and the trim aspect of that same press, for the render that has
-    // to decide whether this drag shows a move preview at all (B-144). Taken
-    // here, in the same batched update as `setActiveDrag`, so "the drag is
-    // running" and "this is the press it started from" can never be true at
-    // different renders. See this state's own doc for why not at press time.
-    setClipDragPress(clip ? trimPressRef.current : null);
   }, []);
 
   const onDndDragCancel = useCallback(() => {
     setActiveDrag(null);
     setClipGrab(null);
-    setClipDragPress(null);
     dragScrollOriginRef.current = null;
     dragPreviewRef.current?.setLanding((prev) => (prev === null ? prev : null));
   }, []);
@@ -3552,28 +3284,6 @@ export function TimelinePane() {
         dragPreviewRef.current?.setInsert((prev) => (prev === null ? prev : null));
         return;
       }
-      // D-235 — an armed drag is a slip or a slide, and neither one moves the
-      // clip anywhere. Showing the move path's landing ghost for it would
-      // promise a reposition that is never going to happen, so the preview is
-      // suppressed for the whole gesture rather than left to contradict the op
-      // that actually commits (`onDndDragEnd`).
-      //
-      // B-144 — this used to check ONLY `altKey`, so D-261's tool-driven
-      // entrance (choosing Slip/Slide in the palette, no modifier held) was
-      // never suppressed and still painted the move ghost/landing preview.
-      // `claimedAsTrim` is now exactly `onDndDragEnd`'s own `claimed` test
-      // below it (the Alt arm OR a palette tool that owns body drags), read
-      // from the same `trimPressRef` capture, so this can never disagree with
-      // what the drag is actually going to commit.
-      const armedActivator = event.activatorEvent as PointerEvent | MouseEvent | undefined;
-      const armedPress = trimPressRef.current;
-      const armedAltKey = armedActivator?.altKey ?? armedPress?.altKey ?? false;
-      const claimedAsTrim = armedPress !== null && (armedAltKey || trimToolOwns(armedPress.tool, 'body'));
-      if (claimedAsTrim) {
-        dragPreviewRef.current?.setLanding((prev) => (prev === null ? prev : null));
-        dragPreviewRef.current?.setInsert((prev) => (prev === null ? prev : null));
-        return;
-      }
       if (overTrack === null) {
         // Not over an existing track's lane — check whether this is a real
         // track-insertion boundary (same helper the Sources-panel add path
@@ -3639,7 +3349,6 @@ export function TimelinePane() {
         raw && (raw as TransitionDragData).type === 'transition' ? (raw as TransitionDragData) : null;
       setActiveDrag(null);
       setClipGrab(null);
-      setClipDragPress(null);
       dragPreviewRef.current?.setLanding((prev) => (prev === null ? prev : null));
       // B-145 — the drag's real displacement, for every branch below that
       // resolves a position. `dragScrollOriginRef` is deliberately NOT cleared
@@ -3734,60 +3443,6 @@ export function TimelinePane() {
       const { track: fromTrack, clipId } = clipDrag;
       const i = idxOf(fromTrack, clipId);
       if (i < 0) return;
-
-      // D-235 — the body half of the context-sensitive trim tool. Armed with
-      // Alt/Option, this same drag is a slip (upper band) or a slide (lower
-      // band) instead of a move, per Resolve's own over-the-thumbnails /
-      // under-the-thumbnails split — see `trimMode.ts` for the rule and its
-      // provenance. Checked BEFORE any of the landing math below, because a
-      // slip and a slide are not landings: neither one is allowed to change
-      // which track the clip is on, so `event.over` is deliberately not
-      // consulted at all.
-      //
-      // `event.activatorEvent` is the original pointerdown dnd-kit started
-      // from, which is where its modifiers really are; `trimPressRef` supplies
-      // the in-row Y that only the raw press knows. Both are read, rather than
-      // either alone, so this agrees exactly with the edge path above about
-      // what "armed" means.
-      const activator = event.activatorEvent as PointerEvent | MouseEvent | undefined;
-      const captured = trimPressRef.current;
-      const press = captured && {
-        // The activator is dnd-kit's own record of the press it started from,
-        // and is authoritative for the modifiers; `trimPressRef` is the only
-        // source for the in-row Y. Reading both, rather than either alone, is
-        // what keeps this in exact agreement with the edge path about what
-        // "armed" means.
-        altKey: activator?.altKey ?? captured.altKey,
-        shiftKey: activator?.shiftKey ?? captured.shiftKey,
-        bodyYRatio: captured.bodyYRatio,
-        // D-261 — the palette's tool as it was at press. Only `trimPressRef`
-        // has this; dnd-kit's activator event knows nothing about it.
-        tool: captured.tool,
-      };
-      if (timeline && moved) {
-        const op = bodyDragOp({
-          tl: timeline,
-          track: fromTrack,
-          clip: i,
-          delta: Math.round((moved.contentX / pxPerSec) * fps),
-          press,
-        });
-        // A `null` op means either "this drag was never a slip/slide" or "it
-        // was, but it moved no whole frame / the model refused it". Only the
-        // first may fall through to the move path — otherwise a Slip that
-        // clamped would silently become a MOVE, which is a different edit
-        // entirely. So the question asked here is whether the gesture was
-        // CLAIMED, not whether it produced an op: claimed by the Alt arm, or
-        // (D-261) by a palette tool that owns body drags.
-        const claimed = press !== null && (press.altKey || trimToolOwns(press.tool, 'body'));
-        if (op || claimed) {
-          if (op) applyOp(op);
-          // Same "a drag also selects what it edited" rule the move path below
-          // ends with — a slip/slide is still a pick.
-          setSelection([{ track: fromTrack, id: clipId }]);
-          return;
-        }
-      }
 
       // B-122 — one question, one answer: `laneDropTrack` is `null` for "not
       // over anything", "over a HEADER rather than a lane" (the crash) and
@@ -3939,37 +3594,13 @@ export function TimelinePane() {
   // sourced from `useEditorTimelineStore` (lifted in the same pass) so both
   // components read the exact same selection without prop-drilling.
 
-  // B-144 — a slip or a slide is not a move: the dragged clip's position
-  // (and, for a slide, its neighbours') never changes, so a cursor-follow
-  // ghost promising a reposition — the filmstrip/waveform preview below, or
-  // its label-pill fallback — would be lying about what this gesture is
-  // about to commit. Built from the press that started the drag — not from
-  // the live `trimArmed` state: a trim's mode is resolved once, at press
-  // (see `trimPressRef`'s own doc), not continuously from whatever key state
-  // happens to be true mid-drag — which is the exact same `claimed` test
-  // `onDndDragEnd` uses to decide whether this gesture commits a slip/slide
-  // instead of a move, so the preview can never disagree with the op that
-  // actually fires. D-250's pointer-adjacent mode badge already names the
-  // gesture correctly; this just stops the move ghost from contradicting it.
-  //
-  // B-184/D-355 — `clipDragPress` is the drag-start SNAPSHOT of that press
-  // (see its declaration), not `trimPressRef.current` read here. Reading the
-  // ref during render is what bailed the React Compiler out of this entire
-  // file. The value is the same one by construction, and is now pinned for
-  // the whole gesture rather than re-read every render.
-  const isSlipOrSlideDrag =
-    activeDrag?.type === 'clip' &&
-    clipDragPress !== null &&
-    (clipDragPress.altKey || trimToolOwns(clipDragPress.tool, 'body'));
-
   // D-098 — `DragOverlay` content: a small floating pill following the
   // pointer for whichever drag is active, a real cursor-follow preview
   // native HTML5 drag/drop never gave us (B-027's own drag-ghost complaint
   // was a symptom of that gap, not a one-off bug — the browser's default
   // drag image is a frozen DOM snapshot captured once at `dragstart`).
-  const dragOverlayLabel = isSlipOrSlideDrag
-    ? null
-    : activeDrag?.type === 'track-header'
+  const dragOverlayLabel =
+    activeDrag?.type === 'track-header'
       ? labels[activeDrag.index]
       : activeDrag?.type === 'clip'
         ? (clipsOf(activeDrag.track)[idxOf(activeDrag.track, activeDrag.clipId)]?.name ?? activeDrag.clipId)
@@ -3984,12 +3615,10 @@ export function TimelinePane() {
   // `MAX_DRAG_GHOST_PX` — this is a cursor-follow *preview*, not a literal
   // render of the clip at full timeline zoom; an hour-long clip dragged at
   // 100% would otherwise produce an unusable, off-screen-sized ghost.
-  const dragOverlayClip = isSlipOrSlideDrag
-    ? null
-    : activeDrag?.type === 'clip'
-      ? clipsOf(activeDrag.track)[idxOf(activeDrag.track, activeDrag.clipId)]
-      : null;
+  const dragOverlayClip =
+    activeDrag?.type === 'clip' ? clipsOf(activeDrag.track)[idxOf(activeDrag.track, activeDrag.clipId)] : null;
   const dragOverlayTrack = activeDrag?.type === 'clip' ? tracks[activeDrag.track] : null;
+  const dragOverlayKind = dragOverlayClip && dragOverlayTrack ? clipKindOf(dragOverlayClip, dragOverlayTrack.kind) : 'video';
   // B-137 — the cap above is what made the ghost detach from the pointer: a
   // capped ghost anchored (by `DragOverlay`, unavoidably) at the dragged
   // clip's LEFT EDGE has no spatial relationship to a press two-thirds of the
@@ -4073,7 +3702,10 @@ export function TimelinePane() {
     >
       <div
         className={
-          'flex flex-col min-h-0 h-full bg-bg-primary outline-none ' +
+          // D-432 P2 / B-342 — `isolate`: the whole timeline is one stacking
+          // context, so its inner layers (`--z-timeline-*`) can never paint
+          // over the shell's floating surfaces (the agent dock, popovers).
+          'isolate flex flex-col min-h-0 h-full bg-bg-primary outline-none ' +
           (dragOver ? 'ring-2 ring-inset ring-accent' : '')
         }
         // D-222 — the one place `MARKER_STRIP_HEIGHT` crosses into CSS:
@@ -4098,7 +3730,7 @@ export function TimelinePane() {
                   data-testid={TIMELINE_TEST_IDS.split}
                   aria-label="Split at playhead"
                 >
-                  <ScissorsIcon />
+                  <SplitHorizontalIcon />
                 </Button>
               }
             />
@@ -4666,7 +4298,6 @@ export function TimelinePane() {
               }}
               onCursorDragEnd={() => endScrub()}
               onChange={() => false}
-              onActionResizeEnd={onActionResizeEndCb}
             />
             {/* D-250 — the armed trim mode, named AT THE POINTER. Resolve's own
                 copy for this feature is explicit that the signal belongs there
@@ -4687,7 +4318,7 @@ export function TimelinePane() {
               data-chroma-trim-badge=""
               role="status"
               hidden={!hoverTrimMode}
-              className="pointer-events-none absolute left-0 top-0 z-40 whitespace-nowrap rounded border border-border-color bg-surface px-1.5 py-1 text-[10px] leading-tight text-text-primary shadow-md"
+              className="pointer-events-none absolute left-0 top-0 z-(--z-timeline-edit-feedback) whitespace-nowrap rounded-sm bg-surface-raised px-1.5 py-1 text-2xs leading-tight text-text-primary shadow-popover"
             >
               <span className="font-medium">{hoverTrimMode ? trimModeLabel(hoverTrimMode) : ''}</span>
               {hoverTrimMode && trimModeHint(hoverTrimMode) && (
@@ -4718,7 +4349,7 @@ export function TimelinePane() {
                     // scaffolding, matching this kit's other glass surfaces
                     // (e.g. the transport bar's own popovers).
                     data-testid={TIMELINE_TEST_IDS.gapSelection}
-                    className="pointer-events-none absolute z-20 overflow-hidden rounded-md border border-accent/50 bg-gradient-to-b from-accent/25 to-accent/10 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] backdrop-blur-sm"
+                    className="pointer-events-none absolute z-(--z-timeline-overlay) rounded-xs border border-selection/60 bg-selection/10"
                     style={{
                       left: START_LEFT_PX + (gap.gapStart / fps) * pxPerSec - scrollLeft,
                       width: ((gap.gapEnd - gap.gapStart) / fps) * pxPerSec,
@@ -4759,7 +4390,7 @@ export function TimelinePane() {
             {tracks.map((_, i) => (
               <div
                 key={`row-line-${i}`}
-                className="pointer-events-none absolute left-0 right-0 z-0 border-b border-border-color/60"
+                className="pointer-events-none absolute left-0 right-0 z-(--z-timeline-lanes) border-b border-border-color/60"
                 style={{ top: RULER_AND_MARGIN_PX + i * ROW_HEIGHT - scrollTop, height: ROW_HEIGHT }}
               />
             ))}
@@ -4813,7 +4444,7 @@ export function TimelinePane() {
             {marquee && (
               <div
                 data-testid={TIMELINE_TEST_IDS.marquee}
-                className="pointer-events-none absolute z-40 rounded-[2px] border border-accent bg-accent/15"
+                className="pointer-events-none absolute z-(--z-timeline-overlay) rounded-xs border border-accent bg-accent/15"
                 style={marqueeOverlayBox(marquee, marqueeViewport)}
               />
             )}
@@ -4855,6 +4486,10 @@ export function TimelinePane() {
                 onEditingIdChange={setEditingMarkerId}
               />
             )}
+            {/* D-432 P2 — the trim brackets, the edge-pinned delta readout, the
+                snap guide and the Blade line (one set per pane, positioned
+                imperatively by `useEditGesture`). */}
+            <EditFeedbackLayer ref={feedbackRef} />
           </div>
             </ResizablePanel>
 
@@ -4899,48 +4534,28 @@ export function TimelinePane() {
             // is otherwise only identifiable by its Tailwind classes.
             data-chroma-drag-ghost=""
             data-testid={TIMELINE_TEST_IDS.dragGhost}
-            className="pointer-events-none relative overflow-hidden rounded shadow-lg ring-2 ring-accent"
-            style={{
-              width: dragOverlayWidth,
-              height: ROW_HEIGHT,
-              background:
-                CLIP_BODY_BACKGROUND[dragOverlayTrack?.kind ?? 'video'],
-            }}
+            // D-432 §5 — the ghost is the clip itself (same anatomy, same
+            // opaque colour) with the selection outline: no shadow, ring or
+            // blur, which re-rasterise every frame of a drag.
+            className={
+              'pointer-events-none relative overflow-hidden rounded-xs outline-2 -outline-offset-2 outline-selection ' +
+              CLIP_KIND_CLASSES[dragOverlayKind].body
+            }
+            style={{ width: dragOverlayWidth, height: ROW_HEIGHT - 2 * CLIP_VERTICAL_INSET_PX }}
           >
-            {dragOverlayTrack?.kind === 'video' && (
-              <>
-                <Filmstrip
-                  sourcePath={dragOverlayClip.source_path}
-                  startSecs={dragOverlayStartSecs}
-                  durationSecs={dragOverlayDurationSecs}
-                  width={dragOverlayWidth}
-                  height={ROW_HEIGHT}
-                />
-                <div className="absolute inset-x-0 bottom-0" style={{ height: ROW_HEIGHT * 0.4 }}>
-                  <Waveform
-                    sourcePath={dragOverlayClip.source_path}
-                    startSecs={dragOverlayStartSecs}
-                    durationSecs={dragOverlayDurationSecs}
-                    width={dragOverlayWidth}
-                    height={ROW_HEIGHT * 0.4}
-                  />
-                </div>
-              </>
-            )}
-            {/* D-128 — same full-height waveform for an audio clip being
-                dragged, so the overlay looks like the clip it came from. */}
-            {dragOverlayTrack?.kind === 'audio' && (
-              <Waveform
-                sourcePath={dragOverlayClip.source_path}
-                startSecs={dragOverlayStartSecs}
-                durationSecs={dragOverlayDurationSecs}
-                width={dragOverlayWidth}
-                height={ROW_HEIGHT}
-              />
-            )}
-            <div className="absolute left-1 top-0.5 z-10 truncate text-[11px] font-medium text-button-text">
-              {dragOverlayClip.name}
-            </div>
+            <ClipBlock
+              clip={{
+                ...dragOverlayClip,
+                // the ghost shows the dragged window of the clip (B-137), so its
+                // source range is that window's, in the clip's own frames
+                source_start: Math.round(dragOverlayStartSecs * (dragOverlayClip.source_fps ?? fps)),
+                duration: Math.round(dragOverlayDurationSecs * (dragOverlayClip.source_fps ?? fps)),
+              }}
+              kind={dragOverlayKind}
+              trackHeight={ROW_HEIGHT}
+              widthPx={dragOverlayWidth}
+              fps={fps}
+            />
           </div>
         ) : (
           dragOverlayLabel && (

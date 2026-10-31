@@ -204,7 +204,7 @@ export const TimelineDragPreview = forwardRef<TimelineDragPreviewHandle, Timelin
             against. */}
         {insert?.kind === 'edge' && (
           <div
-            className="pointer-events-none absolute z-30 bg-accent"
+            className="pointer-events-none absolute z-(--z-timeline-overlay) bg-accent"
             style={{
               left: startLeftPx + (insert.frame / fps) * pxPerSec - scrollLeft,
               top: rulerAndMarginPx + insert.track * rowHeight - scrollTop,
@@ -220,7 +220,7 @@ export const TimelineDragPreview = forwardRef<TimelineDragPreviewHandle, Timelin
             // naming a surface without matching on a Tailwind class string that
             // changes whenever the styling does.
             data-chroma-new-track-preview={insert.index}
-            className="pointer-events-none absolute left-0 right-0 z-30 border-2 border-dashed border-accent/70 bg-accent/10"
+            className="pointer-events-none absolute left-0 right-0 z-(--z-timeline-overlay) border-2 border-dashed border-accent/70 bg-accent/10"
             style={{
               // D-097 — past the last row (`index === tracks.length`) there's
               // no row below to overlap into, so the ghost sits flush under the
@@ -246,7 +246,7 @@ export const TimelineDragPreview = forwardRef<TimelineDragPreviewHandle, Timelin
         {syncGhosts.map((g) => (
           <div
             key={`sync-ghost-${g.id}`}
-            className="pointer-events-none absolute z-30 rounded border-2 border-dashed border-text-secondary/70 bg-text-secondary/10"
+            className="pointer-events-none absolute z-(--z-timeline-overlay) rounded border-2 border-dashed border-text-secondary/70 bg-text-secondary/10"
             style={{
               left: startLeftPx + (g.shiftedStart / fps) * pxPerSec - scrollLeft,
               width: (g.duration / fps) * pxPerSec,
@@ -266,7 +266,7 @@ export const TimelineDragPreview = forwardRef<TimelineDragPreviewHandle, Timelin
             // convention `ClipBody`'s own `data-chroma-*` attributes already
             // use, since a `key` prop is not queryable from the DOM.
             data-chroma-link-drag-ghost={g.id}
-            className="pointer-events-none absolute z-30 rounded border-2 border-dashed border-accent/70 bg-accent/10"
+            className="pointer-events-none absolute z-(--z-timeline-overlay) rounded border-2 border-dashed border-accent/70 bg-accent/10"
             style={{
               left: startLeftPx + (g.shiftedStart / fps) * pxPerSec - scrollLeft,
               width: (g.duration / fps) * pxPerSec,

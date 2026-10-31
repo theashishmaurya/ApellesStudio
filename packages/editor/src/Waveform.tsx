@@ -86,7 +86,16 @@ export interface WaveformProps {
    *  being load-bearing for anyone who does not have a viewport to report. */
   visibleStartPx?: number;
   visibleEndPx?: number;
+  /** D-432 P2 — `'band'` is the timeline clip's waveform band (FCP): rectified,
+   *  drawn bottom-up, nearly opaque, in the colour the PARENT sets (the clip's
+   *  `--color-clip-*-wave-ink`). `'overlay'` (default) is the original centred,
+   *  translucent `text-primary` trace the other callers use. */
+  variant?: 'overlay' | 'band';
 }
+
+/** How opaque each variant draws. */
+const OVERLAY_ALPHA = 0.32;
+const BAND_ALPHA = 0.9;
 
 export function Waveform({
   sourcePath,
@@ -96,6 +105,7 @@ export function Waveform({
   height,
   visibleStartPx,
   visibleEndPx,
+  variant = 'overlay',
 }: WaveformProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [peaks, setPeaks] = useState<Peak[] | null>(null);
@@ -154,7 +164,7 @@ export function Waveform({
     // `--color-text-primary` token through the canvas element's own computed
     // style (it inherits `color` from the DOM), then draw it translucent.
     ctx.fillStyle = getComputedStyle(canvas).color || '#fff';
-    ctx.globalAlpha = 0.32;
+    ctx.globalAlpha = variant === 'band' ? BAND_ALPHA : OVERLAY_ALPHA;
 
     const mid = height / 2;
     const barW = width / peaks.length;
@@ -164,19 +174,27 @@ export function Waveform({
     for (let i = first; i <= last; i++) {
       const [lo, hi] = peaks[i];
       const x = i * barW - spanStart;
+      const w = Math.max(barW - 0.5, 0.5);
+      if (variant === 'band') {
+        // Rectified, bottom-up (FCP): the larger excursion of the bucket.
+        const h = Math.max(Math.max(Math.abs(lo), Math.abs(hi)) * height, 1);
+        ctx.fillRect(x, height - h, w, h);
+        continue;
+      }
       const y1 = mid - hi * mid;
       const y2 = mid - lo * mid;
       const h = Math.max(Math.abs(y2 - y1), 1);
-      ctx.fillRect(x, Math.min(y1, y2), Math.max(barW - 0.5, 0.5), h);
+      ctx.fillRect(x, Math.min(y1, y2), w, h);
     }
-  }, [peaks, width, height, spanStart, spanWidth]);
+  }, [peaks, width, height, spanStart, spanWidth, variant]);
 
   if (!peaks || peaks.length === 0 || spanWidth <= 0) return null;
 
   return (
     <canvas
       ref={canvasRef}
-      className="text-text-primary"
+      // `band` inherits its ink from the clip block that holds it.
+      className={variant === 'band' ? undefined : 'text-text-primary'}
       style={{
         width: spanWidth,
         height,

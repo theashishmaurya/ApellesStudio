@@ -103,12 +103,12 @@ export type TrimZone = 'edge-start' | 'edge-end' | 'body';
  *  default, not an empty slot (see the module doc). The other four are named
  *  for the [`TrimMode`] each one forces, which is what lets
  *  [`resolveTrimMode`] hand the tool straight back as the mode. */
-export type TrimTool = 'select' | 'ripple' | 'roll' | 'slip' | 'slide';
+export type TrimTool = 'select' | 'ripple' | 'roll' | 'slip' | 'slide' | 'blade';
 
 /** The four tools that name an edit outright. Deliberately a subset of
  *  [`TrimMode`] — the compiler holds that correspondence, so a tool can never
  *  be added here without a mode to resolve it to. */
-export type TrimEditTool = Exclude<TrimTool, 'select'>;
+export type TrimEditTool = Exclude<TrimTool, 'select' | 'blade'>;
 
 /** One button in the palette. The GUI renders this list left to right and
  *  reads every string on it; nothing about a tool is written twice. */
@@ -187,6 +187,18 @@ export const TRIM_TOOLS: readonly TrimToolInfo[] = [
     blurb: 'Drag a clip to move it in time; its neighbours are trimmed to absorb the move.',
     zones: WHOLE_CLIP,
   },
+  // D-432 P2 — the Blade (Final Cut) / Razor (Premiere, C) tool: a click on a
+  // clip cuts it there, through every linked half. It is not a trim, so it
+  // owns no trim zone and never reaches `resolveTrimMode`'s modes; the timeline
+  // intercepts its presses before a drag can start (`useEditGesture.ts`). Its
+  // MCP twin is `editor_split_clip(track, clip, at_frame)`.
+  {
+    tool: 'blade',
+    label: 'Blade',
+    shortcutId: 'edit.tool_blade',
+    blurb: 'Click a clip to cut it at that frame (linked audio is cut with it).',
+    zones: [],
+  },
 ];
 
 /** Does `tool` own presses in `zone` — i.e. does choosing it change what a
@@ -251,7 +263,7 @@ export function resolveTrimMode(g: TrimGesture): TrimMode {
     // and the gesture means what it means with no tool selected at all. Note
     // this branch never consults `altKey`/`shiftKey`/`bodyYRatio`/`atEditPoint`
     // — that is the whole point of an explicit tool.
-    if (trimToolOwns(g.tool, g.zone)) return g.tool;
+    if (g.tool !== 'blade' && trimToolOwns(g.tool, g.zone)) return g.tool;
     return g.zone === 'body' ? 'move' : 'trim';
   }
   if (g.zone === 'body') {
@@ -327,92 +339,6 @@ export function trimOpFor(
     case 'slide':
       return { kind: 'slide', track, clip, delta };
   }
-}
-
-/** The whole of what an EDGE-drag gesture decides, as one pure function: given
- *  where the timeline library says the clip's edge ended up and what the press
- *  that started it was holding, which `EditOp` (if any) should commit.
- *
- *  **Why this is a function and not just the body of `onActionResizeEndCb`.**
- *  That handler is called by `@xzdarcy/react-timeline-editor`'s own
- *  interact.js-driven resize, which does not run under jsdom at all — verified
- *  directly while building this, not assumed: a real `PointerEvent` sequence
- *  on the library's own `.timeline-editor-action-right-stretch` handle commits
- *  nothing in that environment, for a plain pre-D-235 trim exactly as much as
- *  for a ripple. So the decision every edge drag turns on is pulled out to
- *  here, where it is directly and exhaustively testable, and the handler is
- *  left as the two lines of adapter that read the library's arguments. Same
- *  pure-core / thin-shell split the whole repo is organised around (D-039);
- *  the untestable remainder is now too small to hide a bug in.
- *
- *  `dir` is the library's own word for which handle was dragged (`'left'` is
- *  the clip's head). `startFrame`/`endFrame` are where that drag left the
- *  clip's two edges, in timeline frames; the delta is derived against the
- *  clip's real current position, so a drag that ended where it began commits
- *  nothing. `press` is the captured modifier state AND the tool that was active
- *  when the drag began (D-261 — captured at press for the same reason the
- *  modifiers are: the mode a gesture commits must be the one the user aimed
- *  at, so a shortcut pressed mid-drag cannot change it). `null` means
- *  "unknown", which resolves to the Selection tool, unarmed — the pre-D-235
- *  behaviour, never a surprise. */
-export function resizeEndOp(args: {
-  tl: Timeline;
-  track: number;
-  clip: number;
-  dir: 'left' | 'right';
-  startFrame: number;
-  endFrame: number;
-  press: { altKey: boolean; shiftKey: boolean; tool?: TrimTool } | null;
-}): EditOp | null {
-  const { tl, track, clip, dir, press } = args;
-  const c = tl.tracks[track]?.clips[clip];
-  if (!c) return null;
-  const edge = dir === 'left' ? 'start' : 'end';
-  const delta = dir === 'left' ? args.startFrame - c.start_frame : args.endFrame - endFrame(c, timelineFps(tl));
-  if (delta === 0) return null;
-  const mode = resolveTrimMode({
-    zone: dir === 'left' ? 'edge-start' : 'edge-end',
-    tool: press?.tool ?? 'select',
-    altKey: press?.altKey ?? false,
-    shiftKey: press?.shiftKey ?? false,
-    atEditPoint: edgeIsEditPoint(tl, track, clip, edge),
-    // An edge drag never consults the vertical band — see `resolveTrimMode`.
-    bodyYRatio: 0,
-  });
-  return trimOpFor(mode, { tl, track, clip, edge, delta });
-}
-
-/** The body-drag counterpart of [`resizeEndOp`]: what a clip-body drag commits
- *  when the palette's tool or the Alt arm makes it something other than a move.
- *  Returns `null` when the gesture resolves to a plain `move`, which is the
- *  caller's signal to fall through to its own (unchanged) move path — the one
- *  gesture whose op this module deliberately does not build, because only the
- *  caller knows which track the drag landed on.
- *
- *  D-261 — the `move` test replaced an `altKey` test here. Under the Selection
- *  tool the two are identical (no Alt ⇒ `move`), so the pre-D-261 behaviour is
- *  bit-for-bit unchanged; what it adds is the Slip/Slide tools reaching this
- *  path with no modifier held at all. */
-export function bodyDragOp(args: {
-  tl: Timeline;
-  track: number;
-  clip: number;
-  delta: number;
-  press: { altKey: boolean; shiftKey: boolean; bodyYRatio: number; tool?: TrimTool } | null;
-}): EditOp | null {
-  const { tl, track, clip, delta, press } = args;
-  if (!press) return null;
-  const mode = resolveTrimMode({
-    zone: 'body',
-    tool: press.tool ?? 'select',
-    altKey: press.altKey,
-    shiftKey: press.shiftKey,
-    atEditPoint: false,
-    bodyYRatio: press.bodyYRatio,
-  });
-  if (mode === 'move') return null;
-  if (delta === 0) return null;
-  return trimOpFor(mode, { tl, track, clip, edge: 'end', delta });
 }
 
 /** The clip whose OUT point is the edit point at the start of `clip` — i.e. the
@@ -496,16 +422,20 @@ export function trimModeHint(mode: TrimMode): string | null {
  * signal for any mode.
  */
 export function trimModeCursor(mode: TrimMode): string {
+  // D-432 §5.1 — `col-resize` for the three edge edits (the cursor of a trim
+  // zone), `ew-resize` for the two that slide a whole clip or its content,
+  // and the default arrow over a body that would just move (no grab hand on
+  // clips, as in Final Cut and Premiere).
   switch (mode) {
     case 'ripple':
     case 'roll':
     case 'trim':
-      return 'ew-resize';
+      return 'col-resize';
     case 'slip':
     case 'slide':
-      return 'grabbing';
+      return 'ew-resize';
     default:
-      return 'grab';
+      return 'default';
   }
 }
 
