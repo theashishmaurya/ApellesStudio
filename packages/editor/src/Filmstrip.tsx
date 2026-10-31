@@ -261,6 +261,11 @@ export function Filmstrip({
           src={t.src}
           alt=""
           draggable={false}
+          // D-437 S7 (plan §2.9 item 6): decode off the main thread, and say the size
+          // so the tile never lays out as 0x0 before its pixels arrive.
+          decoding="async"
+          width={t.w}
+          height={height}
           className="absolute top-0 h-full object-cover"
           style={{ left: t.left, width: t.w, opacity: 0.85 }}
         />
