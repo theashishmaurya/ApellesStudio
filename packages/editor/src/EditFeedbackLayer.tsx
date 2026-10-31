@@ -65,7 +65,7 @@ const BRACKET_WIDTH_PX = 9;
 
 /** Borders only: a 3 px bar on the edge side, 2 px serifs top and bottom. */
 const BRACKET_CLASS =
-  'pointer-events-none absolute left-0 top-0 z-(--z-timeline-edit-feedback) border-0 border-y-2 border-selection ' +
+  'will-change-transform pointer-events-none absolute left-0 top-0 z-(--z-timeline-edit-feedback) border-0 border-y-2 border-selection ' +
   'data-[chroma-bracket-side=in]:border-l-[3px] data-[chroma-bracket-side=out]:border-r-[3px] ' +
   'data-[chroma-limit=true]:border-destructive';
 
@@ -163,13 +163,13 @@ export const EditFeedbackLayer = forwardRef<EditFeedbackHandle>(function EditFee
         ref={snapRef}
         hidden
         data-testid={TIMELINE_TEST_IDS.snapGuide}
-        className="pointer-events-none absolute left-0 top-0 bottom-0 z-(--z-timeline-edit-feedback) w-px bg-selection"
+        className="will-change-transform pointer-events-none absolute left-0 top-0 bottom-0 z-(--z-timeline-edit-feedback) w-px bg-selection"
       />
       <div
         ref={bladeRef}
         hidden
         data-testid={TIMELINE_TEST_IDS.bladeLine}
-        className="pointer-events-none absolute left-0 top-0 z-(--z-timeline-edit-feedback) w-px bg-text-primary"
+        className="will-change-transform pointer-events-none absolute left-0 top-0 z-(--z-timeline-edit-feedback) w-px bg-text-primary"
       />
       <span
         ref={probeRef}
@@ -184,7 +184,7 @@ export const EditFeedbackLayer = forwardRef<EditFeedbackHandle>(function EditFee
         role="status"
         data-testid={TIMELINE_TEST_IDS.editReadout}
         className={
-          'pointer-events-none absolute left-0 top-0 z-(--z-timeline-edit-feedback) flex items-center whitespace-nowrap ' +
+          'will-change-transform pointer-events-none absolute left-0 top-0 z-(--z-timeline-edit-feedback) flex items-center whitespace-nowrap ' +
           'rounded-sm bg-surface-raised px-1.5 font-mono text-2xs tabular-nums text-text-primary shadow-popover ' +
           'data-[chroma-limit=true]:text-destructive'
         }

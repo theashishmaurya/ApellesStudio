@@ -32,6 +32,7 @@
  */
 
 /// <reference path="./perfMarks.d.ts" />
+import { afterPaint } from './afterPaint';
 import { EDIT_PERF as EDIT_PERF_NAMES, EDIT_PERF_PREFIX } from './editPerfNames';
 
 export { EDIT_PERF_PREFIX };
@@ -79,13 +80,6 @@ export function perfMeasureAtFrame(name: string, startMark: string): void {
  * update has finished its style, layout and paint work.
  */
 export function perfMeasureAfterPaint(name: string, startMark: string): void {
-  if (!enabled() || typeof requestAnimationFrame !== 'function' || typeof MessageChannel === 'undefined') return;
-  requestAnimationFrame(() => {
-    const channel = new MessageChannel();
-    channel.port1.onmessage = () => {
-      channel.port1.close();
-      perfMeasure(name, startMark);
-    };
-    channel.port2.postMessage(null);
-  });
+  if (!enabled()) return;
+  afterPaint(() => perfMeasure(name, startMark));
 }

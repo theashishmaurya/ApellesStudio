@@ -394,6 +394,19 @@ describe('render counts (the memoised design)', () => {
   });
 });
 
+describe('paint containment (D-437 S7, plan §2.9 items 1 and 2)', () => {
+  it('a lane is contain: strict; a clip slot is contain: layout size style (never paint); the body keeps layout paint style', () => {
+    setup(baseProps(makeTracks()));
+    const row = document.body.querySelector<HTMLElement>(`[data-testid="${ID.trackRow}"]`)!;
+    expect(row.style.contain).toBe('strict');
+    const s = slot('c0');
+    // `paint` on the slot would clip a head trim's translated body (§2.9 item 2).
+    expect(s.style.contain).toBe('layout size style');
+    const body = s.querySelector<HTMLElement>(`[data-testid="${ID.clip}"]`)!;
+    expect(body.style.contain).toBe('layout paint style');
+  });
+});
+
 describe('scroller wiring', () => {
   it('forwards scrollerRef and onScroll', () => {
     const ref = createRef<HTMLDivElement>();

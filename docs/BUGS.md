@@ -33,11 +33,12 @@ status: **fixed** (2026-11-01) · severity: minor (harness) · area: `packages/u
 
 ## B-353 — a still-image clip on the timeline shows an empty band instead of its picture
 
-status: open (queued after D-437) · severity: minor · area: `packages/editor` clip block filmstrip (`ClipBlock` / `ClipBody`, the filmstrip tile source)
+status: **fixed 2026-11-01** (D-437 S7; not re-seen live) · severity: minor · area: `packages/editor` clip block filmstrip (`ClipBlock` / `Filmstrip`)
 
 - **Seen:** 2026-11-01, live after D-432 P5, on "Voiceover v2": the still "R08 Artificial Analysis" (a PNG) on V2 shows only its name strip over a flat colour band. Video clips show their filmstrip. Screenshot: `scratch/ui-redesign-p5/live-after-p5.png`.
 - **Expected:** a still repeats its own image across the filmstrip, as FCP does. Use the cached thumbnail (D-436's `MediaThumbnail` data path) rather than decoding per tile.
-- **Fix with:** D-437's lanes (S3a/S4 own the clip rendering), so it lands once instead of twice.
+- **Cause:** `Filmstrip` asked `chroma_clip_thumbnails` for frames of the source; a PNG has none to step through, so the answer was empty and the band stayed flat.
+- **Fix (done, with D-437 S7):** `ClipBlock` recognises a still (`isStillSource`), reads its cached thumbnail from the media pool item (`useMediaPoolStore`, the same `thumb` the library tile shows, D-436), and `Filmstrip` repeats that one data URL across the visible slice at 16:9 tiles (`stillTileRange`, capped at 512). No `chroma_clip_thumbnails` request and no decode per tile; a still also no longer asks for a waveform. Until the pool has a thumbnail the band is flat as before. Tests: `Filmstrip.dom.test.tsx` (range maths, tiles = thumbnail, no backend call, `ClipBlock` wiring).
 
 ## B-354 — D-432 P5 leftovers: the toolbar tools are not regrouped, the §4.13 empty states are not designed, and Cmd+4 / the volume popover are missing
 

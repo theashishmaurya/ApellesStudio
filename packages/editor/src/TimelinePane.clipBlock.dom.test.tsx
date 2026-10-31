@@ -347,6 +347,55 @@ describe('edit tools: live motion on every move, exact result on release (B-344,
     expect(body('b').style.transform).toBe('');
   });
 
+  describe('will-change lifecycle (D-437 S7, plan §2.9 items 3-4)', () => {
+    const willChange = (id: string) => ({
+      body: body(id).style.willChange,
+      media: body(id).querySelector<HTMLElement>('[data-chroma-clip-media]')?.style.willChange,
+    });
+
+    it('promotes the target at the press, moved neighbours on their first frame, and never at rest', async () => {
+      expect(willChange('b')).toEqual({ body: '', media: '' });
+      await pickTool('ripple');
+      firePointerEvent(zone('b', 'end'), 'pointerdown', { x: 390, y: ROW_Y });
+      await nextFrame();
+      expect(willChange('b').body).toBe('transform');
+      expect(willChange('b').media).toBe('transform');
+      expect(willChange('c').body).toBe('');
+      firePointerEvent(window, 'pointermove', { x: 330, y: ROW_Y });
+      expect(willChange('c').body).toBe('transform');
+      // a clip that does not move is never promoted
+      expect(willChange('a').body).toBe('');
+      firePointerEvent(window, 'pointerup', { x: 330, y: ROW_Y });
+      await nextFrame();
+    });
+
+    it('is removed after the commit has painted, not at the commit', async () => {
+      await pickTool('ripple');
+      firePointerEvent(zone('b', 'end'), 'pointerdown', { x: 390, y: ROW_Y });
+      firePointerEvent(window, 'pointermove', { x: 330, y: ROW_Y });
+      firePointerEvent(window, 'pointerup', { x: 330, y: ROW_Y });
+      // The commit's render has landed (the preview transform is gone) but the frame
+      // has not painted yet: the layers are still there.
+      expect(body('c').style.transform).toBe('');
+      expect(willChange('b').body).toBe('transform');
+      expect(willChange('c').body).toBe('transform');
+      await waitFrames(3);
+      expect(willChange('b')).toEqual({ body: '', media: '' });
+      expect(willChange('c')).toEqual({ body: '', media: '' });
+    });
+
+    it('is removed when the edit is cancelled with Esc', async () => {
+      await pickTool('ripple');
+      firePointerEvent(zone('b', 'end'), 'pointerdown', { x: 390, y: ROW_Y });
+      firePointerEvent(window, 'pointermove', { x: 330, y: ROW_Y });
+      expect(willChange('c').body).toBe('transform');
+      actSync(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+      await new Promise((r) => setTimeout(r, 200));
+      expect(willChange('b')).toEqual({ body: '', media: '' });
+      expect(willChange('c')).toEqual({ body: '', media: '' });
+    });
+  });
+
   it('renders the pane at most twice per gesture, and never while the pointer moves (B-347)', async () => {
     // By key, not a toolbar click: a clicked button's tooltip closing on the
     // next press is a commit of its own and would be counted here.
