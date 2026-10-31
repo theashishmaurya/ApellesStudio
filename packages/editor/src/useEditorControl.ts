@@ -5504,6 +5504,11 @@ export function useEditorControl(): void {
         const marker = newMarker(frame, a?.color, a?.name, a?.note, a?.durationFrames);
         if ('error' in marker) return marker;
         useEditorTimelineStore.getState().applyOp({ kind: 'add_marker', marker });
+        // B-339 — `openEditor` mirrors the toolbar button / Option+M: also open
+        // the marker's editor popover so the person can title and colour it.
+        // Off by default (like plain M) so an agent marking in bulk never
+        // leaves a popover up.
+        if (a?.openEditor === true) useEditorTimelineStore.getState().setEditingMarkerId(marker.id);
         return { ok: true, marker: markerDto(marker) };
       },
 

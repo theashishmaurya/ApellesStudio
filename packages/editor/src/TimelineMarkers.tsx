@@ -129,6 +129,11 @@ export interface MarkerStripProps {
   ) => void;
   /** Commit a `remove_marker`. */
   onRemove: (id: string) => void;
+  /** B-339 — the marker whose editor is open (controlled: the Add Marker
+   *  button, the M shortcuts and `editor_add_marker` open it right after
+   *  creating the marker, which a strip-local state could not be told). */
+  editingId: string | null;
+  onEditingIdChange: (id: string | null) => void;
 }
 
 /**
@@ -159,9 +164,10 @@ export function MarkerStrip({
   onJump,
   onPatch,
   onRemove,
+  editingId,
+  onEditingIdChange: setEditingId,
 }: MarkerStripProps) {
   const markers = useMemo(() => markersOf(timeline), [timeline]);
-  const [editingId, setEditingId] = useState<string | null>(null);
 
   // A marker deleted (by the popover's own Delete, by an undo, or by an MCP
   // call) while its editor is open must close it rather than leave a popover
@@ -431,6 +437,9 @@ function MarkerEditor({ marker, fps, onPatch, onRemove, onDone }: MarkerEditorPr
         <Input
           className="h-7"
           data-chroma-marker-name
+          // B-339 — the editor opens to be typed into (a heading is the first
+          // thing a fresh marker needs).
+          autoFocus
           placeholder="e.g. cut here"
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -581,6 +590,7 @@ export function MarkerListMenu({ timeline, fps, onJump, onRemove }: MarkerListMe
 }
 
 export interface AddMarkerButtonProps {
+  /** Called on click; the pane adds the marker AND opens its editor (B-339). */
   onAdd: () => void;
   /** Shown in the tooltip so the `M` shortcut is discoverable from the button. */
   shortcut: string;
@@ -594,7 +604,7 @@ export function AddMarkerButton({ onAdd, shortcut }: AddMarkerButtonProps) {
     <Tooltip>
       <TooltipTrigger
         render={
-          <Button variant="ghost" size="icon-sm" onClick={onAdd} aria-label="Add marker">
+          <Button variant="ghost" size="icon-sm" onClick={() => onAdd()} aria-label="Add marker">
             <FlagIcon />
           </Button>
         }
@@ -602,7 +612,7 @@ export function AddMarkerButton({ onAdd, shortcut }: AddMarkerButtonProps) {
       <TooltipContent>
         <span className="font-medium">Marker ({shortcut})</span>
         <span className="ml-1.5 text-text-secondary">
-          Add a marker at the playhead — click a flag on the ruler to jump to it, double-click to rename,
+          Add a marker at the playhead and edit it (M adds; Alt+M adds and edits) — click a flag on the ruler to jump to it, double-click to rename,
           recolour or delete it
         </span>
       </TooltipContent>

@@ -133,6 +133,7 @@ afterEach(() => {
       status: 'idle',
       selection: [],
       selectedGap: null,
+      editingMarkerId: null,
     }),
   );
   expect(errors, `console.error fired during the test:\n${errors.map((e) => e.join(' ')).join('\n')}`).toEqual([]);
@@ -410,5 +411,113 @@ describe('timeline markers — real DOM (D-222)', () => {
     // must stop the event, or deleting would also scrub the user to frame 72.
     expect(useEditorTimelineStore.getState().playhead).toBe(0);
     expect(markers().map((m) => m.id)).toEqual(['earlier']);
+  });
+
+  // ---- B-339: adding a marker opens its editor --------------------------- //
+
+  const pressKey = (init: KeyboardEventInit) =>
+    actSync(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM', key: 'm', bubbles: true, ...init }));
+    });
+
+  it('14. B-339 — the toolbar button adds the marker AND opens its editor, name field focused', async () => {
+    await mountWith(buildFixture([]));
+    actSync(() => useEditorTimelineStore.getState().setPlayhead(48));
+
+    fireMouse(document.querySelector<HTMLElement>('[aria-label="Add marker"]')!, 'click');
+    await waitFrames(3);
+
+    expect(markers()).toHaveLength(1);
+    expect(useEditorTimelineStore.getState().editingMarkerId).toBe(markers()[0].id);
+    const popover = editorPopover();
+    expect(popover, 'the editor must open on the freshly created marker').not.toBeNull();
+    const name = popover!.querySelector<HTMLElement>('[data-chroma-marker-name]');
+    expect(name).not.toBeNull();
+    expect(document.activeElement).toBe(name);
+  });
+
+  it('15. B-339 — plain M adds a marker WITHOUT opening the editor', async () => {
+    useKeymapStore.setState({ overrides: {}, activeScope: 'edit', osPlatform: 'macos' });
+    await mountWith(buildFixture([]));
+    actSync(() => useEditorTimelineStore.getState().setPlayhead(12));
+
+    pressKey({});
+    await waitFrames(2);
+
+    expect(markers().map((m) => m.frame)).toEqual([12]);
+    expect(editorPopover()).toBeNull();
+    expect(useEditorTimelineStore.getState().editingMarkerId).toBeNull();
+  });
+
+  it('16. B-339 — M on a frame that already has a marker opens it instead of adding a duplicate', async () => {
+    useKeymapStore.setState({ overrides: {}, activeScope: 'edit', osPlatform: 'macos' });
+    await mountWith(buildFixture());
+    actSync(() => useEditorTimelineStore.getState().setPlayhead(24));
+
+    pressKey({});
+    await waitFrames(3);
+
+    expect(markers()).toHaveLength(2);
+    expect(useEditorTimelineStore.getState().editingMarkerId).toBe('earlier');
+    expect(editorPopover()).not.toBeNull();
+  });
+
+  it('17. B-339 — Alt+M adds a marker and opens its editor', async () => {
+    useKeymapStore.setState({ overrides: {}, activeScope: 'edit', osPlatform: 'macos' });
+    await mountWith(buildFixture([]));
+    actSync(() => useEditorTimelineStore.getState().setPlayhead(30));
+
+    pressKey({ altKey: true });
+    await waitFrames(3);
+
+    expect(markers().map((m) => m.frame)).toEqual([30]);
+    expect(useEditorTimelineStore.getState().editingMarkerId).toBe(markers()[0].id);
+    expect(editorPopover()).not.toBeNull();
+  });
+
+  it('18. B-339 — Done closes the editor', async () => {
+    await mountWith(buildFixture([]));
+    fireMouse(document.querySelector<HTMLElement>('[aria-label="Add marker"]')!, 'click');
+    await waitFrames(3);
+
+    const done = Array.from(editorPopover()!.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'Done');
+    fireMouse(done!, 'click');
+    await waitFrames(3);
+
+    expect(editorPopover()).toBeNull();
+    expect(useEditorTimelineStore.getState().editingMarkerId).toBeNull();
+  });
+
+  it('19. B-339 — Escape closes the editor', async () => {
+    await mountWith(buildFixture([]));
+    fireMouse(document.querySelector<HTMLElement>('[aria-label="Add marker"]')!, 'click');
+    await waitFrames(3);
+    expect(editorPopover()).not.toBeNull();
+
+    actSync(() => {
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }),
+      );
+    });
+    await waitFrames(3);
+
+    expect(editorPopover()).toBeNull();
+    expect(useEditorTimelineStore.getState().editingMarkerId).toBeNull();
+  });
+
+  it('20. B-339 — removing the marker from its editor closes it', async () => {
+    await mountWith(buildFixture([]));
+    fireMouse(document.querySelector<HTMLElement>('[aria-label="Add marker"]')!, 'click');
+    await waitFrames(3);
+
+    const del = Array.from(editorPopover()!.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Remove Marker'),
+    );
+    fireMouse(del!, 'click');
+    await waitFrames(3);
+
+    expect(markers()).toHaveLength(0);
+    expect(editorPopover()).toBeNull();
+    expect(useEditorTimelineStore.getState().editingMarkerId).toBeNull();
   });
 });

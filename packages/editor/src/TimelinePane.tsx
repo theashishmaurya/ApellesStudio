@@ -438,6 +438,7 @@ import {
   linkedClipIds,
   linkedDragGhosts,
   linkedClipsFromDraggedMedia,
+  markersOf,
   newMarker,
   resolveClipLanding,
   sourceFramesToTimeline,
@@ -1210,6 +1211,8 @@ export function TimelinePane() {
   // reads at the split/marker/zoom-anchor call sites, none of which need a
   // re-render to do their job, only the value at the moment they run.
   const setPlayhead = useEditorTimelineStore((s) => s.setPlayhead);
+  const editingMarkerId = useEditorTimelineStore((s) => s.editingMarkerId);
+  const setEditingMarkerId = useEditorTimelineStore((s) => s.setEditingMarkerId);
   // B-326 — a click-to-seek keeps a running transport running (re-baselined).
   const seekPlayhead = useEditorTimelineStore((s) => s.seekPlayhead);
   // D-232 — grabbing the playhead during playback pauses it, the way every
@@ -3120,13 +3123,25 @@ export function TimelinePane() {
    *  to select first and no track lock to respect (see `Timeline.markers`).
    *  `newMarker` owns id generation and the default colour, so this button and
    *  `editor_add_marker` build an identical marker. */
-  const doAddMarker = () => {
-    const marker = newMarker(useEditorTimelineStore.getState().playhead);
+  const doAddMarker = (openEditor: boolean) => {
+    const store = useEditorTimelineStore.getState();
+    // B-339 — Final Cut ("M on an existing marker opens it") and Resolve ("M
+    // again on the same frame opens the marker dialog"): a marker already at
+    // the playhead is edited, never duplicated. Option/Alt+M and the toolbar
+    // button also open the editor for a NEW marker; plain M does not, so
+    // marking during playback is not interrupted.
+    const existing = markersOf(store.timeline).find((m) => m.frame === store.playhead);
+    if (existing) {
+      store.setEditingMarkerId(existing.id);
+      return;
+    }
+    const marker = newMarker(store.playhead);
     // `newMarker` only rejects a caller-supplied colour or a non-finite frame;
     // this call site passes neither, so the guard is a type narrow, not a real
     // branch.
     if ('error' in marker) return;
     applyOp({ kind: 'add_marker', marker });
+    if (openEditor) store.setEditingMarkerId(marker.id);
   };
 
   /** D-128 — break the selected clip's A/V link so its halves can be edited
@@ -3226,7 +3241,8 @@ export function TimelinePane() {
   //
   // `edit.split` is new: the Split button has been in this toolbar since D-093
   // with no key bound to it anywhere.
-  useShortcut('edit.add_marker', doAddMarker);
+  useShortcut('edit.add_marker', () => doAddMarker(false));
+  useShortcut('edit.add_marker_edit', () => doAddMarker(true));
   useShortcut('edit.split', () => {
     if (selection.length > 0) doSplit();
   });
@@ -4107,7 +4123,7 @@ export function TimelinePane() {
               so unlike the library items it genuinely belongs in this toolbar;
               the list appears beside the add button only once there is
               something in it. */}
-          <AddMarkerButton onAdd={doAddMarker} shortcut="M" />
+          <AddMarkerButton onAdd={() => doAddMarker(true)} shortcut="M" />
           <MarkerListMenu
             timeline={timeline}
             fps={fps}
@@ -4800,6 +4816,8 @@ export function TimelinePane() {
                 onJump={setPlayhead}
                 onPatch={(id, patch) => applyOp({ kind: 'set_marker', id, patch })}
                 onRemove={(id) => applyOp({ kind: 'remove_marker', id })}
+                editingId={editingMarkerId}
+                onEditingIdChange={setEditingMarkerId}
               />
             )}
           </div>
