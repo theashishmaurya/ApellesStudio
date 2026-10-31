@@ -112,10 +112,10 @@ const MEDIA: DraggedMedia = {
 
 /** The pane's own edit area. jsdom lays nothing out, so the one rect every
  *  drop coordinate is measured against has to be supplied — everything else in
- *  this file is then real. `data-bench-id` is the pane's own stable hook, not
+ *  this file is then real. `data-testid` is the pane's own stable hook, not
  *  a class string that moves when the styling does. */
 function stubEditAreaRect(): HTMLElement {
-  const el = document.querySelector<HTMLElement>('[data-bench-id="timeline-edit-area"]');
+  const el = document.querySelector<HTMLElement>('[data-testid="timeline-edit-area"]');
   if (!el) throw new Error('the timeline edit area is not mounted');
   el.getBoundingClientRect = () =>
     ({

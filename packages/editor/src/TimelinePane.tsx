@@ -388,6 +388,7 @@ import { Waveform } from './Waveform';
 import { beginScrub, endScrub, updateScrub } from './scrubAudio';
 import { Filmstrip } from './Filmstrip';
 import { ClipFadeOverlay } from './ClipFadeOverlay';
+import { TIMELINE_TEST_IDS, TIMELINE_VIEW_ATTRS } from './timelineTestIds';
 import {
   niceTickIntervalSeconds,
   formatTimecode,
@@ -914,6 +915,8 @@ function SortableTrackHeader({
     <div
       ref={setNodeRef}
       style={style}
+      data-testid={TIMELINE_TEST_IDS.trackHeader}
+      data-chroma-track={index}
       className={
         'flex flex-col justify-center gap-0.5 px-1.5 border-b border-border-color/60 text-text-secondary ' +
         (locked ? 'opacity-60 ' : '')
@@ -944,6 +947,7 @@ function SortableTrackHeader({
           variant="ghost"
           size="icon-xs"
           onClick={onToggleLock}
+          data-testid={TIMELINE_TEST_IDS.trackLock}
           aria-label={locked ? 'Unlock track' : 'Lock track'}
           title={locked ? 'Unlock track' : 'Lock track'}
         >
@@ -957,6 +961,7 @@ function SortableTrackHeader({
           variant="ghost"
           size="icon-xs"
           onClick={onToggleSyncLocked}
+          data-testid={TIMELINE_TEST_IDS.trackSyncLock}
           aria-label={syncLocked ? 'Disable sync lock' : 'Enable sync lock'}
           title={
             syncLocked
@@ -971,6 +976,7 @@ function SortableTrackHeader({
             variant="ghost"
             size="icon-xs"
             onClick={onToggleHidden}
+            data-testid={TIMELINE_TEST_IDS.trackHide}
             aria-label={hidden ? 'Show track' : 'Hide track'}
             title={hidden ? 'Show track (excluded from compositing)' : 'Hide track'}
           >
@@ -982,6 +988,7 @@ function SortableTrackHeader({
             variant="ghost"
             size="icon-xs"
             onClick={onToggleMute}
+            data-testid={TIMELINE_TEST_IDS.trackMute}
             aria-label={muted ? 'Unmute track' : 'Mute track'}
             title={muted ? 'Unmute track' : 'Mute track'}
           >
@@ -1011,6 +1018,7 @@ function SortableTrackHeader({
             size="icon-xs"
             className={beatGrid ? 'text-accent' : undefined}
             onClick={onToggleBeats}
+            data-testid={TIMELINE_TEST_IDS.trackBeats}
             aria-pressed={beatGrid}
             aria-label={beatGrid ? 'Hide beats' : 'Show beats'}
             title={beatGrid ? "Hide this track's beat grid" : "Show this track's beats on the timeline (and snap to them)"}
@@ -1023,6 +1031,7 @@ function SortableTrackHeader({
           size="icon-xs"
           className="ml-auto text-red-400 hover:text-red-400"
           onClick={onRemove}
+          data-testid={TIMELINE_TEST_IDS.trackRemove}
           aria-label="Remove track"
           title="Remove track"
         >
@@ -1090,6 +1099,7 @@ function ClipBody({
       // see that module's doc, and D-094–D-100 for why this file does not
       // settle two drag systems on one element any other way.
       data-chroma-clip-drag=""
+      data-testid={TIMELINE_TEST_IDS.clip}
       // D-235 — which clip this body belongs to, readable from the DOM. The
       // smart trim tool's hover affordance has to answer "which mode would a
       // press right here commit?" from a raw `pointermove` whose target may be
@@ -1182,6 +1192,11 @@ function TrackDropZone({ track, top, height }: { track: number; top: number; hei
       // `TimelinePane.clipDrag.dom.test.tsx`) — and it cannot do that without
       // being able to find it.
       data-chroma-track-drop-zone={track}
+      // D-434 — the lane of track N as a geometry target for the UI harness
+      // ("click empty space on track 1"). Pointer-transparent, so a press
+      // aimed at it lands on whatever is really there, which is the point.
+      data-testid={TIMELINE_TEST_IDS.trackLane}
+      data-chroma-track={track}
       className="pointer-events-none absolute left-0 right-0 z-20"
       style={{ top, height }}
     />
@@ -4083,6 +4098,7 @@ export function TimelinePane() {
                   size="icon-sm"
                   onClick={doSplit}
                   disabled={selection.length === 0}
+                  data-testid={TIMELINE_TEST_IDS.split}
                   aria-label="Split at playhead"
                 >
                   <ScissorsIcon />
@@ -4172,6 +4188,7 @@ export function TimelinePane() {
                   size="icon-sm"
                   onClick={doRemove}
                   disabled={selection.length === 0}
+                  data-testid={TIMELINE_TEST_IDS.delete}
                   aria-label="Remove clip"
                 >
                   <TrashIcon />
@@ -4195,7 +4212,7 @@ export function TimelinePane() {
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <Button variant="ghost" size="icon-sm" onClick={doUnlink} aria-label="Unlink audio and video">
+                  <Button variant="ghost" size="icon-sm" onClick={doUnlink} data-testid={TIMELINE_TEST_IDS.unlink} aria-label="Unlink audio and video">
                     <LinkBreakIcon />
                   </Button>
                 }
@@ -4227,6 +4244,7 @@ export function TimelinePane() {
                     size="icon-sm"
                     onClick={doLink}
                     disabled={!linkCheck.result.ok}
+                    data-testid={TIMELINE_TEST_IDS.link}
                     aria-label="Link audio and video"
                   >
                     <LinkIcon />
@@ -4268,6 +4286,7 @@ export function TimelinePane() {
                     size="icon-sm"
                     onClick={doRemoveGap}
                     disabled={!gapCloseCheck.ok}
+                    data-testid={TIMELINE_TEST_IDS.removeGap}
                     aria-label="Close gap"
                   >
                     <ArrowsInLineHorizontalIcon />
@@ -4398,18 +4417,23 @@ export function TimelinePane() {
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <Button variant="ghost" size="sm" onClick={zoomOut} aria-label="Zoom out">
+                  <Button variant="ghost" size="sm" onClick={zoomOut} data-testid={TIMELINE_TEST_IDS.zoomOut} aria-label="Zoom out">
                     <MagnifyingGlassMinusIcon />
                   </Button>
                 }
               />
               <TooltipContent>Zoom out (or scroll down over the timeline)</TooltipContent>
             </Tooltip>
-            <span className="w-10 text-center text-[11px] tabular-nums text-text-secondary/70">{zoomPct}%</span>
+            <span
+              data-testid={TIMELINE_TEST_IDS.zoomReadout}
+              className="w-10 text-center text-[11px] tabular-nums text-text-secondary/70"
+            >
+              {zoomPct}%
+            </span>
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <Button variant="ghost" size="sm" onClick={zoomIn} aria-label="Zoom in">
+                  <Button variant="ghost" size="sm" onClick={zoomIn} data-testid={TIMELINE_TEST_IDS.zoomIn} aria-label="Zoom in">
                     <MagnifyingGlassPlusIcon />
                   </Button>
                 }
@@ -4496,7 +4520,7 @@ export function TimelinePane() {
           </div>
         </ResizablePanel>
 
-        <ResizableHandle />
+        <ResizableHandle data-testid={TIMELINE_TEST_IDS.headerResize} />
 
         <ResizablePanel className="relative min-h-0 overflow-hidden">
           {/* D-233 — the edit area and the curve lane are a real vertical
@@ -4515,7 +4539,20 @@ export function TimelinePane() {
             <ResizablePanel className="relative min-h-0 overflow-hidden">
           <div
             ref={attachEditArea}
-            data-bench-id="timeline-edit-area"
+            data-testid={TIMELINE_TEST_IDS.editArea}
+            // D-434 — the view state that lives in this component's own React
+            // state rather than a store (zoom, scroll), readable by a UI test
+            // without reaching into the component. Plain attributes React
+            // already diffs: no extra render, no subscriber.
+            {...{
+              [TIMELINE_VIEW_ATTRS.pxPerSec]: pxPerSec,
+              [TIMELINE_VIEW_ATTRS.scrollLeft]: Math.round(scrollLeft),
+              [TIMELINE_VIEW_ATTRS.scrollTop]: Math.round(scrollTop),
+              [TIMELINE_VIEW_ATTRS.fps]: fps,
+              [TIMELINE_VIEW_ATTRS.startLeft]: START_LEFT_PX,
+              [TIMELINE_VIEW_ATTRS.rowHeight]: ROW_HEIGHT,
+              [TIMELINE_VIEW_ATTRS.rowsTop]: RULER_AND_MARGIN_PX,
+            }}
             className="relative h-full overflow-hidden"
             // D-250 — the cursor half of Resolve's own context-sensitive trim
             // affordance ("You'll see the cursor change to different types of
@@ -4683,6 +4720,7 @@ export function TimelinePane() {
                     // corners — reads as a real selection state rather than
                     // scaffolding, matching this kit's other glass surfaces
                     // (e.g. the transport bar's own popovers).
+                    data-testid={TIMELINE_TEST_IDS.gapSelection}
                     className="pointer-events-none absolute z-20 overflow-hidden rounded-md border border-accent/50 bg-gradient-to-b from-accent/25 to-accent/10 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] backdrop-blur-sm"
                     style={{
                       left: START_LEFT_PX + (gap.gapStart / fps) * pxPerSec - scrollLeft,
@@ -4777,7 +4815,7 @@ export function TimelinePane() {
                 the content it actually encloses rather than sliding off it. */}
             {marquee && (
               <div
-                data-bench-id="timeline-marquee"
+                data-testid={TIMELINE_TEST_IDS.marquee}
                 className="pointer-events-none absolute z-40 rounded-[2px] border border-accent bg-accent/15"
                 style={marqueeOverlayBox(marquee, marqueeViewport)}
               />
@@ -4825,7 +4863,7 @@ export function TimelinePane() {
 
             {curveEditorClip && (
               <>
-                <ResizableHandle />
+                <ResizableHandle data-testid={TIMELINE_TEST_IDS.curveResize} />
                 <ResizablePanel
                   defaultSize={CURVE_LANE_HEIGHT}
                   minSize={CURVE_LANE_MIN_HEIGHT}
@@ -4863,6 +4901,7 @@ export function TimelinePane() {
             // and read back where it really is mid-drag; a `DragOverlay` child
             // is otherwise only identifiable by its Tailwind classes.
             data-chroma-drag-ghost=""
+            data-testid={TIMELINE_TEST_IDS.dragGhost}
             className="pointer-events-none relative overflow-hidden rounded shadow-lg ring-2 ring-accent"
             style={{
               width: dragOverlayWidth,

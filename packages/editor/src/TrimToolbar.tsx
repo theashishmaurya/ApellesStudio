@@ -53,6 +53,7 @@ import { Button, Tooltip, TooltipContent, TooltipTrigger } from '@apelles/ui';
 import { effectiveCombo, formatCombo, shortcutById, useKeymapStore } from '@apelles/keymap';
 
 import { TRIM_TOOLS, type TrimTool } from './trimMode';
+import { TIMELINE_TEST_IDS } from './timelineTestIds';
 
 /**
  * The glyph for each tool, chosen against the two references' REAL icons —
@@ -132,6 +133,7 @@ export function TrimToolbar({ active, onSelect }: TrimToolbarProps) {
                   aria-pressed={isActive}
                   aria-label={shortcut ? `${label} tool (${shortcut})` : `${label} tool`}
                   data-chroma-trim-tool={tool}
+                  data-testid={TIMELINE_TEST_IDS.trimTool}
                   onClick={() => onSelect(tool)}
                 >
                   <Icon />

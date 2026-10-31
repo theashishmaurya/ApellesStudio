@@ -137,7 +137,7 @@ function fixture(pairs: number): Timeline {
 }
 
 function stubEditAreaRect(): void {
-  const el = document.querySelector<HTMLElement>('[data-bench-id="timeline-edit-area"]');
+  const el = document.querySelector<HTMLElement>('[data-testid="timeline-edit-area"]');
   if (!el) return;
   el.getBoundingClientRect = () =>
     ({

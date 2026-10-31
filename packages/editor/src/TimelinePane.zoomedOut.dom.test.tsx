@@ -61,7 +61,7 @@ function fixture(): Timeline {
 }
 
 function stubEditAreaRect(): HTMLElement {
-  const el = document.querySelector<HTMLElement>('[data-bench-id="timeline-edit-area"]');
+  const el = document.querySelector<HTMLElement>('[data-testid="timeline-edit-area"]');
   if (!el) throw new Error('the timeline edit area is not mounted');
   el.getBoundingClientRect = () =>
     ({ ...AREA, x: 0, y: 0, right: AREA.width, bottom: AREA.height, toJSON: () => ({}) }) as DOMRect;

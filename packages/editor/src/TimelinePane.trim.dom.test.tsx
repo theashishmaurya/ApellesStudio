@@ -377,7 +377,7 @@ describe('mode readout — what the editor sees before pressing (D-235)', () => 
     expect(hintText()).toBe('Slip');
 
     // Somewhere on the edit area that is not a clip at all.
-    const area = mounted!.container.querySelector('[data-bench-id="timeline-edit-area"]') as HTMLElement;
+    const area = mounted!.container.querySelector('[data-testid="timeline-edit-area"]') as HTMLElement;
     firePointerEvent(area, 'pointermove', { x: 900, y: 300 }, { altKey: true });
     await nextFrame();
     expect(hintText()).toBe('Trim: hover a clip');
@@ -401,7 +401,7 @@ function badge(): HTMLElement | null {
 }
 
 function editArea(): HTMLElement {
-  return mounted!.container.querySelector('[data-bench-id="timeline-edit-area"]') as HTMLElement;
+  return mounted!.container.querySelector('[data-testid="timeline-edit-area"]') as HTMLElement;
 }
 
 describe('pointer-adjacent mode badge (D-250)', () => {
@@ -567,12 +567,12 @@ describe('B-123 — the smart trim tool survives a late-mounted edit area', () =
     mounted?.unmount();
     mounted = mount(React.createElement(TimelinePane), { strictMode: true });
     await waitFrames(2);
-    expect(mounted.container.querySelector('[data-bench-id="timeline-edit-area"]')).toBeNull();
+    expect(mounted.container.querySelector('[data-testid="timeline-edit-area"]')).toBeNull();
 
     // Now the clips arrive, exactly as the first drag from Sources delivers them.
     actSync(() => useEditorTimelineStore.setState({ timeline: buildFixture() }));
     await waitFrames(2);
-    expect(mounted.container.querySelector('[data-bench-id="timeline-edit-area"]')).not.toBeNull();
+    expect(mounted.container.querySelector('[data-testid="timeline-edit-area"]')).not.toBeNull();
 
     const before = clipById('a').source_start;
     await setAlt(true);

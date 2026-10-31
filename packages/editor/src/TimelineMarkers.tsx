@@ -57,6 +57,7 @@ import {
 } from '@apelles/ui';
 
 import { fmtTimecode, parseTimecode } from '@apelles/player';
+import { TIMELINE_TEST_IDS } from './timelineTestIds';
 
 import {
   MARKER_COLORS,
@@ -221,6 +222,7 @@ export function MarkerStrip({
           key={m.id}
           type="button"
           data-chroma-marker={m.id}
+          data-testid={TIMELINE_TEST_IDS.marker}
           // D-328 — a ranged marker says so in both labels: its span is the
           // thing a user most needs confirmed without opening the popover
           // (Premiere's own ruler markers expose their data on hover for the
@@ -541,7 +543,7 @@ export function MarkerListMenu({ timeline, fps, onJump, onRemove }: MarkerListMe
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="ghost" size="sm" aria-label="Markers">
+          <Button variant="ghost" size="sm" data-testid={TIMELINE_TEST_IDS.markerList} aria-label="Markers">
             <FlagIcon />
             {markers.length}
           </Button>
@@ -604,7 +606,7 @@ export function AddMarkerButton({ onAdd, shortcut }: AddMarkerButtonProps) {
     <Tooltip>
       <TooltipTrigger
         render={
-          <Button variant="ghost" size="icon-sm" onClick={() => onAdd()} aria-label="Add marker">
+          <Button variant="ghost" size="icon-sm" onClick={() => onAdd()} data-testid={TIMELINE_TEST_IDS.addMarker} aria-label="Add marker">
             <FlagIcon />
           </Button>
         }

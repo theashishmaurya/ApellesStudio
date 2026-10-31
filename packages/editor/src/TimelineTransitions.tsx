@@ -65,6 +65,7 @@ import {
   type TransitionAlignment,
   type TransitionKind,
 } from './timeline';
+import { TIMELINE_TEST_IDS } from './timelineTestIds';
 
 /** D-226 — the `@dnd-kit` drag id and `data.type` a palette entry carries.
  *  A third drag "kind" sharing `TimelinePane`'s one `DndContext` alongside
@@ -207,6 +208,7 @@ export function TransitionBadges({
                   // a badge by, mirroring `data-chroma-marker`'s own role for
                   // the marker strip.
                   data-chroma-transition={transition.id}
+                  data-testid={TIMELINE_TEST_IDS.transition}
                   aria-label={`Transition at frame ${transition.at_frame}`}
                   className="absolute z-30 cursor-pointer rounded-sm border border-accent bg-accent/25 hover:bg-accent/40"
                   style={{
