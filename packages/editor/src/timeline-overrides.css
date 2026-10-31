@@ -69,6 +69,24 @@
 }
 
 /*
+ * B-349 — B-346 cut the 16 px strip down to the head band, but the 1 px line
+ * itself (the library's interact.js drag target, `.timeline-editor-cursor`) still
+ * ran the full height and caught any press exactly on it: a click or trim on a
+ * clip the playhead sits over scrubbed the playhead instead. The line is now
+ * transparent to the pointer and only its two children, the head (the SVG
+ * pentagon) and the band under the ruler, take it back. interact.js resolves a
+ * drag by the press target's ancestry, so a press on either child still drags
+ * the line. Final Cut and Resolve grab the playhead by its head only.
+ */
+.timeline-editor-cursor {
+  pointer-events: none;
+}
+.timeline-editor-cursor-top,
+.timeline-editor-cursor-area {
+  pointer-events: auto;
+}
+
+/*
  * D-222 — room for the marker strip.
  *
  * The library leaves a 10px `margin-top` between its 32px ruler and its edit

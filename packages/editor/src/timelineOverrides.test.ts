@@ -27,4 +27,9 @@ describe('timeline-overrides.css', () => {
     expect(tokens).toEqual(expect.arrayContaining(['layout', 'size', 'style']));
     expect(tokens).not.toContain('paint');
   });
+
+  it('makes the 1 px playhead line pointer-transparent; only the head and band grab (B-349)', () => {
+    expect(css).toMatch(/\.timeline-editor-cursor\s*\{\s*pointer-events:\s*none/);
+    expect(css).toMatch(/\.timeline-editor-cursor-top,\s*\.timeline-editor-cursor-area\s*\{\s*pointer-events:\s*auto/);
+  });
 });
