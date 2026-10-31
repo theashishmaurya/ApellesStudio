@@ -781,6 +781,9 @@ is paint)._
   tests green; a DOM test pins the `will-change` lifecycle (added at claim, removed after
   the commit painted, never left behind on Esc/refusal).
 
+- **S7 progress (2026-11-01), one line per item; evidence is in each line.**
+  - **Item 1/2, containment: already built in S3a, now pinned.** `TrackLane` is `contain: strict`, the slot `contain: layout size style`, the body `contain: layout paint style`. `TimelineLanes.dom.test.tsx` pins all three (the slot must never gain `paint`: a head trim translates the body outside it). No before/after: there was nothing to change. Layer effect is **verify live** (layer borders).
+
 ### S8 — scroll out of React (Opus)
 - §2.3 target. Overlays that become content-space are moved inside the scroller's content.
   The rest subscribe to `timelineScroll.ts`. `scrollRef`, `followGeomRef` and the drop math
