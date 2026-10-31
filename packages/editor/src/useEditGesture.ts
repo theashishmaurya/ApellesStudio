@@ -62,12 +62,16 @@ import { TIMELINE_TEST_IDS } from './timelineTestIds';
 import { rowHeightAt, rowTopAt } from './trackHeight';
 import { usePreviewPeekStore } from './previewPeek';
 import { twoUpView } from './twoUp';
+import { afterPaint } from './afterPaint';
 import { EDIT_PERF, perfMark, perfMeasure, perfMeasureAfterPaint, perfMeasureAtFrame } from './editPerf';
 
 /** Snap threshold, px at any zoom (Palmier Pro's 8 px, spec §5). */
 export const EDIT_SNAP_PX = 8;
 /** The settle / snap-back duration for a refused or cancelled edit, ms. */
 export const EDIT_SETTLE_MS = 120;
+/** A clip whose picture layer is wider than this many viewports is not promoted to a
+ *  compositor layer for the gesture (the layer's memory is its size, plan §2.9 item 4). */
+export const PROMOTE_MAX_VIEWPORTS = 2;
 /** Elements inside a clip body that own their own presses. */
 const CLIP_CONTROL_SELECTOR = 'button, [data-chroma-fade-handle]';
 /** The CSS cursor each gesture shows everywhere while it runs (spec §5.1). */
@@ -130,16 +134,32 @@ interface Gesture {
 const clipBodySelector = (id: string) =>
   `[data-testid="${TIMELINE_TEST_IDS.clip}"][data-chroma-clip-id="${id.replace(/["\\]/g, '\\$&')}"]`;
 
-function resetStyles(styled: Map<string, StyledClip>): void {
+/** Drop a gesture's inline preview styles. `layers` also drops the `will-change`
+ *  promotion; a committed edit keeps it until its frame has painted (below). */
+function resetStyles(styled: Map<string, StyledClip>, layers = true): void {
   styled.forEach(({ body, media }) => {
     body.style.transform = '';
     body.style.width = '';
     body.style.transition = '';
+    if (layers) body.style.willChange = '';
     if (media) {
       media.style.transform = '';
       media.style.transition = '';
+      if (layers) media.style.willChange = '';
     }
   });
+}
+
+/** D-437 S7 (plan §2.9 items 3-4): give a clip the gesture moves its own compositor
+ *  layer for the gesture's duration, so a preview frame is a transform on a
+ *  retained layer rather than a repaint of the lane. Skipped for a clip wider than
+ *  {@link PROMOTE_MAX_VIEWPORTS} viewports (the memory cap). The press promotes
+ *  once; nothing is promoted or demoted per frame (B-347 F3 removed `translate3d`
+ *  because layers created mid-drag cost more than they saved). */
+function promote(entry: StyledClip, widthPx: number, viewportWidth: number): void {
+  if (viewportWidth > 0 && widthPx > viewportWidth * PROMOTE_MAX_VIEWPORTS) return;
+  entry.body.style.willChange = 'transform';
+  if (entry.media) entry.media.style.willChange = 'transform';
 }
 
 /** The handlers a timeline pane wires up, plus the two calls its hook makes. */
@@ -211,6 +231,8 @@ export function createEditGesture(
     if (!body) return null; // scrolled out of the rendered range: nothing to move
     const entry = { body, media: body.querySelector<HTMLElement>('[data-chroma-clip-media]') };
     g.styled.set(id, entry);
+    const before = g.index.get(id);
+    promote(entry, before ? px(before.end - before.start) : 0, viewRef.current.viewportWidth);
     return entry;
   };
 
@@ -438,6 +460,9 @@ export function createEditGesture(
       preview: { delta: 0, limited: false, after: tl, shifts: [] },
       styled: new Map(),
     };
+    // D-437 S7 — the target's layer is made at the claim (a moved neighbour's on its
+    // first preview frame), once, and torn down after the commit has painted.
+    styledFor(gestureRef.current, moving.id);
     // D-432 P3 — the two-up viewer opens with the edit's current frames.
     usePreviewPeekStore.getState().setTwoUp(twoUpView(tl, target, tl));
     const area = editAreaRef.current;
@@ -510,7 +535,16 @@ export function createEditGesture(
       const pending = pendingClearRef.current;
       if (!pending) return;
       pendingClearRef.current = null;
-      resetStyles(pending);
+      // The inline preview styles come off in this layout effect, before paint. The
+      // layers stay until the commit's frame has painted, so the release does not
+      // also pay for layer teardown on the frame that repaints (plan §2.9 item 3).
+      resetStyles(pending, false);
+      afterPaint(() => {
+        pending.forEach(({ body, media }) => {
+          body.style.willChange = '';
+          if (media) media.style.willChange = '';
+        });
+      });
       effectsPending = true;
       perfMeasure(EDIT_PERF.commitRendered, EDIT_PERF.commit);
       perfMeasureAtFrame(EDIT_PERF.commitFrame, EDIT_PERF.commit);
