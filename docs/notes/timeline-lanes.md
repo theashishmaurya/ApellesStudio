@@ -569,6 +569,15 @@ single-instance plugin would otherwise hand a second launch over to the dev app)
 A/V pairs' audio halves count towards the 300. The "Baseline" section below stays empty until a
 run fills it.
 
+#### S9 prep (2026-11-01)
+
+The production-bundle debug app is built and launch-verified at
+`target/debug/bundle/macos/Apelles.app` (identifier `studio.apelles.perf`, control port **19798**;
+commands in `docs/notes/ui-harness.md` "Baseline recipe", step 2). It must be rebuilt after any
+later web change (the bundle is a snapshot of `app/dist`). Still to do on an **unlocked** Mac:
+confirm `build.perfMarks` via `debug_perf_entries`, then the `perf-300` runs for the S0c
+baseline and S9.
+
 #### Baseline
 
 _Not run yet. Fill in from `scratch/perf-baseline/dev` and `scratch/perf-baseline/prod`: commit

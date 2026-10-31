@@ -504,18 +504,34 @@ npm run tauri --workspace app -- build --debug --bundles app \
 # prove the bundle carries the perf marks (Tauri sets TAURI_ENV_DEBUG=true for the before-command)
 grep -l 'apelles:edit:' app/dist/assets/*.js
 
-# start it beside the dev app, on its own control port
-open -n --env CHROMA_CONTROL_PORT=19790 target/debug/bundle/macos/Apelles.app
+# start it beside the dev app, on its own control port (19798: 19788 is the dev app,
+# 19790 is the apelles-mcp HTTP server). `open -n` needs the Mac UNLOCKED: a locked screen
+# suspends the WKWebView, so every frontend op answers "got no reply from the frontend".
+open -n --env CHROMA_CONTROL_PORT=19798 target/debug/bundle/macos/Apelles.app
 
 # confirm which bundle answers: build.dev must be false, build.perfMarks true
-curl -s -X POST localhost:19790/op -d '{"op":"debug_perf_entries","args":{}}' | grep -o '"build":{[^}]*}'
+curl -s -X POST 127.0.0.1:19798/op -d '{"op":"debug_perf_entries","args":{},"timeout_ms":3000}' | grep -o '"build":{[^}]*}'
 
-npm run harness --workspace @apelles/ui-harness -- --filter perf-300 --port 19790 \
+npm run harness --workspace @apelles/ui-harness -- --filter perf-300 --port 19798 \
   --out "$PWD/scratch/perf-baseline/prod"
 
 # quit the perf build (by its identifier, so the dev app is untouched)
 osascript -e 'tell application id "studio.apelles.perf" to quit'
 ```
+
+**Verified 2026-11-01** (build, bundle, launch, port, quit; the frontend ops were NOT reached
+because the Mac was locked): the build takes ~2.5 min incrementally (~3 min with the web build),
+needs ~4-5 GB of new `target/` on top of an existing dev `target/`, and produces
+`target/debug/bundle/macos/Apelles.app` (314 MB, ad-hoc signed, `studio.apelles.perf`). The
+override leaves `app/src-tauri/tauri.conf.json` and the build config untouched; no source change
+was needed. `app/dist/assets/index-*.js` contains `apelles:edit:` (9 hits) and no
+`react-dom.development` / `jsxDEV` / DevTools string, i.e. production React with the marks on.
+Launched with `CHROMA_CONTROL_PORT=19798` it listened on 19798 beside the dev app (19788 and
+19790 unaffected), answered a native debug op (`debug_set_occlusion_throttling` -> "'enabled' is
+required", proving the Rust-debug `debug_*` surface) and `unknown op` for a bogus one; ops that go
+to the frontend (`debug_perf_entries`, all `editor_*`) timed out on the locked screen. The
+`build.dev` / `build.perfMarks` read-back above is therefore still to be confirmed on an
+unlocked Mac. Quit with the osascript line; only the perf app exited.
 
 (The control server's `/op` request shape is whatever `ControlClient` in `src/client.ts` sends;
 the `curl` line is a convenience, the harness's own first note says the same thing.) A release
@@ -527,9 +543,8 @@ repaint_counters=true)`, start a gesture with `debug_pointer`, `debug_screenshot
 then turn both flags off. For the paint / layer-flush / JS split of a release and a ripple move,
 `sample` the WebContent process during a 1.5 s gesture as in `docs/notes/timeline-drag-perf.md`.
 
-**Status 2026-11-01:** the fixture, the scenarios and the recipe are in; no baseline was run in
-this pass (the machine's free disk was below the 8 GB the production build needs, and the running
-dev app was off limits for the agent that wrote this). The numbers go in the "Baseline" section
+**Status 2026-11-01:** the fixture, the scenarios and the recipe are in and the production build
+is built and launch-verified (above); no baseline was run yet (needs an unlocked Mac). The numbers go in the "Baseline" section
 of `docs/notes/timeline-lanes.md` with the run directories above.
 
 ### Perf picture (second run)
