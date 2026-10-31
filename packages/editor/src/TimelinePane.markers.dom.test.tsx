@@ -197,7 +197,7 @@ describe('timeline markers — real DOM (D-222)', () => {
     const strip = document.querySelector<HTMLElement>('[data-chroma-marker-strip]');
     expect(strip).not.toBeNull();
     // D-432 P3: our own 24 px ruler (`RULER_HEIGHT_PX`), and the strip fills
-    // exactly the gap `timeline-overrides.css` opens under it.
+    // exactly the gap `timeline.css` opens under it.
     expect(strip!.style.top).toBe(`${RULER_HEIGHT_PX}px`);
     expect(strip!.style.height).toBe(`${MARKER_STRIP_HEIGHT}px`);
   });

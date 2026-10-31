@@ -34,7 +34,7 @@ import { contentWidth } from './laneLayout';
 import { laneIndexOf, laneWindow, laneWindowParams } from './laneWindow';
 import { TrackLane } from './TrackLane';
 import type { LaneActions } from './useLaneActions';
-import { TIMELINE_LIBRARY_ALIAS_CLASSES, TIMELINE_TEST_IDS } from '../timelineTestIds';
+import { TIMELINE_TEST_IDS } from '../timelineTestIds';
 
 export interface TimelineLanesProps {
   tracks: readonly Track[];
@@ -152,7 +152,7 @@ export const TimelineLanes = memo(function TimelineLanes({
       tabIndex={-1}
       data-testid={TIMELINE_TEST_IDS.scroller}
       // D-437 S4 — the library-era scroller class is an inert alias (S6 deletes it).
-      className={`${TIMELINE_LIBRARY_ALIAS_CLASSES.scroller} absolute right-0 bottom-0 left-0 overflow-auto outline-none`}
+      className="absolute right-0 bottom-0 left-0 overflow-auto outline-none"
       style={{ top: topPx }}
       onScroll={onScroll}
       onFocus={onFocus}

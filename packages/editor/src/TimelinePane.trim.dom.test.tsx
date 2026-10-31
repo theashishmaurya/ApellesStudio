@@ -28,7 +28,7 @@
  *    `@xzdarcy/react-timeline-editor`'s interact.js resize, which does not run
  *    under jsdom at all — established directly while building this, not
  *    assumed: a full, correctly-targeted `PointerEvent` sequence on the
- *    library's own `.timeline-editor-action-right-stretch` handle (with real
+ *    library's own right-stretch handle (with real
  *    rects and real `pageX`/`pageY`) commits nothing, and that is equally true
  *    of the plain pre-D-235 trim, which has never been drivable in this tier
  *    either. (D-432 P2 replaced that resize with Apelles' own edge gesture,
@@ -314,7 +314,7 @@ describe('mode readout — what the editor sees before pressing (D-235)', () => 
 
   it('8. reads Slip over a clip’s upper half and Slide over its lower half', async () => {
     await setAlt(true);
-    const action = bodies()[1].closest('.timeline-editor-action') as HTMLElement;
+    const action = bodies()[1].closest('[data-testid="timeline-clip-slot"]') as HTMLElement;
 
     firePointerEvent(action, 'pointermove', { x: 200, y: ROW_HEIGHT_PX * 0.2 }, { altKey: true });
     await nextFrame();
@@ -328,7 +328,7 @@ describe('mode readout — what the editor sees before pressing (D-235)', () => 
   it('9. reads Roll on an edge that is a real edit point', async () => {
     await setAlt(true);
     // 'b' touches a clip on both sides, so both of its handles are edit points.
-    const action = bodies()[1].closest('.timeline-editor-action') as HTMLElement;
+    const action = bodies()[1].closest('[data-testid="timeline-clip-slot"]') as HTMLElement;
     const right = action.querySelector('[data-chroma-trim-edge="end"]') as HTMLElement;
     const left = action.querySelector('[data-chroma-trim-edge="start"]') as HTMLElement;
     expect(right, 'the clip did not render its own edge-trim zones').not.toBeNull();
@@ -346,8 +346,8 @@ describe('mode readout — what the editor sees before pressing (D-235)', () => 
     await setAlt(true);
     // 'a' starts the track; 'c' ends it. Neither of those outer edges touches
     // anything, so neither can roll.
-    const first = bodies()[0].closest('.timeline-editor-action') as HTMLElement;
-    const last = bodies()[2].closest('.timeline-editor-action') as HTMLElement;
+    const first = bodies()[0].closest('[data-testid="timeline-clip-slot"]') as HTMLElement;
+    const last = bodies()[2].closest('[data-testid="timeline-clip-slot"]') as HTMLElement;
 
     firePointerEvent(first.querySelector('[data-chroma-trim-edge="start"]')!, 'pointermove', { x: 21, y: 26 }, { altKey: true });
     await nextFrame();
@@ -361,7 +361,7 @@ describe('mode readout — what the editor sees before pressing (D-235)', () => 
   it('11. Shift forces Ripple at an edit point, where Roll would otherwise win', async () => {
     await setAlt(true);
     const right = bodies()[1]
-      .closest('.timeline-editor-action')!
+      .closest('[data-testid="timeline-clip-slot"]')!
       .querySelector('[data-chroma-trim-edge="end"]') as HTMLElement;
 
     firePointerEvent(right, 'pointermove', { x: 199, y: 26 }, { altKey: true, shiftKey: true });
@@ -371,7 +371,7 @@ describe('mode readout — what the editor sees before pressing (D-235)', () => 
 
   it('12. falls back to the un-hovered text off a clip, and clears when the tool is disarmed', async () => {
     await setAlt(true);
-    const action = bodies()[1].closest('.timeline-editor-action') as HTMLElement;
+    const action = bodies()[1].closest('[data-testid="timeline-clip-slot"]') as HTMLElement;
     firePointerEvent(action, 'pointermove', { x: 200, y: ROW_HEIGHT_PX * 0.2 }, { altKey: true });
     await nextFrame();
     expect(hintText()).toBe('Slip');
@@ -406,7 +406,7 @@ function editArea(): HTMLElement {
 
 describe('pointer-adjacent mode badge (D-250)', () => {
   it('13. does not show until the tool is armed AND the pointer is over a clip', async () => {
-    const action = bodies()[1].closest('.timeline-editor-action') as HTMLElement;
+    const action = bodies()[1].closest('[data-testid="timeline-clip-slot"]') as HTMLElement;
 
     // Unarmed, over a clip: nothing. The plain gestures are untouched, so
     // there is nothing to announce.
@@ -429,8 +429,8 @@ describe('pointer-adjacent mode badge (D-250)', () => {
 
   it('14. names each of the four modes, and says what each one does', async () => {
     await setAlt(true);
-    const action = bodies()[1].closest('.timeline-editor-action') as HTMLElement;
-    const first = bodies()[0].closest('.timeline-editor-action') as HTMLElement;
+    const action = bodies()[1].closest('[data-testid="timeline-clip-slot"]') as HTMLElement;
+    const first = bodies()[0].closest('[data-testid="timeline-clip-slot"]') as HTMLElement;
 
     // Every case mirrors one row of D-235's own mode table, so a change to the
     // rule that this badge did not follow shows up here as a failure.
@@ -473,7 +473,7 @@ describe('pointer-adjacent mode badge (D-250)', () => {
 
   it('15. agrees with the toolbar readout, because both read one resolution', async () => {
     await setAlt(true);
-    const action = bodies()[1].closest('.timeline-editor-action') as HTMLElement;
+    const action = bodies()[1].closest('[data-testid="timeline-clip-slot"]') as HTMLElement;
 
     firePointerEvent(action, 'pointermove', { x: 200, y: ROW_HEIGHT_PX * 0.8 }, { altKey: true });
     await nextFrame();
@@ -487,7 +487,7 @@ describe('pointer-adjacent mode badge (D-250)', () => {
 
   it('16. follows the pointer, and swaps the cursor with the mode', async () => {
     await setAlt(true);
-    const action = bodies()[1].closest('.timeline-editor-action') as HTMLElement;
+    const action = bodies()[1].closest('[data-testid="timeline-clip-slot"]') as HTMLElement;
 
     firePointerEvent(action, 'pointermove', { x: 200, y: ROW_HEIGHT_PX * 0.2 }, { altKey: true });
     await nextFrame();

@@ -78,11 +78,10 @@ need that version back for some reason.
   output, and `analyze.mjs` prints a warning if you diff two runs whose viewports don't
   match.
 - The timeline container uses the one app-owned hook,
-  `[data-bench-id="timeline-edit-area"]` (the wrapper div around `<TimelineEditor>` in
-  `packages/editor/src/TimelinePane.tsx`). The clip/action element uses
-  `.timeline-editor-action`, a class owned by the `@xzdarcy/react-timeline-editor`
-  library itself (not app CSS) — stable across our own restyles since we don't control
-  it, so it's used directly rather than adding a redundant `data-bench-id`. If you add
+  `[data-bench-id="timeline-edit-area"]` (the wrapper div around the lanes in
+  `packages/editor/src/TimelinePane.tsx`). The clip element is each clip's positioning
+  slot, `[data-testid="timeline-clip-slot"]` (`TIMELINE_TEST_IDS.clipSlot`, D-437 S6), a
+  stable test id rather than a utility class. If you add
   new interaction steps against app-owned elements, prefer a `data-bench-id` hook over
   relying on utility classes, which shift on any restyle.
 - This is a general smoothness/regression check, not a profiler. It won't tell you

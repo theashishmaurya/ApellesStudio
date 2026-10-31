@@ -429,7 +429,7 @@ describe('the palette leaves the default surface alone (D-261)', () => {
 describe('the hover readout follows the tool, not just the key (D-261)', () => {
   it('11. names the tool’s edit with NO modifier held', async () => {
     await pickTool('slip');
-    const action = bodies()[1].closest('.timeline-editor-action') as HTMLElement;
+    const action = bodies()[1].closest('[data-testid="timeline-clip-slot"]') as HTMLElement;
     // Mid-height, no Alt: under D-235 alone this hover said nothing at all.
     firePointerEvent(action, 'pointermove', { x: 200, y: ROW_HEIGHT_PX * 0.5 });
     await nextFrame();
@@ -440,7 +440,7 @@ describe('the hover readout follows the tool, not just the key (D-261)', () => {
     // The half of ripple/roll jsdom can answer — see this file's header for
     // why the drag itself cannot be driven here.
     await pickTool('roll');
-    const action = bodies()[1].closest('.timeline-editor-action') as HTMLElement;
+    const action = bodies()[1].closest('[data-testid="timeline-clip-slot"]') as HTMLElement;
     const right = action.querySelector('[data-chroma-trim-edge="end"]') as HTMLElement;
     expect(right, 'the clip did not render its own edge-trim zones').not.toBeNull();
     firePointerEvent(right, 'pointermove', { x: 199, y: 26 });
@@ -457,7 +457,7 @@ describe('the hover readout follows the tool, not just the key (D-261)', () => {
 
   it('13. says nothing over a clip body an edge-only tool does not own', async () => {
     await pickTool('ripple');
-    const action = bodies()[1].closest('.timeline-editor-action') as HTMLElement;
+    const action = bodies()[1].closest('[data-testid="timeline-clip-slot"]') as HTMLElement;
     firePointerEvent(action, 'pointermove', { x: 200, y: ROW_HEIGHT_PX * 0.5 });
     await nextFrame();
     // A drag here is still a plain move, so announcing a mode would be a lie —

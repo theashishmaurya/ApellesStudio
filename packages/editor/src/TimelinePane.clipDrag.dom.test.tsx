@@ -149,7 +149,7 @@ function scrollTimelineGridTo(px: number): () => void {
  *  own track row really occupies, which is what they are in a browser. Without
  *  it every zone measures 0×0 and no drop ever resolves an `over`. */
 function alignDropZonesToRows(): void {
-  const rows = [...mounted!.container.querySelectorAll<HTMLElement>('.timeline-editor-edit-row')];
+  const rows = [...mounted!.container.querySelectorAll<HTMLElement>('[data-testid="timeline-track-row"]')];
   const zones = [...mounted!.container.querySelectorAll<HTMLElement>('[data-chroma-track-drop-zone]')];
   if (rows.length === 0 || zones.length === 0) throw new Error('no rows or no drop zones rendered');
   for (const zone of zones) {

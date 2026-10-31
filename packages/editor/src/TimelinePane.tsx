@@ -104,9 +104,8 @@
  *   - **Dropping a Sources-panel clip targets whichever lane the cursor is
  *     over** (D-046 pass 3's plain-HTML5-drag mechanism, now row-aware) —
  *     `dropTargetTrack` converts `e.clientY` into a row index using the
- *     library's own fixed layout constants (`.timeline-editor-time-area`'s
- *     32px ruler + `.timeline-editor-edit-area`'s 10px margin-top, read
- *     from the library's bundled CSS, not guessed) plus the tracked
+ *     layout constants (`RULER_AND_MARGIN_PX`: the ruler plus the marker
+ *     strip) plus the tracked
  *     `scrollTop`, clamped to a real track index. Falls back to the first
  *     video track if the drop lands above/below every row (e.g. on the
  *     ruler itself) — same default this file always had.
@@ -197,7 +196,7 @@
  * the first that lives in the ruler band rather than over the tracks:
  * `MarkerStrip` (`TimelineMarkers.tsx`) draws one coloured flag per
  * `Timeline.markers` entry in the gap between the library's 32px ruler and
- * track row 0, which `timeline-overrides.css` widens to `MARKER_STRIP_HEIGHT`
+ * track row 0, which `timeline.css` widens to `MARKER_STRIP_HEIGHT`
  * for the purpose — so `RULER_AND_MARGIN_PX` is now derived from that
  * constant instead of being the library's own fixed 42. It cannot collide
  * with the marquee (D-137), the clip drag (D-098) or the fade handles
@@ -281,7 +280,7 @@ import {
   type ReactNode,
   type UIEvent,
 } from 'react';
-import './timeline-overrides.css';
+import './timeline.css';
 import {
   DndContext,
   DragOverlay,
@@ -1021,7 +1020,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
   // culling, so B-267's hidden-tab start needs no remount any more) and the
   // ruler, beat lane, follower and edit gesture all read it.
   // B-123 — `editArea`, not a ref: this node mounts late; see the `wheel` effect.
-  const { width: viewportWidth } = useViewportWidth(editArea);
+  const viewportWidth = useViewportWidth(editArea);
 
   // B-326 — what the playback follower (the store subscription above) needs
   // that lives in React state: kept in a ref so reading it costs no render.

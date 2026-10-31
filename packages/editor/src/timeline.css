@@ -1,19 +1,9 @@
 /*
  * Apelles — the timeline's few global CSS rules (imported by `TimelinePane.tsx`).
  *
- * D-437 S4 — this file used to override `@xzdarcy/react-timeline-editor`'s
- * bundled stylesheet (its grey clip backing, its blurry cursor, its hidden
- * ruler, its marker-strip margin). The pane no longer renders the library: the
- * lanes (`lanes/`) style themselves inline and with tokens, and their elements
- * carry the library's old class names only as inert aliases for selectors
- * (`TIMELINE_LIBRARY_ALIAS_CLASSES`). Those aliases must never be styled here —
- * a rule on `.timeline-editor-cursor-top` would move our playhead head, one on
- * `.timeline-editor-edit-area` would shift the scroller — which
- * `timelineOverrides.test.ts` pins. The behaviour those rules carried now lives
- * on our own elements: the 1 px `--color-playhead` line, the pointer-transparent
- * line with a grabbable head and band (B-346, B-349), all in `lanes/Playhead.tsx`;
- * the clip slot's `contain: layout size style` (B-347 F2) in `lanes/LaneClip.tsx`.
- * D-437 S5 renames this file once the library package is gone.
+ * The lanes (`lanes/`) style themselves inline and with tokens; only two rules
+ * need a stylesheet. (D-437 S5: this file was `timeline-overrides.css` while it
+ * overrode `@xzdarcy/react-timeline-editor`'s bundled CSS; the library is gone.)
  */
 
 /*

@@ -7,7 +7,7 @@ dragging a pool item in from the shell's Sources panel.
 
 - `EditorTab` — the tab: preview pane (top) + `TimelineSwitcher` +
   the timeline strip (bottom; `TimelinePane`, which since D-437 S4 renders Apelles'
-  own lanes and playhead from `src/lanes/` instead of `@xzdarcy/react-timeline-editor`;
+  own lanes and playhead from `src/lanes/` (the `@xzdarcy/react-timeline-editor` library it used before was removed, D-437 S5);
   see `src/lanes/README.md`), or an empty state when no
   project is open. The transport (`SkipBack` / `Play`–`Pause` / `SkipForward`)
   uses `@phosphor-icons/react` icons (D-300); the timeline toolbar (`Scissors`
@@ -204,7 +204,7 @@ dragging a pool item in from the shell's Sources panel.
   placement), the marker editor popover, the jump-to dropdown and the toolbar's
   add button. `MARKER_STRIP_HEIGHT` is exported from here and is the single
   definition of that band's height — `TimelinePane`'s `RULER_AND_MARGIN_PX`
-  derives from it, and `timeline-overrides.css` reads it through the
+  derives from it, and `timeline.css` reads it through the
   `--chroma-marker-strip-height` custom property `TimelinePane` sets. The model
   and ops (`Marker`, `MARKER_COLORS`, `newMarker`, `resolveMarkerColor`,
   `markersOf`, and the `add_marker`/`remove_marker`/`set_marker` `EditOp`s) are

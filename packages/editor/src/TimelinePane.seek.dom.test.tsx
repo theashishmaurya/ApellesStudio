@@ -132,7 +132,7 @@ describe('the view follows the playhead during playback (B-326)', () => {
 
 describe('clicking ON a clip keeps its select-only default (B-326)', () => {
   it('does not move the playhead', () => {
-    const action = editArea.querySelector('.timeline-editor-action');
+    const action = editArea.querySelector('[data-testid="timeline-clip-slot"]');
     if (!action) throw new Error('no rendered clip to click');
     actSync(() => action.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 100, clientY: 80 })));
     expect(useEditorTimelineStore.getState().playhead).toBe(10);

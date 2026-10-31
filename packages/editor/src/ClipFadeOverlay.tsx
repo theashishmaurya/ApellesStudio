@@ -51,8 +51,8 @@
  *     (Marquee-select needs nothing: `canStartMarquee` already refuses any
  *     press with `data-chroma-clip-drag` on its path, which every press in
  *     this subtree has.)
- *   - **The library's own edge-trim resize handles**
- *     (`.timeline-editor-action-{left,right}-stretch`) are 10px-wide,
+ *   - **The clip's edge-trim zones**
+ *     (`timeline-clip-trim-start/-end`) are 8px-wide,
  *     FULL-height siblings of this overlay, and a fade handle at rest sits
  *     exactly on top of one (a zero fade is at the clip's own corner). They
  *     are separated by WHERE IN THE ROW the press lands: a fade handle's grab

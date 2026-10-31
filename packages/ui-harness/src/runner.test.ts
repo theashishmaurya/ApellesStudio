@@ -429,7 +429,7 @@ describe('scenario expectations that follow decided behaviour (H3, H4, H6, H9)',
   it('H16: the scrub starts from the playhead head band (the only part that grabs), and insists on the hit', () => {
     const step = byId('scrub-playhead-drag').steps.find((x) => 'pointer' in x && x.pointer.action === 'drag');
     if (!step || !('pointer' in step)) throw new Error('no scrub drag');
-    expect(step.pointer.target).toEqual({ selector: '.timeline-editor-cursor-area', at: { fx: 0.5, fy: 0.5 } });
+    expect(step.pointer.target).toEqual({ selector: '[data-testid="timeline-playhead-band"]', at: { fx: 0.5, fy: 0.5 } });
     expect(step.expectHit).toBeUndefined();
   });
 

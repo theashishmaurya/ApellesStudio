@@ -3,11 +3,10 @@
 The pieces that replace `@xzdarcy/react-timeline-editor`'s edit area and
 playhead. Plan and rationale: `docs/notes/timeline-lanes.md`; decision: D-437.
 
-**Status: wired (S4).** `TimelinePane` renders `TimelineLanes` and `Playhead` in
-place of the library's editor (the package is still installed, imported by nothing,
-until S5). The lane elements also carry the library's old class names as inert
-aliases (`TIMELINE_LIBRARY_ALIAS_CLASSES`, `timelineTestIds.ts`) so selectors written
-against the library keep matching until S6; no stylesheet may style them.
+**Status: wired (S4), library removed (S5, S6).** `TimelinePane` renders
+`TimelineLanes` and `Playhead`; the library package is gone from the repo. The lane
+parts are addressed by test ids only (`TIMELINE_TEST_IDS`: `scroller`, `trackRow`,
+`clipSlot`, `playhead`, `playheadHead`, `playheadBand`).
 
 ## Files
 

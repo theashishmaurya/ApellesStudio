@@ -29,10 +29,9 @@ import { TRIM_ARM_HINT } from '../trimMode';
  *  to race for the same `pointerdown`, so no `stopPropagation` gymnastics
  *  are needed either (D-098's own capture-vs-bubble same-element ordering
  *  bug simply doesn't apply once there's only one listener on this element
- *  to begin with). The library's own edge-trim resize handles
- *  (`.timeline-editor-action-{left,right}-stretch`) are unaffected — they're
- *  siblings rendered by the library itself, outside this component
- *  entirely, and `enableResizing` never reads `movable`.
+ *  to begin with). The edge-trim zones
+ *  (`timeline-clip-trim-start/-end`) are unaffected — they're siblings
+ *  rendered by `LaneClip`, outside this component entirely.
  *
  *  `onDndDragEnd` (in `TimelinePane`) already resolves same-track vs.
  *  cross-track purely from WHERE this lands (`event.over`'s track vs. this
