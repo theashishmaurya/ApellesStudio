@@ -888,6 +888,593 @@
       }
     },
     {
+      "name": "debug_key",
+      "description": "Press real keys in the running app \u2014 shortcuts, combos, or typed text \u2014\n    delivered the same way as debug_pointer (native NSEvents into the\n    WKWebView by default; see that tool for `mode`, `measure`, `watch` and\n    how to read `observed`).\n\n    Keys are DOM `KeyboardEvent.code` names, which is what the app's own\n    shortcuts match on: \"Space\", \"KeyM\", \"ArrowLeft\", \"Delete\", \"Backspace\",\n    \"Enter\", \"Escape\", \"Digit1\", \"F5\" ... A combo joins modifiers with \"+\":\n    \"meta+KeyZ\" (Cmd+Z), \"meta+shift+KeyZ\", \"alt+ArrowRight\". Each entry of\n    `keys` is pressed and released in turn, `gap_ms` apart.\n\n    The reply's `focused` names the element that had focus \u2014 key events go to\n    it, so a key that \"does nothing\" while an input field is focused is the\n    app's typing guard working, not a broken shortcut.\n\n    Args:\n        keys: combos pressed one after another, e.g. [\"Space\"], [\"meta+KeyZ\"].\n        text: text typed character by character (US layout), instead of keys.\n        phase: press (default) = down then up; down / up = only that half,\n            to hold a key across calls (e.g. hold K while tapping L).\n        hold_ms: how long each key is held (default 30).\n        gap_ms: pause between keys (default 50).\n        mode: auto (default), native or synthetic.\n        measure: also return `perf`.\n        watch: {selectors, cursor, maxFrames} to sample every frame.\n        settle_ms: keep observing this long after the last key (default 120).",
+      "inputSchema": {
+        "properties": {
+          "keys": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Keys"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Text"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Phase"
+          },
+          "hold_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Hold Ms"
+          },
+          "gap_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Gap Ms"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mode"
+          },
+          "measure": {
+            "default": false,
+            "title": "Measure",
+            "type": "boolean"
+          },
+          "watch": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PointerWatch"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "settle_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Settle Ms"
+          }
+        },
+        "type": "object",
+        "$defs": {
+          "PointerWatch": {
+            "additionalProperties": false,
+            "description": "What to sample on every frame while a gesture runs (`debug_pointer`, `debug_key`).",
+            "properties": {
+              "selectors": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "CSS selectors whose elements' rects are sampled each frame.",
+                "title": "Selectors"
+              },
+              "cursor": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Also sample the CSS cursor under the pointer each frame.",
+                "title": "Cursor"
+              },
+              "maxFrames": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Cap on sampled frames. Default 120.",
+                "title": "Maxframes"
+              }
+            },
+            "title": "PointerWatch",
+            "type": "object"
+          }
+        },
+        "title": "debug_keyArguments"
+      }
+    },
+    {
+      "name": "debug_pointer",
+      "description": "Drive the running app with REAL pointer input \u2014 move, press, release,\n    click, double-click, drag along a path, wheel, pinch \u2014 the way a hand on\n    the trackpad does, and get back what it hit and what the page received.\n\n    This is for testing the INPUT HANDLING itself (hit zones, drag thresholds,\n    trim handles, snapping, marquee, scrubbing). To merely put the UI into a\n    state, the `debug_set_*` and `editor_*` tools are the honest route.\n\n    HOW IT IS DELIVERED (`mode`):\n      * \"native\" \u2014 real NSEvents delivered to the window's WKWebView through\n        AppKit's own responder methods (WebKit's test-runner pattern). The page\n        sees `isTrusted` events with real hit-testing, pointer capture and\n        default actions. No macOS permission is needed, the real cursor does\n        not move, and the window need not be in front.\n      * \"synthetic\" \u2014 DOM events made inside the page. `isTrusted` is false\n        and the browser runs none of its own behaviour for them; a handler that\n        works this way can still be broken for a human.\n      * \"auto\" (default) \u2014 native inside the app, synthetic elsewhere. The\n        reply's `mode` says which ran, and `fallbackReason` why, if it fell back.\n\n    TARGETS never need hard-coded pixels: `{\"testid\": \"timeline-clip\"}`,\n    `{\"selector\": \"[data-chroma-clip-id='c1']\", \"at\": {\"fx\": 1, \"dx\": -3}}`\n    (3 px inside the right edge), `{\"nodeId\": \"1.0.3\"}` from debug_dom_tree,\n    raw `{\"x\": 400, \"y\": 300}` CSS px, or \u2014 for `to`/`path` \u2014 `{\"byX\": 40}`,\n    40 px right of the previous point. The timeline's stable test ids are\n    listed in docs/notes/ui-harness.md. A target that matches nothing, has no\n    box, or lies off-screen is refused with the reason and nothing is sent.\n\n    READ THE REPLY:\n      * `targets[]` \u2014 each resolved point, the element named, and `hit`: what\n        `elementFromPoint` reports there. `hitInside: false` means something\n        else (an overlay) is on top and will take the press.\n      * `observed` \u2014 what the page actually received: per-type `counts`,\n        `trusted`/`untrusted`, and each down/up/click/key with its target.\n        Zero `pointerdown`s after a click means the input never arrived.\n      * `native` \u2014 how delivery went (`windowKey`, `occlusionDetection`, the\n        mouse-move path, whether DOM `buttons` was made truthful).\n      * `perf` (with `measure`) \u2014 frame times p50/p95/max and dropped frames\n        against 16.7 ms, input-to-next-frame latency, and store commits after\n        the input. `frames.samples: 0` means rAF never ran: the window is\n        throttled \u2014 call debug_set_occlusion_throttling(enabled=False).\n      * `watch` (with `watch`) \u2014 per-frame rects of the watched elements and\n        the cursor under the pointer: whether the UI moved DURING the drag,\n        not just where it ended up.\n\n    Args:\n        action: move, down, up, click, doubleClick, drag, wheel or pinch.\n            `down` and `up` may be separate calls; the button stays held between.\n        target: where it starts (or, for click/wheel/pinch, where it happens).\n        to: where a drag ends.\n        path: waypoints a drag (or a move) passes through before `to`.\n        button: left (default), right or middle.\n        modifiers: held for the whole gesture, e.g. [\"alt\"], [\"meta\", \"shift\"]\n            (meta = Cmd). The modifier KEYS are pressed before and released\n            after, as a hand does it.\n        steps: interpolated moves per path segment (drag/move, default 12),\n            or events for a wheel (5) or pinch (8).\n        duration_ms: how long the moves take (drag default 300).\n        hold_ms: pause after pressing before moving (default 50), or how long\n            a click holds the button (default 40).\n        delta_x: wheel horizontal CSS px.\n        delta_y: wheel vertical CSS px; negative scrolls up. With\n            modifiers=[\"ctrl\"] this is the timeline's zoom gesture.\n        scale: pinch zoom factor, e.g. 1.5 in, 0.5 out (native mode only\n            sends a real trackpad magnify).\n        mode: auto (default), native or synthetic.\n        measure: also return `perf`.\n        watch: {selectors, cursor, maxFrames} to sample every frame.\n        settle_ms: keep observing this long after the last event (default\n            120, max 5000).",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/$defs/PointerTarget"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PointerTarget"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "path": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PointerTarget"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Path"
+          },
+          "button": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Button"
+          },
+          "modifiers": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Modifiers"
+          },
+          "steps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Steps"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Duration Ms"
+          },
+          "hold_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Hold Ms"
+          },
+          "delta_x": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Delta X"
+          },
+          "delta_y": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Delta Y"
+          },
+          "scale": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scale"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mode"
+          },
+          "measure": {
+            "default": false,
+            "title": "Measure",
+            "type": "boolean"
+          },
+          "watch": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PointerWatch"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "settle_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Settle Ms"
+          }
+        },
+        "required": [
+          "action",
+          "target"
+        ],
+        "type": "object",
+        "$defs": {
+          "PointerAt": {
+            "additionalProperties": false,
+            "description": "Where inside a target element's box a pointer lands (`debug_pointer`).",
+            "properties": {
+              "fx": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Fraction of the box width from its left edge. Default 0.5.",
+                "title": "Fx"
+              },
+              "fy": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Fraction of the box height from its top edge. Default 0.5.",
+                "title": "Fy"
+              },
+              "dx": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "CSS-px offset added after the fraction. Default 0.",
+                "title": "Dx"
+              },
+              "dy": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "CSS-px offset added after the fraction. Default 0.",
+                "title": "Dy"
+              }
+            },
+            "title": "PointerAt",
+            "type": "object"
+          },
+          "PointerTarget": {
+            "additionalProperties": false,
+            "description": "A point to press (`debug_pointer`): raw CSS `x`/`y`, or an element named by\nexactly one of `selector` / `testid` / `nodeId` plus a point inside its box.",
+            "properties": {
+              "x": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Viewport CSS px. Give with `y` instead of naming an element.",
+                "title": "X"
+              },
+              "y": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Viewport CSS px. Give with `x` instead of naming an element.",
+                "title": "Y"
+              },
+              "byX": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "CSS px from the gesture's previous point (for `to`/`path` only), instead of x/y.",
+                "title": "Byx"
+              },
+              "byY": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "CSS px from the gesture's previous point; goes with `byX`.",
+                "title": "Byy"
+              },
+              "selector": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "CSS selector of the element.",
+                "title": "Selector"
+              },
+              "testid": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Shorthand for [data-testid=\"...\"].",
+                "title": "Testid"
+              },
+              "nodeId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "A nodeId from debug_dom_tree.",
+                "title": "Nodeid"
+              },
+              "nth": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Which match, 0-based; negative counts from the end. Default 0.",
+                "title": "Nth"
+              },
+              "at": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PointerAt"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The point inside the box. Default its centre."
+              }
+            },
+            "title": "PointerTarget",
+            "type": "object"
+          },
+          "PointerWatch": {
+            "additionalProperties": false,
+            "description": "What to sample on every frame while a gesture runs (`debug_pointer`, `debug_key`).",
+            "properties": {
+              "selectors": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "CSS selectors whose elements' rects are sampled each frame.",
+                "title": "Selectors"
+              },
+              "cursor": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Also sample the CSS cursor under the pointer each frame.",
+                "title": "Cursor"
+              },
+              "maxFrames": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Cap on sampled frames. Default 120.",
+                "title": "Maxframes"
+              }
+            },
+            "title": "PointerWatch",
+            "type": "object"
+          }
+        },
+        "title": "debug_pointerArguments"
+      }
+    },
+    {
       "name": "debug_record_video",
       "description": "Record the running Apelles window to a real, playable video file. This\n    is `debug_screenshot` over TIME \u2014 how you SHOW behaviour that only exists\n    in motion (stutter, a lagging scrub, a slow first frame).\n\n    THE WORKFLOW this exists for:\n        1. debug_set_fps_overlay(enabled=True)   -> the readout is on screen\n        2. editor_set_playing(True)              -> start the thing to record\n        3. debug_record_video(duration_secs=10)  -> record it\n        4. editor_set_playing(False)\n        5. debug_frame_timing(window_ms=2000)    -> cross-check the number\n    The result is footage with the app's own measured frame rate burned into\n    it. Do the same on a fix branch and the two files are a real before/after.\n\n    IT CAPTURES THE WEBVIEW, NOT THE SCREEN \u2014 same mechanism and same limits\n    as `debug_screenshot` (no macOS Screen Recording permission is involved or\n    needed). Native window chrome, menus and dialogs are invisible to it, and\n    the Colorist tab's picture is a native surface behind the webview, so it\n    does NOT appear. This is for the Edit tab. No audio is recorded.\n\n    PUT THE WINDOW IN FRONT FIRST. A backgrounded macOS window has its\n    requestAnimationFrame throttled to a stop, so playback does not really\n    run and the recording measures the throttling instead of the app. The\n    reply's `windowFocused` says which you got; if it is false, the footage is\n    not evidence of anything.\n\n    READ THE REPLY BEFORE TRUSTING THE FOOTAGE. Every number in it is\n    measured, not requested:\n      * `framesCaptured` / `framesDuplicated` \u2014 the recorder holds a fixed\n        cadence so the video's wall clock matches real time. When a capture\n        misses its slot the previous frame is repeated rather than letting the\n        recording drift into slow motion, and that padding is COUNTED here. A\n        large `framesDuplicated` means the capture could not keep up.\n      * `capturedFps` \u2014 the capture rate genuinely achieved.\n      * `captureMsMedian` / `captureMsP95` \u2014 what each capture cost the app\n        being recorded. This is the observer cost; compare `debug_frame_timing`\n        with and without a recording running before trusting a recorded fps.\n\n    This call BLOCKS the app's whole control server for its full duration (the\n    server answers one request at a time), so nothing else can be driven while\n    it runs. Duration is capped at 120s for that reason.\n\n    Args:\n        duration_secs: how long to record, 0.1 to 120.\n        out_path: absolute path for the .mp4. Default: a timestamped file in\n            the same directory `debug_screenshot` writes to.\n        fps: capture cadence, 1..60. Default 15 \u2014 above what this preview\n            actually achieves, without stealing time from it.\n        width: width of the finished video, in real pixels. Default 1280.\n            WebKit rasterises at this size rather than the frame being\n            downscaled afterwards, so it genuinely reduces what each capture\n            costs the app: measured on a 2x display, 58.7ms per capture at\n            native 2560px against 15.0ms at 1280. Pass 0 for native.\n        window: which window by Tauri label. Default: the focused one.",
       "inputSchema": {
@@ -1125,6 +1712,35 @@
         ],
         "type": "object",
         "title": "debug_set_library_modeArguments"
+      }
+    },
+    {
+      "name": "debug_set_occlusion_throttling",
+      "description": "Turn WebKit's occlusion throttling for the app window on or off.\n\n    WebKit treats a covered window like a background tab and throttles its\n    `requestAnimationFrame` to a stop. The agent driving the app is almost\n    never the frontmost window, so with throttling on, playback does not tick,\n    `debug_frame_timing` reads `raf.samples: 0`, frame-time measurements from\n    debug_pointer/debug_key report no frames, and anything scheduled on a\n    frame (an unmount, an animation) never completes. Pass `enabled=False`\n    before measuring or screenshotting animated UI; pass `enabled=True` to\n    restore the normal, battery-friendly behaviour afterwards.\n\n    This is WebKit's own test-runner switch\n    (`_setWindowOcclusionDetectionEnabled:`), applied to this one webview.\n    It changes nothing about what is drawn \u2014 only whether a covered window\n    keeps drawing.\n\n    Args:\n        enabled: True = normal (covered window throttles), False = keep\n            running while covered.\n        window: which window by Tauri label. Default: the focused one, else main.\n\n    Returns {before, after, window}.",
+      "inputSchema": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "window": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Window"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object",
+        "title": "debug_set_occlusion_throttlingArguments"
       }
     },
     {
@@ -15124,6 +15740,298 @@
       ]
     },
     {
+      "tool": "debug_key",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "debug_key",
+          "args": {},
+          "timeout_ms": 90000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "debug_key",
+      "case": "full",
+      "arguments": {
+        "keys": [
+          "v_debug_key.keys[0]"
+        ],
+        "text": "v_debug_key.text",
+        "phase": "v_debug_key.phase",
+        "hold_ms": 21,
+        "gap_ms": 48,
+        "mode": "v_debug_key.mode",
+        "measure": true,
+        "watch": {
+          "selectors": [
+            "v_debug_key.watch.selectors[0]"
+          ],
+          "cursor": true,
+          "maxFrames": 63
+        },
+        "settle_ms": 84
+      },
+      "requests": [
+        {
+          "op": "debug_key",
+          "args": {
+            "keys": [
+              "v_debug_key.keys[0]"
+            ],
+            "text": "v_debug_key.text",
+            "phase": "v_debug_key.phase",
+            "holdMs": 21,
+            "gapMs": 48,
+            "mode": "v_debug_key.mode",
+            "measure": true,
+            "watch": {
+              "selectors": [
+                "v_debug_key.watch.selectors[0]"
+              ],
+              "cursor": true,
+              "maxFrames": 63
+            },
+            "settleMs": 84
+          },
+          "timeout_ms": 90000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "debug_pointer",
+      "case": "minimal",
+      "arguments": {
+        "action": "v_debug_pointer.action",
+        "target": {
+          "x": -22.16,
+          "y": -47.19,
+          "byX": -10.32,
+          "byY": -38.23,
+          "selector": "v_debug_pointer.target.selector",
+          "testid": "v_debug_pointer.target.testid",
+          "nodeId": "v_debug_pointer.target.nodeId",
+          "nth": 74,
+          "at": {
+            "fx": 26.41,
+            "fy": -38.63,
+            "dx": -48.0,
+            "dy": -29.87
+          }
+        }
+      },
+      "requests": [
+        {
+          "op": "debug_pointer",
+          "args": {
+            "action": "v_debug_pointer.action",
+            "target": {
+              "x": -22.16,
+              "y": -47.19,
+              "byX": -10.32,
+              "byY": -38.23,
+              "selector": "v_debug_pointer.target.selector",
+              "testid": "v_debug_pointer.target.testid",
+              "nodeId": "v_debug_pointer.target.nodeId",
+              "nth": 74,
+              "at": {
+                "fx": 26.41,
+                "fy": -38.63,
+                "dx": -48.0,
+                "dy": -29.87
+              }
+            }
+          },
+          "timeout_ms": 90000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "debug_pointer",
+      "case": "full",
+      "arguments": {
+        "action": "v_debug_pointer.action",
+        "target": {
+          "x": -22.16,
+          "y": -47.19,
+          "byX": -10.32,
+          "byY": -38.23,
+          "selector": "v_debug_pointer.target.selector",
+          "testid": "v_debug_pointer.target.testid",
+          "nodeId": "v_debug_pointer.target.nodeId",
+          "nth": 74,
+          "at": {
+            "fx": 26.41,
+            "fy": -38.63,
+            "dx": -48.0,
+            "dy": -29.87
+          }
+        },
+        "to": {
+          "x": -0.54,
+          "y": -45.03,
+          "byX": -29.57,
+          "byY": -35.17,
+          "selector": "v_debug_pointer.to.selector",
+          "testid": "v_debug_pointer.to.testid",
+          "nodeId": "v_debug_pointer.to.nodeId",
+          "nth": 10,
+          "at": {
+            "fx": 17.57,
+            "fy": -5.87,
+            "dx": -41.75,
+            "dy": 7.13
+          }
+        },
+        "path": [
+          {
+            "x": -12.97,
+            "y": -18.75,
+            "byX": -6.18,
+            "byY": 45.46,
+            "selector": "v_debug_pointer.path[0].selector",
+            "testid": "v_debug_pointer.path[0].testid",
+            "nodeId": "v_debug_pointer.path[0].nodeId",
+            "nth": 64,
+            "at": {
+              "fx": -22.93,
+              "fy": 39.58,
+              "dx": 47.82,
+              "dy": -35.15
+            }
+          }
+        ],
+        "button": "v_debug_pointer.button",
+        "modifiers": [
+          "v_debug_pointer.modifiers[0]"
+        ],
+        "steps": 72,
+        "duration_ms": 89,
+        "hold_ms": 78,
+        "delta_x": 43.08,
+        "delta_y": 35.29,
+        "scale": 24.59,
+        "mode": "v_debug_pointer.mode",
+        "measure": true,
+        "watch": {
+          "selectors": [
+            "v_debug_pointer.watch.selectors[0]"
+          ],
+          "cursor": false,
+          "maxFrames": 65
+        },
+        "settle_ms": 68
+      },
+      "requests": [
+        {
+          "op": "debug_pointer",
+          "args": {
+            "action": "v_debug_pointer.action",
+            "target": {
+              "x": -22.16,
+              "y": -47.19,
+              "byX": -10.32,
+              "byY": -38.23,
+              "selector": "v_debug_pointer.target.selector",
+              "testid": "v_debug_pointer.target.testid",
+              "nodeId": "v_debug_pointer.target.nodeId",
+              "nth": 74,
+              "at": {
+                "fx": 26.41,
+                "fy": -38.63,
+                "dx": -48.0,
+                "dy": -29.87
+              }
+            },
+            "to": {
+              "x": -0.54,
+              "y": -45.03,
+              "byX": -29.57,
+              "byY": -35.17,
+              "selector": "v_debug_pointer.to.selector",
+              "testid": "v_debug_pointer.to.testid",
+              "nodeId": "v_debug_pointer.to.nodeId",
+              "nth": 10,
+              "at": {
+                "fx": 17.57,
+                "fy": -5.87,
+                "dx": -41.75,
+                "dy": 7.13
+              }
+            },
+            "path": [
+              {
+                "x": -12.97,
+                "y": -18.75,
+                "byX": -6.18,
+                "byY": 45.46,
+                "selector": "v_debug_pointer.path[0].selector",
+                "testid": "v_debug_pointer.path[0].testid",
+                "nodeId": "v_debug_pointer.path[0].nodeId",
+                "nth": 64,
+                "at": {
+                  "fx": -22.93,
+                  "fy": 39.58,
+                  "dx": 47.82,
+                  "dy": -35.15
+                }
+              }
+            ],
+            "button": "v_debug_pointer.button",
+            "modifiers": [
+              "v_debug_pointer.modifiers[0]"
+            ],
+            "steps": 72,
+            "durationMs": 89,
+            "holdMs": 78,
+            "deltaX": 43.08,
+            "deltaY": 35.29,
+            "scale": 24.59,
+            "mode": "v_debug_pointer.mode",
+            "measure": true,
+            "watch": {
+              "selectors": [
+                "v_debug_pointer.watch.selectors[0]"
+              ],
+              "cursor": false,
+              "maxFrames": 65
+            },
+            "settleMs": 68
+          },
+          "timeout_ms": 90000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "debug_record_video",
       "case": "minimal",
       "arguments": {
@@ -15384,6 +16292,54 @@
           "op": "debug_set_library_mode",
           "args": {
             "mode": "v_debug_set_library_mode.mode"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "debug_set_occlusion_throttling",
+      "case": "minimal",
+      "arguments": {
+        "enabled": true
+      },
+      "requests": [
+        {
+          "op": "debug_set_occlusion_throttling",
+          "args": {
+            "enabled": true
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "debug_set_occlusion_throttling",
+      "case": "full",
+      "arguments": {
+        "enabled": true,
+        "window": "v_debug_set_occlusion_throttling.window"
+      },
+      "requests": [
+        {
+          "op": "debug_set_occlusion_throttling",
+          "args": {
+            "enabled": true,
+            "window": "v_debug_set_occlusion_throttling.window"
           },
           "timeout_ms": 20000
         }

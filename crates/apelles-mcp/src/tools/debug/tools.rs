@@ -14,7 +14,13 @@ use serde_json::Value;
 
 use crate::args::WireArgs;
 use crate::render;
+use crate::schemas::{PointerTarget, PointerWatch};
 use crate::server::ApellesMcp;
+
+/// D-434 — the UI harness's input tools carry a whole gesture plus its settle time
+/// in one op, and the app refuses any plan longer than 60 s, so one fixed budget
+/// above that covers every legal call. `mcp/server.py`'s `INPUT_OP_TIMEOUT_MS`.
+const INPUT_OP_TIMEOUT_MS: u64 = 90_000;
 
 // Argument defaults — the Python signature's own.
 fn default_debug_screenshot_inline() -> bool {
@@ -119,6 +125,77 @@ pub struct DebugRecordVideoArgs {
     pub fps: Option<i64>,
     #[serde(default)]
     pub width: Option<i64>,
+    #[serde(default)]
+    pub window: Option<String>,
+}
+
+fn default_debug_pointer_measure() -> bool {
+    false
+}
+
+fn default_debug_key_measure() -> bool {
+    false
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DebugPointerArgs {
+    pub action: String,
+    pub target: PointerTarget,
+    #[serde(default)]
+    pub to: Option<PointerTarget>,
+    #[serde(default)]
+    pub path: Option<Vec<PointerTarget>>,
+    #[serde(default)]
+    pub button: Option<String>,
+    #[serde(default)]
+    pub modifiers: Option<Vec<String>>,
+    #[serde(default)]
+    pub steps: Option<i64>,
+    #[serde(default)]
+    pub duration_ms: Option<i64>,
+    #[serde(default)]
+    pub hold_ms: Option<i64>,
+    #[serde(default)]
+    pub delta_x: Option<f64>,
+    #[serde(default)]
+    pub delta_y: Option<f64>,
+    #[serde(default)]
+    pub scale: Option<f64>,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default = "default_debug_pointer_measure")]
+    pub measure: bool,
+    #[serde(default)]
+    pub watch: Option<PointerWatch>,
+    #[serde(default)]
+    pub settle_ms: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DebugKeyArgs {
+    #[serde(default)]
+    pub keys: Option<Vec<String>>,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub phase: Option<String>,
+    #[serde(default)]
+    pub hold_ms: Option<i64>,
+    #[serde(default)]
+    pub gap_ms: Option<i64>,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default = "default_debug_key_measure")]
+    pub measure: bool,
+    #[serde(default)]
+    pub watch: Option<PointerWatch>,
+    #[serde(default)]
+    pub settle_ms: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DebugSetOcclusionThrottlingArgs {
+    pub enabled: bool,
     #[serde(default)]
     pub window: Option<String>,
 }
@@ -655,6 +732,190 @@ impl ApellesMcp {
             .put("width", p.width)
             .put("window", p.window);
         let env = self.op_with("debug_record_video", timeout_ms, args).await?;
+        Ok(render::json_text(&env))
+    }
+    #[tool(
+        name = "debug_pointer",
+        description = r#"Drive the running app with REAL pointer input — move, press, release,
+    click, double-click, drag along a path, wheel, pinch — the way a hand on
+    the trackpad does, and get back what it hit and what the page received.
+
+    This is for testing the INPUT HANDLING itself (hit zones, drag thresholds,
+    trim handles, snapping, marquee, scrubbing). To merely put the UI into a
+    state, the `debug_set_*` and `editor_*` tools are the honest route.
+
+    HOW IT IS DELIVERED (`mode`):
+      * "native" — real NSEvents delivered to the window's WKWebView through
+        AppKit's own responder methods (WebKit's test-runner pattern). The page
+        sees `isTrusted` events with real hit-testing, pointer capture and
+        default actions. No macOS permission is needed, the real cursor does
+        not move, and the window need not be in front.
+      * "synthetic" — DOM events made inside the page. `isTrusted` is false
+        and the browser runs none of its own behaviour for them; a handler that
+        works this way can still be broken for a human.
+      * "auto" (default) — native inside the app, synthetic elsewhere. The
+        reply's `mode` says which ran, and `fallbackReason` why, if it fell back.
+
+    TARGETS never need hard-coded pixels: `{"testid": "timeline-clip"}`,
+    `{"selector": "[data-chroma-clip-id='c1']", "at": {"fx": 1, "dx": -3}}`
+    (3 px inside the right edge), `{"nodeId": "1.0.3"}` from debug_dom_tree,
+    raw `{"x": 400, "y": 300}` CSS px, or — for `to`/`path` — `{"byX": 40}`,
+    40 px right of the previous point. The timeline's stable test ids are
+    listed in docs/notes/ui-harness.md. A target that matches nothing, has no
+    box, or lies off-screen is refused with the reason and nothing is sent.
+
+    READ THE REPLY:
+      * `targets[]` — each resolved point, the element named, and `hit`: what
+        `elementFromPoint` reports there. `hitInside: false` means something
+        else (an overlay) is on top and will take the press.
+      * `observed` — what the page actually received: per-type `counts`,
+        `trusted`/`untrusted`, and each down/up/click/key with its target.
+        Zero `pointerdown`s after a click means the input never arrived.
+      * `native` — how delivery went (`windowKey`, `occlusionDetection`, the
+        mouse-move path, whether DOM `buttons` was made truthful).
+      * `perf` (with `measure`) — frame times p50/p95/max and dropped frames
+        against 16.7 ms, input-to-next-frame latency, and store commits after
+        the input. `frames.samples: 0` means rAF never ran: the window is
+        throttled — call debug_set_occlusion_throttling(enabled=False).
+      * `watch` (with `watch`) — per-frame rects of the watched elements and
+        the cursor under the pointer: whether the UI moved DURING the drag,
+        not just where it ended up.
+
+    Args:
+        action: move, down, up, click, doubleClick, drag, wheel or pinch.
+            `down` and `up` may be separate calls; the button stays held between.
+        target: where it starts (or, for click/wheel/pinch, where it happens).
+        to: where a drag ends.
+        path: waypoints a drag (or a move) passes through before `to`.
+        button: left (default), right or middle.
+        modifiers: held for the whole gesture, e.g. ["alt"], ["meta", "shift"]
+            (meta = Cmd). The modifier KEYS are pressed before and released
+            after, as a hand does it.
+        steps: interpolated moves per path segment (drag/move, default 12),
+            or events for a wheel (5) or pinch (8).
+        duration_ms: how long the moves take (drag default 300).
+        hold_ms: pause after pressing before moving (default 50), or how long
+            a click holds the button (default 40).
+        delta_x: wheel horizontal CSS px.
+        delta_y: wheel vertical CSS px; negative scrolls up. With
+            modifiers=["ctrl"] this is the timeline's zoom gesture.
+        scale: pinch zoom factor, e.g. 1.5 in, 0.5 out (native mode only
+            sends a real trackpad magnify).
+        mode: auto (default), native or synthetic.
+        measure: also return `perf`.
+        watch: {selectors, cursor, maxFrames} to sample every frame.
+        settle_ms: keep observing this long after the last event (default
+            120, max 5000)."#
+    )]
+    pub async fn debug_pointer(
+        &self,
+        Parameters(p): Parameters<DebugPointerArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // Wire keys are camelCase where the tool argument is snake_case, as for
+        // `windowMs` above; `measure` is presence-signalled (sent only when true).
+        let args = WireArgs::new()
+            .set("action", p.action)
+            .set("target", p.target)
+            .put("to", p.to)
+            .put("path", p.path)
+            .put("button", p.button)
+            .put("modifiers", p.modifiers)
+            .put("steps", p.steps)
+            .put("durationMs", p.duration_ms)
+            .put("holdMs", p.hold_ms)
+            .put("deltaX", p.delta_x)
+            .put("deltaY", p.delta_y)
+            .put("scale", p.scale)
+            .put("mode", p.mode)
+            .put_if("measure", p.measure)
+            .put("watch", p.watch)
+            .put("settleMs", p.settle_ms);
+        let env = self
+            .op_with("debug_pointer", INPUT_OP_TIMEOUT_MS, args)
+            .await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "debug_key",
+        description = r#"Press real keys in the running app — shortcuts, combos, or typed text —
+    delivered the same way as debug_pointer (native NSEvents into the
+    WKWebView by default; see that tool for `mode`, `measure`, `watch` and
+    how to read `observed`).
+
+    Keys are DOM `KeyboardEvent.code` names, which is what the app's own
+    shortcuts match on: "Space", "KeyM", "ArrowLeft", "Delete", "Backspace",
+    "Enter", "Escape", "Digit1", "F5" ... A combo joins modifiers with "+":
+    "meta+KeyZ" (Cmd+Z), "meta+shift+KeyZ", "alt+ArrowRight". Each entry of
+    `keys` is pressed and released in turn, `gap_ms` apart.
+
+    The reply's `focused` names the element that had focus — key events go to
+    it, so a key that "does nothing" while an input field is focused is the
+    app's typing guard working, not a broken shortcut.
+
+    Args:
+        keys: combos pressed one after another, e.g. ["Space"], ["meta+KeyZ"].
+        text: text typed character by character (US layout), instead of keys.
+        phase: press (default) = down then up; down / up = only that half,
+            to hold a key across calls (e.g. hold K while tapping L).
+        hold_ms: how long each key is held (default 30).
+        gap_ms: pause between keys (default 50).
+        mode: auto (default), native or synthetic.
+        measure: also return `perf`.
+        watch: {selectors, cursor, maxFrames} to sample every frame.
+        settle_ms: keep observing this long after the last key (default 120)."#
+    )]
+    pub async fn debug_key(
+        &self,
+        Parameters(p): Parameters<DebugKeyArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .put("keys", p.keys)
+            .put("text", p.text)
+            .put("phase", p.phase)
+            .put("holdMs", p.hold_ms)
+            .put("gapMs", p.gap_ms)
+            .put("mode", p.mode)
+            .put_if("measure", p.measure)
+            .put("watch", p.watch)
+            .put("settleMs", p.settle_ms);
+        let env = self.op_with("debug_key", INPUT_OP_TIMEOUT_MS, args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "debug_set_occlusion_throttling",
+        description = r#"Turn WebKit's occlusion throttling for the app window on or off.
+
+    WebKit treats a covered window like a background tab and throttles its
+    `requestAnimationFrame` to a stop. The agent driving the app is almost
+    never the frontmost window, so with throttling on, playback does not tick,
+    `debug_frame_timing` reads `raf.samples: 0`, frame-time measurements from
+    debug_pointer/debug_key report no frames, and anything scheduled on a
+    frame (an unmount, an animation) never completes. Pass `enabled=False`
+    before measuring or screenshotting animated UI; pass `enabled=True` to
+    restore the normal, battery-friendly behaviour afterwards.
+
+    This is WebKit's own test-runner switch
+    (`_setWindowOcclusionDetectionEnabled:`), applied to this one webview.
+    It changes nothing about what is drawn — only whether a covered window
+    keeps drawing.
+
+    Args:
+        enabled: True = normal (covered window throttles), False = keep
+            running while covered.
+        window: which window by Tauri label. Default: the focused one, else main.
+
+    Returns {before, after, window}."#
+    )]
+    pub async fn debug_set_occlusion_throttling(
+        &self,
+        Parameters(p): Parameters<DebugSetOcclusionThrottlingArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("enabled", Value::Bool(p.enabled))
+            .put("window", p.window);
+        let env = self.op("debug_set_occlusion_throttling", args).await?;
         Ok(render::json_text(&env))
     }
 }
