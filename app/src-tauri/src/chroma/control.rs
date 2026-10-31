@@ -34,6 +34,10 @@
 //!     to drive the measurement. Unlike every other op here it BLOCKS this
 //!     server for its whole duration (seconds), since the loop below serves one
 //!     request at a time; `debug_record::MAX_RECORD_SECS` bounds that.
+//!   - `debug_set_occlusion_throttling` (D-434) — WebKit's occlusion
+//!     detection for the window, a switch on the webview rather than store
+//!     state; it is what lets a covered window keep running rAF for the UI
+//!     harness's measurements.
 //!   - `ai_env_status` / `ai_env_retry` (D-315) — the AI-environment bootstrap
 //!     is a Rust state machine (`apelles_ai::ai_env`) with no store copy, and it
 //!     is running at its most interesting *during* startup, before the frontend
@@ -537,6 +541,19 @@ fn debug_native_op(app: &tauri::AppHandle, op: &str, args: &serde_json::Value) -
                 .and_then(|rec| serde_json::to_value(rec).map_err(|e| e.to_string()))
             })
         }
+        // D-434. Native because it is a switch on the webview itself (WebKit's
+        // own occlusion detection), not a fact about the store — and the
+        // moment it matters is precisely when the frontend's rAF has been
+        // throttled to a stop.
+        "debug_set_occlusion_throttling" => match args.get("enabled").and_then(|v| v.as_bool()) {
+            Some(enabled) => super::debug_input::set_occlusion_detection(
+                app,
+                args.get("window").and_then(|v| v.as_str()),
+                enabled,
+            )
+            .and_then(|report| serde_json::to_value(report).map_err(|e| e.to_string())),
+            None => Err("'enabled' is required (true or false)".to_string()),
+        },
         _ => return None,
     };
 

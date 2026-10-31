@@ -158,6 +158,7 @@ dependencies = [
  "apelles-speech",
  "apelles-timeline",
  "apelles-types",
+ "apelles-ui-input",
  "base64 0.23.1",
  "blake3",
  "block2",
@@ -196,7 +197,9 @@ dependencies = [
  "ndarray",
  "ndk-context",
  "objc",
+ "objc2",
  "objc2-app-kit",
+ "objc2-core-graphics",
  "objc2-foundation",
  "objc2-web-kit",
  "once_cell",
@@ -445,6 +448,14 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "apelles-ui-input"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

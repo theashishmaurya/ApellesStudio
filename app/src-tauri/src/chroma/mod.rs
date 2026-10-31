@@ -150,6 +150,11 @@ pub mod control;
 /// code path to a webview screenshot at all.
 #[cfg(debug_assertions)]
 pub mod debug_capture;
+/// D-434 — the UI harness's native input: real `NSEvent`s delivered into the
+/// app's own WKWebView (`debug_pointer` / `debug_key`), plus WebKit's occlusion
+/// throttling switch (`debug_set_occlusion_throttling`). Gated identically.
+#[cfg(debug_assertions)]
+pub mod debug_input;
 /// D-330 — the moving-picture half of `debug_capture`: record the window to a
 /// real video file, so a performance fix can be shown rather than asserted.
 /// Gated identically and for the same reason; see `debug_capture` above.
