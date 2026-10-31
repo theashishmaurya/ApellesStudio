@@ -203,7 +203,8 @@ no scrollbar element (native overflow scrolling) — scenarios scroll with the w
 - Native delivery was checked live on 2026-10-31: see "First live run" below for the answers
   (trusted events yes; keys while not key yes; hover moves while not key **no**; the wheel is
   **not** attributed to the window). The 2026-10-31 fix wave addresses the last two (H5, H8);
-  both are **unverified** until the next live run, see "Fix wave" below.
+  both are **unverified** until the next live run, see "Fix wave" below. Second run: H5
+  works only while Apelles is the active app (H15).
 - **Real input leaks into the observer.** The capture-phase observer counts every event the page
   gets, including the owner's real mouse and keyboard; a live check saw a real Shift keydown
   and stray pointermoves in an injected call's `observed`. Run with nobody at the machine, or
@@ -353,3 +354,57 @@ Performance trace of one slide drag is the first step of the fix.
   it waits for P5.
 - **Roadmap (B-348):** keymap additions (J/K/L, I/O, ↑/↓, Shift+Delete, `=`/`-`, N snapping) are
   one Sonnet wave with their MCP tools; blade tool and marker drag are P2/P3-sized.
+
+## Second live run (2026-10-31, after D-432 P2)
+
+Run `scratch/ui-harness/runs/2026-10-31T18-56-56-222Z/` (50 scenarios, native): **29 pass,
+19 fail, 2 skip**, perf over budget in 14 of 24 measured steps. All seven edit-tool
+scenarios pass on correctness (B-344 and B-345 confirmed fixed live) and the Blade tool is
+reachable. Triage reran every non-pass from a scratchpad script that imports the runner, in
+a throwaway project. Each scenario was prefixed with `pickTool('select')`, focus targets
+were moved inside the visible edit area, and the hover pair was run with Apelles frontmost.
+Custom probes: a scrub from the head band, a scrub from the ruler, a select off the
+playhead line, and a drag starting on the line. The owner's project was reopened afterwards.
+
+### Classification of the 21 non-passes
+
+| scenario | class | evidence → finding |
+|---|---|---|
+| `split-at-playhead-shortcut` | **real** | B-349: the press lands on the 1 px `div.timeline-editor-cursor` (the playhead is at `b`'s centre). A drag starting on the line over a clip moves the playhead 135 → 155. Off the line, select + Cmd+K splits |
+| `scrub-playhead-drag` | harness, then real | H16: the target is the ruler (H4), but P2 made the head band the grab zone. From `.timeline-editor-cursor-area` it scrubs live (21 distinct x values, ends at 200). Behind it: **B-350**, a ruler drag does not scrub (Premiere and Resolve do) |
+| `clip-body-hover-cursor` (SKIP) | harness, then real | H15, then **B-351**: with the app frontmost, the cursor is `pointer` (dnd-kit's `role="button"` + the base rule), not the arrow D-432 specifies |
+| `track-header-present` (SKIP) | harness | H15: PASS with the app frontmost |
+| `select-cmd-click-toggles`, `select-shift-click-range` | harness | H11: clip `c`'s centre (x ≈ 1197) is under the Inspector, so the press lands on `div.flex.flex-col.gap-2.5`. PASS with Select forced and the clip visible |
+| `select-marquee` | harness | H11: the drag starts at frame 220 (x 1182), past the edit area's right edge (1149), on the Inspector. Started at frame 200: the band grows and selects all 3. **Not a P2 regression** |
+| `select-click-empty-deselects` | harness | H11: "empty space" at frame 260 is on the Inspector. PASS inside the edit area |
+| `marker-add-key-m`, `key-space-play-pause`, `key-arrows-frame-step` | harness | H11: "focus the timeline" at frame 400 is x 1722, outside the 1470-px viewport. All PASS with an on-screen focus click |
+| `linked-av-select-one-half` | harness | H13: looks for `outline-dashed`; P2 drew the partner as a solid 1 px `before:outline-selection/55`, as spec §4.3 says ("solid, not dashed"). Selection and Delete-takes-both pass |
+| `track-header-resize` | harness | H14: `elementFromPoint` at the 1 px separator is `.timeline-editor-edit-row`, but `react-resizable-panels` resolves its separator by proximity, and the column grew 185 → 215 |
+| `trim-two-up-viewer`, `move-snapping-toggle`, `ripple-delete-shortcut`, `zoom-keyboard`, `marker-drag-move`, `key-jkl-shuttle`, `key-in-out-marks`, `key-edit-point-navigation` | missing | B-348, unchanged by P2 (rechecked: no ids in `SHORTCUTS`; the two-up viewer is listed as "not built in P2"). The keyboard ones also hit H11 first |
+
+**Counts:** real 1 primary + 2 found behind harness defects (B-349, B-350, B-351) · missing
+feature 8 · harness 12 primary. **Regressions from P2: none.** B-349 is an incomplete
+B-346 fix, and B-351 is a P2 spec item not reached.
+
+### Harness defects and the fix each needs (second run)
+
+| # | defect | fix |
+|---|---|---|
+| H11 | Frame and element targets are not checked against the edit area's **visible** rect. At 1470×923 with Sources and the Inspector open, the edit area is x 490–1149 (frames ≈ 0–209 at 90 px/s). The hard-coded "focus" frames 400 / 260, the marquee start (220) and a partly hidden clip's centre land outside the viewport or on the Inspector. It hit 11 scenarios (the first run's "PASS on rerun" for these was at a different window/layout) | `resolveTargetRef`: fail with "outside the timeline's visible area" when a resolved point is outside the edit area rect; clamp an element target's `fx` to the part of it that is inside; pick focus and empty-space points from the fixture (an empty track, a frame just past the last clip) rather than fixed far frames |
+| H12 | The trim tool leaks between scenarios (`TimelinePane`'s `useState` outlives timeline and project switches): Roll stayed active from `trim-two-up-viewer` to the end of the run | `buildFixture` resets the tool: press V, or a new `editor_set_tool` MCP op (already a parity gap in `ui-redesign.md` §7) |
+| H13 | `linked-av-select-one-half` matches a class substring that P2 changed | a stable hook on the partner (`data-chroma-link-partner` on `ClipBody`, an app change) and target that |
+| H14 | The separator press check cannot pass for `react-resizable-panels` (proximity hit) | `expectHit: false` on that drag; keep the width assertion |
+| H15 | H5's `makeKeyWindow` does not take while Apelles is not the active app (`madeKeyForMove: false`); with Apelles frontmost the moves arrive | the CLI activates the app at start and restores the previous front app at the end, through a debug-gated op (`NSApp activate` + `makeKeyAndOrderFront`) |
+| H16 | `playheadGrab` aims at the ruler, which only seeks on release | aim at `.timeline-editor-cursor-area` (the head band) until B-350 / P3's ruler scrubs |
+| H17 | Perf method: the rect `watch` forces a layout per frame (+5–25 ms p95); ~40 frames per gesture makes p95 the second-worst frame; no wait for idle after a big fixture; dev build | `docs/notes/timeline-drag-perf.md` F6 |
+
+**Window note:** one triage batch run with the Inspector closed
+(`debug_set_editor_inspector {open:false}`) sampled 0 frames on every measured step. A
+direct check right after it (same calls) sampled frames normally, so it is recorded as not
+reproduced, not as a defect.
+
+### Perf picture (second run)
+
+Profiled for real in `docs/notes/timeline-drag-perf.md`: per-gesture × clip-count tables,
+`sample` profiles of the WebContent process by phase, controls (watch, throttling, focus,
+input rate), ranked causes and fix plan F1–F6.

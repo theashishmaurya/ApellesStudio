@@ -4,6 +4,30 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-351 — a clip body shows the hand (`pointer`) cursor with the Select tool, not the arrow D-432 specifies
+
+status: **open** · severity: minor (feel, not function) · area: `packages/editor/src/TimelinePane.tsx` `ClipBody` (spreads dnd-kit's `useDraggable` `attributes`, which include `role="button"`), `app/src/styles.css:184` (`@layer base { :where(button, [role='button']):not([disabled]) { cursor: pointer } }`)
+
+- **found:** 2026-11-01, second live harness run, `clip-body-hover-cursor` (SKIP in the run, H15; rerun with Apelles frontmost): the cursor over clip `b` is `pointer` both while hovering and in the computed style (`body.cursor = "pointer"`). D-432 §5 "Cursors" (owner-approved) and P2's "as built" say the default arrow, as Final Cut Pro and Premiere's Selection tool show.
+- **cause:** P2 removed the old `cursor-grab` class but not the cursor that dnd-kit's `role="button"` picks up from the global base rule.
+- **fix:** give `ClipBody` `cursor-default` (the per-tool overrides written by `onTrimHoverMove` / the gesture still win as inline styles), or override `role` in the spread attributes if the clip should not announce as a button. Pin it in a DOM test via `getComputedStyle` on a mounted `ClipBody`.
+
+## B-350 — dragging in the time ruler does not scrub: the playhead jumps once on release
+
+status: **open** · severity: minor · area: `@xzdarcy/react-timeline-editor` (`.timeline-editor-time-area-interact` is click-to-seek only; the drag handle is the playhead's `.timeline-editor-cursor` element), `TimelinePane.tsx` ruler wiring
+
+- **found:** 2026-11-01, second live harness run, `scrub-playhead-drag` (`.timeline-editor-cursor` took 2 distinct x values over 53 frames; the store ends at 200). Triage: the same drag started on the playhead's head band (`.timeline-editor-cursor-area`) scrubs live (21 distinct x values, playhead 200); a drag from the ruler at frame 60 to 200 gives 2 values (seek on release only).
+- **expected:** Premiere and Resolve both scrub when you press and drag anywhere in the time ruler; grabbing the playhead's head first is not required.
+- **not a P2 regression:** the library never scrubbed from the ruler; P2 confined the grab zone to the head band (B-346), which made the scenario's ruler target (H4) stop reaching the handle. Natural home: P3's own ruler.
+
+## B-349 — the 1 px playhead line still grabs the playhead over the tracks: a press exactly on it starts a scrub instead of selecting or trimming the clip under it (B-346 residual)
+
+status: **open** · severity: medium (it lands exactly on the cut a split-at-playhead just made) · area: `@xzdarcy/react-timeline-editor` (the playhead's interact.js draggable wraps the whole `.timeline-editor-cursor` element: `top: 32px; height: calc(100% - 32px); cursor: ew-resize`), `packages/editor/src/timeline-overrides.css`
+
+- **found:** 2026-11-01, second live harness run, `split-at-playhead-shortcut`: with the playhead at frame 135 (the middle of `b`), the click to select `b` resolves to `div.timeline-editor-cursor`. Triage (scratch project): a drag that starts on the line over a clip moves the playhead 135 → 155; the same select 5 % off the line works and Cmd+K splits (`tracks.0.length` 4).
+- **cause:** B-346's fix shortened `.timeline-editor-cursor-area` (the 16 px strip) to the head band, but the line element itself, which is above the clips (`--z-timeline-playhead`), is still the draggable and still hit-tests over every track. It is 1 px wide, so it bites rarely, but always at the playhead, which is where a split leaves the new cut.
+- **fix:** `pointer-events: none` on `.timeline-editor-cursor` and `pointer-events: auto` on `.timeline-editor-cursor-top` / `.timeline-editor-cursor-area`, so only the head grabs (check the library's interact.js still starts a drag from a child), pinned in `timelineOverrides.test.ts`. Gone by construction if the library is replaced (`docs/notes/timeline-drag-perf.md` F5).
+
 ## B-348 — standard NLE timeline affordances the harness found missing (one entry for the group, not a defect list)
 
 status: **open, feature gap: for the roadmap, not a bug fix** · severity: medium (editing speed) · area: `@apelles/keymap` (`packages/keymap/src/shortcuts.ts`), `TimelinePane.tsx`, `TimelineMarkers.tsx`
@@ -14,7 +38,7 @@ status: **open, feature gap: for the roadmap, not a bug fix** · severity: mediu
 
 ## B-347 — edit-tool drags and zoom gestures miss the frame budget (worst frames 53–90 ms, 12–20 % dropped)
 
-status: **open — the edit-gesture half addressed by D-432 P2, to be measured** (trims/ripple/roll/slip/slide: no React render and no library `left`/`width` write per move; one pane render at release, measured in `TimelinePane.clipBlock.dom.test.tsx`; the trimmed clip(s) still take a `width` per move — a contained layout of one or two nodes). Moves (dnd-kit), marquee and zoom are untouched · severity: medium (CLAUDE.md: a janky drag is a real defect) · area: `TimelinePane.tsx`, `@xzdarcy/react-timeline-editor`, dnd-kit clip drags
+status: **open — measured and profiled 2026-11-01 after D-432 P2: `docs/notes/timeline-drag-perf.md`** (causes ranked, fix plan F1–F6). P2's gesture engine removed the per-move React renders, but two costs remain. (1) The release re-renders and re-lays-out every clip: worst frame 60–103 ms at 3–50 clips, 178–337 ms at 200; the owner's real timeline has 288. (2) Each preview's `offsetWidth` read on the readout (`EditFeedbackLayer.tsx:106`) forces a layout that is not "one or two nodes", as first assumed, but tree-wide (scroller overflow, flex): 57–78 % of busy main-thread time while a trim/ripple moves. The timeline copy per frame is ≤ 1 %. Harness p95 is inflated by its own rect watch and by the dev build (React dev Performance Tracks ~22 % of release time at 200 clips, StrictMode). Moves (dnd-kit), marquee and zoom are untouched · severity: medium (CLAUDE.md: a janky drag is a real defect) · area: `TimelinePane.tsx`, `@xzdarcy/react-timeline-editor`, dnd-kit clip drags
 
 - **found:** 2026-10-31 by the D-434 harness, 13 of 23 measured steps over budget on the first run (`scratch/ui-harness/runs/2026-10-31T17-37-31-132Z/`), reproduced on the rerun (`…/2026-10-31T17-42-35-009Z/`). Numbers per gesture are in `docs/notes/ui-harness.md` § "Perf picture".
 - **worst:** slide (worst frame 76–90 ms, 15–20 % dropped, input→frame p95 68–79 ms), slip (65–75 ms, 12–17 %, 58–72 ms), ripple (67–72 ms, input→frame 60–62 ms), roll (72 ms on the rerun), plain edge trims (53 ms), cross-track move (57 ms), linked A/V move (p95 44 ms, 18 %), marquee (18 % dropped), ctrl+wheel / pinch zoom (p95 46–48 ms, 63–64 % of a short window dropped). Median frames are a steady 16–17 ms: the misses are spikes, not a slow steady state.
@@ -23,7 +47,7 @@ status: **open — the edit-gesture half addressed by D-432 P2, to be measured**
 
 ## B-346 — the playhead's 16 px drag strip covers every track, so a click or trim within 8 px of the playhead grabs the playhead instead of the clip
 
-status: **fixed 2026-10-31 (D-432 P2)** — `timeline-overrides.css` cuts `.timeline-editor-cursor-area` down to the head band under the ruler (`--chroma-marker-strip-height`), as Final Cut and Resolve do; the ruler still seeks on click. Pinned by `timelineOverrides.test.ts`. Live confirmation: harness `split-at-playhead-shortcut` · severity: medium · area: `@xzdarcy/react-timeline-editor` CSS (`.timeline-editor-cursor-area { width: 16px; height: 100% }`), `packages/editor/src/timeline-overrides.css`
+status: **fixed 2026-10-31 (D-432 P2)** — `timeline-overrides.css` cuts `.timeline-editor-cursor-area` down to the head band under the ruler (`--chroma-marker-strip-height`), as Final Cut and Resolve do; the ruler still seeks on click. Pinned by `timelineOverrides.test.ts`. Live check 2026-11-01: the strip is fixed, but the 1 px line itself still grabs (**B-349**) · severity: medium · area: `@xzdarcy/react-timeline-editor` CSS (`.timeline-editor-cursor-area { width: 16px; height: 100% }`), `packages/editor/src/timeline-overrides.css`
 
 - **found:** 2026-10-31, harness `split-at-playhead-shortcut`: with the playhead parked mid-clip, the click meant to select `b` resolves (`elementFromPoint`) to `div.timeline-editor-cursor-area`, so nothing is selected and Cmd+K has nothing to split. The same click 20 % into the clip (off the playhead) selects it and Cmd+K splits it (verified live in a scratch project).
 - **why it hurts:** right after a split at the playhead the new cut sits under the playhead, so the edit point you just made cannot be selected or trimmed until you move the playhead away. Resolve and Premiere do not hit-test the playhead line over the tracks; only its head in the ruler is a handle.
