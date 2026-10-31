@@ -67,6 +67,10 @@ import {
   type TransitionKind,
 } from './timeline';
 import { TIMELINE_TEST_IDS } from './timelineTestIds';
+import { TRIM_ZONE_PX } from './lanes/laneLayout';
+
+/** B-357 — the least px of badge left to click once the cut's trim strip is cut out of it. */
+const MIN_BADGE_TARGET_PX = 8;
 
 /** D-226 — the `@dnd-kit` drag id and `data.type` a palette entry carries.
  *  A third drag "kind" sharing `TimelinePane`'s one `DndContext` alongside
@@ -150,6 +154,20 @@ export function TransitionsPaletteButton() {
   );
 }
 
+/** B-357 — the badge's hit area minus the cut's trim strip. A badge sits over its
+ *  cut, and the two clips' trim zones (`TRIM_ZONE_PX` each side of the cut) sit
+ *  under it, so a press on the cut hit the badge and the edit point could not be
+ *  trimmed or rolled by hand (an agent could). `clip-path` clips hit testing too:
+ *  this hole in the badge's transparent hit button lets that strip through. The
+ *  badge stays clickable on both sides of it. `null` (no hole) when the badge is
+ *  too narrow to keep a usable target beside the strip. */
+export function editPointHoleClip(widthPx: number, cutXPx: number): string | null {
+  const from = Math.max(0, cutXPx - TRIM_ZONE_PX);
+  const to = Math.min(widthPx, cutXPx + TRIM_ZONE_PX);
+  if (to <= from || widthPx - (to - from) < MIN_BADGE_TARGET_PX) return null;
+  return `polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, ${from}px 0, ${from}px 100%, ${to}px 100%, ${to}px 0, ${from}px 0)`;
+}
+
 /** D-226 — a transition drawn on its track: a hatched band spanning its own
  *  `[start, end)` window, centred on the cut it belongs to, with an X through
  *  it (the mark every reference NLE uses for a dissolve). Click to open its
@@ -204,6 +222,8 @@ export function TransitionBadges({
         const width = Math.max(6, ((end - start) / fps) * pxPerSec);
         const rowTop = rowTops ? rowTopAt(rowTops, trackIndex, rowHeight) : trackIndex * rowHeight;
         const rowH = rowTops ? rowHeightAt(rowTops, trackIndex, rowHeight) : rowHeight;
+        const badgeTop = rulerAndMarginPx + rowTop - scrollTop + rowH * 0.15;
+        const badgeHeight = rowH * 0.7;
         return (
           <Popover key={`${trackIndex}:${transition.id}`}>
             <PopoverTrigger
@@ -216,20 +236,34 @@ export function TransitionBadges({
                   data-chroma-transition={transition.id}
                   data-testid={TIMELINE_TEST_IDS.transition}
                   aria-label={`Transition at frame ${transition.at_frame}`}
-                  className="absolute z-(--z-timeline-overlay) cursor-pointer rounded-sm border border-accent bg-accent/25 hover:bg-accent/40"
+                  // B-357 — the hit target only: transparent, with the cut's
+                  // trim strip cut out so a press there reaches the clips'
+                  // edge zones underneath. The look is the sibling below.
+                  className="peer absolute z-(--z-timeline-overlay) cursor-pointer"
                   style={{
                     left,
                     width,
-                    top: rulerAndMarginPx + rowTop - scrollTop + rowH * 0.15,
-                    height: rowH * 0.7,
-                    // The dissolve X, drawn as two gradients rather than an SVG
-                    // so a timeline full of transitions paints plain divs — the
-                    // same reasoning `TimelineMarkers`' `clip-path` flag uses.
-                    backgroundImage:
-                      'linear-gradient(to top right, transparent calc(50% - 0.5px), currentColor calc(50% - 0.5px), currentColor calc(50% + 0.5px), transparent calc(50% + 0.5px)), linear-gradient(to bottom right, transparent calc(50% - 0.5px), currentColor calc(50% - 0.5px), currentColor calc(50% + 0.5px), transparent calc(50% + 0.5px))',
+                    top: badgeTop,
+                    height: badgeHeight,
+                    clipPath: editPointHoleClip(width, ((transition.at_frame - start) / fps) * pxPerSec) ?? undefined,
                   }}
                 />
               }
+            />
+            <div
+              aria-hidden
+              className="pointer-events-none absolute z-(--z-timeline-overlay) rounded-sm border border-accent bg-accent/25 peer-hover:bg-accent/40"
+              style={{
+                left,
+                width,
+                top: badgeTop,
+                height: badgeHeight,
+                // The dissolve X, drawn as two gradients rather than an SVG
+                // so a timeline full of transitions paints plain divs — the
+                // same reasoning `TimelineMarkers`' `clip-path` flag uses.
+                backgroundImage:
+                  'linear-gradient(to top right, transparent calc(50% - 0.5px), currentColor calc(50% - 0.5px), currentColor calc(50% + 0.5px), transparent calc(50% + 0.5px)), linear-gradient(to bottom right, transparent calc(50% - 0.5px), currentColor calc(50% - 0.5px), currentColor calc(50% + 0.5px), transparent calc(50% + 0.5px))',
+              }}
             />
             <PopoverContent className="w-60 p-3">
               <TransitionEditor

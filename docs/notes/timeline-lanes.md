@@ -1,6 +1,6 @@
 # Timeline lanes: replacing `@xzdarcy/react-timeline-editor` (D-437 build plan)
 
-Status: **plan, 2026-11-01. Built so far: S0, S1, S2, S3a, S3b, S4 — `TimelinePane` renders the lanes and our playhead since S4; the library package is still installed but imported by nothing (S5 deletes it). See each step's "Built" note.** Decision: D-437 (`docs/08-decisions.md`).
+Status: **plan, 2026-11-01. Built so far: S0, S1, S2, S3a, S3b, S4, S5, S6 — `TimelinePane` renders the lanes and our playhead since S4; the library package and its selectors are gone (S5, S6). See each step's "Built" note.** Decision: D-437 (`docs/08-decisions.md`).
 Evidence: `docs/notes/timeline-drag-perf.md` (B-347), the live harness runs under
 `scratch/ui-harness/runs/` (run 4: `2026-10-31T21-00-23-799Z`). Builds on D-432 P2/P3
 (`docs/notes/ui-redesign.md` §6b, §6c) and the harness (`docs/notes/ui-harness.md`).
@@ -445,8 +445,8 @@ the lanes. On a commit, only the changed clips repaint.
 | every `TIMELINE_TEST_IDS` entry | **unchanged** (`timeline-clip`, `-trim-*`, `-track-lane`, `-edit-area`, …) | all 55 scenarios | — |
 | `TIMELINE_VIEW_ATTRS` on the edit area | **unchanged** names and meaning (`rowsTop` stays `RULER_AND_MARGIN_PX`) | `ScenarioRunner` frame targets, `visibility.ts` (H11) | S8 writes the scroll attrs imperatively |
 
-`TIMELINE_LIBRARY_SELECTORS` survives S4 only as an alias of the new selectors, so the
-harness keeps compiling unchanged across the switch. S6 deletes it, moves its uses to
+(Done in S6, see below.) `TIMELINE_LIBRARY_SELECTORS` survived S4 only as an alias of the new selectors, so the
+harness kept compiling unchanged across the switch. S6 deleted it, moved its uses to
 `TIMELINE_TEST_IDS` (`playhead`, `playheadHead`, `playheadBand`, `clipSlot`, `scroller`,
 `trackRow`), replaces `timelineTestIds.test.ts`'s library-CSS pin with a render test that
 every id is present on a real `TimelinePane` (extends `TimelinePane.testIds.dom.test.tsx`),
@@ -764,9 +764,13 @@ is paint)._
   packages app/src` returns only historical docs; `npm ls interactjs` empty; bundle size
   delta recorded; all tests green.
 
+- **Built (2026-11-01).** The package, `interactjs` and `react-virtualized` (and 12 transitive packages, 15 in all) left `packages/editor/package.json` and `package-lock.json` (`npm ls` finds none; `grep` over `packages/` and `app/src` finds no import). `timeline-overrides.css` is now `timeline.css` (the B-351 and edit-gesture cursor rules), `useViewportWidth` returns the width only (`epoch` and its remount purpose are gone), and `TimelinePane`'s module doc and the stale comments that named library classes were updated; the lineage comments ("replaces the library") stay on purpose. `app/bench/replay.js` and its README now find clips by `timeline-clip-slot`. `timelineTestIds.test.ts` lost its library-stylesheet pin (it needed the package). Bundle size: no delta to record, the S4 switch had already dropped the import, so the production bundle had tree-shaken the library out; the saving is install size (about 7 MB). The library-only tests were already ported in S4. `buildRows`/`editorRef`/`measureEpoch` were removed in S4.
+
 ### S6 — harness map
 - §3's last paragraph. Full live harness run, report cited.
 - Acceptance: `runner.test.ts` updated; 51/55 live (or better).
+- **Built (2026-11-01).** `TIMELINE_LIBRARY_SELECTORS` and `TIMELINE_LIBRARY_ALIAS_CLASSES` are deleted; the lane parts carry only their test ids; `targets.ts` aims at `timeline-playhead-band` and exports `playheadLine()` for the scrub `live` watches; the DOM suites query `[data-testid="timeline-clip-slot"]` etc. `TimelinePane.testIds.dom.test.tsx` now pins that a real render has the scroller, a track row holding a clip slot, and the playhead with its head and band. Live run: pending (the owner runs the harness).
+- **The first live perf-300 run on the lanes and what it found** (B-357; reproduced in headless Chromium on `app/harness.html?mode=edit` with a CDP driver, since the running app was off limits): the two transition-blocked trims were a fixture defect AND a real UX bug (a badge over a cut blocked its trim zones: fixed with a hit-test hole, `editPointHoleClip`); `perf-300-scroll-horizontal` was a real bug (the aim point fell on a lane's height-resize overlay, which swallowed the wheel; the ruler too: the pane now forwards it to the scroller); `perf-300-roll` is attributed to the pane's scroll state outliving the scroller (the ruler offset and misplaced brackets in the failure screenshot; fixed by adopting the scroller's position on mount; not reproducible in Chromium, so unproven). Ripple would have been refused next (B-033: dense timeline), so that scenario now sync-unlocks the other tracks.
 
 ### S7 — paint isolation (measured)
 - §2.9 items 3–7, **one sub-commit per item**, each with the harness at 3 and 300 clips

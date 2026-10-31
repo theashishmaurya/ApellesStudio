@@ -34,6 +34,13 @@ const drag = (target: TargetRef, frames: number, label: string): Step => ({
   measure: true,
 });
 
+/** A ripple shifts every sync-locked track, and refuses (B-033) when a clip on one straddles the edit point: on a dense 8-track
+ *  timeline one always does. Unlock every other track, as an editor would to ripple one. */
+const unsyncOthers = (keep: number): Step[] =>
+  Array.from({ length: BIG_300.tracks.length }, (_, t) => t)
+    .filter((t) => t !== keep)
+    .map((t) => ({ op: 'editor_set_track_sync_locked', args: { track: t, syncLocked: false }, label: `sync-unlock track ${t}` }));
+
 const scenario = (id: string, title: string, steps: Step[]): Scenario => ({
   id: `perf-300-${id}`,
   title: `300 clips: ${title}`,
@@ -50,6 +57,7 @@ export const PERF_300_SCENARIOS: Scenario[] = [
     { waitFor: { path: `timeline.clips.${c(1, 1)}.duration`, op: 'lt', value: 75 } },
   ]),
   scenario('ripple-trim', 'Ripple trim (every later clip on the track moves)', [
+    ...unsyncOthers(2),
     pickTool('ripple'),
     toolActive('ripple', 'the Ripple tool button did not activate'),
     drag(trimRight(c(2, 1)), -15, `ripple-trim ${c(2, 1)}'s right edge 15 frames left`),

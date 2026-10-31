@@ -57,7 +57,8 @@ describe('bigFixtureSpec (D-437 S0c)', () => {
     for (const tr of BIG_300.transitions ?? []) {
       const clips = BIG_300.tracks[tr.track].clips;
       const incoming = clips.findIndex((c) => c.startFrame === tr.atFrame);
-      expect(incoming).toBeGreaterThan(0);
+      // past the butted run: the edit-tool scenarios press on the cuts inside it (D-437 S6)
+      expect(incoming).toBeGreaterThanOrEqual(BIG_BUTTED_RUN);
       expect(clips[incoming - 1].startFrame + clips[incoming - 1].duration).toBe(tr.atFrame);
     }
   });
