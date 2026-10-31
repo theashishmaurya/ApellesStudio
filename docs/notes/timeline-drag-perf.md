@@ -246,6 +246,12 @@ Each line is a landed fix. None is re-profiled against the live app yet (that ne
   live in the pane's overlay layers, not in the action. Pinned as text in
   `timelineOverrides.test.ts` (jsdom applies no CSS). Expected: move-phase layout
   ~8 ms -> < 1 ms per preview; **unverified live**: re-profile with the F6 build.
+- **F3 (2D part) done.** Moved neighbours get `translate(dx, 0)` instead of
+  `translate3d(dx, 0, 0)` in `useEditGesture.ts`, so no clip is promoted to its own
+  compositing layer mid-drag (transform-only, nothing else changed). The slip picture's
+  `media` shift keeps `translate3d`: it is one element per gesture. Pinned by a
+  `TimelinePane.clipBlock.dom.test.tsx` case. The per-track group transform stays with F5.
+  Expected: 200-clip ripple/slide move p95 66 -> ~25 ms; **unverified live**.
 
 ## Instrument next (exact additions; debug-only)
 

@@ -201,7 +201,9 @@ export function createEditGesture(
       if (!el) continue;
       moved.add(s.id);
       const before = g.index.get(s.id);
-      el.body.style.transform = s.dStart !== 0 ? `translate3d(${px(s.dStart)}px, 0, 0)` : '';
+      // 2D `translate`, not `translate3d`: the latter promotes every moved clip to its
+      // own compositing layer, created mid-drag and torn down at release (B-347 F3).
+      el.body.style.transform = s.dStart !== 0 ? `translate(${px(s.dStart)}px, 0)` : '';
       // The one clip-level layout write: a clip whose length changes takes its
       // new width (spec §5.1 allows width "on that one clip only"); every
       // neighbour that only shifts is a pure transform.
