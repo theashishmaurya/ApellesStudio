@@ -264,6 +264,7 @@ import {
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from 'react';
 import type { TimelineRow, TimelineAction } from '@xzdarcy/timeline-engine';
 import { Timeline as TimelineEditor, type TimelineState } from '@xzdarcy/react-timeline-editor';
