@@ -33,6 +33,14 @@
 //!     measurement in `docs/notes/debug-tooling.md` (B-124, D-217, D-330).
 //!     Explicit, through `debug_set_occlusion_throttling`; never implicit.
 //!
+//!   - The app's activation state, for hover. WebKit delivers a buttonless
+//!     move only to a window that is key, and a window is only key while its
+//!     app is the active one; H5's `makeKeyWindow` does not take otherwise
+//!     (`madeKeyForMove: false`). `debug_activate_app` (H15) brings Apelles to
+//!     the front and reports which app was in front, and called again with
+//!     that app's pid it hands the front back, so a harness run leaves the
+//!     owner's desktop as it found it. Explicit, never implicit.
+//!
 //! What it does NOT do: resolve targets, plan gestures, or observe what the
 //!   page received — all frontend (`@apelles/debug`). The wire format and the
 //!   pure mapping rules (validation, coordinates, virtual keys, characters)
@@ -54,7 +62,30 @@
 pub use apelles_ui_input::{InjectReport, LowEvent, Viewport};
 
 #[cfg(target_os = "macos")]
-pub use mac::{inject, set_occlusion_detection};
+pub use mac::{activate_app, inject, set_occlusion_detection};
+
+/// One application, as `NSRunningApplication` names it.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppRef {
+    pub pid: i32,
+    pub name: Option<String>,
+}
+
+/// `debug_activate_app`'s answer.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivationReport {
+    /// The app in front before the call (what to hand the front back to).
+    pub previous: Option<AppRef>,
+    /// The app in front when the call returned.
+    pub now: Option<AppRef>,
+    /// Whether the app asked for (this one, or `restorePid`) is now in front.
+    pub active: bool,
+    /// Whether this app's window is key after the call (hover needs it).
+    pub window_key: bool,
+    pub window: String,
+}
 
 /// Non-macOS twin: there is no native input path here yet. The message is
 /// matched by the frontend's `auto` mode (`isUnsupported`), which then falls
@@ -67,6 +98,15 @@ pub fn inject<R: tauri::Runtime>(
     _viewport: Viewport,
 ) -> Result<InjectReport, String> {
     Err("native input is not supported on this platform (macOS only, D-434)".into())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn activate_app<R: tauri::Runtime>(
+    _app: &tauri::AppHandle<R>,
+    _window_label: Option<&str>,
+    _restore_pid: Option<i32>,
+) -> Result<ActivationReport, String> {
+    Err("app activation control is not supported on this platform (macOS only, D-434)".into())
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -85,7 +125,7 @@ mod mac {
     use std::time::Duration;
 
     use objc2::rc::Retained;
-    use objc2::runtime::{AnyClass, Imp, NSObject, NSObjectProtocol, Sel};
+    use objc2::runtime::{AnyClass, Bool, Imp, NSObject, NSObjectProtocol, Sel};
     use objc2::{ClassType, msg_send, sel};
     use objc2_app_kit::{
         NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSResponder, NSScreen, NSView,
@@ -98,6 +138,7 @@ mod mac {
     use objc2_web_kit::WKWebView;
     use tauri::Runtime;
 
+    use super::{ActivationReport, AppRef};
     use crate::chroma::debug_capture::resolve_capturable_window;
     use apelles_ui_input::{
         InjectReport, KeyPhase, LowEvent, MagnifyPhase, MouseButton, MouseKind, OcclusionReport,
@@ -622,6 +663,102 @@ mod mac {
         NSScreen::screens(mtm)
             .firstObject()
             .map_or(0.0, |s| s.frame().size.height)
+    }
+
+    /// How long to wait for the window server to finish an activation.
+    const ACTIVATION_TIMEOUT: Duration = Duration::from_millis(1500);
+    const ACTIVATION_POLL: Duration = Duration::from_millis(40);
+    /// `NSApplicationActivateIgnoringOtherApps`.
+    const ACTIVATE_IGNORING_OTHER_APPS: usize = 1 << 1;
+
+    fn app_ref(app: &NSObject) -> AppRef {
+        // SAFETY: both selectors are `NSRunningApplication` properties; `app`
+        // is one (it came from `frontmostApplication` / `runningApplication…`).
+        let pid: i32 = unsafe { msg_send![app, processIdentifier] };
+        let name: Option<Retained<NSString>> = unsafe { msg_send![app, localizedName] };
+        AppRef {
+            pid,
+            name: name.map(|n| n.to_string()),
+        }
+    }
+
+    /// The application in front right now, if the workspace names one.
+    fn frontmost_app() -> Option<AppRef> {
+        let workspace = AnyClass::get(c"NSWorkspace")?;
+        // SAFETY: `+[NSWorkspace sharedWorkspace]` / `-frontmostApplication`.
+        let shared: Option<Retained<NSObject>> = unsafe { msg_send![workspace, sharedWorkspace] };
+        let front: Option<Retained<NSObject>> =
+            unsafe { msg_send![&*shared?, frontmostApplication] };
+        Some(app_ref(&*front?))
+    }
+
+    /// Bring the application with this pid to the front.
+    fn activate_pid(pid: i32) -> Result<(), String> {
+        let class = AnyClass::get(c"NSRunningApplication")
+            .ok_or("NSRunningApplication is not available")?;
+        // SAFETY: `+[NSRunningApplication runningApplicationWithProcessIdentifier:]`
+        // takes a pid_t and returns nil for a process that is gone.
+        let app: Option<Retained<NSObject>> =
+            unsafe { msg_send![class, runningApplicationWithProcessIdentifier: pid] };
+        let app = app.ok_or_else(|| format!("no running application has pid {pid}"))?;
+        // SAFETY: `-activateWithOptions:` takes an NSApplicationActivationOptions.
+        let accepted: Bool =
+            unsafe { msg_send![&*app, activateWithOptions: ACTIVATE_IGNORING_OTHER_APPS] };
+        if accepted.as_bool() {
+            Ok(())
+        } else {
+            Err(format!("the system refused to activate pid {pid}"))
+        }
+    }
+
+    /// Activate this app and make its window key, or (with `restore_pid`) hand
+    /// the front back to the app that had it. Waits, briefly, for the window
+    /// server to finish: activation is asynchronous.
+    pub fn activate_app<R: Runtime>(
+        app: &tauri::AppHandle<R>,
+        window_label: Option<&str>,
+        restore_pid: Option<i32>,
+    ) -> Result<ActivationReport, String> {
+        let window = resolve_capturable_window(app, window_label)?;
+        let label = window.label().to_string();
+        let own_pid = i32::try_from(std::process::id()).unwrap_or(-1);
+        let wanted = restore_pid.unwrap_or(own_pid);
+        let previous = on_webview(&window, move |webview, mtm| {
+            let previous = frontmost_app();
+            match restore_pid {
+                Some(pid) => activate_pid(pid)?,
+                None => {
+                    #[allow(deprecated)] // the pre-macOS-14 spelling works on every supported OS
+                    NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
+                    if let Some(w) = webview.window() {
+                        w.makeKeyAndOrderFront(None);
+                    }
+                }
+            }
+            Ok(previous)
+        })?;
+        let deadline = std::time::Instant::now() + ACTIVATION_TIMEOUT;
+        loop {
+            let (now, window_key) = on_webview(&window, |webview, _| {
+                Ok((
+                    frontmost_app(),
+                    webview.window().is_some_and(|w| w.isKeyWindow()),
+                ))
+            })?;
+            let active = now.as_ref().is_some_and(|a| a.pid == wanted);
+            // Handing the front back needs no key window; taking it does.
+            let settled = active && (restore_pid.is_some() || window_key);
+            if settled || std::time::Instant::now() >= deadline {
+                return Ok(ActivationReport {
+                    previous,
+                    now,
+                    active,
+                    window_key,
+                    window: label,
+                });
+            }
+            std::thread::sleep(ACTIVATION_POLL);
+        }
     }
 
     pub fn set_occlusion_detection<R: Runtime>(

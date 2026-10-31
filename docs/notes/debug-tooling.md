@@ -255,6 +255,10 @@ several rounds of the owner's own screenshots before an agent could even confirm
      WebKitTestRunner's own pattern — so the page gets trusted events without any TCC
      permission and without the window being frontmost. In-page synthetic dispatch is
      the labelled fallback (jsdom, non-macOS).
+   - **`debug_activate_app`** (H15, native control op, harness-only: no MCP tool): brings the
+     app to the front and makes its window key (WebKit delivers a buttonless move only to a key
+     window), reporting the previous front app; called again with `restorePid` it hands the
+     front back. `chroma::debug_input`, compile-gated with the rest.
    - **`debug_perf_entries`** (B-347, frontend op + MCP tool): the app's own
      `performance` marks for the edit gestures (`apelles:edit:*`, written by
      `@apelles/editor`'s `editPerf.ts`) with `build.dev`, and an optional `waitIdleMs`
