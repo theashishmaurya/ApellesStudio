@@ -28,9 +28,12 @@
  * tile defect D-128 removed. Two copies of these numbers drifting apart
  * would reintroduce it quietly, so there is exactly one.
  */
-/** The timeline library's own ruler-bar height, in px —
- *  `.timeline-editor-time-area { height: 32px }` in its bundled
- *  `react-timeline-editor.css`, read there rather than guessed.
+/** The ruler bar's height, in px. D-432 P3: 24 (spec §4.6), down from the
+ *  library's own 32 (`.timeline-editor-time-area { height: 32px }` in its
+ *  bundled CSS). `timeline-overrides.css` sets the library's ruler and its
+ *  playhead's top from this number through the `--chroma-ruler-height`
+ *  custom property `TimelinePane` writes, so the CSS and the overlay maths
+ *  read one definition.
  *
  *  A constant here rather than a literal at each site (D-222) because two
  *  unrelated files now need the same number and must not disagree about it:
@@ -39,7 +42,7 @@
  *  the drop-target row math measure from, and `TimelineMarkers.tsx` uses it as
  *  the strip's own `top`. It lives in this module, with the ruler's other
  *  layout constants, rather than in either consumer — neither one owns it. */
-export const RULER_HEIGHT_PX = 32;
+export const RULER_HEIGHT_PX = 24;
 
 export const MIN_PX_PER_SEC = 1;
 export const MAX_PX_PER_SEC = 480;
@@ -93,5 +96,50 @@ export function formatTimecode(seconds: number, fps: number, tickIntervalSeconds
   const hh = Math.floor(totalSeconds / 3600);
   const pad = (n: number) => String(n).padStart(2, '0');
   const base = `${pad(hh)}:${pad(mm)}:${pad(ss)}`;
+  return tickIntervalSeconds < 1 ? `${base}:${pad(ff)}` : base;
+}
+
+/** D-432 P3 — the spacing a minor ruler tick must keep, px: closer than this
+ *  and the ticks read as a grey bar rather than as marks. */
+export const MIN_MINOR_TICK_PX = 8;
+
+/** The subdivisions a labelled interval may be split into, coarsest last. */
+const SPLIT_CANDIDATES = [10, 5, 2, 1] as const;
+
+/**
+ * D-432 P3 — how many minor ticks to draw per labelled interval (the
+ * library's `scaleSplitCount`): the finest of 10 / 5 / 2 / 1 that keeps the
+ * minor ticks at least `MIN_MINOR_TICK_PX` apart at this zoom, so the
+ * density follows the zoom the way the labels' interval already does. The
+ * library's own default is a fixed 10.
+ */
+export function rulerSplitCount(tickSeconds: number, pxPerSecond: number): number {
+  const tickPx = tickSeconds * pxPerSecond;
+  for (const split of SPLIT_CANDIDATES) {
+    if (tickPx / split >= MIN_MINOR_TICK_PX) return split;
+  }
+  return 1;
+}
+
+/**
+ * D-432 P3 — a ruler label in the spec's adaptive format (§4.6): `0:05`,
+ * `1:30`, `1:02:10` (h:mm:ss once there are hours), with frames appended
+ * only at frame-level zoom — a sub-second labelled interval — `1:30:12`.
+ * No zero-padded hours on every label: the ruler is read at a glance, and
+ * `00:00:05` spends five characters saying "five seconds". The marker
+ * tooltips and the timecode fields keep the full `HH:MM:SS:FF`
+ * (`formatTimecode`, `fmtTimecode`), which is for reading a position exactly.
+ */
+export function formatRulerLabel(seconds: number, fps: number, tickIntervalSeconds: number): string {
+  const safeFps = fps > 0 ? fps : 24;
+  const wholeFps = Math.max(1, Math.round(safeFps));
+  const totalFrames = Math.max(0, Math.round(seconds * safeFps));
+  const ff = totalFrames % wholeFps;
+  const totalSeconds = Math.floor(totalFrames / wholeFps);
+  const ss = totalSeconds % 60;
+  const mm = Math.floor(totalSeconds / 60) % 60;
+  const hh = Math.floor(totalSeconds / 3600);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const base = hh > 0 ? `${hh}:${pad(mm)}:${pad(ss)}` : `${mm}:${pad(ss)}`;
   return tickIntervalSeconds < 1 ? `${base}:${pad(ff)}` : base;
 }

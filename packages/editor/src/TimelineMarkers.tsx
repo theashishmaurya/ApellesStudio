@@ -32,14 +32,22 @@
  * ranged markers (`scratch/premiere-index-reference/`); the field SET is that,
  * the look is this repo's own.
  *
+ * **D-432 P3 — the FCP / Resolve look and a drag.** The flag is Phosphor's
+ * `BookmarkSimple` shield (11 px, fill, a 14 × 14 hit area, centred on the
+ * frame) on a 14 px strip; a ranged marker's bar is 4 px at 55 %. A first
+ * click selects the flag (a ring) and jumps; a click on the selected flag,
+ * Enter, a double-click or a right-click opens the editor; a drag past 3 px
+ * moves the marker (B-348), snapping while Snapping (N) is on, committing one
+ * `set_marker`. The editor uses a 64 px label column, Name first.
+ *
  * **What it does NOT do.** It owns no state that outlives a gesture: every
  * commit goes straight to `useEditorTimelineStore.applyOp`, so a marker edit
  * is persisted and undoable exactly like any other edit. It computes no
  * timeline geometry of its own either — `pxPerSec`/`scrollLeft`/`startLeftPx`
  * come from `TimelinePane`, which is the one place that math lives.
  */
-import { useEffect, useMemo, useState } from 'react';
-import { CheckIcon, FlagIcon, TrashIcon } from '@phosphor-icons/react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { BookmarkSimpleIcon, TrashIcon } from '@phosphor-icons/react';
 import {
   Button,
   DropdownMenu,
@@ -69,30 +77,35 @@ import {
   type Timeline,
 } from './timeline';
 import { formatTimecode, RULER_HEIGHT_PX } from './ruler';
+import { snapFrame } from './editGesture';
 
 /** Height of the marker strip, in px — and, because the strip lives in the
- *  gap the timeline library leaves between its 32px ruler and its edit area,
- *  also the `margin-top` `timeline-overrides.css` gives
- *  `.timeline-editor-edit-area` (the library's own default is 10px, which is
- *  too short for a legible flag). `TimelinePane`'s `RULER_AND_MARGIN_PX` is
- *  `32 + this`; the two must move together, so this is the single definition
- *  and both sites derive from it. */
-export const MARKER_STRIP_HEIGHT = 16;
+ *  gap the timeline library leaves between its ruler and its edit area, also
+ *  the `margin-top` `timeline-overrides.css` gives `.timeline-editor-edit-area`
+ *  (the library's own default is 10px, which is too short for a legible flag).
+ *  `TimelinePane`'s `RULER_AND_MARGIN_PX` is `RULER_HEIGHT_PX + this`; the two
+ *  must move together, so this is the single definition and both sites derive
+ *  from it. D-432 P3: 14 (spec §4.7), was 16. */
+export const MARKER_STRIP_HEIGHT = 14;
 
-/** Flag glyph size. Narrow enough that two markers a second apart at the
- *  default zoom still read as two, tall enough to fill the strip. */
-const FLAG_WIDTH = 9;
+/** D-432 P3 — the flag glyph (Phosphor `BookmarkSimple`, fill) and its hit
+ *  area, px (spec §4.7: an 11 px shield, a 14 × 14 target, centred on the
+ *  marker's frame). */
+const FLAG_ICON_PX = 11;
+const FLAG_HIT_PX = 14;
+/** A press on a flag that travels this far is a drag, not a click (the same
+ *  3 px threshold the clip drag and the track reorder use, spec §5). */
+const MARKER_DRAG_THRESHOLD_PX = 3;
+/** Snap reach of a dragged marker, px at any zoom (spec §5's 8 px). */
+const MARKER_SNAP_PX = 8;
+/** A ranged marker's bar (spec §4.7): 4 px tall, its colour at 55 %. */
+const MARKER_BAR_PX = 4;
 
-/** Resolve's own marker glyph — a pennant/shield: square shoulders, a notched
- *  point at the bottom. Drawn with `clip-path` rather than an SVG per flag so
- *  a timeline with a hundred markers paints a hundred plain divs. */
-const FLAG_CLIP_PATH = 'polygon(0 0, 100% 0, 100% 62%, 50% 100%, 0 62%)';
-
-/** Where a marker's flag sits horizontally, in the edit area's own coordinate
+/** Where a marker's frame sits horizontally, in the edit area's own coordinate
  *  space — the same `startLeft + frame/fps*pxPerSec - scrollLeft` the ruler
  *  ticks, the playhead and every other overlay in `TimelinePane` already use.
- *  The flag's LEFT edge is the frame (like the playhead's own line), not its
- *  centre, so "which frame is this marker on" is unambiguous at any zoom. */
+ *  The flag is centred on this x (D-432 P3), so "which frame is this marker
+ *  on" is the shield's point at any zoom. */
 export function markerLeftPx(frame: number, fps: number, pxPerSec: number, scrollLeft: number, startLeftPx: number): number {
   return startLeftPx + (frame / fps) * pxPerSec - scrollLeft;
 }
@@ -107,6 +120,23 @@ export function markerLeftPx(frame: number, fps: number, pxPerSec: number, scrol
  *  `duration_frames != null` test. */
 export function markerSpanWidthPx(marker: Marker, fps: number, pxPerSec: number): number {
   return ((markerEndFrame(marker) - marker.frame) / fps) * pxPerSec;
+}
+
+/** D-432 P3 / B-348 — where a marker dragged `dxPx` from its frame lands: the
+ *  frame under the pointer (never before 0), snapped to the nearest target
+ *  within `MARKER_SNAP_PX` when snapping is on. Pure, so the drag's rule is
+ *  unit-tested without a pointer. */
+export function draggedMarkerFrame(
+  fromFrame: number,
+  dxPx: number,
+  fps: number,
+  pxPerSec: number,
+  snapTargets: readonly number[] | null,
+): number {
+  const raw = Math.max(0, Math.round(fromFrame + (dxPx / pxPerSec) * fps));
+  if (!snapTargets || snapTargets.length === 0) return raw;
+  const threshold = Math.max(1, Math.round((MARKER_SNAP_PX / pxPerSec) * fps));
+  return snapFrame(raw, snapTargets, threshold, null).frame;
 }
 
 /** The `set_marker` patch, as the strip and its popover pass one up. Exactly
@@ -124,10 +154,7 @@ export interface MarkerStripProps {
   /** Jump the playhead to a marker's frame (the store's own `setPlayhead`). */
   onJump: (frame: number) => void;
   /** Commit a `set_marker` patch (the store's own `applyOp`). */
-  onPatch: (
-    id: string,
-    patch: MarkerPatch,
-  ) => void;
+  onPatch: (id: string, patch: MarkerPatch) => void;
   /** Commit a `remove_marker`. */
   onRemove: (id: string) => void;
   /** B-339 — the marker whose editor is open (controlled: the Add Marker
@@ -135,26 +162,35 @@ export interface MarkerStripProps {
    *  creating the marker, which a strip-local state could not be told). */
   editingId: string | null;
   onEditingIdChange: (id: string | null) => void;
+  /** D-432 P3 — what a dragged marker snaps to (clip edges, the playhead, the
+   *  other markers), read at the press; `null` while Snapping (N) is off. */
+  snapTargets?: (movingId: string) => number[] | null;
 }
 
 /**
- * The flag strip itself. Click a flag to jump the playhead there; double-click
- * or right-click one to open its editor.
+ * The flag strip itself (D-222; D-432 P3 restyled it and made a flag
+ * draggable). A click selects a flag (a 1 px ring) and jumps the playhead to
+ * it; a click on the selected flag, a double-click, Enter or a right-click
+ * opens its editor; a drag past 3 px moves the marker (one `set_marker` on
+ * release, snapping to clip edges / the playhead / the other markers while
+ * Snapping is on; Esc cancels).
  *
- * **Why click ≠ open**, unlike most small controls: this is Resolve's own
+ * **Why the first click does not open the editor**: this is Resolve's own
  * split (single click positions, double-click opens the Markers dialog), and
  * it is the right one here — a marker's first job is to be a place you jump
  * to while reviewing, and popping a form open on every such jump would make
- * the common gesture the expensive one.
+ * the common gesture the expensive one. Adding a marker does open it (B-339).
  *
  * **Gesture coexistence** (the same question D-137's marquee and D-207's fade
  * handles each had to answer): the strip carries `data-chroma-no-marquee`, the
  * escape hatch `marquee.ts`'s own `MARQUEE_BLOCKING_SELECTOR` already
- * documents for exactly this — "anything later rendered into the edit area
- * that owns its own press" — so no marquee can start from a press on a flag,
- * with no change to that module. Everything but the flags themselves is
- * `pointer-events-none`, so a press on the empty parts of the strip still
- * falls through to the library underneath.
+ * documents for exactly this, and a flag stops its own press. Everything but
+ * the flags themselves is `pointer-events-none`, so a press on the empty
+ * parts of the strip still falls through to the library underneath.
+ *
+ * **A drag renders nothing**: each move writes a `transform` on the flag and
+ * its bar; the release commits once, and the transforms are dropped in a
+ * layout effect on the render that carries the new frame, before paint.
  */
 export function MarkerStrip({
   timeline,
@@ -167,8 +203,16 @@ export function MarkerStrip({
   onRemove,
   editingId,
   onEditingIdChange: setEditingId,
+  snapTargets,
 }: MarkerStripProps) {
   const markers = useMemo(() => markersOf(timeline), [timeline]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** Removes the current press's window listeners (one press at a time). */
+  const detachRef = useRef<(() => void) | null>(null);
+  /** The flag whose drag just ended: its trailing `click` is not a click. */
+  const suppressClickRef = useRef<string | null>(null);
+  /** Elements whose drag transform must drop on the render that moves them. */
+  const pendingResetRef = useRef<HTMLElement[]>([]);
 
   // A marker deleted (by the popover's own Delete, by an undo, or by an MCP
   // call) while its editor is open must close it rather than leave a popover
@@ -178,18 +222,87 @@ export function MarkerStrip({
     if (editingId !== null && !editing) setEditingId(null);
   }, [editingId, editing]);
 
+  // The render that carries a dragged marker's new frame: its flag is now
+  // laid out there, so the drag's transform comes off before paint.
+  useLayoutEffect(() => {
+    for (const el of pendingResetRef.current) el.style.transform = '';
+    pendingResetRef.current = [];
+  }, [markers]);
+
+  const onFlagPointerDown = (e: ReactPointerEvent<HTMLButtonElement>, m: Marker) => {
+    // The strip sits over the library's own ruler/edit area and inside
+    // `TimelinePane`'s edit-area container, both of which have their own
+    // press handlers (set the playhead / clear the selection). A press on a
+    // flag is this control's, so it stops here.
+    e.stopPropagation();
+    if (e.button !== 0) return;
+    detachRef.current?.();
+    const span = e.currentTarget.parentElement?.querySelector<HTMLElement>(
+      `[data-chroma-marker-span="${m.id.replace(/["\\]/g, '\\$&')}"]`,
+    );
+    const els = span ? [e.currentTarget, span] : [e.currentTarget];
+    const targets = snapTargets ? snapTargets(m.id) : null;
+    const originX = e.clientX;
+    const pointerId = e.pointerId;
+    let dragging = false;
+    let frame = m.frame;
+    const end = (commit: boolean) => {
+      detach();
+      if (!dragging) return;
+      suppressClickRef.current = m.id;
+      if (commit && frame !== m.frame) {
+        pendingResetRef.current = els;
+        onPatch(m.id, { frame });
+      } else {
+        for (const el of els) el.style.transform = '';
+      }
+    };
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      const dx = ev.clientX - originX;
+      if (!dragging && Math.abs(dx) < MARKER_DRAG_THRESHOLD_PX) return;
+      dragging = true;
+      frame = draggedMarkerFrame(m.frame, dx, fps, pxPerSec, targets);
+      const offset = ((frame - m.frame) / fps) * pxPerSec;
+      for (const el of els) el.style.transform = `translate3d(${offset}px, 0, 0)`;
+    };
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId === pointerId) end(true);
+    };
+    const onCancel = () => end(false);
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== 'Escape' || !dragging) return;
+      ev.stopPropagation();
+      end(false);
+    };
+    const detach = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('keydown', onKey, true);
+      detachRef.current = null;
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+    window.addEventListener('keydown', onKey, true);
+    detachRef.current = detach;
+  };
+
+  // An unmount mid-drag must not leave window listeners behind.
+  useEffect(() => () => detachRef.current?.(), []);
+
   return (
     <div
       data-chroma-marker-strip
       data-chroma-no-marquee
-      className="pointer-events-none absolute left-0 right-0 z-(--z-timeline-markers) overflow-hidden"
+      className="pointer-events-none absolute left-0 right-0 z-(--z-timeline-markers) overflow-hidden bg-timeline-bg"
       style={{ top: RULER_HEIGHT_PX, height: MARKER_STRIP_HEIGHT }}
     >
-      {/* D-328 — the span bars, drawn BEFORE the flags so a flag always sits on
-          top of its own bar (and of a neighbouring one it overlaps). Each is
-          `pointer-events-none`: the flag at the bar's left edge stays the one
-          hit target for the marker, so adding ranges changed no gesture. A
-          point marker has zero width here and renders nothing. */}
+      {/* D-328 / D-432 P3 — the span bars, drawn BEFORE the flags so a flag
+          always sits on top of its own bar. A 4 px bar in the marker's colour
+          at 55 % with a 2 px solid end, radius 2. `pointer-events-none`: the
+          flag stays the one hit target for the marker. */}
       {markers.map((m) => {
         const width = markerSpanWidthPx(m, fps, pxPerSec);
         if (width <= 0) return null;
@@ -198,73 +311,95 @@ export function MarkerStrip({
             key={`${m.id}-span`}
             data-chroma-marker-span={m.id}
             aria-hidden
-            className="pointer-events-none absolute top-0.5 rounded-sm"
+            className="pointer-events-none absolute bottom-0.5 rounded-xs"
             style={{
               left: markerLeftPx(m.frame, fps, pxPerSec, scrollLeft, startLeftPx),
               width,
-              height: MARKER_STRIP_HEIGHT - 4,
-              // The marker's own colour at low alpha, with a solid right edge
-              // marking the end frame — the bar has to read as "this marker,
-              // extended" rather than as a separate object, and the end needs
-              // to be locatable to the frame. `color-mix` keeps this derived
-              // from the one stored colour instead of a second palette of
-              // washed-out variants (CLAUDE.md's one-token-source reasoning
-              // applied to document content: see D-222 decision 3).
-              background: `color-mix(in srgb, ${m.color} 28%, transparent)`,
+              height: MARKER_BAR_PX,
+              // `color-mix` keeps this derived from the one stored colour
+              // instead of a second palette of washed-out variants (CLAUDE.md's
+              // one-token-source reasoning applied to document content, D-222).
+              background: `color-mix(in srgb, ${m.color} 55%, transparent)`,
               borderRight: `2px solid ${m.color}`,
             }}
           />
         );
       })}
 
-      {markers.map((m) => (
-        <button
-          key={m.id}
-          type="button"
-          data-chroma-marker={m.id}
-          data-testid={TIMELINE_TEST_IDS.marker}
-          // D-328 — a ranged marker says so in both labels: its span is the
-          // thing a user most needs confirmed without opening the popover
-          // (Premiere's own ruler markers expose their data on hover for the
-          // same reason), and a screen-reader user has no bar to look at.
-          aria-label={`Marker ${m.name ?? ''} at ${formatTimecode(m.frame / fps, fps, 0)}${
-            m.duration_frames ? ` lasting ${formatTimecode(m.duration_frames / fps, fps, 0)}` : ''
-          }`.replace(/\s+/g, ' ')}
-          title={`${m.name ? `${m.name} — ` : ''}${formatTimecode(m.frame / fps, fps, 0)}${
-            m.duration_frames
-              ? ` → ${formatTimecode(markerEndFrame(m) / fps, fps, 0)} (${formatTimecode(m.duration_frames / fps, fps, 0)})`
-              : ''
-          }\nClick to jump · double-click to edit`}
-          className="pointer-events-auto absolute top-0.5 cursor-pointer border-0 p-0 outline-none focus-visible:ring-1 focus-visible:ring-accent"
-          style={{
-            left: markerLeftPx(m.frame, fps, pxPerSec, scrollLeft, startLeftPx),
-            width: FLAG_WIDTH,
-            height: MARKER_STRIP_HEIGHT - 4,
-            background: m.color,
-            clipPath: FLAG_CLIP_PATH,
-          }}
-          // The strip sits over the library's own ruler/edit area and inside
-          // `TimelinePane`'s edit-area container, both of which have their own
-          // click handlers (set the playhead / clear the selection). A press on
-          // a flag is this control's, so it stops there — the same
-          // distinct-hit-target discipline every other gesture on this surface
-          // uses.
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            onJump(m.frame);
-          }}
-          onDoubleClick={(e) => {
-            e.stopPropagation();
-            setEditingId(m.id);
-          }}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setEditingId(m.id);
-          }}
-        />
-      ))}
+      {markers.map((m) => {
+        const selected = selectedId === m.id;
+        return (
+          <button
+            key={m.id}
+            type="button"
+            data-chroma-marker={m.id}
+            data-chroma-marker-selected={selected ? '' : undefined}
+            data-testid={TIMELINE_TEST_IDS.marker}
+            // D-328 — a ranged marker says so in both labels: its span is the
+            // thing a user most needs confirmed without opening the popover.
+            aria-label={`Marker ${m.name ?? ''} at ${formatTimecode(m.frame / fps, fps, 0)}${
+              m.duration_frames ? ` lasting ${formatTimecode(m.duration_frames / fps, fps, 0)}` : ''
+            }`.replace(/\s+/g, ' ')}
+            aria-pressed={selected}
+            title={`${m.name ? `${m.name} — ` : ''}${formatTimecode(m.frame / fps, fps, 0)}${
+              m.duration_frames
+                ? ` → ${formatTimecode(markerEndFrame(m) / fps, fps, 0)} (${formatTimecode(m.duration_frames / fps, fps, 0)})`
+                : ''
+            }\nClick to jump · click again or double-click to edit · drag to move`}
+            className={
+              'pointer-events-auto absolute top-0 flex cursor-pointer items-center justify-center rounded-xs border-0 bg-transparent p-0 outline-none focus-visible:ring-1 focus-visible:ring-focus-ring ' +
+              (selected ? 'ring-1 ring-text-primary' : '')
+            }
+            style={{
+              left: markerLeftPx(m.frame, fps, pxPerSec, scrollLeft, startLeftPx),
+              marginLeft: -FLAG_HIT_PX / 2,
+              width: FLAG_HIT_PX,
+              height: MARKER_STRIP_HEIGHT,
+              color: m.color,
+            }}
+            onPointerDown={(e) => onFlagPointerDown(e, m)}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (suppressClickRef.current === m.id) {
+                suppressClickRef.current = null;
+                return;
+              }
+              if (selected) {
+                setEditingId(m.id);
+                return;
+              }
+              setSelectedId(m.id);
+              onJump(m.frame);
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return;
+              e.preventDefault();
+              e.stopPropagation();
+              setSelectedId(m.id);
+              setEditingId(m.id);
+            }}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              setEditingId(m.id);
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setEditingId(m.id);
+            }}
+          >
+            {/* The shield: Phosphor's own glyph in the marker's colour, with a
+                thin dark stroke under the fill so a light colour stays visible
+                on the strip. */}
+            <BookmarkSimpleIcon
+              weight="fill"
+              size={FLAG_ICON_PX}
+              aria-hidden
+              className="pointer-events-none stroke-black/40 [paint-order:stroke] [stroke-width:24px]"
+            />
+          </button>
+        );
+      })}
 
       {/* One popover for whichever marker is being edited, anchored to an
           invisible element at that marker's own x. A single instance rather
@@ -289,15 +424,16 @@ export function MarkerStrip({
               <span
                 aria-hidden
                 tabIndex={-1}
-                className="pointer-events-none absolute top-0 block h-4 w-0"
-                style={{ left: markerLeftPx(editing.frame, fps, pxPerSec, scrollLeft, startLeftPx) }}
+                className="pointer-events-none absolute top-0 block w-0"
+                style={{ left: markerLeftPx(editing.frame, fps, pxPerSec, scrollLeft, startLeftPx), height: MARKER_STRIP_HEIGHT }}
               />
             }
           />
           <PopoverContent
-            className="w-72 bg-surface border-border-color text-text-primary"
-            align="start"
+            className="w-70 rounded-md border-border-color bg-surface-raised p-3 text-text-primary shadow-popover"
+            align="center"
             data-chroma-marker-editor
+            data-testid={TIMELINE_TEST_IDS.markerEditor}
           >
             <MarkerEditor
               marker={editing}
@@ -325,22 +461,17 @@ interface MarkerEditorProps {
 }
 
 /**
- * The marker's own form — Resolve's Markers dialog, minus the fields D-222
- * scoped out (Duration, Keyword).
- *
- * Name/Notes are **local until Done/blur**, the colour swatches commit on
- * click. That split is the same one D-207's fade handles make and for the same
- * reason: `applyOp` snapshots the whole timeline onto the undo stack per call,
- * so committing per keystroke would be one undo entry per character, while a
- * swatch click is already a single discrete decision.
+ * The marker editor (spec §4.7, D-432 P3 layout; fields D-222 / D-328): a
+ * 64 px label column, Name (focused on open, B-339), Time and Duration as
+ * timecode (one row each), the colour swatches, Notes; Remove Marker on the left,
+ * Done on the right. Enter on Name commits and closes; Esc closes. Same fields
+ * as Resolve's dialog minus Keyword; they map 1:1 onto `editor_set_marker`.
  */
 function MarkerEditor({ marker, fps, onPatch, onRemove, onDone }: MarkerEditorProps) {
   const [name, setName] = useState(marker.name ?? '');
   const [note, setNote] = useState(marker.note ?? '');
-  // D-328 — Time and Duration are TIMECODE text, not frame integers. A number
-  // field made the user do the frames-per-second arithmetic themselves for
-  // anything past a couple of seconds, which is why every NLE's marker dialog
-  // (Premiere's included) uses timecode here. `parseTimecode` still accepts a
+  // D-328 — Time and Duration are TIMECODE text, not frame integers: every
+  // NLE's marker dialog uses timecode here. `parseTimecode` still accepts a
   // bare frame count, so nothing the old numeric field took stopped working.
   const [timeText, setTimeText] = useState(fmtTimecode(marker.frame, fps));
   const [durationText, setDurationText] = useState(
@@ -348,8 +479,8 @@ function MarkerEditor({ marker, fps, onPatch, onRemove, onDone }: MarkerEditorPr
   );
 
   // Re-seed whenever the stored marker changes underneath (an undo, an MCP
-  // write, a swatch click's own round trip) so the fields can never show a
-  // stale draft — `CaptionInspectorPanel`'s own draft convention.
+  // write, a swatch click's own round trip, a drag) so the fields can never
+  // show a stale draft — `CaptionInspectorPanel`'s own draft convention.
   useEffect(() => {
     setName(marker.name ?? '');
     setNote(marker.note ?? '');
@@ -386,110 +517,114 @@ function MarkerEditor({ marker, fps, onPatch, onRemove, onDone }: MarkerEditorPr
     onPatch(patch);
   };
 
-  const ranged = !!marker.duration_frames;
+  const label = 'text-xs text-text-secondary';
+  const row = 'grid grid-cols-[64px_1fr] items-center gap-2';
 
   return (
-    <div className="flex flex-col gap-3 text-xs">
-      <div className="flex items-center justify-between">
-        <span className="font-medium">Marker</span>
-        {/* The end of the span, the one fact neither field shows directly —
-            and the quickest confirmation that a typed duration did what the
-            user meant. Hidden for a point marker, where it would just repeat
-            the Time field. */}
-        {ranged && (
-          <span className="tabular-nums text-text-secondary" data-chroma-marker-endtime>
-            ends {fmtTimecode(markerEndFrame(marker), fps)}
-          </span>
-        )}
-      </div>
-
-      {/* Time and Duration side by side: they are one statement ("from here,
-          for this long"), and stacking them would read as two unrelated
-          fields. */}
-      <div className="flex items-start gap-2">
-        <label className="flex min-w-0 flex-1 flex-col gap-1">
-          <span className="text-text-secondary">Time</span>
-          <Input
-            className="h-7 text-right tabular-nums"
-            data-chroma-marker-time
-            aria-label="Marker time"
-            value={timeText}
-            onChange={(e) => setTimeText(e.target.value)}
-            onBlur={commit}
-          />
-        </label>
-        <label className="flex min-w-0 flex-1 flex-col gap-1">
-          <span className="text-text-secondary">Duration</span>
-          <Input
-            className="h-7 text-right tabular-nums"
-            data-chroma-marker-duration
-            aria-label="Marker duration"
-            // An empty field IS the point-marker state, so the placeholder
-            // shows what empty means rather than an example value.
-            placeholder="00:00:00:00"
-            value={durationText}
-            onChange={(e) => setDurationText(e.target.value)}
-            onBlur={commit}
-          />
-        </label>
-      </div>
-
-      <label className="flex flex-col gap-1">
-        <span className="text-text-secondary">Name</span>
+    <div className="flex flex-col gap-2.5 text-xs">
+      <label className={row}>
+        <span className={label}>Name</span>
         <Input
           className="h-7"
           data-chroma-marker-name
-          // B-339 — the editor opens to be typed into (a heading is the first
-          // thing a fresh marker needs).
+          // B-339 — the editor opens to be typed into.
           autoFocus
-          placeholder="e.g. cut here"
+          placeholder="Marker"
           value={name}
           onChange={(e) => setName(e.target.value)}
           onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            commit();
+            onDone();
+          }}
         />
       </label>
 
-      <label className="flex flex-col gap-1">
-        <span className="text-text-secondary">Comments</span>
+      {/* Time and Duration on their own rows: two full timecodes do not fit
+          side by side in a 280 px popover without clipping (the spec's
+          side-by-side layout, checked on screen). */}
+      <label className={row}>
+        <span className={label}>Time</span>
+        <Input
+          className="h-7 text-right font-mono tabular-nums"
+          data-chroma-marker-time
+          aria-label="Marker time"
+          value={timeText}
+          onChange={(e) => setTimeText(e.target.value)}
+          onBlur={commit}
+        />
+      </label>
+      <label className={row}>
+        <span className={label}>Duration</span>
+        <Input
+          className="h-7 text-right font-mono tabular-nums"
+          data-chroma-marker-duration
+          aria-label="Marker duration"
+          title="Empty for a point marker"
+          // An empty field IS the point-marker state, so the placeholder
+          // shows what empty means rather than an example value.
+          placeholder="00:00:00:00"
+          value={durationText}
+          onChange={(e) => setDurationText(e.target.value)}
+          onBlur={commit}
+        />
+      </label>
+      {marker.duration_frames ? (
+        <div className={row}>
+          <span />
+          <span className="text-2xs tabular-nums text-text-tertiary" data-chroma-marker-endtime>
+            ends {fmtTimecode(markerEndFrame(marker), fps)}
+          </span>
+        </div>
+      ) : null}
+
+      <div className={row}>
+        <span className={label}>Colour</span>
+        <div className="flex flex-wrap gap-1.5">
+          {MARKER_COLORS.map((c) => {
+            const on = c.hex.toUpperCase() === marker.color.toUpperCase();
+            return (
+              <button
+                key={c.name}
+                type="button"
+                aria-label={c.name}
+                aria-pressed={on}
+                title={c.name}
+                className={
+                  'size-3.5 rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-focus-ring ' +
+                  (on ? 'ring-2 ring-text-primary ring-offset-1 ring-offset-surface-raised' : '')
+                }
+                style={{ background: c.hex }}
+                onClick={() => onPatch({ color: c.hex })}
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      <label className="grid grid-cols-[64px_1fr] items-start gap-2">
+        <span className={label + ' pt-1.5'}>Notes</span>
         <Textarea
-          // Taller than D-222's Notes box: this is the field the Index panel's
-          // marker rows also edit, and the reference treats it as the marker's
-          // main body of text rather than an afterthought.
-          className="min-h-20 text-xs"
+          className="min-h-16 max-h-32 text-xs"
+          rows={3}
           data-chroma-marker-note
-          placeholder="Anything worth remembering about this range"
+          placeholder="Anything worth remembering here"
           value={note}
           onChange={(e) => setNote(e.target.value)}
           onBlur={commit}
         />
       </label>
 
-      <div className="flex flex-wrap gap-1">
-        {MARKER_COLORS.map((c) => (
-          <button
-            key={c.name}
-            type="button"
-            aria-label={c.name}
-            title={c.name}
-            className="relative size-4 rounded-sm border border-border-color/60 outline-none focus-visible:ring-1 focus-visible:ring-accent"
-            style={{ background: c.hex }}
-            onClick={() => onPatch({ color: c.hex })}
-          >
-            {c.hex.toUpperCase() === marker.color.toUpperCase() && (
-              <CheckIcon className="absolute inset-0 m-auto size-3 text-black/70" />
-            )}
-          </button>
-        ))}
-      </div>
-
       <div className="flex items-center justify-between gap-2 pt-1">
-        <Button variant="ghost" size="xs" className="h-6 px-2 text-[11px] text-red-400" onClick={onRemove}>
+        <Button variant="ghost" size="xs" className="h-6 px-2 text-xs text-destructive hover:text-destructive" onClick={onRemove}>
           <TrashIcon className="size-3" />
           Remove Marker
         </Button>
         <Button
           size="xs"
-          className="h-6 px-3 text-[11px]"
+          className="h-6 px-3 text-xs"
           onClick={() => {
             commit();
             onDone();
@@ -544,7 +679,7 @@ export function MarkerListMenu({ timeline, fps, onJump, onRemove }: MarkerListMe
       <DropdownMenuTrigger
         render={
           <Button variant="ghost" size="sm" data-testid={TIMELINE_TEST_IDS.markerList} aria-label="Markers">
-            <FlagIcon />
+            <BookmarkSimpleIcon weight="fill" />
             {markers.length}
           </Button>
         }
@@ -572,7 +707,7 @@ export function MarkerListMenu({ timeline, fps, onJump, onRemove }: MarkerListMe
               data-chroma-marker-list-remove={m.id}
               aria-label={`Delete marker at ${formatTimecode(m.frame / fps, fps, 0)}`}
               title="Delete this marker"
-              className="shrink-0 cursor-pointer rounded-sm p-1 text-text-secondary hover:bg-red-500/15 hover:text-red-400"
+              className="shrink-0 cursor-pointer rounded-sm p-1 text-text-secondary hover:bg-destructive/15 hover:text-destructive"
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 // The row's own handler jumps the playhead; deleting must not
@@ -607,15 +742,15 @@ export function AddMarkerButton({ onAdd, shortcut }: AddMarkerButtonProps) {
       <TooltipTrigger
         render={
           <Button variant="ghost" size="icon-sm" onClick={() => onAdd()} data-testid={TIMELINE_TEST_IDS.addMarker} aria-label="Add marker">
-            <FlagIcon />
+            <BookmarkSimpleIcon />
           </Button>
         }
       />
       <TooltipContent>
         <span className="font-medium">Marker ({shortcut})</span>
         <span className="ml-1.5 text-text-secondary">
-          Add a marker at the playhead and edit it (M adds; Alt+M adds and edits) — click a flag on the ruler to jump to it, double-click to rename,
-          recolour or delete it
+          Add a marker at the playhead and edit it (M adds; Alt+M adds and edits) — click a flag to jump to it, click it again to edit it, drag it
+          to move it
         </span>
       </TooltipContent>
     </Tooltip>

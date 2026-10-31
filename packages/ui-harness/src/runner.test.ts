@@ -354,7 +354,7 @@ describe('runner helpers', () => {
     expect(resolveTargetRef({ frame: 30, track: 0 }, view, {})).toEqual({ x: 222, y: 96 });
     expect(resolveTargetRef({ frame: { ref: 'v.f', plus: 30 }, track: 1, fy: 0 }, view, { v: { f: 0 } })).toEqual({ x: 222, y: 122 });
     expect(resolveTargetRef({ byFrames: 15, byTracks: 1 }, view, {})).toEqual({ byX: 45, byY: 52 });
-    expect(resolveTargetRef({ frame: 30, track: 'ruler' }, view, {})).toEqual({ selector: '.timeline-editor-time-area', at: { fx: 0, fy: 0.5, dx: 122 } });
+    expect(resolveTargetRef({ frame: 30, track: 'ruler' }, view, {})).toEqual({ selector: '[data-testid="timeline-ruler"]', at: { fx: 0, fy: 0.5, dx: 122 } });
     expect(resolveTargetRef({ testid: 'x' }, null, {})).toEqual({ testid: 'x' });
     expect(() => resolveTargetRef({ frame: 1, track: 0 }, null, {})).toThrow(/view readout/);
   });

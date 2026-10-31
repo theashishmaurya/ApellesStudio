@@ -42,6 +42,7 @@
  * of the pane's coordinate space and there is no import cycle.
  */
 
+import { rowHeightAt, rowTopAt } from './trackHeight';
 import { forwardRef, useImperativeHandle, useMemo, useState } from 'react';
 
 import { linkedDragGhosts, sourceFramesToTimeline, syncLinkedClipIdsAtPosition } from './timeline';
@@ -86,7 +87,11 @@ export interface TimelineDragPreviewProps {
   scrollLeft: number;
   scrollTop: number;
   startLeftPx: number;
+  /** the default row height (every row, when `rowTops` is absent) */
   rowHeight: number;
+  /** D-432 P3 — each row's top when tracks have their own heights
+   *  (`trackHeight.ts` `trackTops`) */
+  rowTops?: readonly number[];
   rulerAndMarginPx: number;
 }
 
@@ -101,9 +106,12 @@ interface Ghost {
 
 export const TimelineDragPreview = forwardRef<TimelineDragPreviewHandle, TimelineDragPreviewProps>(
   function TimelineDragPreview(
-    { timeline, tracks, fps, pxPerSec, scrollLeft, scrollTop, startLeftPx, rowHeight, rulerAndMarginPx },
+    { timeline, tracks, fps, pxPerSec, scrollLeft, scrollTop, startLeftPx, rowHeight, rowTops, rulerAndMarginPx },
     ref,
   ) {
+    // D-432 P3 — a row's top and height at any mix of track heights.
+    const topOf = (i: number) => (rowTops ? rowTopAt(rowTops, i, rowHeight) : i * rowHeight);
+    const heightOf = (i: number) => (rowTops ? rowHeightAt(rowTops, i, rowHeight) : rowHeight);
     const [landing, setLandingState] = useState<ClipDragPreview | null>(null);
     const [insert, setInsertState] = useState<InsertPreview | null>(null);
 
@@ -207,9 +215,9 @@ export const TimelineDragPreview = forwardRef<TimelineDragPreviewHandle, Timelin
             className="pointer-events-none absolute z-(--z-timeline-overlay) bg-accent"
             style={{
               left: startLeftPx + (insert.frame / fps) * pxPerSec - scrollLeft,
-              top: rulerAndMarginPx + insert.track * rowHeight - scrollTop,
+              top: rulerAndMarginPx + topOf(insert.track) - scrollTop,
               width: 2,
-              height: rowHeight,
+              height: heightOf(insert.track),
             }}
           />
         )}
@@ -231,7 +239,7 @@ export const TimelineDragPreview = forwardRef<TimelineDragPreviewHandle, Timelin
               // affordance.
               top:
                 rulerAndMarginPx +
-                insert.index * rowHeight -
+                topOf(insert.index) -
                 (insert.index === tracks.length ? 0 : rowHeight / 2) -
                 scrollTop,
               height: rowHeight,
@@ -250,8 +258,8 @@ export const TimelineDragPreview = forwardRef<TimelineDragPreviewHandle, Timelin
             style={{
               left: startLeftPx + (g.shiftedStart / fps) * pxPerSec - scrollLeft,
               width: (g.duration / fps) * pxPerSec,
-              top: rulerAndMarginPx + g.track * rowHeight - scrollTop,
-              height: rowHeight,
+              top: rulerAndMarginPx + topOf(g.track) - scrollTop,
+              height: heightOf(g.track),
             }}
           />
         ))}
@@ -270,8 +278,8 @@ export const TimelineDragPreview = forwardRef<TimelineDragPreviewHandle, Timelin
             style={{
               left: startLeftPx + (g.shiftedStart / fps) * pxPerSec - scrollLeft,
               width: (g.duration / fps) * pxPerSec,
-              top: rulerAndMarginPx + g.track * rowHeight - scrollTop,
-              height: rowHeight,
+              top: rulerAndMarginPx + topOf(g.track) - scrollTop,
+              height: heightOf(g.track),
             }}
           />
         ))}

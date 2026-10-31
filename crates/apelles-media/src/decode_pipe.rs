@@ -539,8 +539,16 @@ impl PipeLane {
     /// wrapping it would silently alias lane 0, which is the one lane that must
     /// never be handed out here.
     pub fn render(n: usize) -> Self {
-        PipeLane(n.saturating_add(1).min(u16::MAX as usize) as u16)
+        PipeLane(n.saturating_add(1).min(u16::MAX as usize - 1) as u16)
     }
+
+    /// D-432 P3 — the Edit tab's two-up trim viewer: the outgoing and incoming
+    /// frames shown while a roll / slip / slide is dragged, one sequential
+    /// stream per half (slots `Track(0)` / `Track(1)`). Its own lane so a
+    /// trim drag's decodes can neither release nor reposition a pipe the live
+    /// preview is using, and the preview's per-frame release can never kill
+    /// them. The top of the range, which [`Self::render`] stops one short of.
+    pub const TRIM_VIEW: PipeLane = PipeLane(u16::MAX);
 }
 
 /// What the pool is actually keyed by since D-360: one sequential stream,

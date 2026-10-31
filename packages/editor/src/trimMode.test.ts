@@ -154,13 +154,17 @@ describe('TRIM_TOOLS — the palette itself', () => {
     expect(new Set(TRIM_TOOLS.map((t) => t.shortcutId)).size).toBe(TRIM_TOOLS.length);
   });
 
-  it('is still bound to Adobe’s own V/B/N/Y/U (+ C, Premiere’s Razor) by default', () => {
-    // V/B/N/Y/U, quoted from Adobe's own help pages in
+  it('is bound to Adobe’s V/B/Y/U, T for Roll and C (Premiere’s Razor) by default', () => {
+    // V/B/Y/U, quoted from Adobe's own help pages in
     // `scratch/premiere-tools-reference/premiere-tools-panel.json`. Asserted
     // against the registry now that it is the one place the letters live.
+    // D-432 P3: Roll moved off Premiere's N to T (Final Cut's Trim tool and
+    // Resolve's Trim Edit mode) when N became Final Cut's snapping toggle.
     expect(
       TRIM_TOOLS.map((t) => shortcutById(t.shortcutId)?.defaultCombo),
-    ).toEqual([['KeyV'], ['KeyB'], ['KeyN'], ['KeyY'], ['KeyU'], ['KeyC']]);
+    ).toEqual([['KeyV'], ['KeyB'], ['KeyT'], ['KeyY'], ['KeyU'], ['KeyC']]);
+    expect(shortcutById('edit.toggle_snapping')?.defaultCombo).toEqual(['KeyN']);
+    expect(shortcutById('edit.toggle_skimming')?.defaultCombo).toEqual(['KeyS']);
   });
 
   it('gives every tool a label and a blurb, so nothing renders blank', () => {

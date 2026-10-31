@@ -61,16 +61,16 @@ const ROLL_FIELDS = ['startFrame', 'duration', 'sourceStart'] as const;
 export const EDIT_TOOL_SCENARIOS: Scenario[] = [
   {
     id: 'trim-tool-shortcuts',
-    title: 'V / B / N / Y / U select the Select, Ripple, Roll, Slip and Slide tools',
+    title: 'V / B / T / Y / U select the Select, Ripple, Roll, Slip and Slide tools',
     area: 'edit tools',
-    reference: "Premiere Pro's Tools panel shortcuts (D-261); the palette must show which tool is active",
+    reference: "Premiere Pro's Tools panel shortcuts (D-261), Roll on T since D-432 P3 (N is Final Cut's snapping); the palette must show which tool is active",
     fixture: THREE_CLIPS,
     steps: [
       { pointer: { action: 'click', target: clip('a') }, label: 'focus the timeline' },
       { key: { keys: ['KeyB'] } },
       toolActive('ripple', 'B did not select the Ripple tool'),
-      { key: { keys: ['KeyN'] } },
-      toolActive('roll', 'N did not select the Roll tool'),
+      { key: { keys: ['KeyT'] } },
+      toolActive('roll', 'T did not select the Roll tool'),
       { key: { keys: ['KeyY'] } },
       toolActive('slip', 'Y did not select the Slip tool'),
       { key: { keys: ['KeyU'] } },
@@ -263,7 +263,12 @@ export const EDIT_TOOL_SCENARIOS: Scenario[] = [
       pickTool('roll'),
       { pointer: { action: 'down', target: trimRight('a') }, label: 'press on the a|b cut' },
       { pointer: { action: 'move', target: atFrame(100, 0) }, label: 'start rolling (button still held)' },
-      { reachable: { selector: '[data-chroma-trim-viewer]', reason: 'no two-up trim viewer: nothing in the preview shows the out/in frames during a roll' } },
+      {
+        reachable: {
+          selector: `[data-testid="${TIMELINE_TEST_IDS.twoUpViewer}"]`,
+          reason: 'no two-up trim viewer: nothing in the preview shows the out/in frames during a roll',
+        },
+      },
       { pointer: { action: 'up', target: atFrame(100, 0) }, label: 'release' },
     ],
   },

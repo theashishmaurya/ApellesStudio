@@ -27,7 +27,7 @@ import { checkBudget, DEFAULT_PERF_BUDGET, PLAYBACK_PAINT_MIN_FPS, PLAYBACK_RAF_
 import type { OpClient } from './client.ts';
 import { buildFixture, teardownFixture, type BuiltFixture, type ScratchProject } from './fixture.ts';
 import type { FrameOffset, FrameTarget, Scenario, Step, TargetRef } from './scenario.ts';
-import { TIMELINE_LIBRARY_SELECTORS, TIMELINE_TEST_IDS } from '@apelles/editor/src/timelineTestIds.ts';
+import { TIMELINE_TEST_IDS } from '@apelles/editor/src/timelineTestIds.ts';
 import { framesToPx, pointAtFrame, timelineSnapshot, VIEW_QUERY, viewSnapshot, type ViewSnap } from './snapshot.ts';
 
 export type Status = 'PASS' | 'FAIL' | 'SKIP' | 'ERROR';
@@ -118,7 +118,8 @@ export function resolveTargetRef(t: TargetRef, view: ViewSnap | null, scope: Sco
         // the frame's x relative to the ruler is the same arithmetic minus
         // the area's own left; the app resolves the ruler's live rect.
         const x = pointAtFrame(view, frame, 0).x - view.rect.x;
-        return { selector: TIMELINE_LIBRARY_SELECTORS.ruler, at: { fx: 0, fy: t.fy ?? 0.5, dx: x } };
+        // D-432 P3 — our own ruler (`TimelineRuler.tsx`), not the library's.
+        return { selector: `[data-testid="${TIMELINE_TEST_IDS.ruler}"]`, at: { fx: 0, fy: t.fy ?? 0.5, dx: x } };
       }
       return pointAtFrame(view, frame, t.track, t.fy);
     }

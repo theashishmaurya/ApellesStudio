@@ -178,6 +178,9 @@ import { Player, useContentBox } from '@apelles/player';
 import { useShortcut } from '@apelles/keymap';
 
 import { useEditorTimelineStore } from './timelineStore';
+// D-432 P3 — skimming's frame request and the two-up trim viewer.
+import { usePreviewPeekStore } from './previewPeek';
+import { TwoUpViewer } from './TwoUpViewer';
 import { timelineDuration, timelineFps } from './timeline';
 import { TransformOverlay } from './TransformOverlay';
 import { DynamicZoomOverlay } from './DynamicZoomOverlay';
@@ -615,6 +618,24 @@ export function PreviewPane() {
     fetchFrame(playhead, PREVIEW_LONG_EDGE);
   }, [playhead, playing, hasTimeline, savedVersion, fetchFrame]);
 
+  // D-432 P3 — skimming (S): the timeline asks for the frame under its pointer
+  // through `previewPeek.ts`, and this subscribes OUTSIDE React, so a skim
+  // costs a fetch (latest-wins, through `fetchFrame`) and no render here or in
+  // the timeline. `null` (the pointer left the timeline) brings the playhead's
+  // frame back. Ignored while playing: playback owns the picture.
+  useEffect(
+    () =>
+      usePreviewPeekStore.subscribe((s, prev) => {
+        if (s.skimFrame === prev.skimFrame) return;
+        const st = useEditorTimelineStore.getState();
+        if (st.playing || !st.timeline) return;
+        const want = s.skimFrame ?? st.playhead;
+        if (shownFrame.current === want) return;
+        fetchFrame(want, PREVIEW_LONG_EDGE);
+      }),
+    [fetchFrame],
+  );
+
   // play: wall-clock rAF loop, frame-dropping to stay real-time
   useEffect(() => {
     if (rafRef.current) {
@@ -958,6 +979,10 @@ export function PreviewPane() {
                   selected CAPTION clip, which `TransformOverlay` now explicitly
                   stands aside for. */}
               <CaptionTransformOverlay container={surfaceEl} size={compSize} />
+              {/* D-432 P3 — the two-up trim viewer, only while a roll / slip /
+                  slide is dragged; on top of everything, as it replaces the
+                  picture for the gesture. */}
+              <TwoUpViewer />
             </div>
           ) : timeline ? (
             <div className="flex flex-col items-center gap-2 text-text-secondary">

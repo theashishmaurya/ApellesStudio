@@ -30,6 +30,11 @@
  *      render, before paint, so nothing settles or jumps. A refused or
  *      cancelled (Esc) edit animates back over 120 ms instead.
  *
+ * D-432 P3: a roll, slip or slide also feeds the two-up viewer
+ * (`twoUp.ts` → `previewPeek.ts` → `TwoUpViewer.tsx`) on each preview, and
+ * clears it at the end; the store skips unchanged frames, so this costs no
+ * render when the snapped delta does not move a side.
+ *
  * What it does NOT do: moves (dnd-kit, `TimelinePane`'s `ClipBody`), fades
  * (`ClipFadeOverlay`), or decide any edit's rules (`editGesture.ts`,
  * `timeline.ts` `applyOp`).
@@ -54,6 +59,9 @@ import {
 import { endFrame, type EditOp, type Timeline } from './timeline';
 import { edgeIsEditPoint, resolveTrimMode, type TrimTool, type TrimZone } from './trimMode';
 import { TIMELINE_TEST_IDS } from './timelineTestIds';
+import { rowHeightAt, rowTopAt } from './trackHeight';
+import { usePreviewPeekStore } from './previewPeek';
+import { twoUpView } from './twoUp';
 
 /** Snap threshold, px at any zoom (Palmier Pro's 8 px, spec §5). */
 export const EDIT_SNAP_PX = 8;
@@ -79,7 +87,13 @@ export interface EditGestureView {
   scrollTop: number;
   startLeft: number;
   rowsTop: number;
+  /** the default row height (every row, when `rowTops` is absent) */
   rowHeight: number;
+  /** D-432 P3 — each row's top when tracks have their own heights */
+  rowTops?: readonly number[];
+  /** D-432 P3 — the toolbar's Snapping toggle (N); off, an edit lands where
+   *  the pointer is. Absent = on. */
+  snapping?: boolean;
   viewportWidth: number;
   /** extra snap targets in frames: the playhead and the markers */
   snapExtras: () => number[];
@@ -166,16 +180,19 @@ export function createEditGesture(
   };
   const rowTop = (track: number) => {
     const v = viewRef.current;
-    return v.rowsTop + track * v.rowHeight - v.scrollTop;
+    return v.rowsTop + (v.rowTops ? rowTopAt(v.rowTops, track, v.rowHeight) : track * v.rowHeight) - v.scrollTop;
+  };
+  const rowH = (track: number) => {
+    const v = viewRef.current;
+    return v.rowTops ? rowHeightAt(v.rowTops, track, v.rowHeight) : v.rowHeight;
   };
 
   const showBrackets = (tl: Timeline, target: EditTarget, limit: boolean) => {
-    const v = viewRef.current;
     feedbackRef.current?.brackets(
       editBrackets(tl, target).map((b) => ({
         x: frameX(b.frame),
         top: rowTop(b.track) + 1,
-        height: Math.max(0, v.rowHeight - 2),
+        height: Math.max(0, rowH(b.track) - 2),
         side: b.side,
         limit,
       })),
@@ -241,7 +258,7 @@ export function createEditGesture(
     const raw = Math.round((((clientX - g.originX) + (v.scrollLeft - g.originScrollLeft)) / v.pxPerSec) * v.fps);
     let delta = raw;
     let snapX: number | null = null;
-    if (g.edgeFrame0 !== null && !suspendSnap) {
+    if (g.edgeFrame0 !== null && !suspendSnap && v.snapping !== false) {
       const threshold = Math.max(1, Math.round((EDIT_SNAP_PX / v.pxPerSec) * v.fps));
       const s = snapFrame(g.edgeFrame0 + raw, g.snapTargets, threshold, g.sticky);
       g.sticky = s.target;
@@ -255,6 +272,8 @@ export function createEditGesture(
     g.lastDelta = delta;
     g.preview = previewEdit(g.tl, g.target, delta, g.index);
     paint(g);
+    // D-432 P3 — the two-up viewer follows the edit (roll / slip / slide).
+    usePreviewPeekStore.getState().setTwoUp(twoUpView(g.tl, g.target, g.preview.after));
   };
 
   const finish = (commit: boolean) => {
@@ -276,6 +295,7 @@ export function createEditGesture(
       area.style.cursor = '';
     }
     feedbackRef.current?.clear();
+    usePreviewPeekStore.getState().setTwoUp(null);
     hoverKeyRef.current = null;
     const v = viewRef.current;
     const op = commit ? editOpFor(g.tl, g.target, g.preview.delta) : null;
@@ -408,6 +428,8 @@ export function createEditGesture(
       preview: { delta: 0, limited: false, after: tl, shifts: [] },
       styled: new Map(),
     };
+    // D-432 P3 — the two-up viewer opens with the edit's current frames.
+    usePreviewPeekStore.getState().setTwoUp(twoUpView(tl, target, tl));
     const area = editAreaRef.current;
     if (area) {
       area.dataset.chromaEditGesture = target.mode;
@@ -445,7 +467,7 @@ export function createEditGesture(
       const frame = frameAtClientX(e.clientX);
       hoverKeyRef.current = 'blade';
       fb.brackets([]);
-      fb.blade(frame === null ? null : { x: frameX(frame), top: rowTop(track) + 1, height: Math.max(0, v.rowHeight - 2) });
+      fb.blade(frame === null ? null : { x: frameX(frame), top: rowTop(track) + 1, height: Math.max(0, rowH(track) - 2) });
       return;
     }
     fb.blade(null);

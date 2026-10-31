@@ -34,7 +34,7 @@ import type { Icon as PhosphorIcon } from '@phosphor-icons/react';
 
 import { adjustmentSummary } from './adjustment';
 import { captionLines } from './caption';
-import { clipAnatomy, clipChrome, type ClipKind } from './clipAnatomy';
+import { CLIP_BAND_RATIO, clipAnatomy, clipChrome, type ClipKind } from './clipAnatomy';
 import { Filmstrip } from './Filmstrip';
 import type { Clip } from './timeline';
 import { TIMELINE_TEST_IDS } from './timelineTestIds';
@@ -90,6 +90,12 @@ export interface ClipBlockProps {
   curveOpen?: boolean;
   /** toggle the curve lane; absent on the drag ghost */
   onToggleCurve?: () => void;
+  /** D-432 P3 — the Clip Appearance popover (`timelineView.ts`): the
+   *  waveform/filmstrip share of the body, and whether the strip shows the
+   *  clip's name and badges */
+  bandRatio?: number;
+  showName?: boolean;
+  showBadges?: boolean;
 }
 
 export function ClipBlock({
@@ -104,8 +110,11 @@ export function ClipBlock({
   keyframed = false,
   curveOpen = false,
   onToggleCurve,
+  bandRatio = CLIP_BAND_RATIO,
+  showName = true,
+  showBadges: badgesOn = true,
 }: ClipBlockProps) {
-  const a = clipAnatomy(trackHeight, kind);
+  const a = clipAnatomy(trackHeight, kind, bandRatio);
   const chrome = clipChrome(widthPx);
   const colours = CLIP_KIND_CLASSES[kind];
   const KindIcon = KIND_ICONS[kind];
@@ -114,7 +123,8 @@ export function ClipBlock({
   const durationSecs = clip.duration / srcFps;
   const label = clipLabel(clip, kind);
   const speedRamped = (clip.speed_points?.length ?? 0) > 0;
-  const showBadges = chrome.badges && !a.labelsOnly;
+  const showBadges = badgesOn && chrome.badges && !a.labelsOnly;
+  const showLabel = showName && chrome.label;
 
   return (
     <>
@@ -180,7 +190,7 @@ export function ClipBlock({
         style={{ height: a.strip }}
       >
         {KindIcon && chrome.label && <KindIcon size={STRIP_ICON_PX} className="shrink-0 opacity-90" aria-hidden />}
-        {chrome.label && <span className="min-w-0 flex-1 truncate">{label}</span>}
+        {showLabel && <span className="min-w-0 flex-1 truncate">{label}</span>}
         {showBadges && speedRamped && (
           <span className="flex shrink-0 items-center rounded-xs bg-black/30 px-0.5" title="Speed ramp">
             <GaugeIcon size={STRIP_ICON_PX} aria-hidden />

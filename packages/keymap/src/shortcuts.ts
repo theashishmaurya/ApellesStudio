@@ -165,11 +165,36 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
   // marking during playback is not interrupted.
   { id: 'edit.add_marker', label: 'Add marker at playhead (opens an existing one)', category: 'timeline', scope: 'edit', defaultCombo: ['KeyM'] },
   { id: 'edit.add_marker_edit', label: 'Add marker and edit it', category: 'timeline', scope: 'edit', defaultCombo: ['alt', 'KeyM'] },
+  // D-432 P3 — Final Cut's own keys, the owner's answer in D-432: N toggles
+  // snapping, S toggles skimming (off by default).
+  { id: 'edit.toggle_snapping', label: 'Snapping on / off', category: 'timeline', scope: 'edit', defaultCombo: ['KeyN'] },
+  { id: 'edit.toggle_skimming', label: 'Skimming on / off', category: 'timeline', scope: 'edit', defaultCombo: ['KeyS'] },
+  // D-432 P3 / B-348 — keyboard zoom: Premiere's = / -, with Final Cut's
+  // Cmd+= / Cmd+- as aliases. Anchored on the playhead, like the buttons.
+  {
+    id: 'edit.zoom_in',
+    label: 'Zoom the timeline in',
+    category: 'timeline',
+    scope: 'edit',
+    defaultCombo: ['Equal'],
+    aliases: [['ctrl', 'Equal']],
+  },
+  {
+    id: 'edit.zoom_out',
+    label: 'Zoom the timeline out',
+    category: 'timeline',
+    scope: 'edit',
+    defaultCombo: ['Minus'],
+    aliases: [['ctrl', 'Minus']],
+  },
 
-  // ── Trim tools (Edit tab) — Adobe's own V/B/N/Y/U, D-261 ─────────────────
+  // ── Trim tools (Edit tab) — Adobe's own V/B/Y/U, D-261 ───────────────────
   { id: 'edit.tool_select', label: 'Select tool', category: 'trim-tools', scope: 'edit', defaultCombo: ['KeyV'] },
   { id: 'edit.tool_ripple', label: 'Ripple tool', category: 'trim-tools', scope: 'edit', defaultCombo: ['KeyB'] },
-  { id: 'edit.tool_roll', label: 'Roll tool', category: 'trim-tools', scope: 'edit', defaultCombo: ['KeyN'] },
+  // D-432 P3 — Roll left Premiere's N when N became snapping (Final Cut's key).
+  // T is the trim key in both Final Cut (the Trim tool) and Resolve (Trim Edit
+  // mode), and a trim drag on an edit point's centre is a roll in both.
+  { id: 'edit.tool_roll', label: 'Roll tool', category: 'trim-tools', scope: 'edit', defaultCombo: ['KeyT'] },
   { id: 'edit.tool_slip', label: 'Slip tool', category: 'trim-tools', scope: 'edit', defaultCombo: ['KeyY'] },
   { id: 'edit.tool_slide', label: 'Slide tool', category: 'trim-tools', scope: 'edit', defaultCombo: ['KeyU'] },
   // D-432 P2 — Premiere's Razor key (Final Cut's Blade is B, which is Ripple here).

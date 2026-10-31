@@ -158,7 +158,17 @@ export async function buildFixture(client: OpClient, project: ScratchProject, sc
   // H2 — view state outlives a timeline: a pinch scenario left 480 px/s and
   // pushed every later frame-addressed target off screen. Start each scenario
   // at the default zoom, through the same tool an agent uses.
-  await client.op('editor_set_timeline_view', { zoom: 'default' });
+  // D-432 P3: and the rest of the view (clip height, balance, names, badges,
+  // snapping on, skimming off), so no scenario inherits another's toggles.
+  await client.op('editor_set_timeline_view', {
+    zoom: 'default',
+    clipHeight: 'default',
+    bandRatio: 'default',
+    showNames: true,
+    showBadges: true,
+    snapping: true,
+    skimming: false,
+  });
   if (!spec) return built;
 
   // Tracks, top to bottom: insert any the new timeline lacks at its index.

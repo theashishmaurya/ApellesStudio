@@ -56,6 +56,7 @@ import { useEditorTimelineStore } from './timelineStore';
 import { TimelinePane } from './TimelinePane';
 import { DEFAULT_MARKER_COLOR, MARKER_COLORS, type Marker, type Timeline } from './timeline';
 import { MARKER_STRIP_HEIGHT } from './TimelineMarkers';
+import { RULER_HEIGHT_PX } from './ruler';
 
 const FPS = 24;
 const PX_PER_SEC = 90; // DEFAULT_PX_PER_SEC, as `TimelinePane.tsx` defines it
@@ -186,17 +187,18 @@ describe('timeline markers — real DOM (D-222)', () => {
     // and the playhead use — 24 frames == 1s == 90px, 72 frames == 3s == 270px.
     expect(flagFor('earlier').style.left).toBe(`${START_LEFT_PX + PX_PER_SEC}px`);
     expect(flagFor('later').style.left).toBe(`${START_LEFT_PX + 3 * PX_PER_SEC}px`);
-    // …and each carries its own colour, not a themed one.
-    expect(flagFor('earlier').style.background).toBeTruthy();
+    // …and each carries its own colour, not a themed one (D-432 P3: the
+    // Phosphor shield draws in `currentColor`).
+    expect(flagFor('earlier').style.color).toBeTruthy();
   });
 
   it('2. the strip sits in the ruler band, under the ticks and above track row 0', async () => {
     await mountWith(buildFixture());
     const strip = document.querySelector<HTMLElement>('[data-chroma-marker-strip]');
     expect(strip).not.toBeNull();
-    // 32px is the timeline library's own ruler height (its bundled CSS), and
-    // the strip fills exactly the gap `timeline-overrides.css` opens under it.
-    expect(strip!.style.top).toBe('32px');
+    // D-432 P3: our own 24 px ruler (`RULER_HEIGHT_PX`), and the strip fills
+    // exactly the gap `timeline-overrides.css` opens under it.
+    expect(strip!.style.top).toBe(`${RULER_HEIGHT_PX}px`);
     expect(strip!.style.height).toBe(`${MARKER_STRIP_HEIGHT}px`);
   });
 

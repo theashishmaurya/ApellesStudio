@@ -59,7 +59,10 @@ export const clipEdge = (name: string, side: 'left' | 'right', px: number = EDGE
   clip(name, side === 'left' ? { fx: 0, dx: px } : { fx: 1, dx: -px });
 
 /** The ruler at a fraction of its width. */
-export const ruler = (fx = 0.5): TargetRef => selector(LIB.ruler, { fx, fy: 0.5 });
+export const ruler = (fx = 0.5): TargetRef => selector(`[data-testid="${ID.ruler}"]`, { fx, fy: 0.5 });
+/** D-432 P3 — track N's header bottom-edge height zone. */
+export const trackHeightZone = (track: number) =>
+  selector(`[data-testid="${ID.trackHeightResize}"][data-chroma-track="${track}"]`, { fy: 0.5 });
 /** Where a human grabs the playhead to scrub (H4): the ruler at the playhead's
  *  own frame. The library's head `svg` sits UNDER its 16 px hit strip, so aiming
  *  at the svg always reports "the press lands on the strip"; and the redesign
