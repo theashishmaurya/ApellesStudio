@@ -157,6 +157,21 @@ async function drag(el: HTMLElement, fromX: number, dxFrames: number, sample: st
 }
 const distinct = (xs: unknown[]) => new Set(xs.map((x) => JSON.stringify(x))).size;
 
+describe('the linked partner hook (harness H13)', () => {
+  it("marks ONLY the selected clip's linked A/V partner with data-chroma-link-partner", async () => {
+    actSync(() => {
+      const tl = buildFixture();
+      tl.tracks[0].clips[0].link_group = 'g';
+      tl.tracks[1].clips[0].link_group = 'g';
+      useEditorTimelineStore.setState({ timeline: tl, selection: [{ track: 0, id: 'a' }] });
+    });
+    await waitFrames(2);
+    expect(body('m').hasAttribute('data-chroma-link-partner')).toBe(true);
+    expect(body('a').hasAttribute('data-chroma-link-partner')).toBe(false);
+    expect(body('b').hasAttribute('data-chroma-link-partner')).toBe(false);
+  });
+});
+
 describe('the clip block (§4.3)', () => {
   it('a video clip at the default 52 px track: 14 px strip, 25 px filmstrip, 11 px waveform band', () => {
     const b = body('a');

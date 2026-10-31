@@ -1041,9 +1041,13 @@ function ClipBody({
   style,
   children,
   onPointerDownCapture,
+  linkPartner,
 }: {
   track: number;
   clipId: string;
+  /** This clip is the linked A/V partner of the selected one (its outline is drawn
+   *  in `className`); exposed as `data-chroma-link-partner` for the UI harness. */
+  linkPartner?: boolean;
   className: string;
   style?: CSSProperties;
   children: ReactNode;
@@ -1080,6 +1084,7 @@ function ClipBody({
       // same pair, but it is not exposed on the DOM node in any documented way.
       data-chroma-track={track}
       data-chroma-clip-id={clipId}
+      data-chroma-link-partner={linkPartner ? '' : undefined}
       // D-250 — where the smart trim tool is announced when it is NOT armed.
       // D-235's four edits are reachable only by already knowing to hold
       // Alt/Option, and its readout appears only once that key is down, so
@@ -2663,6 +2668,7 @@ export function TimelinePane() {
         <ClipBody
           track={ti}
           clipId={action.id}
+          linkPartner={isAvLinked}
           onPointerDownCapture={(e) => editGesture.onClipPointerDownCapture(e, ti, action.id)}
           className={
             // D-432 §4.3 — the FCP clip: opaque kind colour, a 2 px radius, a
