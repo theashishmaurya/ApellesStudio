@@ -561,6 +561,20 @@ short of a second debug build). Whoever runs S0c step 3 records both here.
 
 ### S0c — big fixture + baseline
 
+**Done 2026-11-01 (fixture, scenarios and recipe); the baseline run is NOT done.** See
+`docs/notes/ui-harness.md` "Baseline recipe" for the exact commands (dev bundle; production
+bundle via `tauri build --debug` with its own identifier and control port, because the
+single-instance plugin would otherwise hand a second launch over to the dev app). The plan's
+`buildBigFixture({clips, tracks})` is `bigFixtureSpec` (exported under both names); the linked
+A/V pairs' audio halves count towards the 300. The "Baseline" section below stays empty until a
+run fills it.
+
+#### Baseline
+
+_Not run yet. Fill in from `scratch/perf-baseline/dev` and `scratch/perf-baseline/prod`: commit
+rendered / effects / frame / painted, move p95 / worst, zoom, scroll, a `sample` split of a release
+and a ripple move phase, and the answer to section 0's question (how much of the 30-43 ms move p95
+is paint)._
 - `buildBigFixture({ clips: 300, tracks: 8 })` in `packages/ui-harness` (mixed lengths,
   linked A/V on two tracks, 4 markers, 2 transitions) and the `perf-300` scenario set.
   Scenarios assert little; they measure.
