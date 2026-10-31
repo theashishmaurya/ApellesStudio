@@ -6,7 +6,9 @@ live preview, reorder / trim / split / remove edits, and add a clip by
 dragging a pool item in from the shell's Sources panel.
 
 - `EditorTab` — the tab: preview pane (top) + `TimelineSwitcher` +
-  `@xzdarcy/react-timeline-editor` strip (bottom), or an empty state when no
+  the timeline strip (bottom; `TimelinePane`, which since D-437 S4 renders Apelles'
+  own lanes and playhead from `src/lanes/` instead of `@xzdarcy/react-timeline-editor`;
+  see `src/lanes/README.md`), or an empty state when no
   project is open. The transport (`SkipBack` / `Play`–`Pause` / `SkipForward`)
   uses `@phosphor-icons/react` icons (D-300); the timeline toolbar (`Scissors`
   split, `Trash` remove) and the empty-state action are `@apelles/ui` `<Button>`s, the toolbar

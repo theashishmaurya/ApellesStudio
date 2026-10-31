@@ -1,91 +1,20 @@
 /*
- * Apelles — overrides for `@xzdarcy/react-timeline-editor`'s bundled CSS
- * (imported just above this file in `TimelinePane.tsx`, so these rules win on
- * specificity ties).
+ * Apelles — the timeline's few global CSS rules (imported by `TimelinePane.tsx`).
  *
- * D-432 P2 removed the edge-trim handle rules D-060 kept here (a cursor and a
- * hover brightening of the library's translucent stretch triangles): the
- * library's interact.js resize is off (`flexible: false`, B-344) and a clip's
- * own edge zones carry the trim, with the amber bracket drawn by
- * `EditFeedbackLayer`. The triangles were the "drag handles" the owner
- * disliked (ui-redesign §6 defect 6).
+ * D-437 S4 — this file used to override `@xzdarcy/react-timeline-editor`'s
+ * bundled stylesheet (its grey clip backing, its blurry cursor, its hidden
+ * ruler, its marker-strip margin). The pane no longer renders the library: the
+ * lanes (`lanes/`) style themselves inline and with tokens, and their elements
+ * carry the library's old class names only as inert aliases for selectors
+ * (`TIMELINE_LIBRARY_ALIAS_CLASSES`). Those aliases must never be styled here —
+ * a rule on `.timeline-editor-cursor-top` would move our playhead head, one on
+ * `.timeline-editor-edit-area` would shift the scroller — which
+ * `timelineOverrides.test.ts` pins. The behaviour those rules carried now lives
+ * on our own elements: the 1 px `--color-playhead` line, the pointer-transparent
+ * line with a grabbable head and band (B-346, B-349), all in `lanes/Playhead.tsx`;
+ * the clip slot's `contain: layout size style` (B-347 F2) in `lanes/LaneClip.tsx`.
+ * D-437 S5 renames this file once the library package is gone.
  */
-
-/* D-432 §6 defect 7 — the library paints a grey `#2f3134` backing under every
- * clip; the clip block is opaque and draws its own colour and 2 px radius. */
-.timeline-editor-action {
-  background-color: transparent;
-}
-
-/*
- * B-347 F2 — contain a clip's size change. A trim writes `width` on the clip
- * BODY (`useEditGesture.ts`), whose box then overflows the library's
- * absolutely-positioned action wrapper; that overflow change propagated to the
- * `overflow: overlay` edit-area scroller and re-laid-out its flex boxes and
- * scrollbars (57-78 % of a ripple's move-phase main thread, measured in
- * `docs/notes/timeline-drag-perf.md`). The wrapper's own size is set inline by
- * the library (left / width / row height), so size containment is safe, and
- * layout containment keeps its subtree's layout (and overflow) inside it. Not
- * `paint`: the clip body already paints inside its own `contain: layout paint
- * style` box (`TimelinePane.tsx`), and a paint clip here would cut whatever a
- * future overlay draws outside the wrapper.
- */
-.timeline-editor-action {
-  contain: layout size style;
-}
-
-/*
- * D-432 §4.6 — the playhead: a crisp 1 px `--color-playhead` line (the library
- * drew two blue `#5297FF` borders and scaled them by half, which renders
- * blurry), above clips and markers in the timeline's own layer scale.
- */
-.timeline-editor-cursor {
-  border: 0;
-  width: 1px;
-  background: var(--color-playhead);
-  transform: none;
-  z-index: var(--z-timeline-playhead);
-  /* D-432 P3 — under the 24 px ruler, not the library's 32 px one. */
-  top: var(--chroma-ruler-height, 32px);
-  height: calc(100% - var(--chroma-ruler-height, 32px));
-}
-
-/*
- * D-432 P3 — the library's ruler is replaced by our own (`TimelineRuler.tsx`,
- * drawn over this band: ticks, labels, press-to-seek and drag-to-scrub,
- * B-350). The library's stays for layout only — its height sets where its
- * edit area starts — at our 24 px (`RULER_HEIGHT_PX`, through the
- * `--chroma-ruler-height` custom property `TimelinePane` sets), hidden and
- * out of hit testing.
- */
-.timeline-editor-time-area {
-  height: var(--chroma-ruler-height, 32px);
-  visibility: hidden;
-}
-.timeline-editor {
-  font-family: inherit;
-}
-
-/* The head keeps the library's own shape (its inline SVG), recoloured, and
- * loses the ×2 that only undid the line's old ×0.5. */
-.timeline-editor-cursor-top {
-  transform: translate(-50%);
-}
-.timeline-editor-cursor-top path {
-  fill: var(--color-playhead);
-}
-
-/*
- * B-346 — the playhead's 16 px grab strip ran the full height of every track,
- * so a click or a trim within 8 px of the playhead (including the cut a split
- * at the playhead had just made) grabbed the playhead instead. Final Cut and
- * Resolve grab the playhead by its head only: the strip is cut down to the
- * head's band under the ruler (the marker-strip height, below) and keeps its
- * width there. The ruler itself still seeks on click.
- */
-.timeline-editor-cursor-area {
-  height: var(--chroma-marker-strip-height, 10px);
-}
 
 /*
  * B-351 / D-432 §5 "Cursors" — a clip body is the plain arrow with the Select
@@ -98,45 +27,6 @@
  */
 [data-chroma-clip-drag] {
   cursor: default;
-}
-
-/*
- * B-349 — B-346 cut the 16 px strip down to the head band, but the 1 px line
- * itself (the library's interact.js drag target, `.timeline-editor-cursor`) still
- * ran the full height and caught any press exactly on it: a click or trim on a
- * clip the playhead sits over scrubbed the playhead instead. The line is now
- * transparent to the pointer and only its two children, the head (the SVG
- * pentagon) and the band under the ruler, take it back. interact.js resolves a
- * drag by the press target's ancestry, so a press on either child still drags
- * the line. Final Cut and Resolve grab the playhead by its head only.
- */
-.timeline-editor-cursor {
-  pointer-events: none;
-}
-.timeline-editor-cursor-top,
-.timeline-editor-cursor-area {
-  pointer-events: auto;
-}
-
-/*
- * D-222 — room for the marker strip.
- *
- * The library leaves a 10px `margin-top` between its 32px ruler and its edit
- * area (`.timeline-editor-edit-area { margin-top: 10px }` in the bundled CSS
- * above), and that gap is exactly where a marker flag belongs — under the
- * ruler's ticks, above the first track, which is where DaVinci Resolve puts
- * its own (`scratch/resolve-reference/markers.jpg`). 10px is too short for a
- * legible flag, so the gap is widened to the strip's own height rather than
- * the strip being drawn overlapping either neighbour.
- *
- * The number is NOT written here: `MARKER_STRIP_HEIGHT` (`TimelineMarkers.tsx`)
- * is the one definition, `TimelinePane.tsx`'s `RULER_AND_MARGIN_PX` derives
- * from it, and this rule reads it through a custom property that
- * `TimelinePane` sets on the pane root — so the CSS and the drop/overlay
- * geometry can never drift apart.
- */
-.timeline-editor-edit-area {
-  margin-top: var(--chroma-marker-strip-height, 10px);
 }
 
 /*

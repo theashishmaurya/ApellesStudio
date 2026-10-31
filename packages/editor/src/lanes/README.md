@@ -3,9 +3,11 @@
 The pieces that replace `@xzdarcy/react-timeline-editor`'s edit area and
 playhead. Plan and rationale: `docs/notes/timeline-lanes.md`; decision: D-437.
 
-**Status: built standalone (S1, S2, S3a, S3b), not yet wired.** `TimelinePane`
-still renders the library; S4 switches it over. Only `ClipBody` is imported by
-the pane today (S2).
+**Status: wired (S4).** `TimelinePane` renders `TimelineLanes` and `Playhead` in
+place of the library's editor (the package is still installed, imported by nothing,
+until S5). The lane elements also carry the library's old class names as inert
+aliases (`TIMELINE_LIBRARY_ALIAS_CLASSES`, `timelineTestIds.ts`) so selectors written
+against the library keep matching until S6; no stylesheet may style them.
 
 ## Files
 

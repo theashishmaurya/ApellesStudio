@@ -19,10 +19,10 @@
  * to be supplied here (the same category as `stubOffsetMetrics`, which this
  * suite has always needed):
  *
- *  1. `scrollTimelineGridTo` gives the timeline library's own scrolling grid a
- *     real `scrollLeft`. jsdom's is permanently 0 because nothing overflows
- *     anything. dnd-kit reads exactly this property (`getScrollOffset`), so
- *     with it defined the library's grid is a genuinely scrolled scrollable
+ *  1. `scrollTimelineGridTo` gives the lanes' scroller (D-437 S4; it was the
+ *     library's scrolling grid) a real `scrollLeft`. jsdom's is 0 because nothing
+ *     overflows anything. dnd-kit reads exactly this property (`getScrollOffset`),
+ *     so with it defined the scroller is a genuinely scrolled scrollable
  *     ancestor of the dragged clip — which is the whole precondition of B-145.
  *  2. `alignDropZonesToRows` gives each `TrackDropZone` the box its own track
  *     row really occupies. In a browser they coincide by construction (the zone
@@ -49,8 +49,8 @@
  * pre-fix code it lands the clip at `startFrame: 0` — the owner's own symptom,
  * deterministically, in CI.
  *
- * **Tier limit, stated rather than papered over.** Because the library never
- * fires its own `onScroll` under jsdom, `TimelinePane`'s own `scrollLeft` state
+ * **Tier limit, stated rather than papered over.** Because no `scroll` event
+ * fires for a stubbed `scrollLeft` under jsdom, `TimelinePane`'s own `scrollLeft` state
  * stays 0 while the DOM grid is scrolled, so the "content scrolled DURING the
  * drag" term of `dragDelta` is exercised by `dragDelta.test.ts`, not here. The
  * live verification for that, for the same-track case, and for the full range
@@ -87,6 +87,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { useEditorTimelineStore } from './timelineStore';
 import { TimelinePane } from './TimelinePane';
 import type { Timeline } from './timeline';
+import { TIMELINE_TEST_IDS } from './timelineTestIds';
 
 const FPS = 24;
 /** `DEFAULT_PX_PER_SEC` (`ruler.ts`), which `TimelinePane` starts at. */
@@ -130,17 +131,12 @@ let restore: Array<() => void> = [];
 let mounted: MountedComponent | null = null;
 let console_: ReturnType<typeof captureConsole>;
 
-/** jsdom-tier stub (1): a real horizontal scroll offset on the timeline
- *  library's own scrolling grid — the element dnd-kit walks up to and reads
- *  `scrollLeft` off. Returns a restore function. */
+/** jsdom-tier stub (1): a real horizontal scroll offset on the lanes' own
+ *  scroller (D-437 S4; it was the library's edit-area grid) — the element
+ *  dnd-kit walks up to and reads `scrollLeft` off. Returns a restore function. */
 function scrollTimelineGridTo(px: number): () => void {
-  // The library renders TWO `ReactVirtualized__Grid`s — one for the ruler/time
-  // area and one for the edit area. Only the second is the dragged clip's own
-  // scroll container, and stubbing the wrong one is silent: dnd-kit reads a
-  // scroll offset of 0 and the whole precondition quietly does not happen.
-  const grids = [...mounted!.container.querySelectorAll<HTMLElement>('.ReactVirtualized__Grid')];
-  const grid = grids.find((g) => g.contains(clipBody('a')));
-  if (!grid) throw new Error('no scrolling grid contains the dragged clip');
+  const grid = mounted!.container.querySelector<HTMLElement>(`[data-testid="${TIMELINE_TEST_IDS.scroller}"]`);
+  if (!grid || !grid.contains(clipBody('a'))) throw new Error('no scrolling grid contains the dragged clip');
   const had = Object.getOwnPropertyDescriptor(grid, 'scrollLeft');
   Object.defineProperty(grid, 'scrollLeft', { value: px, configurable: true });
   return () => {

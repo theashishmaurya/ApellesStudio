@@ -27,7 +27,7 @@ import { ClipBlock, CLIP_KIND_CLASSES } from '../ClipBlock';
 import { ClipFadeOverlay } from '../ClipFadeOverlay';
 import { CLIP_VERTICAL_INSET_PX, clipAnatomy, type ClipKind } from '../clipAnatomy';
 import type { Clip, ClipKeyframeParam } from '../timeline';
-import { TIMELINE_TEST_IDS } from '../timelineTestIds';
+import { TIMELINE_LIBRARY_ALIAS_CLASSES, TIMELINE_TEST_IDS } from '../timelineTestIds';
 import { ClipBody } from './ClipBody';
 import { TRIM_ZONE_MAX_FRACTION, TRIM_ZONE_PX } from './laneLayout';
 import type { LaneActions } from './useLaneActions';
@@ -96,7 +96,9 @@ export const LaneClip = memo(function LaneClip({
     <div
       data-testid={TIMELINE_TEST_IDS.clipSlot}
       data-chroma-clip-slot=""
-      className="absolute top-0"
+      // D-437 S4 — the library-era class, an inert alias for selectors written
+      // against the library (`timelineTestIds.ts`); deleted in S6.
+      className={`${TIMELINE_LIBRARY_ALIAS_CLASSES.action} absolute top-0`}
       style={{ left: leftPx, width: widthPx, height: trackHeight, contain: 'layout size style' }}
       onClick={(e) => actions.onClipClick(e, trackIndex, clip.id)}
     >

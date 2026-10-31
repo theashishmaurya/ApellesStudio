@@ -771,7 +771,9 @@ document data, see D-432 P3 for why). `editor_list_tracks` reports `badge`,
 - Markers keep the D-328 16-colour palette (MCP colour names are a contract),
   as 14 px swatches in two rows; Time and Duration are on separate rows.
 - The ruler is ours, the playhead still the library's: its head keeps the
-  library shape, recoloured (D-437 replaces both).
+  library shape, recoloured (D-437 replaces both). **Since D-437 S4 the playhead is
+  ours too** (`lanes/Playhead.tsx`: 1 px line, Phosphor `CaretDown` head in the ruler,
+  grab band under it, §4.6).
 - The zoom readout stays beside the +/- buttons (harness ids); the zoom slider
   is in the Clip Appearance popover.
 - The beat grid's own snap toggle stays (D-413) with a straight magnet; the

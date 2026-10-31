@@ -38,7 +38,7 @@ import {
 } from 'react';
 import { CaretDownIcon } from '@phosphor-icons/react';
 import { timecode } from '../editGesture';
-import { TIMELINE_TEST_IDS } from '../timelineTestIds';
+import { TIMELINE_LIBRARY_ALIAS_CLASSES, TIMELINE_TEST_IDS } from '../timelineTestIds';
 import { edgeScrollSpeed } from './playheadAutoscroll';
 
 /** The grab band's width, px (B-346's size). */
@@ -247,7 +247,9 @@ export function Playhead({
         ref={lineRef}
         data-testid={TIMELINE_TEST_IDS.playhead}
         data-chroma-playhead=""
-        className="absolute bottom-0 left-0 w-px bg-(--color-playhead)"
+        // D-437 S4 — the library-era classes on the line, head and band are inert
+        // aliases for selectors written against the library; S6 deletes them.
+        className={`${TIMELINE_LIBRARY_ALIAS_CLASSES.playhead} absolute bottom-0 left-0 w-px bg-(--color-playhead)`}
         style={{ top: rulerHeightPx, willChange: 'transform', pointerEvents: 'none' }}
       >
         <div
@@ -260,7 +262,7 @@ export function Playhead({
           aria-orientation="horizontal"
           aria-valuemin={0}
           aria-valuemax={durationFrames}
-          className="absolute flex cursor-ew-resize items-center justify-center text-(--color-playhead)"
+          className={`${TIMELINE_LIBRARY_ALIAS_CLASSES.playheadHandle} absolute flex cursor-ew-resize items-center justify-center text-(--color-playhead)`}
           style={{ pointerEvents: 'auto', top: -rulerHeightPx, left: -BAND_WIDTH_PX / 2, width: BAND_WIDTH_PX, height: rulerHeightPx }}
           {...grab}
         >
@@ -270,7 +272,7 @@ export function Playhead({
           data-testid={TIMELINE_TEST_IDS.playheadBand}
           data-chroma-playhead=""
           data-chroma-no-marquee=""
-          className="absolute top-0 cursor-ew-resize"
+          className={`${TIMELINE_LIBRARY_ALIAS_CLASSES.playheadBand} absolute top-0 cursor-ew-resize`}
           style={{ pointerEvents: 'auto', left: -BAND_WIDTH_PX / 2, width: BAND_WIDTH_PX, height: bandHeightPx }}
           {...grab}
         />

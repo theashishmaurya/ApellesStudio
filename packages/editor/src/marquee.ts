@@ -40,10 +40,10 @@
  * this event's propagation path," which is the same condition dnd-kit itself
  * uses to decide whether its sensor runs.
  *
- * The rest of the selector list is the same idea applied to the timeline
- * library's own gestures (edge-trim, ruler scrub, playhead drag) so a marquee
- * can't start out from under those either — class names read out of
- * `@xzdarcy/react-timeline-editor`'s bundled CSS, not guessed.
+ * The rest of the selector list is the same idea applied to the timeline's
+ * other press owners (the clip slot, the ruler scrub, the playhead drag) so a
+ * marquee can't start out from under those either — our own attributes since
+ * D-437 S4 replaced the library's DOM.
  */
 
 import { rowAtY, yAtRow } from './trackHeight';
@@ -66,26 +66,21 @@ export const MARQUEE_MIN_DRAG_PX = 4;
  *  - `[data-chroma-clip-drag]` — `ClipBody`, the one `@dnd-kit/core`
  *    `useDraggable` node inside the edit area (D-100). This entry is the
  *    coexistence guarantee; see the module doc.
- *  - `.timeline-editor-action` — the library's own action wrapper. Redundant
- *    with the attribute above today (a `ClipBody` is always rendered inside
- *    one) and kept anyway, because it is also the ancestor of the library's
- *    `.timeline-editor-action-{left,right}-stretch` edge-trim handles, which
- *    are the library's siblings of our content, not our children.
- *  - `.timeline-editor-time-area` / `-cursor` / `-cursor-area` — the ruler and
- *    the playhead. `onClickTimeArea` / `onCursorDrag` own those presses.
- *  - `.timeline-editor-edit-row-drag-handle` — the library's own row-drag
- *    grip. Unused by this app (D-094 chose a custom header sidebar instead)
- *    but present in the library's DOM, so listed rather than assumed absent.
+ *  - `[data-chroma-clip-slot]` — the clip's positioning slot in its lane
+ *    (D-437 S4, `LaneClip`; it replaced the library's action wrapper). Its 1 px
+ *    above and below the body still belong to the clip, not to empty canvas.
+ *  - `[data-testid="timeline-ruler"]` — our ruler: its press seeks and its drag
+ *    scrubs (B-350).
+ *  - `[data-chroma-playhead]` — the playhead's line, head and band
+ *    (`lanes/Playhead.tsx`): the head and band own their press (a scrub).
  *  - `[data-chroma-no-marquee]` — a real escape hatch for anything later
  *    rendered into the edit area that owns its own press. */
 export const MARQUEE_BLOCKING_SELECTOR = [
   '[data-chroma-clip-drag]',
   '[data-chroma-no-marquee]',
-  '.timeline-editor-action',
-  '.timeline-editor-time-area',
-  '.timeline-editor-cursor',
-  '.timeline-editor-cursor-area',
-  '.timeline-editor-edit-row-drag-handle',
+  '[data-chroma-clip-slot]',
+  '[data-testid="timeline-ruler"]',
+  '[data-chroma-playhead]',
 ].join(',');
 
 /** The one thing `canStartMarquee` needs from an `EventTarget`. Structural,

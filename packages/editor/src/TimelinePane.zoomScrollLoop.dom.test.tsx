@@ -1,35 +1,26 @@
 // @vitest-environment jsdom
 /**
- * @apelles/editor — B-291: zooming the timeline must never lock the library's
- * scroll state into an update loop ("Maximum update depth exceeded", which
- * blanked the whole window live on 2026-10-28 while the owner pinch-zoomed a
- * 64-clip timeline).
+ * @apelles/editor — a zoom writes the lanes' scroll position ONCE, inside the
+ * zoom's own commit (B-116 anchor, B-291, D-437 S4).
  *
- * **The defect.** `@xzdarcy/react-timeline-editor` keeps the horizontal
- * scroll in two places that echo each other inside React's commit phase: its
- * `ScrollSync` state, and the edit-area `Grid`. The grid reports its position
- * up from `componentDidUpdate`; the edit area pushes `ScrollSync`'s value down
- * into the grid from a `useLayoutEffect`. If one render changes the two to
- * different values, each commit swaps them and the loop never ends.
- * `TimelinePane`'s zoom anchor wrote the library scroll from a PASSIVE
- * effect, and that leaves a gap a second zoom can land in: the write is issued
- * but not yet rendered, so the next zoom anchors on a `scrollLeft` that has not
- * caught up and issues a second, different write — which React flushes after
- * the edit area has pushed the first value down and before the grid has
- * reported it. Captured live in WebKit (Playwright, the D-142 harness, the
- * owner's real timeline): 9 of 15 pinch runs hit it before the fix, 0 of 15
- * after.
+ * **History.** B-291: `@xzdarcy/react-timeline-editor` kept the horizontal
+ * scroll in two places that echoed each other inside React's commit phase (its
+ * `ScrollSync` state and its edit-area `Grid`); a zoom-anchor write issued from
+ * a PASSIVE effect let a second pinch land between the write and its render,
+ * and the two copies swapped forever ("Maximum update depth exceeded", the
+ * whole window blank, live on 2026-10-28). The fix moved the write into a
+ * layout effect, and this suite reproduced the loop by dispatching the second
+ * zoom exactly where a real one could arrive.
  *
- * **How this test reproduces it without a browser's frame scheduling.** jsdom
- * has no frames, so React never separates a passive effect from the render
- * that applies it the way a busy WebKit frame does. The test therefore places
- * the second zoom input exactly where a real one can arrive: if the pane's
- * write to the library is issued from a passive effect, a real input can land
- * between it and its render, so the second zoom is dispatched right there; if
- * the write is issued inside the commit (where no input can interleave), the
- * second zoom is dispatched at the next task. The second zoom is the toolbar's
- * zoom-in button: its handler uses the closure of the render on screen — the
- * same stale `scrollLeft` the live trace showed.
+ * **Now (D-437 S4).** The pane renders its own lanes: one native scroller, the
+ * single source of the scroll position, so there is no second copy and the
+ * loop cannot exist. What still matters is the B-116 half: the anchor write
+ * must land in the zoom's commit (a layout effect, before paint and before any
+ * input can interleave), exactly once per zoom step, after the lanes have laid
+ * their content out at the NEW width (or the browser would clamp the write
+ * against the old one and lose the anchor on a zoom-in). This suite pins that,
+ * and keeps the owner's back-to-back pinch shape (64 linked pairs, a wheel
+ * zoom followed at once by a toolbar zoom) to show it stays convergent.
  *
  * Compiled with the app's React Compiler preset (`vitest.config.ts`), like
  * every `.tsx` in this package's tests.
@@ -58,6 +49,7 @@ import { useEditorTimelineStore } from './timelineStore';
 import { TimelinePane } from './TimelinePane';
 import { useTimelineViewStore } from './timelineView';
 import type { Clip, Timeline } from './timeline';
+import { TIMELINE_TEST_IDS } from './timelineTestIds';
 
 const FPS = 24;
 const PAIRS = 64;
@@ -110,7 +102,6 @@ function inPassiveFlush(): boolean {
 
 let root: Root | null = null;
 let restores: Array<() => void> = [];
-const originalSetState = React.PureComponent.prototype.setState;
 
 beforeEach(() => {
   // D-434 — the zoom is a store now, so it outlives a mounted pane: start each test at the default.
@@ -121,15 +112,14 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  React.PureComponent.prototype.setState = originalSetState;
   root?.unmount();
   root = null;
   restores.forEach((restore) => restore());
   useEditorTimelineStore.setState({ timeline: null, openProjectKey: null, status: 'idle', selection: [], selectedGap: null });
 });
 
-describe('B-291 — a zoom that lands while the previous zoom is still scrolling the library does not loop', () => {
-  it('keeps the library scroll state convergent across back-to-back zooms', async () => {
+describe('B-116 / B-291 / D-437 S4 — a zoom writes scrollLeft once, in its own commit', () => {
+  it('one write per zoom step, never from a passive effect, against the new content width', async () => {
     useEditorTimelineStore.setState({
       timeline: fixture(),
       openProjectKey: '/projects/b291.chroma',
@@ -147,49 +137,63 @@ describe('B-291 — a zoom that lands while the previous zoom is still scrolling
     root.render(<TimelinePane />);
     await wait(SETTLE_MS * 2);
 
-    const area = document.querySelector<HTMLElement>('[data-testid="timeline-edit-area"]');
+    const area = document.querySelector<HTMLElement>(`[data-testid="${TIMELINE_TEST_IDS.editArea}"]`);
+    const scroller = document.querySelector<HTMLElement>(`[data-testid="${TIMELINE_TEST_IDS.scroller}"]`);
     const zoomIn = document.querySelector<HTMLElement>('[aria-label="Zoom in"]');
     expect(area, 'the edit area mounted').not.toBeNull();
+    expect(scroller, 'the lanes\' scroller mounted').not.toBeNull();
     expect(zoomIn, 'the toolbar has a zoom-in button').not.toBeNull();
     area!.getBoundingClientRect = () =>
       ({ ...AREA, x: 0, y: 0, right: AREA.width, bottom: AREA.height, toJSON: () => ({}) }) as DOMRect;
+    const content = scroller!.firstElementChild as HTMLElement;
 
-    // Watch the pane's imperative scroll writes into the library: the
-    // library's `TimelineState.setScrollLeft` is the only caller of a
-    // `ScrollSync` `setState` whose update carries `scrollLeft` alone.
-    let armed = false;
-    let secondZooms = 0;
-    const clickZoomIn = () => {
-      secondZooms += 1;
-      zoomIn!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    };
-    React.PureComponent.prototype.setState = function patched(
-      this: React.PureComponent,
-      update: Parameters<typeof originalSetState>[0],
-      callback?: () => void,
-    ) {
-      const isImperativeScroll =
-        update !== null && typeof update === 'object' && Object.keys(update).join() === 'scrollLeft';
-      if (armed && isImperativeScroll) {
-        armed = false;
-        if (inPassiveFlush()) clickZoomIn();
-        else setTimeout(clickZoomIn, 0);
-      }
-      return originalSetState.call(this, update, callback);
-    };
+    // Record every write to the scroller's `scrollLeft`: from where, and how wide
+    // the content was at that moment.
+    let value = 0;
+    const writes: { passive: boolean; contentWidth: string; pxPerSec: number }[] = [];
+    Object.defineProperty(scroller!, 'scrollLeft', {
+      configurable: true,
+      get: () => value,
+      set: (v: number) => {
+        value = v;
+        writes.push({ passive: inPassiveFlush(), contentWidth: content.style.width, pxPerSec: useTimelineViewStore.getState().pxPerSec });
+      },
+    });
 
-    // Two plain zoom steps first, so there is room to scroll.
-    for (let i = 0; i < 2; i++) {
-      ctrlWheel(area!, 900);
+    // Every real zoom change (two inputs in one task can collapse into one: the
+    // second handler still sees the render on screen, the stale closure B-291's
+    // live trace showed, and asks for the same zoom).
+    let zoomChanges = 0;
+    const unsubscribe = useTimelineViewStore.subscribe((st, prev) => {
+      if (st.pxPerSec !== prev.pxPerSec) zoomChanges += 1;
+    });
+    const steps: { before: string; pxPerSec: number }[] = [];
+    const zoomStep = async (how: 'wheel' | 'button') => {
+      const before = content.style.width;
+      if (how === 'wheel') ctrlWheel(area!, 900);
+      else zoomIn!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       await wait(SETTLE_MS);
-    }
-    for (let round = 0; round < 4 && uncaught.length === 0; round++) {
-      armed = true;
+      steps.push({ before, pxPerSec: useTimelineViewStore.getState().pxPerSec });
+    };
+    for (let i = 0; i < 2; i++) await zoomStep('wheel');
+    // The owner's pinch: back-to-back steps, a wheel then a button at once.
+    for (let round = 0; round < 4; round++) {
       ctrlWheel(area!, 900);
-      await wait(SETTLE_MS);
+      await zoomStep('button');
     }
 
+    unsubscribe();
     expect(uncaught, 'no "Maximum update depth exceeded"').toEqual([]);
-    expect(secondZooms, 'every round really issued a second zoom').toBe(4);
+    expect(zoomChanges, 'the zoom really changed every step').toBeGreaterThanOrEqual(6);
+    expect(writes.length, 'exactly one scroll write per zoom change').toBe(zoomChanges);
+    for (const w of writes) {
+      expect(w.passive, 'the anchor write is never issued from a passive effect').toBe(false);
+    }
+    // Each write saw a content width that had already changed for its own zoom
+    // (zooming in only ever widens the content).
+    const widths = writes.map((w) => Number.parseFloat(w.contentWidth));
+    for (let i = 1; i < widths.length; i++) expect(widths[i]).toBeGreaterThan(widths[i - 1]);
+    expect(widths[0]).toBeGreaterThan(Number.parseFloat(steps[0].before));
+    expect(value, 'the anchor kept the view scrolled into the content').toBeGreaterThan(0);
   }, 30_000);
 });
