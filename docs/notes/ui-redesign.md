@@ -690,6 +690,7 @@ Each phase builds on its own, ships on its own, and lands with its docs.
   - No layout shift on row hover (the CLS of the Inspector during a hover sweep = 0).
 
 **P5 — Chrome and layout.**
+- *Done early (B-341, D-435, 2026-10-31):* the Agent activity dock became a top-bar button + popover with an unread badge, so it no longer covers the timeline.
 - The FCP arrangement (full-width timeline), browser tabs replacing the rail, the viewer header, the transport, the window-chrome segmented tabs, the empty states.
 - *Harness:* panel resize at 60 fps; layout sizes persist across relaunch; no panel narrower than its min at 1280×800.
 

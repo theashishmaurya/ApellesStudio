@@ -187,15 +187,15 @@ export interface ShellProps {
    *  per-tab one. Injected by the composition root exactly like `launcher` and
    *  `sourcesPanel` — `Shell` still never imports `@apelles/editor`. */
   headerAction?: ReactNode;
-  /** D-298 — a floating surface rendered ABOVE the tab content, on every tab,
-   *  while a project is open: the agent activity feed + `request_human`
-   *  banner (D-032). It was mounted inside the Colorist app, which made a feed
-   *  of what an agent is doing to the whole project visible only from one of
-   *  the three tabs. Positions itself (the node is `fixed`), so the shell only
-   *  decides *whether* it is on screen, not where. Injected by the caller for
-   *  the same reason as `launcher`/`headerAction`: it lives in `app/src` and
-   *  `Shell` must not import it. */
-  overlay?: ReactNode;
+  /** D-298 / B-341 — the agent activity feed's opener (a toolbar button with
+   *  an unread badge, plus its popover and the `request_human` banner, D-032),
+   *  rendered in the chrome bar on every tab while a project is open. It was
+   *  a fixed bottom-left dock until B-341: that covered the Edit timeline's
+   *  toolbar and track headers and reopened on every agent action. Shell-level
+   *  because an agent's work spans all three tabs. Injected by the caller for
+   *  the same reason as `headerAction`: it lives in `app/src` and `Shell`
+   *  must not import it. */
+  activityAction?: ReactNode;
   /** D-416 — the Brand kit panel's opener (button + its dialog), rendered in
    *  the chrome bar while a project is open, beside Keyboard shortcuts and
    *  Connect to MCP: a brand kit belongs to every tab, so its opener is
@@ -224,7 +224,7 @@ export function Shell({
   onCloseProject,
   sourcesPanel,
   headerAction,
-  overlay,
+  activityAction,
   brandAction,
   translate,
 }: ShellProps) {
@@ -386,6 +386,7 @@ export function Shell({
             Inspector's own toggle (opposite corner, same idea). */}
         <div className="ml-auto flex items-center h-full gap-1">
           {projectOpen && headerAction}
+          {projectOpen && activityAction}
           {projectOpen && brandAction}
           {/* D-273 — the Keyboard Shortcuts window's opener. Genuinely
               shell-level (all three tabs share one registry), which is why it
@@ -431,15 +432,6 @@ export function Shell({
         hiddenIds={hiddenTabShortcuts}
       />
       <ConnectMcpDialog open={mcpDialogOpen} onOpenChange={setMcpDialogOpen} />
-
-      {/* D-298 — the agent activity feed, above every tab. Rendered here
-          rather than inside a tab for the same reason the Keyboard Shortcuts
-          window above is: it is genuinely shell-level (an agent's work spans
-          all three tabs), and a surface that only exists while one tab is on
-          screen cannot report what happened on another. Gated on
-          `projectOpen` only — the node hides itself when there is nothing to
-          show. */}
-      {projectOpen && overlay}
 
       <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0 overflow-hidden relative">
         {/* D-263 — the active tab's icon rail, LEFTMOST, immediately left of

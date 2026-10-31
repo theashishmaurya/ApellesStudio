@@ -8,6 +8,13 @@ first-class tool).
 
 Two pieces, one store, minimal upstream footprint.
 
+> **Updated 2026-10-31 by B-341 / D-435: the dock is a top-bar button + popover.**
+> Read every mention of the "dock" below as that popover: the fixed bottom-left card, its
+> caret/Hide (B-159) controls and the store fields `feedOpen`, `dockDismissed`,
+> `dismissedAtRowKey` no longer exist. The open flag is `useShellStore.agentActivityOpen`, the badge
+> counts rows newer than `useAgentStore.activitySeenTs`, and the shell slot is `activityAction`
+> (was `overlay`). The popover never opens on its own.
+
 > **Updated 2026-09-10 by D-298 — this is a THREE-tab feed now, and it is
 > shell-level.** Everything below still describes the Colorist half exactly, and
 > that half is unchanged. What changed: the dock is no longer mounted in

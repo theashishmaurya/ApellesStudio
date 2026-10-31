@@ -54,7 +54,10 @@
  *                                   rather than a new bespoke op per popover.
  *                                   (D-252's original `caption-panel` id went
  *                                   away with its popover in D-263, which
- *                                   docked that library.)
+ *                                   docked that library.) Also the id
+ *                                   `agent-activity` (B-341): the chrome-bar
+ *                                   Agent activity popover, whose flag lives
+ *                                   in the shell store.
  *   `debug_dom_tree`              — bounded DOM dump (see `domTree.ts`).
  *   `debug_frame_timing`          — the Edit-tab preview's real paint
  *                                   intervals, and since D-290 the per-phase
@@ -130,6 +133,9 @@ function uiStateSnapshot() {
       activeTab: shell.activeTab,
       tabs: SHELL_TABS,
       sourcesPanelOpen: shell.sourcesPanelOpen,
+      // B-341 — the chrome bar's Agent activity popover (drive it with
+      // `debug_set_popover_open {id: 'agent-activity'}`).
+      agentActivityOpen: shell.agentActivityOpen,
       wgpuSurfaceActive: shell.wgpuSurfaceActive,
     },
     editor: {
@@ -188,6 +194,10 @@ function uiStateSnapshot() {
     crashedPanels: getPanelCrashes(),
   };
 }
+
+/** B-341 — the shell-level Agent activity popover's id for
+ *  `debug_set_popover_open`; every other id is an Edit-tab `PANEL_IDS` entry. */
+const AGENT_ACTIVITY_PANEL_ID = 'agent-activity';
 
 export const DEBUG_OPS: Record<string, OpHandler> = {
   debug_get_ui_state: () => uiStateSnapshot(),
@@ -248,9 +258,21 @@ export const DEBUG_OPS: Record<string, OpHandler> = {
   },
 
   debug_set_popover_open: (a) => {
+    // B-341 — the one shell-level popover: the Agent activity feed, owned by
+    // `useShellStore` (the shell is where this package may look), not by the
+    // Edit tab's `openPanels` map.
+    if (a?.id === AGENT_ACTIVITY_PANEL_ID) {
+      const open = parseBool(a?.open, 'open');
+      if (isParseError(open)) return open;
+      // The same action the button's `onOpenChange` calls (`AgentActivityDock`).
+      useShellStore.getState().setAgentActivityOpen(open.value);
+      return { ok: true, id: AGENT_ACTIVITY_PANEL_ID, open: useShellStore.getState().agentActivityOpen };
+    }
     const id = parsePanelId(a?.id);
     if (id === null) {
-      return { error: `unknown panel ${JSON.stringify(a?.id)} — expected one of ${PANEL_IDS.join(', ')}` };
+      return {
+        error: `unknown panel ${JSON.stringify(a?.id)} — expected one of ${[...PANEL_IDS, AGENT_ACTIVITY_PANEL_ID].join(', ')}`,
+      };
     }
     const open = parseBool(a?.open, 'open');
     if (isParseError(open)) return open;

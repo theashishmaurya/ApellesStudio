@@ -57,7 +57,7 @@ status: **open** · severity: **major** · area: `@apelles/history` (`packages/h
 
 ## B-342 — a timeline marker flag draws on top of the Agent activity dock
 
-status: **open — fix in redesign P2** (with a z-index layer scale in `@apelles/tokens`) · severity: minor · area: `packages/editor/src/TimelineMarkers.tsx:185` (`z-40`), `app/src/components/chroma/AgentActivityDock.tsx:221` (`fixed … z-40`)
+status: **open — fix in redesign P2** (with a z-index layer scale in `@apelles/tokens`) · severity: minor · area: `packages/editor/src/TimelineMarkers.tsx:185` (`z-40`); the dock half went away with B-341 (D-435), the missing layer scale did not
 
 - **found:** 2026-10-31, owner screenshot `scratch/bug-refs/2026-10-31-marker-above-agent-activity.png`: the amber marker flag paints over the dock's rows.
 - **cause:** both use `z-40` in the root stacking context, so DOM order decides and the timeline comes later. There is no layer scale: z-indexes are ad-hoc literals across the app (`z-10` ×53, `z-50` ×43, `z-20` ×33, `z-30` ×14, `z-40` ×12, plus `z-100`, `z-[9999]`, `z-9999`, `z-101`, `z-[15]`).
@@ -65,11 +65,12 @@ status: **open — fix in redesign P2** (with a z-index layer scale in `@apelles
 
 ## B-341 — the Agent activity dock covers the Edit timeline's toolbar, track headers and the start of the lanes, and comes back on every agent action
 
-status: **open** · severity: **major** for the AI-native workflow (a human editing while an agent works) · area: `app/src/components/chroma/AgentActivityDock.tsx:221` (`fixed left-3 bottom-3 z-40 w-[340px]`, list `max-h-[45vh]`)
+status: **fixed** (2026-10-31, D-435) · severity: **major** for the AI-native workflow (a human editing while an agent works) · area: `app/src/components/chroma/AgentActivityDock.tsx` (`fixed left-3 bottom-3 z-40 w-[340px]`, list `max-h-[45vh]`)
 
 - **found:** 2026-10-31, the first harness run: every press aimed at the trim-tool buttons, the Split and Add-marker buttons, the playhead head and track headers resolved (`elementFromPoint`) to the dock's rows (`div.flex.items-center.gap-2`, `div.px-2.5.py-2.border-b`, `span.text-[10px]`): 10 scenarios failed on it. Collapsing the dock's list and rerunning: the Split button, the toolbar marker button and the slip tool all pass. A 1470×923 window puts the dock at x 12–352, y ≈ 496–911, over the toolbar (y 643–675) and the header column.
 - **why a human hits it:** the dock opens whenever an agent edits, covers controls a human needs at that moment, and its X only hides it until the next agent action (B-159's design). This was not the toolbar's own layout: the trim buttons are where they should be; P1's type scale did not move them.
-- **fix direction:** the dock must not overlap the timeline's interactive area in the Edit tab: dock it inside a panel (the Inspector column or a collapsible strip), or anchor it to the viewer area, or collapse to a badge by default in the Edit tab. Decide with the owner (it is a layout call; P5 "chrome and layout" is the natural home if it waits).
+- **fix (owner decision, 2026-10-31: "move it to a toolbar button + popover", D-435):** the dock is gone. `AgentActivityDock` is now a Phosphor button with an unread-count badge in the top bar (`Shell`'s new `activityAction` slot, replacing `overlay`) and opens a Base UI popover anchored under it with the same list (header, Clear, Close). It never opens on its own: new activity only bumps the badge, cleared when the popover is opened; a pending `request_human` makes the button amber with a "!" badge and shows the banner inside the popover. B-159's dismissal state is deleted. Open state is `useShellStore.agentActivityOpen`, driven by `debug_set_popover_open {id: 'agent-activity'}` and reported by `debug_get_ui_state`. Nothing is rendered over the timeline while it is closed (test).
+- **verification:** `AgentActivityDock.dom.test.tsx` (10: badge bumps without opening, click opens and clears, Escape/X close, Clear, request_human state, no `.fixed` element when closed), `debugOps.popover.dom.test.tsx` (+1), app `tsc` at its 65 baseline, editor 3. Not yet checked in the live app (the worktree cannot launch it): look at the top bar at 1470x923 with an agent working.
 
 ## B-340 — the segmented export picks its parallel-chunk count from CPU cores only, not memory, so a 4K export can over-commit RAM on a 16 GB Mac
 

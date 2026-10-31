@@ -1,13 +1,24 @@
 // Apelles — the agent activity feed + `request_human` banner (D-032),
-// **shell-level and cross-tab since D-298**.
+// shell-level and cross-tab since D-298, a **chrome-bar button + popover since
+// B-341** (owner decision, 2026-10-31).
 //
-// A fixed bottom-left dock, injected into `@apelles/shell`'s `overlay` slot by
-// `Root.tsx` — it was mounted inside `App.tsx` (the Colorist tab) until D-298,
-// which made a feed of what an agent is doing to the whole project visible
-// from only one of the three tabs.
-// - top card: the `request_human` hand-back banner (reason + "Resume agent")
-// - bottom card: a newest-first list of what the agent has done, merged from
-//   two sources:
+// It was a fixed bottom-left dock until B-341: that covered the Edit
+// timeline's toolbar, track headers and the start of the lanes, and reopened
+// on every agent action. Now `Root.tsx` injects this into `@apelles/shell`'s
+// `activityAction` slot, which renders in the top bar beside Export / Brand /
+// Shortcuts / MCP:
+// - a Phosphor icon button with an unread badge (rows newer than the last time
+//   the popover was open, `useAgentStore.activitySeenTs`);
+// - click opens a popover anchored under the button with the list (header,
+//   clear, close). It NEVER opens on its own: new activity only bumps the
+//   badge, and a pending `request_human` turns the button amber with a "!"
+//   badge (the banner itself sits at the top of the popover). Nothing is
+//   rendered over the timeline while it is closed.
+// - the open flag is `useShellStore.agentActivityOpen`, so the debug ops
+//   (`debug_ui_state`, `debug_set_popover_open` with id `agent-activity`) can
+//   open, close and read it: the AI-parity half of the GUI toggle.
+//
+// The list merges two sources, newest first:
 //     * **Colorist grade changes** (D-032, `useAgentStore`) — the rich rows:
 //       an expandable per-field diff and a jump-to-here "Undo".
 //     * **Edit / Motion ops** (D-298, `@apelles/history` entries stamped
@@ -20,28 +31,21 @@
 //   stack (which the D-051 bridge also pushes them onto) so the diff and the
 //   jump-to-here undo survive; the shared-stack side filters
 //   `tab !== 'colorist'` so nothing is listed twice.
-//
-// Hidden entirely when there's no activity and no pending request. Styling
-// follows the sibling ColoristTransport (plain elements + the app's colour tokens).
-//
-// The activity-list card's own "Hide" (X) button dismisses just that card
-// (`dockDismissed` in `useAgentStore`, B-159) — separate from the caret
-// toggle beside it, which only collapses the row list and leaves the header
-// on screen. A dismissal is not forever: it clears itself the instant the
-// newest row (from either source) changes, i.e. on the next genuinely new
-// activity item, so dismissing never hides real new activity.
 // See docs/notes/agent-activity-feed.md.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   CaretDownIcon,
   CaretRightIcon,
   ArrowUUpLeftIcon,
+  RobotIcon,
   TrashIcon,
   UserCircleIcon,
   XIcon,
 } from '@phosphor-icons/react';
 
 import { useHistoryStore, type HistoryEntry } from '@apelles/history';
+import { useShellStore } from '@apelles/shell';
+import { Button, Popover, PopoverContent, PopoverTrigger } from '@apelles/ui';
 
 import { useAgentStore, AgentActivityEntry } from '../../store/useAgentStore';
 import { restoreEditorHistorySnapshot } from '../../utils/editorHistorySnapshot';
@@ -183,18 +187,21 @@ function TabActivityRow({ entry }: { entry: HistoryEntry }) {
   );
 }
 
+/** Popover width: a fixed popover, not a resizable pane. */
+const POPOVER_WIDTH_PX = 340;
+/** The list scrolls inside the popover past this viewport share. */
+const POPOVER_MAX_HEIGHT = '60vh';
+/** Badge counts above this read as "99+". */
+const BADGE_CAP = 99;
+
 export default function AgentActivityDock() {
   const activity = useAgentStore((s) => s.activity);
-  const feedOpen = useAgentStore((s) => s.feedOpen);
-  const setFeedOpen = useAgentStore((s) => s.setFeedOpen);
   const clearActivity = useAgentStore((s) => s.clearActivity);
   const pending = useAgentStore((s) => s.pendingHumanRequest);
-  // B-159 — the "Hide" (X) button dismisses the whole card (see below);
-  // `dismissedAtRowKey` is what makes that dismissal temporary rather than
-  // forever, see the store's own doc comment.
-  const dockDismissed = useAgentStore((s) => s.dockDismissed);
-  const dismissedAtRowKey = useAgentStore((s) => s.dismissedAtRowKey);
-  const dismissDock = useAgentStore((s) => s.dismissDock);
+  const seenTs = useAgentStore((s) => s.activitySeenTs);
+  const markActivitySeen = useAgentStore((s) => s.markActivitySeen);
+  const open = useShellStore((s) => s.agentActivityOpen);
+  const setOpen = useShellStore((s) => s.setAgentActivityOpen);
   // D-298 — the Edit/Motion half. `tab !== 'colorist'` because the D-051
   // bridge pushes Colorist grade edits onto this same stack, and those are
   // already listed (with their diff and their undo) from `useAgentStore`.
@@ -209,61 +216,91 @@ export default function AgentActivityDock() {
     ...tabActivity.map((e) => ({ ts: e.ts, key: `h-${e.id}`, node: <TabActivityRow key={`h-${e.id}`} entry={e} /> })),
   ].sort((a, b) => b.ts - a.ts);
 
-  // B-159 — "dismissed" means the newest row hasn't changed since "Hide" was
-  // clicked: the instant a different row (any source) becomes the newest
-  // one, this goes false on its own, no effect required.
-  const isDismissed = dockDismissed && (rows[0]?.key ?? null) === dismissedAtRowKey;
+  // While the popover is open everything in it is being seen, including rows
+  // that arrive meanwhile; the badge restarts from the moment it closes.
+  const newestTs = rows[0]?.ts ?? 0;
+  useEffect(() => {
+    if (open) markActivitySeen();
+  }, [open, newestTs, markActivitySeen]);
 
+  const unread = open ? 0 : rows.filter((r) => r.ts > seenTs).length;
   const showBanner = !!pending && !pending.cleared;
-  if (!showBanner && (rows.length === 0 || isDismissed)) return null;
+  const label = showBanner
+    ? 'Agent activity: the agent is asking for you'
+    : unread > 0
+      ? `Agent activity, ${unread} new`
+      : 'Agent activity';
 
   return (
-    <div className="fixed left-3 bottom-3 z-40 w-[340px] max-w-[calc(100vw-24px)] flex flex-col gap-2">
-      {showBanner && <RequestHumanBanner />}
-
-      {rows.length > 0 && !isDismissed && (
-        <div className="rounded-lg border border-border-color bg-surface shadow-2xl overflow-hidden flex flex-col max-h-[45vh]">
-          <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-border-color shrink-0">
-            <button
-              onClick={() => setFeedOpen(!feedOpen)}
-              className="flex items-center gap-1.5 text-text-primary hover:text-accent"
-            >
-              {feedOpen ? <CaretDownIcon size={14} /> : <CaretRightIcon size={14} />}
-              <span className="text-xs font-semibold">Agent activity</span>
-            </button>
-            <span className="text-[10px] text-text-secondary tabular-nums">{rows.length}</span>
-            <div className="flex-1" />
-            <button
-              onClick={clearActivity}
-              className="text-text-secondary hover:text-text-primary p-0.5"
-              // D-298 — clears the Colorist half only. The Edit/Motion rows
-              // come off the shared UNDO stack, and clearing that to tidy a
-              // feed would throw away real undo history — a far worse trade
-              // than a feed that still lists them.
-              title="Clear the grade feed (does not revert anything, and leaves Edit/Motion undo history alone)"
-            >
-              <TrashIcon size={12} />
-            </button>
-            <button
-              onClick={() => dismissDock(rows[0]?.key ?? null)}
-              className="text-text-secondary hover:text-text-primary p-0.5"
-              // B-159 — this used to call `setFeedOpen(false)`, which is what
-              // the caret toggle right next to it already does (collapses the
-              // row list, leaves this header on screen). This actually hides
-              // the whole card; it comes back on the next new activity item.
-              title="Hide (reappears on new activity)"
-            >
-              <XIcon size={12} />
-            </button>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="xs"
+            title={label}
+            aria-label={label}
+            data-chroma-agent-activity-button
+            className={`relative h-6 w-6 p-0 hover:text-text-primary ${showBanner ? 'text-amber-400' : 'text-text-secondary'}`}
+          >
+            <RobotIcon className="size-3.5" />
+            {(unread > 0 || showBanner) && (
+              <span
+                data-chroma-agent-activity-badge
+                className={`absolute -top-0.5 -right-0.5 min-w-3.5 h-3.5 px-1 rounded-full text-[9px] leading-[14px] font-semibold tabular-nums text-center ${showBanner ? 'bg-amber-500 text-black' : 'bg-accent text-button-text'}`}
+              >
+                {showBanner ? '!' : unread > BADGE_CAP ? `${BADGE_CAP}+` : unread}
+              </span>
+            )}
+          </Button>
+        }
+      />
+      <PopoverContent
+        align="end"
+        sideOffset={6}
+        data-chroma-agent-activity
+        className="p-0 flex flex-col overflow-hidden bg-surface border-border-color text-text-primary"
+        style={{ width: POPOVER_WIDTH_PX, maxWidth: 'calc(100vw - 24px)', maxHeight: POPOVER_MAX_HEIGHT }}
+      >
+        {showBanner && (
+          <div className="p-2 border-b border-border-color shrink-0">
+            <RequestHumanBanner />
           </div>
+        )}
 
-          {feedOpen && (
-            <div className="overflow-y-auto custom-scrollbar min-h-0">
-              {rows.map((r) => r.node)}
-            </div>
+        <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-border-color shrink-0">
+          <span className="text-xs font-semibold">Agent activity</span>
+          <span className="text-[10px] text-text-secondary tabular-nums">{rows.length}</span>
+          <div className="flex-1" />
+          <button
+            onClick={clearActivity}
+            className="text-text-secondary hover:text-text-primary p-0.5"
+            // D-298 — clears the Colorist half only. The Edit/Motion rows
+            // come off the shared UNDO stack, and clearing that to tidy a
+            // feed would throw away real undo history — a far worse trade
+            // than a feed that still lists them.
+            title="Clear the grade feed (does not revert anything, and leaves Edit/Motion undo history alone)"
+          >
+            <TrashIcon size={12} />
+          </button>
+          <button
+            onClick={() => setOpen(false)}
+            className="text-text-secondary hover:text-text-primary p-0.5"
+            title="Close"
+            aria-label="Close agent activity"
+          >
+            <XIcon size={12} />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto custom-scrollbar min-h-0">
+          {rows.length === 0 ? (
+            <p className="px-2.5 py-3 text-xs text-text-secondary">No agent activity yet.</p>
+          ) : (
+            rows.map((r) => r.node)
           )}
         </div>
-      )}
-    </div>
+      </PopoverContent>
+    </Popover>
   );
 }

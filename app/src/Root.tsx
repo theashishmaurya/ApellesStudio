@@ -490,13 +490,12 @@ export function Root() {
       // here rather than imported by `Shell`, same app → shell direction as
       // `launcher` and `sourcesPanel` above.
       headerAction={<EditorExportDialog />}
-      // D-298 — the agent activity feed + `request_human` banner, promoted out
-      // of the Colorist app (where it was mounted in `App.tsx`) to a
-      // shell-level surface: an agent's work spans all three tabs, and a feed
-      // of it that only exists on one of them cannot report the other two.
-      // Injected like `launcher`/`sourcesPanel`/`headerAction` — `Shell` never
-      // imports it.
-      overlay={<AgentActivityDock />}
+      // D-298/B-341 — the agent activity feed + `request_human` banner, a
+      // chrome-bar button with an unread badge and a popover (owner,
+      // 2026-10-31; it was a fixed bottom-left dock that covered the Edit
+      // timeline). Shell-level because an agent's work spans all three tabs;
+      // injected like `headerAction` — `Shell` never imports it.
+      activityAction={<AgentActivityDock />}
       // D-416 — the Brand kit panel: one kit for all three tabs.
       brandAction={<BrandKitButton />}
       onCloseProject={() => {
