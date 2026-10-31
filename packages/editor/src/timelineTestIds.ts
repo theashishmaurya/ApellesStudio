@@ -53,6 +53,18 @@ export const TIMELINE_TEST_IDS = {
   /** One track's row in the edit area (`TrackDropZone` — pointer-transparent,
    *  so it is a geometry target: "the lane of track N"). */
   trackLane: 'timeline-track-lane',
+  /** D-437 — the lane renderer's own parts (`lanes/`): one track's lane row
+   *  (carries `data-chroma-track`), a clip's positioning slot (also
+   *  `data-chroma-clip-slot`; the `timeline-clip` body is inside it), the
+   *  native scroller, and the playhead's line, head (in the ruler) and grab
+   *  band (under it). They replace the library selectors below once the pane
+   *  is switched over. */
+  trackRow: 'timeline-track-row',
+  clipSlot: 'timeline-clip-slot',
+  scroller: 'timeline-scroller',
+  playhead: 'timeline-playhead',
+  playheadHead: 'timeline-playhead-head',
+  playheadBand: 'timeline-playhead-band',
   /** One track's header in the left column, and its buttons. */
   trackHeader: 'timeline-track-header',
   trackLock: 'timeline-track-lock',

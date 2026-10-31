@@ -26,12 +26,22 @@ import { fileURLToPath } from 'node:url';
 import { transformAsync } from '@babel/core';
 import { reactCompilerPreset } from '@vitejs/plugin-react';
 
-/** Every `.ts`/`.tsx` in this package except the tests themselves. Read from
- *  disk rather than listed by hand so a newly-added file is covered the day it
- *  lands, not whenever someone remembers to update a list. */
-const SRC_DIR = fileURLToPath(new URL('.', import.meta.url));
-const SOURCE_FILES = (await readdir(SRC_DIR))
-  .filter((f) => (f.endsWith('.ts') || f.endsWith('.tsx')) && !f.includes('.test.'))
+/** Every `.ts`/`.tsx` in this package except the tests themselves, top level and
+ *  `lanes/` (D-437: the lane renderer is held to zero bailouts from its first
+ *  commit). Read from disk rather than listed by hand so a newly-added file is
+ *  covered the day it lands, not whenever someone remembers to update a list.
+ *  Paths are relative to `src/`. */
+const SOURCE_DIRS = ['', 'lanes/'];
+const SOURCE_FILES = (
+  await Promise.all(
+    SOURCE_DIRS.map(async (dir) =>
+      (await readdir(new URL(dir, new URL('.', import.meta.url))))
+        .filter((f) => (f.endsWith('.ts') || f.endsWith('.tsx')) && !f.includes('.test.'))
+        .map((f) => dir + f),
+    ),
+  )
+)
+  .flat()
   .sort();
 
 async function bailoutsFor(file: string): Promise<string[]> {

@@ -1,6 +1,6 @@
 # Timeline lanes: replacing `@xzdarcy/react-timeline-editor` (D-437 build plan)
 
-Status: **plan, 2026-11-01. No code changed.** Decision: D-437 (`docs/08-decisions.md`).
+Status: **plan, 2026-11-01. Built so far: S1, S2, S3a, S3b (standalone in `packages/editor/src/lanes/`, not wired into `TimelinePane`; see each step's "Built" note).** Decision: D-437 (`docs/08-decisions.md`).
 Evidence: `docs/notes/timeline-drag-perf.md` (B-347), the live harness runs under
 `scratch/ui-harness/runs/` (run 4: `2026-10-31T21-00-23-799Z`). Builds on D-432 P2/P3
 (`docs/notes/ui-redesign.md` §6b, §6c) and the harness (`docs/notes/ui-harness.md`).
@@ -551,11 +551,28 @@ moves new code to `lanes/`.
 - Acceptance: the tests listed in §2.4, plus `contentWidth` against the library's formula
   for 6 cases (no clips, < 20 ticks, long timeline, each zoom extreme). Coverage of every
   branch.
+- **Built (2026-11-01).** `lanes/laneLayout.ts`, `lanes/laneWindow.ts`,
+  `lanes/laneWindow.test.ts` (26 tests: empty/one/unsorted/tied clips, window before/after/
+  inside/straddling, a long clip hiding under short ones, pinned ids beyond the window, `viewportWidth`
+  0, zoom extremes, `contentWidth` vs the library formula for 6 cases, `visibleSlice`, a 10k-clip
+  property test against a brute-force filter, a 400-clip timing guard at < 1 ms per window call; measured
+  well under that). Deviations: the API grew three helpers the plan implied but did not name:
+  `laneWindowParams(viewportWidth)` (overscan = max(viewport, 600 px), bucket = half viewport),
+  `windowScrollLeft(scrollLeft, viewportWidth)` (what the pane passes down so a scroll inside a bucket is
+  not a prop change) and `windowClipIndices(track, window, fps, pinnedIds)` (range + overlap filter +
+  pinned ids, returned in array order so stacking and keys do not depend on the window).
+  `visibleSlice(clipLeft, widthPx, viewStart, viewEnd, bucketPx)` takes the viewport in content px
+  (the plan's `windowPx`) and an explicit bucket (200 px, `SLICE_BUCKET_PX`, the old filmstrip bucket).
+  `TRIM_ZONE_PX` / `TRIM_ZONE_MAX_FRACTION` live in `laneLayout.ts`; the pane's copies are deleted by S4.
 
 ### S2 — move `ClipBody`
 - Pure move to `lanes/ClipBody.tsx` with its doc comment. `TimelinePane` imports it.
 - Acceptance: every existing editor test green, no diff in rendered DOM (snapshot of one
   clip before/after in a throwaway assertion, not committed).
+- **Built (2026-11-01).** `ClipBody` moved verbatim (plus `export` and a header comment) to
+  `lanes/ClipBody.tsx`. `TimelinePane.tsx`: one import line added (`import { ClipBody } from
+  './lanes/ClipBody'`), the 100-line function deleted, and the now-unused `ReactNode`, `useDraggable`,
+  `TRIM_ARM_HINT` imports removed. No behaviour change.
 
 ### S3a — lanes components (not wired)
 - `TimelineLanes`, `TrackLane`, `LaneClip` per §2.1–2.2, with the pinned set, the clamped
@@ -568,6 +585,24 @@ moves new code to `lanes/`.
   one `LaneClip`; a selection change re-renders only the clips whose flag flipped; slot
   `left`/`width` match `laneLayout`; every `data-testid`/`data-chroma-*` from §3 present.
 - Acceptance: those tests + compiler test green. No pane change.
+- **Built (2026-11-01).** `lanes/TimelineLanes.tsx` (`memo`), `TrackLane.tsx`, `LaneClip.tsx`
+  (`memo`), `useLaneActions.ts`, `lanes/README.md`; `reactCompiler.test.ts` now covers `src/` and
+  `src/lanes/` (zero bailouts). `lanes/TimelineLanes.dom.test.tsx`: 23 tests. Render counts (counted at
+  the `memo` boundary of `LaneClip`, because the React Compiler memoises an unchanged child element and a
+  stubbed child would undercount): identical props re-render 0 clips; replacing one clip object re-renders
+  exactly that one; a selection change re-renders exactly the clip whose flag flipped (2 on moving it); a
+  scroll inside the window bucket re-renders 0 (and not even `TimelineLanes`, since `windowLeft` is
+  unchanged); crossing a bucket re-renders the newcomers and the clips that leave the viewport (their
+  visible slice parks at an edge once) but not a clip that stays fully visible; a zoom re-renders each
+  visible clip once; a change on one track leaves the other track alone. Deviations: (1) `TimelineLanes`
+  takes `windowLeft` (scroll already floored to the bucket by `windowScrollLeft`) instead of a raw
+  `scrollLeft`, which is what makes "a scroll inside the threshold re-renders nothing" true at the
+  component boundary; (2) it also takes `scrollerRef` and `onScroll`, which S4 needs; (3) `useLaneActions`
+  is the `actions` pattern as a hook (ref written in a layout effect); (4) six ids were added to
+  `TIMELINE_TEST_IDS` (`trackRow`, `clipSlot`, `scroller`, `playhead`, `playheadHead`, `playheadBand`),
+  earlier than S4, because the components need them; (5) the clip slot is `top 0` with an explicit
+  `height` rather than `inset-y 0`, so the lane's 1 px bottom border does not shrink the clip's row box.
+  Not covered (needs layout): real scroll behaviour, which S4's Chromium/live checks own.
 
 ### S3b — playhead (not wired)
 - `Playhead.tsx` per §2.6, with handle, head and band, scrub callbacks, edge autoscroll
@@ -577,6 +612,18 @@ moves new code to `lanes/`.
   begin/update/end in order with snapping, `pointercancel`/lost capture/unmount end the
   scrub, autoscroll speed curve.
 - Acceptance: tests + compiler test green.
+- **Built (2026-11-01).** `lanes/Playhead.tsx`, `lanes/playheadAutoscroll.ts`,
+  `lanes/Playhead.dom.test.tsx` (19 tests) and `lanes/playheadAutoscroll.test.ts` (5). Position is
+  `transform: translate3d` only, `x` rounded to the device pixel, `will-change: transform`, written through
+  a handle (`setFrame`, `setScroll`); a `Profiler` shows 0 extra commits for 200 `setFrame` calls. The
+  line, the root and the (positioned) container are `pointer-events: none` (inline style, so the test can
+  read it); the head and band are `auto`. A scrub uses pointer capture; start/scrub/end fire in order with
+  snapping, only on a frame change; `pointercancel`, lost capture and unmount each end it exactly once; a
+  second press or another pointer while one is active is ignored; edge autoscroll scrolls the scroller by
+  `edgeScrollSpeed` per animation frame and reports the new frames, and stops on release. Deviation:
+  `fps`/`pxPerSec`/`startLeftPx` arrive as **props** (re-placed in a layout effect, one render per zoom
+  step) rather than a `setScale` handle method; the frame and scroll, which change per frame, are the
+  handle. The head and band are children of the line, so the one transform moves all three.
 
 ### S4 — the switch (Opus)
 - Pane: replace `<TimelineEditor>` (`:4091-4128`) with `<TimelineLanes>` + `<Playhead>`.
