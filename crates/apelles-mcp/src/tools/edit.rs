@@ -835,6 +835,9 @@ pub struct EditorAddMarkerArgs {
     /// takes is `durationFrames`, camelCase like every other multi-word op arg.
     #[serde(default)]
     pub duration_frames: Option<i64>,
+    /// B-339 — also open the new marker's editor popover in the GUI.
+    #[serde(default)]
+    pub open_editor: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -4293,6 +4296,11 @@ impl ApellesMcp {
     derived `endFrame` for both kinds, so a point marker reads back as
     `durationFrames: 0` with `endFrame` equal to `frame`.
 
+    `open_editor` (default false) also opens the new marker's editor popover in
+    the GUI, exactly like clicking the toolbar's Marker button or pressing
+    Option+M; leave it off for plain `M`-style marking so no popover is left
+    open.
+
     A marker is real document content: it is written into `project.json` and
     a GUI undo (⌘Z) removes it, unlike `editor_set_selection` /
     `editor_set_preview_zoom`, which change only what the user is looking at.
@@ -4308,7 +4316,8 @@ impl ApellesMcp {
             .put("color", p.color)
             .put("name", p.name)
             .put("note", p.note)
-            .put("durationFrames", p.duration_frames);
+            .put("durationFrames", p.duration_frames)
+            .put("openEditor", p.open_editor);
         let env = self.op("editor_add_marker", args).await?;
         Ok(render::json_text(&env))
     }

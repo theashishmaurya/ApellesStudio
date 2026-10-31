@@ -159,7 +159,12 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     defaultCombo: ['Delete'],
     aliases: [['Backspace']],
   },
-  { id: 'edit.add_marker', label: 'Add marker at playhead', category: 'timeline', scope: 'edit', defaultCombo: ['KeyM'] },
+  // B-339 — M adds (or, on a frame that already has a marker, opens it: Resolve's
+  // and Final Cut's "M again edits it"); Alt/Option+M adds AND opens the editor
+  // (Final Cut's Option-M). Plain M never opens the dialog for a NEW marker so
+  // marking during playback is not interrupted.
+  { id: 'edit.add_marker', label: 'Add marker at playhead (opens an existing one)', category: 'timeline', scope: 'edit', defaultCombo: ['KeyM'] },
+  { id: 'edit.add_marker_edit', label: 'Add marker and edit it', category: 'timeline', scope: 'edit', defaultCombo: ['alt', 'KeyM'] },
 
   // ── Trim tools (Edit tab) — Adobe's own V/B/N/Y/U, D-261 ─────────────────
   { id: 'edit.tool_select', label: 'Select tool', category: 'trim-tools', scope: 'edit', defaultCombo: ['KeyV'] },

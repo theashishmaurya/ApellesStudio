@@ -258,6 +258,19 @@ describe('editor_set_track_sync_locked (B-315)', () => {
   });
 });
 
+describe('editor_add_marker open_editor (B-339)', () => {
+  it('opens the new marker’s editor only when openEditor is true', async () => {
+    act(() => useEditorTimelineStore.getState().setEditingMarkerId(null));
+    const plain = await callOp('editor_add_marker', { frame: 10 });
+    expect(useEditorTimelineStore.getState().editingMarkerId).toBeNull();
+
+    const opened = await callOp('editor_add_marker', { frame: 20, openEditor: true });
+    expect(useEditorTimelineStore.getState().editingMarkerId).toBe(opened.result.marker.id);
+    expect(opened.result.marker.id).not.toBe(plain.result.marker.id);
+    act(() => useEditorTimelineStore.getState().setEditingMarkerId(null));
+  });
+});
+
 describe('marker creation time and sort (B-317)', () => {
   const frameOf = (id: string): number => useEditorTimelineStore.getState().timeline!.markers!.find((m) => m.id === id)!.frame;
 

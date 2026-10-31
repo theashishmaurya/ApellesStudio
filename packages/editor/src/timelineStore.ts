@@ -245,6 +245,12 @@ interface EditorTimelineState {
    *  `playhead` when playback started, so a seek DURING playback has to
    *  re-baseline both; they key their effects on this counter to do it. */
   seekEpoch: number;
+  /** B-339 — the marker whose editor popover is open, or null. View state like
+   *  `selection`: not on the undo stack and never persisted. It lives here (not
+   *  in `MarkerStrip`) so the Add Marker button, the M shortcuts and
+   *  `editor_add_marker`'s `open_editor` can open a marker's editor the instant
+   *  after creating it. */
+  editingMarkerId: string | null;
   /** every timeline in the open project, for the switcher (D-046 pass 3) */
   timelines: TimelineSummary[];
   /** the current clip selection (D-107 multi-select) — see `Selection`'s doc */
@@ -488,6 +494,8 @@ interface EditorTimelineState {
    *  is that very one, so only a NEWER edit makes the answer stale. */
   load: (opts?: { afterOwnSave?: boolean }) => Promise<void>;
   setPlayhead: (frame: number) => void;
+  /** B-339 — open (id) or close (null) a marker's editor popover. */
+  setEditingMarkerId: (id: string | null) => void;
   setPlaying: (playing: boolean) => void;
   /** B-326 — a USER seek (timeline click, MCP): `setPlayhead` plus a re-baseline
    *  of the running transport, so playback continues from `frame` instead of
@@ -769,6 +777,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   playhead: 0,
   playing: false,
   seekEpoch: 0,
+  editingMarkerId: null,
   timelines: [],
   selection: [],
   selectedGap: null,
@@ -980,6 +989,8 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   },
 
   setPlaying: (playing) => set({ playing }),
+
+  setEditingMarkerId: (id) => set({ editingMarkerId: id }),
 
   seekPlayhead: (frame) => {
     get().setPlayhead(frame);

@@ -1587,7 +1587,7 @@
     },
     {
       "name": "editor_add_marker",
-      "description": "Pin a marker to a timeline frame \u2014 the same action the GUI's Marker\n    button and its `M` shortcut perform.\n\n    `frame` omitted means \"at the playhead\", exactly like the GUI's own\n    button, so `editor_set_playhead(...)` then `editor_add_marker()` is the\n    natural pair. `color` is a palette NAME (blue, cyan, green, yellow, red,\n    pink, purple, fuchsia, rose, lavender, sky, mint, lemon, sand, cocoa,\n    cream \u2014 `editor_list_markers` returns the live list) or a raw `#RGB` /\n    `#RRGGBB` hex; omitted gives blue, the same default DaVinci Resolve uses.\n    `name` is the short title shown next to the flag on the ruler; `note` is\n    longer free text visible only in the marker's own popover.\n\n    `duration_frames` makes the marker span a RANGE rather than flag a single\n    frame: omitted (or 0) is a point marker, the default and what every marker\n    made before this parameter existed is. A ranged marker covers\n    `frame` through `frame + duration_frames` inclusive and draws as a bar on\n    the ruler instead of a pin. The response reports `durationFrames` and the\n    derived `endFrame` for both kinds, so a point marker reads back as\n    `durationFrames: 0` with `endFrame` equal to `frame`.\n\n    A marker is real document content: it is written into `project.json` and\n    a GUI undo (\u2318Z) removes it, unlike `editor_set_selection` /\n    `editor_set_preview_zoom`, which change only what the user is looking at.\n    Any frame is legal, including one past the last clip. Returns the created\n    marker including its generated `id`.",
+      "description": "Pin a marker to a timeline frame \u2014 the same action the GUI's Marker\n    button and its `M` shortcut perform.\n\n    `frame` omitted means \"at the playhead\", exactly like the GUI's own\n    button, so `editor_set_playhead(...)` then `editor_add_marker()` is the\n    natural pair. `color` is a palette NAME (blue, cyan, green, yellow, red,\n    pink, purple, fuchsia, rose, lavender, sky, mint, lemon, sand, cocoa,\n    cream \u2014 `editor_list_markers` returns the live list) or a raw `#RGB` /\n    `#RRGGBB` hex; omitted gives blue, the same default DaVinci Resolve uses.\n    `name` is the short title shown next to the flag on the ruler; `note` is\n    longer free text visible only in the marker's own popover.\n\n    `duration_frames` makes the marker span a RANGE rather than flag a single\n    frame: omitted (or 0) is a point marker, the default and what every marker\n    made before this parameter existed is. A ranged marker covers\n    `frame` through `frame + duration_frames` inclusive and draws as a bar on\n    the ruler instead of a pin. The response reports `durationFrames` and the\n    derived `endFrame` for both kinds, so a point marker reads back as\n    `durationFrames: 0` with `endFrame` equal to `frame`.\n\n    `open_editor` (default false) also opens the new marker's editor popover in\n    the GUI, exactly like clicking the toolbar's Marker button or pressing\n    Option+M; leave it off for plain `M`-style marking so no popover is left\n    open.\n\n    A marker is real document content: it is written into `project.json` and\n    a GUI undo (\u2318Z) removes it, unlike `editor_set_selection` /\n    `editor_set_preview_zoom`, which change only what the user is looking at.\n    Any frame is legal, including one past the last clip. Returns the created\n    marker including its generated `id`.",
       "inputSchema": {
         "properties": {
           "frame": {
@@ -1649,6 +1649,18 @@
             ],
             "default": null,
             "title": "Duration Frames"
+          },
+          "open_editor": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Open Editor"
           }
         },
         "type": "object",
@@ -15777,7 +15789,8 @@
         "color": "v_editor_add_marker.color",
         "name": "v_editor_add_marker.name",
         "note": "v_editor_add_marker.note",
-        "duration_frames": 78
+        "duration_frames": 78,
+        "open_editor": true
       },
       "requests": [
         {
@@ -15787,7 +15800,8 @@
             "color": "v_editor_add_marker.color",
             "name": "v_editor_add_marker.name",
             "note": "v_editor_add_marker.note",
-            "durationFrames": 78
+            "durationFrames": 78,
+            "openEditor": true
           },
           "timeout_ms": 20000
         }

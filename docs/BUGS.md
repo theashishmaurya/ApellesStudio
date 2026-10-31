@@ -4,6 +4,16 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-339 — adding a marker does not open its editor popover
+
+status: **fixed** (2026-10-31) · severity: **minor** · area: `@apelles/editor` (`TimelineMarkers.tsx`, `TimelinePane.tsx`, `timelineStore`), `@apelles/keymap`, `editor_add_marker`
+
+- **found:** 2026-10-31, owner report with a screenshot (`scratch/bug-refs/2026-10-31-marker-no-popover.png`): "when I add a marker it does not open the small popover where I can write a comment, select colour and heading."
+- **cause:** the editor popover's open state (`editingId`) was local to `MarkerStrip` and only set by double-click or right-click on an existing flag; the Add Marker button and `M` only called `add_marker`, with no way to reach that state.
+- **fix:** the open id is now `editingMarkerId` in the editor timeline store (view state, not undoable), and `MarkerStrip` takes it as a controlled prop. The toolbar button adds and opens the editor with the Name field focused. `M` adds only (so marking during playback is not interrupted) but, if a marker already sits on the playhead frame, opens that marker instead of adding a duplicate. New `edit.add_marker_edit` (Alt/Option+M, registered in `@apelles/keymap`, no conflict) adds and opens. `editor_add_marker` gains optional `open_editor` (default false) in `mcp/server.py` and `crates/apelles-mcp`; tool count stays 257.
+- **reference:** Final Cut Pro (M adds a marker, Option-M adds and opens the marker dialog, M on an existing marker opens it) and DaVinci Resolve (M adds, M again on the same frame opens the marker dialog).
+- **verification:** `TimelinePane.markers.dom.test.tsx` tests 14-20 (button opens popover with name focused, M adds without popover, M on existing opens it, Alt+M adds and opens, Done / Escape / Remove close it), `trackOps.e2e.dom.test.tsx` (`openEditor` op), keymap suite, `cargo test -p apelles-mcp` (parity corpus regenerated), editor `tsc` at its 3 baseline errors.
+
 ## B-338 — a generated caption cue cannot be lengthened with `editor_trim_clip`
 
 status: **open** · severity: **minor** · area: caption clips (D-228/D-229) under `checkTrim` (`packages/editor/src/timeline.ts`)

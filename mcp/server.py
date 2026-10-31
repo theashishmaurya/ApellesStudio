@@ -3795,6 +3795,7 @@ def editor_add_marker(
     name: str | None = None,
     note: str | None = None,
     duration_frames: int | None = None,
+    open_editor: bool | None = None,
 ) -> str:
     """Pin a marker to a timeline frame — the same action the GUI's Marker
     button and its `M` shortcut perform.
@@ -3816,6 +3817,11 @@ def editor_add_marker(
     derived `endFrame` for both kinds, so a point marker reads back as
     `durationFrames: 0` with `endFrame` equal to `frame`.
 
+    `open_editor` (default false) also opens the new marker's editor popover in
+    the GUI, exactly like clicking the toolbar's Marker button or pressing
+    Option+M; leave it off for plain `M`-style marking so no popover is left
+    open.
+
     A marker is real document content: it is written into `project.json` and
     a GUI undo (⌘Z) removes it, unlike `editor_set_selection` /
     `editor_set_preview_zoom`, which change only what the user is looking at.
@@ -3830,6 +3836,7 @@ def editor_add_marker(
         ("name", name),
         ("note", note),
         ("durationFrames", duration_frames),
+        ("openEditor", open_editor),
     ):
         if val is not None:
             args[key] = val
