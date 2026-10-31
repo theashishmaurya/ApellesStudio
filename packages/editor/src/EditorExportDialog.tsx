@@ -410,7 +410,15 @@ export function EditorExportDialog() {
       <Tooltip>
         <TooltipTrigger
           render={
-            <Button variant="ghost" size="sm" onClick={() => setOpen(true)} aria-label="Export">
+            // D-432 P5 / spec §4.2 — a secondary button in the top bar:
+            // `bg-secondary`, `DownloadSimple`, `text-sm` 500.
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setOpen(true)}
+              aria-label="Export"
+              className="h-6 gap-1.5 rounded-sm bg-bg-secondary px-2.5 text-sm font-medium text-text-primary hover:bg-card-active"
+            >
               <DownloadSimpleIcon />
               Export
             </Button>

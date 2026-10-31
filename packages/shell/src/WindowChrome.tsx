@@ -143,9 +143,8 @@ export function MacTrafficLights({ show }: { show: boolean }) {
 }
 
 /**
- * Windows / Linux window controls (right side). On macOS returns a spacer the
- * same width as the traffic lights so `Shell.tsx` can keep the tabs truly
- * centred. Renders nothing on mobile.
+ * Windows / Linux window controls (right side). Renders nothing on macOS
+ * (its traffic lights are on the left) or on mobile.
  */
 export function WindowControls({ chrome }: { chrome: WindowChromeState }) {
   const { isWindows, isLinux, isMac, isMobile, isMaximized } = chrome;
@@ -155,10 +154,10 @@ export function WindowControls({ chrome }: { chrome: WindowChromeState }) {
 
   if (isMobile) return null;
 
-  if (isMac) {
-    // keep the tabs centred: mirror the traffic-lights cluster width
-    return <div className="w-[72px] shrink-0" aria-hidden />;
-  }
+  // D-432 P5 — no spacer on macOS any more: the tabs are absolutely centred
+  // in the bar, so nothing needs to balance the traffic lights, and Export
+  // sits flush at the right edge as in the redesign mockup.
+  if (isMac) return null;
 
   if (isLinux) {
     return (

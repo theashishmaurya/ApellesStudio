@@ -1,7 +1,7 @@
 # @apelles/player
 
 **The shared preview component** (D-039 roadmap "Next" item 1) — one canvas
-viewport + title strip + transport bar all 3 tabs embed. Fully controlled and
+viewport + viewer header + scrub bar + transport row (D-432 P5 layout) all 3 tabs embed. Fully controlled and
 **presentational only**: it renders whatever `surface` the caller hands it and
 calls back on every interaction. It owns no frame-fetch, no IPC, no timeline
 model, no playback-loop state — that logic is tab-owned and stays in the
@@ -9,32 +9,40 @@ caller (see `@apelles/editor`'s `PreviewPane.tsx` for the reference pattern:
 the `chroma_timeline_frame` invoke, the scrub-refetch effect, the wall-clock
 `requestAnimationFrame` play loop with frame-dropping).
 
-Deps: `react`, `@phosphor-icons/react` (D-300), `@apelles/ui` (Button/Slider from the shadcn kit,
-D-042). **No `@tauri-apps/api`, no zustand, no video/decode logic** — if this
+Deps: `react`, `@phosphor-icons/react` (D-300), `@apelles/ui` (Button/Slider/ScrubBar from the
+shadcn kit, D-042). **No `@tauri-apps/api`, no zustand, no video/decode logic** — if this
 package ever grows a `useEffect` that calls `invoke(...)`, that's a bug; move
 it to the caller.
 
 ## Layout
 
+D-432 P5 (`docs/notes/ui-redesign.md` §4.11), flat `surface` rows split by `divider`:
+
 ```
-┌─────────────────────────────────────────────┐
-│  ‹  title                              …     │  ← title strip (only if title/onPrev/onNext/menu given)
-├─────────────────────────────────────────────┤
-│                                               │
-│                   surface                    │  ← viewport, bg-black/40, centered
-│                                               │
-├─────────────────────────────────────────────┤
-│  ───────────●─────────────────────────────   │  ← scrub bar (only if onSeek given)
-│  ⏮ ⏴ ▶ ⏵ ⏭   00:00:12:04 / 00:01:03:00  ⏱1×      📷 ⛶ 🔍Fit │  ← transport bar
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ [start] 1920×1080 · 24p      ‹ title ›      − Fit +  [view] ≋ … [end] │  ← header, 28 px (only if any of it is given)
+├──────────────────────────────────────────────────────────────┤
+│                           surface                            │  ← viewport, black
+├──────────────────────────────────────────────────────────────┤
+│ (waveform band, when on)                                     │
+│━━━━━━━━━━━━━━━●──────────────────────────────────────────────│  ← 3 px scrub bar, 12 px hit area (only if onSeek)
+│ 00:00:12:04          ⏮  ‹  ▶  ›  ⏭          1×  🔊  📷  ⛶   │  ← transport, 40 px
+└──────────────────────────────────────────────────────────────┘
 ```
+
+The timecode is the full `HH:MM:SS:FF` in `--color-playhead`. The skip buttons'
+meaning is the caller's (`skipLabels`): the Edit tab uses them for previous /
+next edit point.
 
 ## Prop contract
 
 ```ts
 interface PlayerProps {
   surface: ReactNode;           // whatever the tab renders inside the viewport
-  title?: string;                // clip/shot/composition name, shown in the title strip
+  title?: string;                // clip/shot/composition name, centred in the header
+  formatLabel?: string;          // D-432 P5 — the header's format line, e.g. `1920×1080 · 24p`
+  headerStart?: ReactNode;       // D-432 P5 — caller controls at the header's far left
+  headerEnd?: ReactNode;         // D-432 P5 — caller controls at the header's far right
   onPrev?: () => void;           // '‹' nav — only rendered if provided
   onNext?: () => void;           // '›' nav — only rendered if provided
   menu?: ReactNode;               // the '…' slot — caller supplies its own dropdown content (trigger included)
@@ -48,6 +56,7 @@ interface PlayerProps {
   onSeek?: (frame: number) => void;      // optional scrub bar; omit → no scrub bar rendered
   onSkipStart?: () => void;              // omit → button hidden
   onSkipEnd?: () => void;                // omit → button hidden
+  skipLabels?: { start: string; end: string }; // the skip buttons' names; default Skip to start / end
 
   onSnapshot?: () => void;               // omit → button hidden
   onFullscreen?: () => void;             // omit → button hidden
@@ -78,8 +87,8 @@ without the Editor's choices constraining them. Exceptions, by design:
 - **`rate` is the TRANSPORT's playback rate** (D-280) — timeline seconds
   played per real second — and is **not** any clip's Speed/Retime property.
   It changes how fast the user watches; it persists nothing and changes no
-  render. The control sits in the transport bar's left cluster, after the
-  timecode, and opens a popover of presets plus a custom field. Unlike `zoom`,
+  render. The control sits in the transport row's right group (D-432 P5), before
+  volume, and opens a popover of presets plus a custom field. Unlike `zoom`,
   the presets/bounds/formatting DO live in this package
   (`src/playbackRate.ts`, exported) because the control renders all three —
   the tab imports the same values for its own clamp so there is one source.

@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 /**
- * @apelles/editor — real-DOM coverage for D-263's DOCKED library panel: the
- * rail switches what the column shows, and every library in it is still a real
- * drag source onto the timeline.
+ * @apelles/editor — real-DOM coverage for the Edit tab's library browser
+ * (D-263's docked panel; since D-432 P5 switched by the browser's own tab bar
+ * instead of a separate rail): the tabs switch what the browser shows, and
+ * every library in it is still a real drag source onto the timeline.
  *
  * **Why this file exists.** D-248 put these libraries in per-rail-button
  * popovers, partly because "a native HTML5 drag out of a popover keeps the
@@ -51,8 +52,8 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 
 import { useEditorTimelineStore } from './timelineStore';
 import { TimelinePane } from './TimelinePane';
-import { EditLibraryRail } from './EditLibraryRail';
-import { EditLibraryPanel } from './EditLibraryPanel';
+import { EditBrowser } from './EditBrowser';
+import { EDIT_LIBRARY_MODES } from './editLibrary';
 import { CHROMA_GENERATOR_DRAG_MIME, isTextClip, type Timeline } from './timeline';
 
 const FPS = 24;
@@ -84,22 +85,13 @@ function fixture(): Timeline {
   };
 }
 
-/** The three surfaces mounted the way the shell mounts them (D-263): rail,
- *  then the docked column, then the tab content with the timeline in it. The
- *  dock-open flag is shell state in the real app (`useShellStore`), which this
- *  package must not import — so it is a prop, exactly as `Root.tsx` wires it. */
-let dockOpen = true;
+/** The browser (D-432 P5: its tab bar replaced D-263's rail) beside the
+ *  timeline, as `EditorTab` mounts them. */
 function Harness(): React.ReactElement {
   return React.createElement(
     'div',
     null,
-    React.createElement(EditLibraryRail, {
-      dockOpen,
-      onDockOpenChange: (open: boolean) => {
-        dockOpen = open;
-      },
-    }),
-    React.createElement(EditLibraryPanel),
+    React.createElement(EditBrowser, { mediaPool: React.createElement('div', { 'data-testid': 'media-pool' }) }),
     React.createElement(TimelinePane),
   );
 }
@@ -154,7 +146,7 @@ function dropEvent(payload: string, clientY: number): Event {
   return e;
 }
 
-const rail = (mode: string) => document.querySelector<HTMLElement>(`[data-chroma-rail-button="${mode}"]`);
+const tab = (mode: string) => document.querySelector<HTMLElement>(`[data-chroma-browser-tab="${mode}"]`);
 const panel = () => document.querySelector<HTMLElement>('[data-chroma-panel="edit-library"]');
 const entry = (kind: string) => document.querySelector<HTMLElement>(`[data-chroma-library-entry="${kind}"]`);
 
@@ -166,7 +158,6 @@ let ui: MountedComponent | null = null;
 let console_: ReturnType<typeof captureConsole>;
 
 async function mountAll(): Promise<HTMLElement> {
-  dockOpen = true;
   actSync(() =>
     useEditorTimelineStore.setState({
       timeline: fixture(),
@@ -185,11 +176,11 @@ async function mountAll(): Promise<HTMLElement> {
   return stubEditAreaRect();
 }
 
-/** Click a rail button. The panel re-renders off the store, so this is the
+/** Click a browser tab. The panel re-renders off the store, so this is the
  *  same path the human's own click takes — no state is poked directly. */
 async function pick(mode: string): Promise<void> {
-  const button = rail(mode);
-  expect(button, `the rail has a ${mode} button`).not.toBeNull();
+  const button = tab(mode);
+  expect(button, `the browser has a ${mode} tab`).not.toBeNull();
   actSync(() => button!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
   await waitFrames(2);
 }
@@ -224,11 +215,12 @@ afterEach(() => {
   expect(errors, `console.error fired during the test:\n${errors.map((e) => e.join(' ')).join('\n')}`).toEqual([]);
 });
 
-describe('D-263 — the rail switches the DOCKED panel, one library at a time', () => {
-  it('1. shows nothing of its own in `sources` mode, then each library in turn', async () => {
+describe('D-432 P5 — the browser tabs switch the library, one at a time', () => {
+  it('1. shows the media pool in `sources` mode, then each library in turn', async () => {
     await mountAll();
-    // `sources` is the shell's shared media pool: this package renders nothing.
+    // `sources` is the shared media pool, injected by the composition root.
     expect(panel(), 'no Edit-tab library while Sources is selected').toBeNull();
+    expect(document.querySelector('[data-testid="media-pool"]')!.parentElement!.className).toBe('h-full');
 
     await pick('titles');
     expect(panel()!.getAttribute('data-chroma-library-mode')).toBe('titles');
@@ -252,19 +244,25 @@ describe('D-263 — the rail switches the DOCKED panel, one library at a time', 
     ).not.toBeNull();
     expect(entry('adjustment')).toBeNull();
 
-    // Exactly one library panel exists at any moment.
+    // Exactly one library panel exists at any moment, and the media pool
+    // stays mounted but hidden, so its search and scroll survive.
     expect(document.querySelectorAll('[data-chroma-panel="edit-library"]')).toHaveLength(1);
+    expect(document.querySelector('[data-testid="media-pool"]')!.parentElement!.className).toBe('hidden');
   });
 
-  it('2. collapsing (clicking the selected library again) asks the shell to close the column', async () => {
+  it('2. every library the old rail reached has a tab, and the selected one is marked', async () => {
     await mountAll();
-    await pick('titles');
-    expect(dockOpen).toBe(true);
-
-    await pick('titles');
-    // The rail does not hide anything itself — the column is the shell's, so
-    // all it can do is ask, which is exactly what it did.
-    expect(dockOpen, 'the second click asked for the column to close').toBe(false);
+    const tabs = [...document.querySelectorAll<HTMLElement>('[data-chroma-browser-tab]')];
+    expect(tabs.map((t) => t.getAttribute('data-chroma-browser-tab'))).toEqual([...EDIT_LIBRARY_MODES]);
+    for (const mode of EDIT_LIBRARY_MODES) {
+      await pick(mode);
+      expect(useEditorTimelineStore.getState().libraryMode).toBe(mode);
+      expect(tab(mode)!.getAttribute('aria-selected')).toBe('true');
+    }
+    // Clicking the selected tab again keeps it (the rail used to collapse the
+    // column here; the browser has its own toggle in the viewer header now).
+    await pick('index');
+    expect(useEditorTimelineStore.getState().libraryMode).toBe('index');
   });
 });
 

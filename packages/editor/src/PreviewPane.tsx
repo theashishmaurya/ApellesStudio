@@ -171,7 +171,7 @@
  * the right test and why the listener has to be a native non-passive one.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { CircleNotchIcon } from '@phosphor-icons/react';
 import { Player, useContentBox } from '@apelles/player';
@@ -189,6 +189,7 @@ import { CaptionTransformOverlay } from './CaptionTransformOverlay';
 import { CanvasBoundary } from './CanvasBoundary';
 import { SafeAreaOverlay } from './SafeAreaOverlay';
 import { SafeAreaMenu } from './SafeAreaMenu';
+import { editPoints, nextEditPoint, prevEditPoint } from './editPoints';
 import { useCanvasClipPick } from './useCanvasClipPick';
 import { EditOverlay } from './EditOverlay';
 import { useCompositionSize } from './useCompositionSize';
@@ -234,14 +235,25 @@ const PREVIEW_LONG_EDGE = 960;
  */
 const PREVIEW_MIME = 'image/jpeg';
 
-// D-249 added a `headerActions` prop here (`Player`'s own `menu` slot) for
-// the Edit tab's Export dialog; D-251 moved Export again, out of this tab
-// entirely, to `@apelles/shell`'s chrome bar (see `EditorTab.tsx`'s own note
-// at its `<PreviewPane />` call site and `Shell.tsx`'s module doc). Nothing
-// else ever used the slot, so the prop is removed rather than left with no
-// caller — `Player`'s own `menu` prop is untouched and still generally
-// available to any future caller that needs it.
-export function PreviewPane() {
+/** The transport's outer buttons go to edit points, not the ends (D-432 P5). */
+const EDIT_POINT_LABELS = { start: 'Previous edit point (↑)', end: 'Next edit point (↓)' } as const;
+
+/** D-432 P5 — the viewer header's format line: `1920×1080 · 24p`. */
+export function viewerFormatLabel(size: { width: number; height: number } | null, fps: number): string {
+  const rate = Number.isInteger(fps) ? String(fps) : fps.toFixed(2);
+  return size ? `${size.width}×${size.height} · ${rate}p` : `${rate}p`;
+}
+
+export interface PreviewPaneProps {
+  /** D-432 P5 — caller-owned controls at the viewer header's far left (the
+   *  Edit tab's browser toggle). D-249's `headerActions` slot is not this:
+   *  it held Export and went with it to the shell (D-251). */
+  headerStart?: ReactNode;
+  /** …and at its far right (the Inspector toggle). */
+  headerEnd?: ReactNode;
+}
+
+export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const playhead = useEditorTimelineStore((s) => s.playhead);
   const playing = useEditorTimelineStore((s) => s.playing);
@@ -878,6 +890,18 @@ export function PreviewPane() {
   useShortcut('edit.frame_back', () => step(-1), { enabled: hasTimeline });
   useShortcut('edit.frame_forward', () => step(1), { enabled: hasTimeline });
 
+  // D-432 P5 — the transport's outer buttons and Up / Down: previous / next
+  // edit point (`editPoints.ts`). Read from the store at the moment of the
+  // press, so this costs no subscription.
+  const goToEdit = (dir: 'prev' | 'next') => {
+    const { timeline: tl, playhead: at } = useEditorTimelineStore.getState();
+    const points = editPoints(tl);
+    if (playing) setPlaying(false);
+    setPlayhead(dir === 'prev' ? prevEditPoint(points, at) : nextEditPoint(points, at));
+  };
+  useShortcut('edit.prev_edit', () => goToEdit('prev'), { enabled: hasTimeline });
+  useShortcut('edit.next_edit', () => goToEdit('next'), { enabled: hasTimeline });
+
   return (
     // D-126 — the real fullscreen target. `bg-bg-primary` matters here: a
     // fullscreened element has no ambient page background behind it, so
@@ -893,7 +917,13 @@ export function PreviewPane() {
           otherwise, so it costs an unmounted component the rest of the time. */}
       <EditOverlay />
       <Player
-        title="Timeline"
+        title={timeline?.name || 'Untitled timeline'}
+        formatLabel={viewerFormatLabel(compSize, fps)}
+        headerStart={headerStart}
+        headerEnd={headerEnd}
+        onSkipStart={() => goToEdit('prev')}
+        onSkipEnd={() => goToEdit('next')}
+        skipLabels={EDIT_POINT_LABELS}
         muted={muted}
         onMuteToggle={() => setAudioMonitor({ muted: !muted })}
         volume={volume}

@@ -22,6 +22,18 @@
  * removed from any tab's UI, only from this file. Like every other control
  * here it stays presentational: the tab holds the value, clamps it, and
  * decides what a rate means for its own playback loop and audio session.
+ *
+ * **Layout (D-432 P5, `docs/notes/ui-redesign.md` §4.11).** Three rows, flat
+ * `surface` panels split by `divider` lines, as Final Cut's viewer:
+ * - **Header (28 px):** caller's `headerStart`, the format line, the title
+ *   centred, then zoom, the caller's view controls, the waveform toggle, the
+ *   `menu` slot and the caller's `headerEnd`.
+ * - **Picture**, then the optional waveform band, then a **3 px scrub bar**
+ *   (`ScrubBar`, 12 px hit area) — the owner chose to keep a thin one rather
+ *   than the old thick slider or none (D-432 answers).
+ * - **Transport (40 px):** the timecode in `--color-playhead` on the left;
+ *   previous edit, frame back, play (28 px), frame forward, next edit centred;
+ *   rate, volume, snapshot and fullscreen on the right.
  */
 
 import { useCallback, useEffect, useRef, type ReactNode } from 'react';
@@ -30,26 +42,24 @@ import {
   CameraIcon,
   CaretLeftIcon,
   CaretRightIcon,
-  GaugeIcon,
   CornersOutIcon,
   CornersInIcon,
   PauseIcon,
   PlayIcon,
   SkipBackIcon,
   SkipForwardIcon,
-  CaretLineLeftIcon,
-  CaretLineRightIcon,
   SpeakerLowIcon,
   SpeakerHighIcon,
   SpeakerSlashIcon,
-  MagnifyingGlassPlusIcon,
-  MagnifyingGlassMinusIcon,
+  MinusIcon,
+  PlusIcon,
 } from '@phosphor-icons/react';
 import {
   Button,
   Popover,
   PopoverContent,
   PopoverTrigger,
+  ScrubBar,
   ScrubbableNumberInput,
   Slider,
   cn,
@@ -68,8 +78,17 @@ import {
 export interface PlayerProps {
   /** Whatever the tab renders inside the viewport — an `<img>`, `<canvas>`, `@remotion/player`, etc. */
   surface: ReactNode;
-  /** Clip / shot / composition name, shown in the title strip. */
+  /** Clip / shot / composition name, centred in the viewer header. */
   title?: string;
+  /** D-432 P5 — the format line at the header's left (`3840×2160 · 24p`),
+   *  in place of a size chip painted over the picture. */
+  formatLabel?: string;
+  /** D-432 P5 — caller-owned controls at the header's far left (the Edit
+   *  tab's browser toggle). */
+  headerStart?: ReactNode;
+  /** D-432 P5 — caller-owned controls at the header's far right (the Edit
+   *  tab's Inspector toggle). */
+  headerEnd?: ReactNode;
   /** '‹' nav — only rendered if provided. */
   onPrev?: () => void;
   /** '›' nav — only rendered if provided. */
@@ -107,10 +126,15 @@ export interface PlayerProps {
   onSeekStart?: (frame: number) => void;
   /** The position-bar gesture ended — pointer up, keyup, or unmount. */
   onSeekEnd?: () => void;
-  /** Omit → button hidden. */
+  /** The transport's outer-left button (`SkipBack`). Omit → button hidden.
+   *  What it skips to is the caller's: the Edit tab goes to the previous edit
+   *  point, and says so through {@link skipLabels}. */
   onSkipStart?: () => void;
-  /** Omit → button hidden. */
+  /** The outer-right button (`SkipForward`). Omit → button hidden. */
   onSkipEnd?: () => void;
+  /** The two skip buttons' accessible names / tooltips. Default
+   *  `Skip to start` / `Skip to end`. */
+  skipLabels?: { start: string; end: string };
 
   /** Omit → button hidden. */
   onSnapshot?: () => void;
@@ -148,11 +172,9 @@ export interface PlayerProps {
    * three; the caller's only job is to hold the value and to clamp what comes
    * back (`clampPlaybackRate`), the same division of labour {@link zoom} has.
    *
-   * Placement is deliberate: the control sits in the LEFT cluster with the
-   * transport buttons and the timecode, because that is what the owner's
-   * reference screenshot points at and because a shuttle rate is a fact about
-   * the transport, not about the viewport (which is what the right-hand cluster
-   * holds).
+   * Placement: the transport row's right group, before volume (D-432 P5,
+   * spec §4.11). D-280 put it beside the timecode on the left; the redesign's
+   * transport puts only the timecode there and centres the buttons.
    */
   rate?: number;
   onRateChange?: (rate: number) => void;
@@ -172,11 +194,9 @@ export interface PlayerProps {
    * knows nothing about). Omit `zoom` → the whole cluster is hidden, matching
    * every other optional control here.
    *
-   * Shape mirrors `TimelinePane.tsx`'s own already-shipped timeline zoom
-   * control exactly — a ghost `MagnifyingGlassMinus` button, a `{pct}%` readout, a ghost
-   * `MagnifyingGlassPlus` button — so the two zooms in one tab read as the same
-   * control. `onZoomReset` additionally makes the readout itself clickable
-   * (the timeline's is a plain `<span>`, having no pan to get lost in).
+   * Drawn in the viewer header's right group (D-432 P5): a small minus, the
+   * readout — `Fit` at `1`, else `{pct}%` — and a small plus. `onZoomReset`
+   * makes the readout a button that returns to fit.
    */
   zoom?: number;
   /** Omit → the zoom-in button is rendered disabled (e.g. at max zoom). */
@@ -188,7 +208,7 @@ export interface PlayerProps {
 
   /**
    * An audio waveform strip for the current position (D-232), rendered
-   * **between the picture and the position bar** — the placement
+   * **between the picture and the scrub bar** — the placement
    * DaVinci Resolve's own viewer uses (`scratch/resolve-reference/scrubbing.jpg`:
    * a full-width waveform band directly under the picture, directly above the
    * position bar, with a playhead line through it).
@@ -203,9 +223,10 @@ export interface PlayerProps {
   waveformOn?: boolean;
   /** Omit → the waveform toggle button is hidden. */
   onWaveformToggle?: () => void;
-  /** D-431 — extra caller-owned controls, rendered in the transport's right
-   *  cluster just before the waveform toggle (the Edit tab's Safe Area menu).
-   *  Presentational: this component owns no state for them. */
+  /** D-431 — extra caller-owned view controls (the Edit tab's Safe Area
+   *  menu), rendered in the viewer header's right group with the zoom and the
+   *  waveform toggle (D-432 P5). Presentational: this component owns no state
+   *  for them. */
   viewControls?: ReactNode;
 
   className?: string;
@@ -229,15 +250,6 @@ export interface PlayerProps {
  * so the popover's own state does not re-render the whole transport on every
  * open — this bar re-renders on every playhead tick during playback.
  */
-
-/** Strips `fmtTimecode`'s trailing `:FF` field for a display that wants
- *  seconds precision, not frame precision — the transport bar's own
- *  current/total readout. A plain slice, not a `fmtTimecode` mode: the
- *  fallback `f123` (no-fps) form has no frame field to strip and is
- *  returned as-is. */
-function dropFrameField(timecode: string): string {
-  return timecode.startsWith('f') ? timecode : timecode.slice(0, timecode.lastIndexOf(':'));
-}
 
 function RateControl({
   rate,
@@ -268,7 +280,7 @@ function RateControl({
           <Button
             variant="ghost"
             size="sm"
-            className={cn('h-7 gap-1 px-1.5 text-xs tabular-nums', !off && 'text-accent')}
+            className={cn('h-6 px-1.5 text-xs tabular-nums text-text-secondary hover:text-text-primary', !off && 'text-accent-text')}
             title={
               off
                 ? 'Playback rate — review the timeline faster or slower (audio stays in pitch)'
@@ -276,12 +288,11 @@ function RateControl({
             }
             aria-label="Playback rate"
           >
-            <GaugeIcon className="size-3.5" />
             {label}
           </Button>
         }
       />
-      <PopoverContent align="start" className="w-56 p-2 text-xs">
+      <PopoverContent align="end" className="w-56 p-2 text-xs">
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap gap-1" role="group" aria-label="Playback rate presets">
             {PLAYBACK_RATE_PRESETS.map((preset) => (
@@ -289,7 +300,7 @@ function RateControl({
                 key={preset}
                 variant={preset === rate ? 'default' : 'ghost'}
                 size="sm"
-                className="h-6 flex-1 px-2 text-[11px] tabular-nums"
+                className="h-6 flex-1 px-2 text-xs tabular-nums"
                 aria-pressed={preset === rate}
                 onClick={() => onRateChange(preset)}
               >
@@ -300,7 +311,7 @@ function RateControl({
           <label className="flex items-center justify-between gap-2">
             <span className="text-text-secondary">Custom</span>
             <ScrubbableNumberInput
-              className="h-6 w-20 px-1 text-[11px]"
+              className="h-6 w-20 px-1 text-xs"
               value={rate}
               step={PLAYBACK_RATE_STEP}
               min={MIN_PLAYBACK_RATE}
@@ -312,7 +323,7 @@ function RateControl({
           {/* The one thing a user could plausibly get wrong about this control,
               said once, where they are looking — the Inspector's Speed field is
               a different feature that edits the cut. */}
-          <p className="text-[10px] leading-snug text-text-secondary/70">
+          <p className="text-2xs leading-snug text-text-tertiary">
             Preview only — this does not change any clip&apos;s speed or the export.
           </p>
         </div>
@@ -321,9 +332,50 @@ function RateControl({
   );
 }
 
+const DEFAULT_SKIP_LABELS = { start: 'Skip to start', end: 'Skip to end' } as const;
+
+/** A 24 px ghost icon button, the size every header / transport control uses. */
+function IconButton({
+  label,
+  onClick,
+  pressed,
+  disabled,
+  className,
+  children,
+}: {
+  label: string;
+  onClick?: () => void;
+  pressed?: boolean;
+  disabled?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      aria-pressed={pressed}
+      className={cn(
+        'size-6 text-text-secondary hover:text-text-primary [&_svg]:size-4',
+        pressed && 'text-accent-text',
+        className,
+      )}
+    >
+      {children}
+    </Button>
+  );
+}
+
 export function Player({
   surface,
   title,
+  formatLabel,
+  headerStart,
+  headerEnd,
   onPrev,
   onNext,
   menu,
@@ -338,6 +390,7 @@ export function Player({
   onSeekEnd,
   onSkipStart,
   onSkipEnd,
+  skipLabels = DEFAULT_SKIP_LABELS,
   onSnapshot,
   onFullscreen,
   isFullscreen,
@@ -357,10 +410,12 @@ export function Player({
   viewControls,
   className,
 }: PlayerProps) {
-  const showTitleStrip = Boolean(title || onPrev || onNext || menu);
+  const showHeader = Boolean(
+    title || formatLabel || headerStart || headerEnd || onPrev || onNext || menu || zoom !== undefined || viewControls || onWaveformToggle,
+  );
   const hasDuration = total > 0;
 
-  // D-232 — the position bar's own gesture state. A ref, not state: nothing
+  // D-232 — the scrub bar's own gesture state. A ref, not state: nothing
   // renders differently mid-drag, and re-rendering the transport on every
   // pointer move of a scrub is exactly the jank the perf rule forbids.
   const seekDragging = useRef(false);
@@ -382,12 +437,9 @@ export function Player({
     [],
   );
 
-  // Base UI's Slider is generic over `number | readonly number[]` (range
-  // sliders use an array, one value per thumb) — we only ever pass a single
-  // value, but the callback type still has to account for the array case.
   const handleSeek = useCallback(
-    (value: number | readonly number[]) => {
-      const f = Math.round(Array.isArray(value) ? value[0] : (value as number));
+    (value: number) => {
+      const f = Math.round(value);
       if (!seekDragging.current) {
         seekDragging.current = true;
         onSeekStart?.(f);
@@ -405,6 +457,8 @@ export function Player({
     onSeekEnd?.();
   }, [onSeekEnd]);
 
+  // Base UI's Slider is generic over `number | readonly number[]`; the volume
+  // slider passes a single value, but the callback type still allows an array.
   const handleVolumeSeek = useCallback(
     (value: number | readonly number[]) => {
       const v = Array.isArray(value) ? value[0] : (value as number);
@@ -415,273 +469,184 @@ export function Player({
 
   const showMute = Boolean(onMuteToggle);
   const VolumeIcon = muted ? SpeakerSlashIcon : (volume ?? 1) < 0.5 ? SpeakerLowIcon : SpeakerHighIcon;
+  const zoomLabel = zoom === undefined ? '' : zoom === 1 ? 'Fit' : `${Math.round(zoom * 100)}%`;
 
   return (
-    <div className={cn('flex flex-col min-h-0 flex-1 bg-bg-primary', className)}>
-      {showTitleStrip && (
-        // B-051/D-131: `pl-10` (not the uniform `px-3` every other edge
-        // uses) reserves the footprint of `@apelles/shell`'s Sources-panel
-        // toggle — `absolute top-2 left-2 h-6 w-6` (`Shell.tsx`), i.e. an
-        // 8px-inset 24px chip whose right edge lands at x=32px. D-120
-        // deliberately floats that toggle over whichever tab is active, at
-        // the content area's top-left corner, specifically so it's reachable
-        // no matter which tab or panel state is showing — so it always sits
-        // on top of *this* strip's top-left corner too, not just in Edit.
-        // D-126 made the chip legible (opaque bg+border+shadow) but never
-        // gave this strip the matching padding, so its own "Timeline" text
-        // still started at the strip's default 12px and sat directly under
-        // the chip. `pl-10` = 40px clears the chip's 32px edge with an 8px
-        // gap; unconditional (not just when a Sources panel is actually
-        // mounted) because the toggle is genuinely shell-level, not
-        // Edit-tab-specific, so any tab embedding this shared component can
-        // have it floating over this same corner.
-        // B-118 — the right end needed the mirror of `pl-10`, and never had
-        // it. D-118 put the Edit tab's Inspector toggle at `absolute top-2
-        // right-2 h-6 w-6` — the same 8px-inset 24px chip as Sources' on the
-        // left, so its LEFT edge lands 32px in from this strip's right edge —
-        // but this strip kept a bare `pr-3` (12px), so anything in the `menu`
-        // slot sat under that chip and the strip read as unpadded and
-        // lopsided: 40px of clearance on one side, 12px on the other, with a
-        // floating control overlapping the short side. The owner flagged
-        // exactly that ("timeline header has no padding, not properly
-        // aligned"). `pr-10` is the same 40px reservation `pl-10` makes, for
-        // the same 24px chip, so the strip is now symmetric and nothing in it
-        // can be covered. `min-h-8` gives it a stable height whether or not it
-        // has any `menu` content, so the label does not shift vertically when
-        // an action appears beside it.
-        <div className="shrink-0 flex min-h-8 items-center justify-between gap-2 pl-10 pr-10 py-1.5 border-b border-border-color bg-surface text-text-primary">
-          <div className="flex items-center gap-1 min-w-0">
-            {onPrev && (
-              <Button variant="ghost" size="icon-xs" onClick={onPrev} title="Previous" aria-label="Previous">
-                <CaretLeftIcon />
-              </Button>
-            )}
-            <span className="min-w-0 truncate text-xs font-medium text-text-secondary">{title}</span>
-            {onNext && (
-              <Button variant="ghost" size="icon-xs" onClick={onNext} title="Next" aria-label="Next">
-                <CaretRightIcon />
-              </Button>
+    <div className={cn('flex min-h-0 flex-1 flex-col bg-bg-primary', className)}>
+      {showHeader && (
+        // A three-column grid so the title stays truly centred whatever the
+        // two side groups hold; each side truncates rather than pushing it.
+        <div
+          data-player-header
+          className="grid h-7 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2 border-b border-divider bg-surface px-1.5 text-text-primary"
+        >
+          <div className="flex min-w-0 items-center gap-1.5">
+            {headerStart}
+            {formatLabel && (
+              <span data-player-format className="min-w-0 truncate text-xs text-text-secondary">
+                {formatLabel}
+              </span>
             )}
           </div>
-          {menu && <div className="flex shrink-0 items-center gap-1">{menu}</div>}
+          <div className="flex min-w-0 items-center justify-center gap-1">
+            {onPrev && (
+              <IconButton label="Previous" onClick={onPrev}>
+                <CaretLeftIcon />
+              </IconButton>
+            )}
+            {title && <span className="min-w-0 truncate text-xs font-medium text-text-primary">{title}</span>}
+            {onNext && (
+              <IconButton label="Next" onClick={onNext}>
+                <CaretRightIcon />
+              </IconButton>
+            )}
+          </div>
+          <div className="flex min-w-0 items-center justify-end gap-0.5">
+            {/* D-218 — the preview's own zoom. All the math is the caller's —
+                see `PlayerProps.zoom`. */}
+            {zoom !== undefined && (
+              <div className="flex items-center" role="group" aria-label="Viewer zoom">
+                <IconButton label="Zoom out" onClick={onZoomOut} disabled={!onZoomOut} className="size-5 [&_svg]:size-3">
+                  <MinusIcon />
+                </IconButton>
+                {onZoomReset ? (
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="h-6 min-w-9 px-1 text-xs tabular-nums text-text-secondary hover:text-text-primary"
+                    onClick={onZoomReset}
+                    title="Back to fit"
+                    aria-label="Reset zoom to fit"
+                  >
+                    {zoomLabel}
+                  </Button>
+                ) : (
+                  <span className="min-w-9 text-center text-xs tabular-nums text-text-secondary">{zoomLabel}</span>
+                )}
+                <IconButton label="Zoom in" onClick={onZoomIn} disabled={!onZoomIn} className="size-5 [&_svg]:size-3">
+                  <PlusIcon />
+                </IconButton>
+              </div>
+            )}
+            {viewControls}
+            {/* D-232 — what this viewer tells you about the AUDIO at this
+                position, a view toggle like the safe areas beside it. */}
+            {onWaveformToggle && (
+              <IconButton
+                label={waveformOn ? 'Hide the audio waveform' : 'Show the audio waveform'}
+                onClick={onWaveformToggle}
+                pressed={!!waveformOn}
+              >
+                <WaveformIcon />
+              </IconButton>
+            )}
+            {menu}
+            {headerEnd}
+          </div>
         </div>
       )}
 
-      <div className="flex-1 min-h-0 flex items-center justify-center overflow-hidden bg-black/40">{surface}</div>
+      <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black">{surface}</div>
 
-      <div className="shrink-0 flex flex-col border-t border-border-color bg-surface text-text-primary">
-        {/* D-232 — the waveform band sits between the picture and the position
-            bar, full width, exactly as the Resolve reference has it. Rendered
-            above the `border-t` divider's content so the two read as one
-            stacked axis (waveform over position bar), which is what makes the
-            playhead line and the slider thumb legible as the same position. */}
-        {waveformOn && waveform && (
-          <div className="border-b border-border-color">{waveform}</div>
-        )}
+      <div className="flex shrink-0 flex-col border-t border-divider bg-surface text-text-primary">
+        {/* D-232 — the waveform band sits between the picture and the scrub
+            bar, full width, as the Resolve reference has it. */}
+        {waveformOn && waveform && <div className="border-b border-divider">{waveform}</div>}
         {onSeek && (
-          <div className="px-3 pt-2">
-            <Slider
-              // B-050/D-131: `@apelles/ui`'s Slider wrapper (matching upstream
-              // shadcn's own convention) only recognises an *array* value/
-              // defaultValue as "a real controlled value" — a bare number
-              // falls through to its `[min, max]` fallback and renders 2
-              // `Thumb`s instead of 1 (Base UI's `Root` itself accepts a raw
-              // number fine; only this wrapper's own thumb-count `_values`
-              // memo cared). Both extra thumbs land on index 0 (Base UI's
-              // `SliderThumb` forces `index = 0` whenever the real slider
-              // state has a single value, `range = sliderValues.length > 1`),
-              // so the two DOM thumbs stacked exactly on top of each other —
-              // harmless-looking, but duplicate focusable/ARIA nodes.
-              value={[frame]}
-              min={0}
-              max={hasDuration ? total : 1}
-              step={1}
-              disabled={!hasDuration}
-              onValueChange={handleSeek}
-              // D-232 — the gesture's real end. See `handleSeekCommit`.
-              onValueCommitted={handleSeekCommit}
-              aria-label="Seek"
-            />
-          </div>
+          <ScrubBar
+            value={frame}
+            min={0}
+            max={hasDuration ? total : 1}
+            step={1}
+            largeStep={10}
+            disabled={!hasDuration}
+            onValueChange={handleSeek}
+            onValueCommitted={handleSeekCommit}
+            aria-label="Seek"
+            className="-mt-1.5"
+          />
         )}
 
-        <div className="flex items-center gap-1 px-3 py-2">
-          {onSkipStart && (
-            <Button variant="ghost" size="icon-sm" onClick={onSkipStart} title="Skip to start" aria-label="Skip to start">
-              <SkipBackIcon />
-            </Button>
-          )}
-          <Button variant="ghost" size="icon-sm" onClick={() => onStep(-1)} title="Step back one frame" aria-label="Step back one frame">
-            <CaretLineLeftIcon />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={onPlayPause}
-            title={playing ? 'Pause' : 'Play'}
-            aria-label={playing ? 'Pause' : 'Play'}
+        <div data-player-transport className="grid h-10 grid-cols-[1fr_auto_1fr] items-center gap-2 px-3">
+          {/* `fmtTimecode` always returns exactly "HH:MM:SS:FF", and the mono
+              stack gives every character the same advance, so the readout's
+              width is constant and the row never jitters while it ticks. */}
+          <span
+            data-player-timecode
+            className="min-w-0 truncate font-mono text-base font-semibold tabular-nums text-playhead"
           >
-            {playing ? <PauseIcon /> : <PlayIcon />}
-          </Button>
-          <Button variant="ghost" size="icon-sm" onClick={() => onStep(1)} title="Step forward one frame" aria-label="Step forward one frame">
-            <CaretLineRightIcon />
-          </Button>
-          {onSkipEnd && (
-            <Button variant="ghost" size="icon-sm" onClick={onSkipEnd} title="Skip to end" aria-label="Skip to end">
-              <SkipForwardIcon />
-            </Button>
-          )}
-
-          {/* `fmtTimecode` always returns exactly "HH:MM:SS:FF" (zero-padded,
-              D-328's `fmtTimecode`), so the STRING's length never changes —
-              but `tabular-nums` alone only fixes DIGIT advance widths in
-              whatever proportional UI font this app uses; the colons and the
-              " / " still ride that font's normal (non-fixed-pitch) metrics,
-              which is enough sub-pixel drift per glyph combination to
-              visibly jitter the rest of the transport bar on every frame
-              tick. `font-mono` (a real fixed-pitch stack) makes EVERY
-              character the same advance width, so the whole string's
-              rendered width is now a true constant — no explicit
-              width/ch hack needed, and none of the earlier attempt's
-              per-half boxes, which mis-measured against this font and
-              left a gap instead of removing one.
-
-              This transport readout drops the trailing `:FF` frame field —
-              the owner doesn't want frame-level precision cluttering this
-              specific glance-at-it readout. `fmtTimecode` itself keeps
-              returning the full, frame-accurate string unchanged (the marker
-              popover and every other caller still need exact frame
-              round-tripping); only this display strips it, via a plain
-              string slice rather than a new `fmtTimecode` mode, since
-              nothing else needs a frameless variant yet. */}
-          <span className="ml-2 flex h-8 items-center font-mono text-xs tabular-nums text-text-secondary">
-            {dropFrameField(fmtTimecode(frame, fps))} / {dropFrameField(fmtTimecode(total, fps))}
+            {fmtTimecode(frame, fps)}
           </span>
 
-          {/* D-280 — the playback-rate control, in the LEFT cluster with the
-              transport buttons and the timecode (where the owner's reference
-              screenshot puts it), not in the right-hand viewport cluster. It
-              follows the timecode rather than splitting play from it: the two
-              have always been adjacent and a shuttle rate reads naturally as
-              "…and at this speed". */}
-          {rate !== undefined && (
-            <div className="ml-1">
-              <RateControl rate={rate} onRateChange={onRateChange} />
-            </div>
-          )}
-
-          <div className="flex-1" />
-
-          {showMute && (
-            <div className="flex items-center gap-1 group/volume">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={onMuteToggle}
-                title={muted ? 'Unmute' : 'Mute'}
-                aria-label={muted ? 'Unmute' : 'Mute'}
-                aria-pressed={muted}
-              >
-                <VolumeIcon />
-              </Button>
-              {onVolumeChange && (
-                <div className="w-0 overflow-hidden group-hover/volume:w-16 focus-within:w-16 transition-[width] duration-150">
-                  <Slider
-                    // B-050/D-131: see the seek slider's comment above — same
-                    // wrap-in-array fix, same reason.
-                    value={[muted ? 0 : (volume ?? 1)]}
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    onValueChange={handleVolumeSeek}
-                    aria-label="Volume"
-                  />
-                </div>
-              )}
-            </div>
-          )}
-          {/* D-232 — the waveform toggle, next to mute/volume because it is the
-              same kind of thing: a control over what this viewer tells you
-              about the AUDIO at this position. Omitted, not disabled, when the
-              caller supplies no handler — this component's standing rule. */}
-          {viewControls}
-          {onWaveformToggle && (
+          <div className="flex items-center gap-1">
+            {onSkipStart && (
+              <IconButton label={skipLabels.start} onClick={onSkipStart}>
+                <SkipBackIcon />
+              </IconButton>
+            )}
+            <IconButton label="Step back one frame" onClick={() => onStep(-1)}>
+              <CaretLeftIcon />
+            </IconButton>
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={onWaveformToggle}
-              title={waveformOn ? 'Hide the audio waveform' : 'Show the audio waveform'}
-              aria-label={waveformOn ? 'Hide the audio waveform' : 'Show the audio waveform'}
-              aria-pressed={!!waveformOn}
-              className={waveformOn ? 'text-accent' : undefined}
+              onClick={onPlayPause}
+              title={playing ? 'Pause' : 'Play'}
+              aria-label={playing ? 'Pause' : 'Play'}
+              className="size-7 rounded-sm bg-bg-secondary text-text-primary hover:bg-card-active [&_svg]:size-4"
             >
-              <WaveformIcon />
+              {playing ? <PauseIcon weight="fill" /> : <PlayIcon weight="fill" />}
             </Button>
-          )}
-          {onSnapshot && (
-            <Button variant="ghost" size="icon-sm" onClick={onSnapshot} title="Snapshot" aria-label="Snapshot">
-              <CameraIcon />
-            </Button>
-          )}
-          {onFullscreen && (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={onFullscreen}
-              title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-              aria-label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-              aria-pressed={isFullscreen}
-            >
-              {isFullscreen ? <CornersInIcon /> : <CornersOutIcon />}
-            </Button>
-          )}
+            <IconButton label="Step forward one frame" onClick={() => onStep(1)}>
+              <CaretRightIcon />
+            </IconButton>
+            {onSkipEnd && (
+              <IconButton label={skipLabels.end} onClick={onSkipEnd}>
+                <SkipForwardIcon />
+              </IconButton>
+            )}
+          </div>
 
-          {/* D-218 — the preview's own zoom cluster, shaped exactly like the
-              one `TimelinePane.tsx`'s toolbar already ships for the timeline
-              (ghost zoom-out / `{pct}%` / ghost zoom-in, same icons,
-              same `w-10 tabular-nums` readout), so the two controls in this
-              tab read as the same kind of control rather than two inventions.
-              All the math is the caller's — see `PlayerProps.zoom`. */}
-          {zoom !== undefined && (
-            <div className="flex items-center gap-0.5">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={onZoomOut}
-                disabled={!onZoomOut}
-                title="Zoom out (or ctrl/pinch-scroll over the preview)"
-                aria-label="Zoom out"
+          <div className="flex min-w-0 items-center justify-end gap-0.5">
+            {/* D-280 — the playback rate. */}
+            {rate !== undefined && <RateControl rate={rate} onRateChange={onRateChange} />}
+            {showMute && (
+              <div className="group/volume flex items-center gap-1">
+                <IconButton label={muted ? 'Unmute' : 'Mute'} onClick={onMuteToggle} pressed={muted}>
+                  <VolumeIcon />
+                </IconButton>
+                {onVolumeChange && (
+                  <div className="w-0 overflow-hidden transition-[width] duration-150 focus-within:w-16 group-hover/volume:w-16">
+                    <Slider
+                      // B-050/D-131: `@apelles/ui`'s Slider only treats an
+                      // ARRAY value as controlled; a bare number renders two
+                      // stacked thumbs.
+                      value={[muted ? 0 : (volume ?? 1)]}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      onValueChange={handleVolumeSeek}
+                      aria-label="Volume"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+            {onSnapshot && (
+              <IconButton label="Snapshot" onClick={onSnapshot}>
+                <CameraIcon />
+              </IconButton>
+            )}
+            {onFullscreen && (
+              <IconButton
+                label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                onClick={onFullscreen}
+                pressed={isFullscreen}
               >
-                <MagnifyingGlassMinusIcon />
-              </Button>
-              {onZoomReset ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="w-10 px-0 text-[11px] tabular-nums text-text-secondary/70"
-                  onClick={onZoomReset}
-                  title="Reset to fit (100%)"
-                  aria-label="Reset zoom to fit"
-                >
-                  {Math.round(zoom * 100)}%
-                </Button>
-              ) : (
-                <span className="w-10 text-center text-[11px] tabular-nums text-text-secondary/70">
-                  {Math.round(zoom * 100)}%
-                </span>
-              )}
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={onZoomIn}
-                disabled={!onZoomIn}
-                title="Zoom in (or ctrl/pinch-scroll over the preview)"
-                aria-label="Zoom in"
-              >
-                <MagnifyingGlassPlusIcon />
-              </Button>
-            </div>
-          )}
+                {isFullscreen ? <CornersInIcon /> : <CornersOutIcon />}
+              </IconButton>
+            )}
+          </div>
         </div>
       </div>
     </div>

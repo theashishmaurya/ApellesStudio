@@ -140,6 +140,10 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     scope: 'edit',
     defaultCombo: ['ArrowRight'],
   },
+  // D-432 P5 — the viewer transport's outer buttons. Up / Down are the keys
+  // Final Cut, Premiere and Resolve all use to jump between edit points.
+  { id: 'edit.prev_edit', label: 'Go to previous edit point', category: 'playback', scope: 'edit', defaultCombo: ['ArrowUp'] },
+  { id: 'edit.next_edit', label: 'Go to next edit point', category: 'playback', scope: 'edit', defaultCombo: ['ArrowDown'] },
 
   // ── Timeline editing (Edit tab) ──────────────────────────────────────────
   {

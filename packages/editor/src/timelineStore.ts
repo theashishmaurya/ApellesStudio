@@ -425,10 +425,10 @@ interface EditorTimelineState {
    *  be a surprise mid-edit, and none of today's registered panels hold data
    *  that belongs to one project over another. */
   openPanels: Record<string, boolean>;
-  /** D-263 — which library the Edit tab's docked left-hand column is showing:
-   *  the shared media pool (`sources`), or one of this tab's own libraries
-   *  (`titles` / `effects` / `subtitles`). The rail (`EditLibraryRail.tsx`)
-   *  writes it, the docked panel (`EditLibraryPanel.tsx`) renders off it, and
+  /** D-263 — which library the Edit tab's browser is showing: the shared
+   *  media pool (`sources`), or one of this tab's own libraries. The browser's
+   *  tab bar (`EditBrowser.tsx`, D-432 P5; D-263's rail before it) writes it,
+   *  the library panel (`EditLibraryPanel.tsx`) renders off it, and
    *  the composition root reads it to decide whether the Edit tab is taking
    *  the shell's docked column over at all (`Root.tsx` → `Shell`'s
    *  `libraryPanel`).
@@ -558,9 +558,9 @@ interface EditorTimelineState {
   /** D-252 — open/close one registered popover/dialog by id. The one writer
    *  for both that popover's own trigger and `debug_set_popover_open`. */
   setPanelOpen: (id: string, open: boolean) => void;
-  /** D-263 — switch which library the docked left column shows. The one
-   *  writer for both the human's rail button (`EditLibraryRail.tsx`) and any
-   *  future op that needs to drive it. */
+  /** D-263 — switch which library the Edit tab's browser shows. The one
+   *  writer for both the human's browser tab (`EditBrowser.tsx`) and
+   *  `debug_set_library_mode`. */
   setLibraryMode: (mode: EditLibraryMode) => void;
   applyOp: (op: EditOp) => void;
   /** D-051 — restore a full `Timeline` snapshot (an undo/redo target),

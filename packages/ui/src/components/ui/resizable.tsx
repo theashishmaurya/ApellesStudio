@@ -50,4 +50,9 @@ function ResizableHandle({
   );
 }
 
+/** The library's own handle and size types, re-exported so a consumer that
+ *  drives a panel imperatively (D-432 P5's persisted Edit layout) does not
+ *  import `react-resizable-panels` past this wrapper. */
+export type { PanelImperativeHandle, PanelSize, LayoutChangedMeta } from 'react-resizable-panels';
+
 export { ResizablePanelGroup, ResizablePanel, ResizableHandle };

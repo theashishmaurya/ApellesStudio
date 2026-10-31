@@ -22,8 +22,8 @@
  * behind local `useState` before this one landed —
  * `CaptionPanel` (`open_`, itself retired by D-263 — see below),
  * `CanvasSettingsPopover` (`open`),
- * `EditorExportDialog` (`open`), and `EditLibraryRail`'s per-rail-button
- * popovers (fully uncontrolled, no state at all yet) — with a fifth,
+ * `EditorExportDialog` (`open`), and the old library rail's per-button
+ * popovers (fully uncontrolled; the rail itself is gone since D-432 P5) — with a fifth,
  * `MarkerStrip`'s per-marker editor, keyed by *which marker* rather than a
  * plain boolean. A bespoke `xOpen`/`setXOpen` store field plus its own debug
  * op and its own `debug_get_ui_state` line, repeated per popover, is exactly

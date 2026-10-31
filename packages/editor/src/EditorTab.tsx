@@ -1,13 +1,13 @@
 /**
  * @apelles/editor — the Edit tab (D-041).
  *
- * MVP: a single-video-track timeline of the open project's shots, scrub + play
- * with a live preview, and basic edits (reorder / trim / split / remove).
- * Deferred (later tracked steps): multi-track, audio, transitions, transcript
- * cut, GPU compositing, grade-in-preview, OTIO export, MCP tools.
+ * The open project's multi-track timeline, its live preview, the media
+ * browser and the clip Inspector, laid out in the Final Cut Pro arrangement
+ * (D-432 P5, `docs/notes/ui-redesign.md` §4.1): browser | viewer | Inspector in
+ * the upper band, the timeline across the full window width beneath them.
  *
- * A project must be open (via the Colorist tab's D-037 launcher) for the
- * timeline to have shots.
+ * A project must be open (via the D-037 launcher) for the timeline to have
+ * clips.
  *
  * B-034/D-112 — **this screen used to lie, and that is why the same bug kept
  * "coming back."** It rendered "No project open" for *any* failed
@@ -25,71 +25,137 @@
  * a Retry. Recovery from a transient failure is automatic (the store's retry
  * ladder), so Retry is a last resort rather than the only way out.
  *
- * D-118 — the Inspector (`EditorInspectorPanel`, wrapping `ClipInspector
- * Panel`) is now a real sibling of the preview+timeline column, in its own
- * full-height `ResizablePanel`, not a third pane nested inside
- * `TimelinePane.tsx`'s own split (which was capped at the timeline row's
- * height, `h-[46%]` below). Same architectural treatment `@apelles/shell`'s
- * D-116 gave the Sources panel on the left — a real resizable column, not a
- * fixed width, spanning the full tab. Toggled by a local button in this
- * tab's own preview-area toolbar (not a `Shell.tsx` chrome-bar button like
- * Sources' toggle): `Shell` is deliberately tab-agnostic (its own doc:
- * "never on the colorist app or the editor/motion packages"), and unlike
- * Sources — one real, shared media pool used identically by all three tabs
- * — this Inspector is Edit-tab-specific content (Colorist has its own
- * `ControlsPanel`, Motion its own `InspectorPanel`, neither toggleable
- * today), so a shell-level toggle would need `Shell` to become aware of
- * which tab is active just to know whether to show it — a real layering
- * violation for what a tab-local button delivers just as well.
+ * **Layout (D-432 P5).** Before P5 the timeline sat in the centre column under
+ * the viewer only, the shell drew the media pool as a full-height column to
+ * its left, a 44 px icon rail (D-263) sat left of that, and the Inspector took
+ * the full height on the right (D-118), so at 1440 px the timeline lost about
+ * 600 px of width (§6 #21). Now:
+ * - The browser (`EditBrowser`) is this tab's own upper-left panel, with the
+ *   rail's eight libraries as its tab bar. The shared media pool node still
+ *   comes from the composition root (`mediaPool`, `app/`'s `SourcesPanel`),
+ *   and `Shell` draws no docked column for this tab (`ShellTab.
+ *   ownsLibraryColumn`).
+ * - The Inspector stays Edit-tab-local (D-118's reasoning) and its toggle,
+ *   with the browser's, sits in the viewer header (spec §4.11) instead of
+ *   floating over the picture.
+ * - Every split is a `ResizablePanel` and its released size persists through
+ *   `editLayout.ts`.
  */
 
-import { useEffect } from 'react';
-import { Button, PanelErrorBoundary, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@apelles/ui';
+import { useCallback, useEffect, useRef, type ReactNode } from 'react';
+import {
+  Button,
+  PanelErrorBoundary,
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+  type LayoutChangedMeta,
+  type PanelImperativeHandle,
+  type PanelSize,
+} from '@apelles/ui';
 import { SidebarSimpleIcon } from '@phosphor-icons/react';
 
 import { EditorInspectorPanel } from './EditorInspectorPanel';
+import { EditBrowser } from './EditBrowser';
 import { PreviewPane } from './PreviewPane';
 import { CaptionInspectorPanel } from './CaptionInspectorPanel';
 import { TextClipInspectorPanel } from './TextClipInspectorPanel';
 import { AdjustmentClipInspectorPanel } from './AdjustmentClipInspectorPanel';
 import { TimelinePane } from './TimelinePane';
 import { TimelineSwitcher } from './TimelineSwitcher';
+import { PlayheadTimecode } from './PlayheadTimecode';
 import { useEditorTimelineStore } from './timelineStore';
 import { useEditorControl } from './useEditorControl';
+import {
+  BROWSER_WIDTH,
+  INSPECTOR_WIDTH,
+  TIMELINE_DEFAULT_PERCENT,
+  TIMELINE_HEIGHT,
+  UPPER_MIN_HEIGHT,
+  VIEWER_MIN_WIDTH,
+  useEditLayoutStore,
+  type EditLayout,
+} from './editLayout';
 import { registerBrandApplier } from '@apelles/brand';
 import { applyBrandToEdit } from './brandEdit';
 
-// D-208 — widened from 280/220: every Transform and Crop row now carries its
-// own keyframe nav + stopwatch diamond + reset (four `icon-xs` buttons, 96px)
-// alongside its label and number field, which no longer fits the old default
-// without the field itself being squeezed. Still fully user-resizable, and
-// the max is unchanged.
-const INSPECTOR_DEFAULT_WIDTH = 320;
-const INSPECTOR_MIN_WIDTH = 264;
-const INSPECTOR_MAX_WIDTH = 420;
+/** Stable panel ids: `react-resizable-panels` keys its layout by them. */
+const PANEL_ID = {
+  upper: 'edit-upper',
+  timeline: 'edit-timeline',
+  browser: 'edit-browser',
+  viewer: 'edit-viewer',
+  inspector: 'edit-inspector',
+} as const;
 
-// Roadmap 25 — the preview/timeline split was a fixed `h-[46%]` flex row, not
-// a real `ResizablePanel`, in violation of this repo's own standing rule
-// ("every resizable-by-nature panel/pane/sidebar must actually be
-// resizable" — CLAUDE.md) and reported live by the owner ("the timeline
-// panel is also not resizable"). Same vertical-`PanelGroup` convention
-// `MotionTab.tsx` already uses for its own preview/timeline split, same
-// pixel-based sizing this file already uses for the Inspector column.
-const PREVIEW_MIN_HEIGHT = 200;
-const TIMELINE_DEFAULT_HEIGHT = 320;
-const TIMELINE_MIN_HEIGHT = 180;
+/** A store write within this many pixels of the live panel is not re-applied
+ *  (the store rounds; the panel reports fractions). */
+const RESIZE_TOLERANCE_PX = 1;
 
-export function EditorTab() {
+/** The centre of the timeline toolbar (spec §4.9): the timeline switcher, then
+ *  the playhead timecode. Handed to `TimelinePane` as a slot, and drawn as its
+ *  own row while the timeline has no tracks (the pane then shows only its
+ *  empty state, which has no toolbar). */
+function TimelineToolbarCenter() {
+  return (
+    <div className="flex items-center gap-3">
+      <TimelineSwitcher />
+      <PlayheadTimecode withDuration />
+    </div>
+  );
+}
+
+/** A 24 px icon toggle in the viewer header (browser / Inspector). */
+function PanelToggle({
+  label,
+  pressed,
+  onToggle,
+  mirrored,
+}: {
+  label: string;
+  pressed: boolean;
+  onToggle: () => void;
+  mirrored?: boolean;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="xs"
+      onClick={onToggle}
+      title={label}
+      aria-label={label}
+      aria-pressed={pressed}
+      className={'h-6 w-6 p-0 ' + (pressed ? 'text-accent-text' : 'text-text-secondary hover:text-text-primary')}
+    >
+      {/* D-300 — Phosphor's one sidebar glyph is left-handed; the Inspector
+          toggle mirrors it so each glyph points at its own panel. */}
+      <SidebarSimpleIcon className="size-4" mirrored={mirrored} />
+    </Button>
+  );
+}
+
+export interface EditorTabProps {
+  /** The shared media pool (`app/`'s `SourcesPanel`), shown on the browser's
+   *  Sources tab. Injected by the composition root (`Root.tsx`): this package
+   *  must not import `app/` (D-039). */
+  mediaPool?: ReactNode;
+}
+
+export function EditorTab({ mediaPool }: EditorTabProps) {
   const load = useEditorTimelineStore((s) => s.load);
   const projectOpen = useEditorTimelineStore((s) => s.openProjectKey !== null);
   const status = useEditorTimelineStore((s) => s.status);
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const error = useEditorTimelineStore((s) => s.error);
-  // D-219 — the Inspector's open/closed flag lives in the store now, not in a
-  // `useState` here, so the human's toggle below and the debug UI-state op
-  // `debug_set_editor_inspector` drive one piece of state rather than two.
+  // D-219 — the Inspector's open/closed flag lives in the store, so the
+  // human's toggle and `debug_set_editor_inspector` drive one piece of state.
   const inspectorOpen = useEditorTimelineStore((s) => s.inspectorOpen);
   const setInspectorOpen = useEditorTimelineStore((s) => s.setInspectorOpen);
+  const hasTracks = useEditorTimelineStore((s) => (s.timeline?.tracks.length ?? 0) > 0);
+  // D-432 P5 — the browser's flag and the persisted split sizes.
+  const browserOpen = useEditLayoutStore((s) => s.browserOpen);
+  const setBrowserOpen = useEditLayoutStore((s) => s.setBrowserOpen);
+  const layout = useLayoutSizes();
 
   // D-183 — the Edit tab's own control-server surface (see
   // `useEditorControl.ts`'s own module doc comment for the full
@@ -132,7 +198,7 @@ export function EditorTab() {
         <p className="text-sm text-text-secondary max-w-md">
           The project is open, but reading its timeline failed. Retrying didn’t help either.
         </p>
-        {error && <p className="text-[11px] text-text-secondary/60 max-w-md break-words">{error}</p>}
+        {error && <p className="text-xs text-text-tertiary max-w-md break-words">{error}</p>}
         <Button className="mt-2" onClick={() => load()}>
           Retry
         </Button>
@@ -149,132 +215,211 @@ export function EditorTab() {
   }
 
   return (
-    <ResizablePanelGroup orientation="horizontal" className="h-full w-full min-h-0 bg-bg-primary">
-      {/* D-263 — the library rail used to be rendered here, as this group's
-          first child, which put it to the RIGHT of the shell-level Sources
-          column it is supposed to switch. It is now injected into the shell as
-          this tab's `libraryRail` (`Root.tsx` → `Shell.tsx`), so the whole
-          left edge reads rail → library column → this tab's content, and it
-          stays owned by this package. See `EditLibraryRail.tsx`'s module doc
-          and D-263 for why that slot rather than a `Shell` import. */}
-      <ResizablePanel className="min-w-0 flex flex-col min-h-0">
-        <ResizablePanelGroup orientation="vertical" className="flex-1 min-h-0">
-          <ResizablePanel minSize={PREVIEW_MIN_HEIGHT} className="flex flex-col min-h-0">
-            <div className="flex-1 min-h-0 flex flex-col relative">
-              {/* D-249 put Export in this pane's own top strip (`Player`'s
-                  `menu` slot via `PreviewPane`'s now-removed `headerActions`
-                  prop); D-251 moved it again, out of this tab entirely, to
-                  `@apelles/shell`'s chrome bar beside the tab switcher — see
-                  `Root.tsx`'s `headerAction` wiring and `Shell.tsx`'s own
-                  module doc. Nothing left in this tab renders it. */}
-              {/* B-292 — each pane crashes alone. `useEditorControl()` above
-                  is deliberately OUTSIDE every pane boundary, so the
-                  `editor_*` ops keep answering while a pane shows its
-                  fallback. */}
-              <PanelErrorBoundary panel="Preview">
-                <PreviewPane />
-              </PanelErrorBoundary>
-              {/* D-118 — the Inspector's own opener: tab-local (see this file's
-                  module doc for why it isn't a `Shell.tsx` chrome-bar button
-                  like Sources'), placed at the preview's top-right so it reads
-                  as "the same corner Sources' own toggle lives in," just scoped
-                  to this tab. A real elevated chip, not a transparent `ghost`
-                  button — it floats directly over the `Player`'s own title
-                  strip ("Timeline"), and Shell's matching Sources toggle hit the
-                  identical crowding problem for the same reason (see its own
-                  comment in `Shell.tsx`). */}
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={() => setInspectorOpen(!inspectorOpen)}
-                title="Inspector"
-                aria-label="Inspector"
-                aria-pressed={inspectorOpen}
-                className={
-                  'absolute top-2 right-2 h-6 w-6 p-0 z-10 rounded-md border border-border-color bg-surface/90 shadow-sm backdrop-blur-sm ' +
-                  (inspectorOpen ? 'text-accent' : 'text-text-secondary hover:text-text-primary')
-                }
+    <ResizablePanelGroup
+      orientation="vertical"
+      className="h-full w-full min-h-0 bg-bg-primary"
+      onLayoutChanged={layout.onVerticalLayoutChanged}
+    >
+      <ResizablePanel
+        id={PANEL_ID.upper}
+        data-chroma-panel="edit-upper"
+        minSize={UPPER_MIN_HEIGHT}
+        className="flex min-h-0 flex-col"
+      >
+        <ResizablePanelGroup
+          orientation="horizontal"
+          className="min-h-0 flex-1"
+          onLayoutChanged={layout.onHorizontalLayoutChanged}
+        >
+          {browserOpen && (
+            <>
+              <ResizablePanel
+                id={PANEL_ID.browser}
+                // The docked library column's long-standing hook (D-219), kept
+                // for every debug recipe that asks for "sources".
+                data-chroma-panel="sources"
+                panelRef={layout.browserRef}
+                onResize={layout.onBrowserResize}
+                defaultSize={layout.initial.browserWidth}
+                minSize={BROWSER_WIDTH.min}
+                maxSize={BROWSER_WIDTH.max}
+                className="h-full min-h-0 overflow-hidden bg-surface"
               >
-                {/* D-300 — this toggles the RIGHT-hand Inspector; Phosphor's
-                    one sidebar glyph is left-handed, so mirror it. */}
-                <SidebarSimpleIcon className="size-3.5" mirrored />
-              </Button>
-            </div>
-          </ResizablePanel>
-
-          <ResizableHandle />
-
+                <EditBrowser mediaPool={mediaPool} />
+              </ResizablePanel>
+              <ResizableHandle className="bg-divider" />
+            </>
+          )}
           <ResizablePanel
-            defaultSize={TIMELINE_DEFAULT_HEIGHT}
-            minSize={TIMELINE_MIN_HEIGHT}
-            className="shrink-0 border-t border-border-color flex flex-col min-h-0"
+            id={PANEL_ID.viewer}
+            data-chroma-panel="edit-viewer"
+            minSize={VIEWER_MIN_WIDTH}
+            className="flex min-h-0 min-w-0 flex-col"
           >
-            {/* D-229/D-243 held the Captions panel and D-238's
-                transcript-driven alternative here, in a bare strip beside the
-                timeline switcher. D-248 moved both into the left library
-                rail's Subtitles entry: they create a whole subtitle TRACK,
-                which is a library-shaped action rather than a per-timeline
-                one, and the owner asked for exactly that ("add caption from
-                transcript / subtitle here", drawn on the left edge). What is
-                left is the timeline switcher itself, which really is a
-                property of this pane. */}
-            <PanelErrorBoundary panel="Timeline">
-              <div className="flex shrink-0 items-center justify-between gap-2">
-                <TimelineSwitcher />
-              </div>
-              <div className="flex-1 min-h-0">
-                <TimelinePane />
-              </div>
+            {/* B-292 — each pane crashes alone. `useEditorControl()` above is
+                deliberately OUTSIDE every pane boundary, so the `editor_*` ops
+                keep answering while a pane shows its fallback. */}
+            <PanelErrorBoundary panel="Preview">
+              <PreviewPane
+                headerStart={
+                  <PanelToggle
+                    label={browserOpen ? 'Hide the browser' : 'Show the browser'}
+                    pressed={browserOpen}
+                    onToggle={() => setBrowserOpen(!browserOpen)}
+                  />
+                }
+                headerEnd={
+                  // D-118 — the Inspector's opener, now in the viewer header's
+                  // right group (spec §4.11) rather than a chip floating over
+                  // the picture's corner.
+                  <PanelToggle
+                    label="Inspector"
+                    pressed={inspectorOpen}
+                    onToggle={() => setInspectorOpen(!inspectorOpen)}
+                    mirrored
+                  />
+                }
+              />
             </PanelErrorBoundary>
           </ResizablePanel>
+          {inspectorOpen && (
+            <>
+              <ResizableHandle className="bg-divider" />
+              <ResizablePanel
+                id={PANEL_ID.inspector}
+                // D-219 — a stable, human-readable hook for `debug_dom_tree`.
+                data-chroma-panel="editor-inspector"
+                panelRef={layout.inspectorRef}
+                onResize={layout.onInspectorResize}
+                defaultSize={layout.initial.inspectorWidth}
+                minSize={INSPECTOR_WIDTH.min}
+                maxSize={INSPECTOR_WIDTH.max}
+                className="h-full overflow-hidden bg-surface"
+              >
+                {/* D-211 / D-229 / D-230 — a title's, a caption's or an
+                    adjustment clip's own section stacks ABOVE the shared
+                    geometry Inspector; each renders `null` for any other
+                    selection, and they are mutually exclusive by construction. */}
+                <PanelErrorBoundary panel="Inspector">
+                  <div className="flex h-full min-h-0 flex-col">
+                    <TextClipInspectorPanel />
+                    <CaptionInspectorPanel />
+                    <AdjustmentClipInspectorPanel />
+                    <div className="min-h-0 flex-1">
+                      <EditorInspectorPanel />
+                    </div>
+                  </div>
+                </PanelErrorBoundary>
+              </ResizablePanel>
+            </>
+          )}
         </ResizablePanelGroup>
       </ResizablePanel>
 
-      {inspectorOpen && (
-        <>
-          <ResizableHandle />
-          <ResizablePanel
-            // D-219 — a stable, human-readable hook for the debug DOM-tree
-            // dump (`debug_dom_tree {selector}`) and for any future
-            // targeted query. Not a test-only artefact: it is the one thing
-            // that lets a tool ask about "the Inspector" without matching on
-            // a Tailwind class string that changes whenever the styling does.
-            data-chroma-panel="editor-inspector"
-            defaultSize={INSPECTOR_DEFAULT_WIDTH}
-            minSize={INSPECTOR_MIN_WIDTH}
-            maxSize={INSPECTOR_MAX_WIDTH}
-            className="shrink-0 h-full border-l border-border-color bg-surface overflow-hidden"
-          >
-            {/* D-211 — a TEXT clip's own Title section (content/font/size/
-                colour) stacks ABOVE the geometry Inspector rather than being
-                folded into it: different fields, a different write op
-                (`set_text_clip`), and only ever relevant for one kind of
-                clip. Stacking is also what keeps the shared half genuinely
-                shared — a title's Opacity and Position rows, with their
-                D-208 keyframe diamonds, are `ClipInspectorPanel`'s existing
-                rows rendered underneath, not a second copy. Renders `null`
-                for any other selection, so it costs nothing when no title is
-                selected. */}
-            <PanelErrorBoundary panel="Inspector">
-            <div className="flex h-full flex-col min-h-0">
-              <TextClipInspectorPanel />
-              {/* D-229 — mounted unconditionally; renders null unless the
-                  selection is exactly one caption, exactly like the title
-                  panel above it. */}
-              <CaptionInspectorPanel />
-              {/* D-230 — the same stacking, for the same reasons, for an
-                  adjustment clip's correction. The two are mutually exclusive
-                  by construction (a clip cannot be both), so only ever one of
-                  them renders anything. */}
-              <AdjustmentClipInspectorPanel />
-              <div className="flex-1 min-h-0">
-                <EditorInspectorPanel />
-              </div>
+      <ResizableHandle className="bg-divider" />
+
+      <ResizablePanel
+        id={PANEL_ID.timeline}
+        data-chroma-panel="edit-timeline"
+        panelRef={layout.timelineRef}
+        onResize={layout.onTimelineResize}
+        defaultSize={layout.initial.timelineHeight ?? `${TIMELINE_DEFAULT_PERCENT}%`}
+        minSize={TIMELINE_HEIGHT.min}
+        className="flex min-h-0 flex-col"
+      >
+        <PanelErrorBoundary panel="Timeline">
+          {!hasTracks && (
+            <div className="flex h-9 shrink-0 items-center justify-center border-b border-border-color bg-surface">
+              <TimelineToolbarCenter />
             </div>
-            </PanelErrorBoundary>
-          </ResizablePanel>
-        </>
-      )}
+          )}
+          <div className="min-h-0 flex-1">
+            <TimelinePane toolbarCenter={<TimelineToolbarCenter />} />
+          </div>
+        </PanelErrorBoundary>
+      </ResizablePanel>
     </ResizablePanelGroup>
   );
+}
+
+/**
+ * The bridge between the live panels and `useEditLayoutStore` (D-432 P5).
+ *
+ * - **Into the store:** each panel's `onResize` records its pixel size in a
+ *   ref (no render); the group's `onLayoutChanged` commits those sizes only
+ *   when `isUserInteraction` — a released drag or a keyboard resize — so a
+ *   mount, a window resize or a panel opening never rewrites the saved sizes.
+ * - **Out of the store:** a write that did not come from the user (a debug op,
+ *   a late settings hydrate) is applied to the live panels with their
+ *   imperative `resize`.
+ */
+function useLayoutSizes() {
+  const browserRef = useRef<PanelImperativeHandle | null>(null);
+  const inspectorRef = useRef<PanelImperativeHandle | null>(null);
+  const timelineRef = useRef<PanelImperativeHandle | null>(null);
+  const live = useRef<{ browser: number | null; inspector: number | null; timeline: number | null }>({
+    browser: null,
+    inspector: null,
+    timeline: null,
+  });
+  // The sizes a panel mounts at. Selected (not read once) so a panel that
+  // opens later mounts at the latest saved size; a write re-renders only this
+  // tab's shell, never the panes inside it (they subscribe to nothing here).
+  const browserWidth = useEditLayoutStore((s) => s.browserWidth);
+  const inspectorWidth = useEditLayoutStore((s) => s.inspectorWidth);
+  const timelineHeight = useEditLayoutStore((s) => s.timelineHeight);
+
+  const onBrowserResize = useCallback((size: PanelSize) => {
+    live.current.browser = size.inPixels;
+  }, []);
+  const onInspectorResize = useCallback((size: PanelSize) => {
+    live.current.inspector = size.inPixels;
+  }, []);
+  const onTimelineResize = useCallback((size: PanelSize) => {
+    live.current.timeline = size.inPixels;
+  }, []);
+
+  const onHorizontalLayoutChanged = useCallback((_layout: unknown, meta: LayoutChangedMeta) => {
+    if (!meta.isUserInteraction) return;
+    const patch: Partial<EditLayout> = {};
+    if (browserRef.current && live.current.browser !== null) patch.browserWidth = live.current.browser;
+    if (inspectorRef.current && live.current.inspector !== null) patch.inspectorWidth = live.current.inspector;
+    useEditLayoutStore.getState().setLayout(patch, 'user');
+  }, []);
+  const onVerticalLayoutChanged = useCallback((_layout: unknown, meta: LayoutChangedMeta) => {
+    if (!meta.isUserInteraction || live.current.timeline === null) return;
+    useEditLayoutStore.getState().setLayout({ timelineHeight: live.current.timeline }, 'user');
+  }, []);
+
+  useEffect(
+    () =>
+      useEditLayoutStore.subscribe((next, prev) => {
+        if (next.revision === prev.revision || next.lastSource === 'user') return;
+        const apply = (ref: PanelImperativeHandle | null, px: number | null) => {
+          if (!ref || px === null) return;
+          if (Math.abs(ref.getSize().inPixels - px) > RESIZE_TOLERANCE_PX) ref.resize(px);
+        };
+        apply(browserRef.current, next.browserWidth);
+        apply(inspectorRef.current, next.inspectorWidth);
+        // `null` = back to the default share (a debug reset).
+        if (next.timelineHeight === null && prev.timelineHeight !== null) {
+          timelineRef.current?.resize(`${TIMELINE_DEFAULT_PERCENT}%`);
+        } else {
+          apply(timelineRef.current, next.timelineHeight);
+        }
+      }),
+    [],
+  );
+
+  return {
+    browserRef,
+    inspectorRef,
+    timelineRef,
+    initial: { browserWidth, inspectorWidth, timelineHeight },
+    onBrowserResize,
+    onInspectorResize,
+    onTimelineResize,
+    onHorizontalLayoutChanged,
+    onVerticalLayoutChanged,
+  };
 }

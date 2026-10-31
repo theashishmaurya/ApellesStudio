@@ -2,10 +2,9 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'react-toastify';
 import { Shell, useActiveTab, useShellStore } from '@apelles/shell';
 import {
-  EditLibraryPanel,
-  EditLibraryRail,
   EditorExportDialog,
   EditorTab,
+  useEditLayoutStore,
   useEditorTimelineStore,
 } from '@apelles/editor';
 import {
@@ -291,18 +290,8 @@ export function Root() {
     toast.success(`Rendered — refreshed ${linked} Edit clip${linked === 1 ? '' : 's'}`);
   }, []);
 
-  // D-263 — the Edit tab's library rail is a tab-owned node that must sit to
-  // the LEFT of the shell's own docked column, so it is injected through
-  // `@apelles/shell`'s per-tab `libraryRail` slot (D-251's pattern) rather than
-  // rendered inside `EditorTab`. This is the one place that legitimately spans
-  // both stores — the shell owns whether the column is OPEN
-  // (`sourcesPanelOpen`), `@apelles/editor` owns WHICH library it shows
-  // (`libraryMode`) — and the composition root is where they meet, exactly
-  // like the `onRendered`/`editLinks` props below and the store bridges above.
-  // Neither package imports the other for it.
-  const sourcesPanelOpen = useShellStore((s) => s.sourcesPanelOpen);
-  const setSourcesPanelOpen = useShellStore((s) => s.setSourcesPanelOpen);
-  const libraryMode = useEditorTimelineStore((s) => s.libraryMode);
+  // D-432 P5 — the open project's name, for the top bar's breadcrumb.
+  const projectName = useSessionStore((s) => s.projectName);
 
   // D-260 — the Motion tab's view of what its scenes feed in Edit: the input
   // to both the per-scene "N in Edit" badge and the `motion_get_edit_links`
@@ -448,6 +437,22 @@ export function Root() {
     useKeymapStore.getState().hydrate(keybinds);
   }, [keybinds]);
 
+  // D-432 P5 — the Edit tab's panel sizes, persisted in `appSettings.
+  // editLayout` the way the keymap's remaps are in `keybinds` (D-273): the
+  // package stores nothing itself, it is handed what was saved and a sink.
+  const editLayout = useSettingsStore((s) => s.appSettings?.editLayout);
+  useEffect(() => {
+    if (editLayout) useEditLayoutStore.getState().hydrate(editLayout);
+  }, [editLayout]);
+  useEffect(() => {
+    useEditLayoutStore.getState().setPersist((layout) => {
+      const settings = useSettingsStore.getState().appSettings;
+      if (!settings) return;
+      void useSettingsStore.getState().handleSettingsChange({ ...settings, editLayout: layout });
+    });
+    return () => useEditLayoutStore.getState().setPersist(null);
+  }, []);
+
   useEffect(() => {
     useKeymapStore.getState().setOsPlatform(osPlatform);
   }, [osPlatform]);
@@ -506,21 +511,17 @@ export function Root() {
       onCloseProject={() => {
         void useSessionStore.getState().closeProject();
       }}
+      projectName={projectName ?? undefined}
       tabs={[
         {
           id: 'edit',
           label: 'Edit',
-          element: <EditorTab />,
-          // D-263 — the icon rail, leftmost. It drives the shell's own
-          // open/closed flag through these props rather than importing
-          // `@apelles/shell` itself (a tab package must not).
-          libraryRail: (
-            <EditLibraryRail dockOpen={sourcesPanelOpen} onDockOpenChange={setSourcesPanelOpen} />
-          ),
-          // …and the docked column's content while a non-`sources` library is
-          // selected. `undefined` in `sources` mode is what tells `Shell` to
-          // show the shared media pool instead — see `ShellTab.libraryPanel`.
-          libraryPanel: libraryMode === 'sources' ? undefined : <EditLibraryPanel />,
+          // D-432 P5 — the Edit tab lays out its own browser (the Final Cut
+          // arrangement: the timeline runs full width beneath it), so it is
+          // handed the shared media pool to show on the browser's Sources tab
+          // and the shell draws no docked column for it.
+          element: <EditorTab mediaPool={<SourcesPanel />} />,
+          ownsLibraryColumn: true,
         },
         // D-391 — a build can leave Motion out (`buildFeatures.ts`); the v0.2.0
         // beta did. Since D-417 the release ships it, with its render runtime
