@@ -153,10 +153,11 @@ export type { TimelineSummary, TimelineActionResult } from './timelineStore';
 // panels themselves register with via `usePanelOpen` rather than restating
 // it. See `panelRegistry.ts`'s module doc for why a shared map + one op
 // generalises D-219/D-246's own bespoke-field pattern to N popovers.
-/** Exported for the Sources panel's audio tile (the same cached peaks and band
- *  drawing the timeline clip uses). */
-export { Waveform, getPeaks } from './Waveform';
-export type { Peak } from './Waveform';
+/** The one kind-aware media picture well (video / audio waveform / image /
+ *  Motion render / text, duration badge, loading + offline) — Sources tiles,
+ *  the project launcher, the shot strip. See `MediaThumbnail.tsx`. */
+export { MediaThumbnail, formatDuration, mediaItemThumbnailProps } from './MediaThumbnail';
+export type { MediaThumbnailKind, MediaThumbnailProps } from './MediaThumbnail';
 export { PANEL_IDS, parsePanelId, usePanelOpen } from './panelRegistry';
 export type { PanelId } from './panelRegistry';
 /** D-252 exported `CaptionPanel` here for `@apelles/debug`'s DOM proof that

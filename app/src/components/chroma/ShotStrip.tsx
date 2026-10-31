@@ -30,6 +30,8 @@ import {
 } from '@phosphor-icons/react';
 import { toast } from 'react-toastify';
 
+import { MediaThumbnail } from '@apelles/editor';
+
 import { useSessionStore, isNonNeutralGrade } from '../../store/useSessionStore';
 import { useEditorStore } from '../../store/useEditorStore';
 import ProjectSettingsModal from './ProjectSettingsModal';
@@ -159,14 +161,12 @@ export default function ShotStrip() {
               active ? 'border-accent' : 'border-surface hover:border-text-secondary',
             ].join(' ')}
           >
-            <div className="relative h-16 bg-bg-primary">
-              {thumbs[shot.id] ? (
-                <img src={thumbs[shot.id]} draggable={false} className="w-full h-full object-cover pointer-events-none" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  <CircleNotchIcon size={14} className="animate-spin text-text-secondary" />
-                </div>
-              )}
+            <MediaThumbnail
+              kind="video"
+              src={thumbs[shot.id]}
+              status={thumbs[shot.id] ? 'ready' : 'loading'}
+              className="h-16 aspect-auto rounded-none bg-bg-primary"
+            >
               {hasGrade && (
                 <span
                   className="absolute top-1 left-1 w-2 h-2 rounded-full bg-accent ring-1 ring-black/40"
@@ -198,7 +198,7 @@ export default function ShotStrip() {
                   <ArrowRightIcon size={11} />
                 </button>
               )}
-            </div>
+            </MediaThumbnail>
             <div
               className={[
                 'px-1.5 py-1 text-[10px] truncate',

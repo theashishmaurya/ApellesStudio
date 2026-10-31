@@ -54,7 +54,6 @@ import {
   MagnifyingGlassIcon,
   SquareIcon,
   TrashIcon,
-  WifiSlashIcon,
   XIcon,
 } from '@phosphor-icons/react';
 import {
@@ -78,11 +77,10 @@ import {
 } from '@apelles/ui';
 import { useShellStore } from '@apelles/shell';
 import { useMediaPoolStore } from '@apelles/bridge';
-import { CHROMA_MEDIA_DRAG_MIME } from '@apelles/editor';
+import { CHROMA_MEDIA_DRAG_MIME, MediaThumbnail, mediaItemThumbnailProps } from '@apelles/editor';
 
 import { useSessionStore, type ProjectOpenDto } from '../../store/useSessionStore';
 import { pickClips } from './ProjectLauncher';
-import { MediaTileThumb } from './MediaTileThumb';
 
 // D-436 — the folder list / media grid split (`@apelles/ui` resizable, the
 // standing resizable-panes rule). Percentages of the height under the folder
@@ -637,23 +635,16 @@ export function SourcesPanel() {
                         isSelected ? 'border-accent bg-accent/10' : 'border-border-color bg-bg-primary',
                       )}
                     >
-                      <div className="aspect-video w-full rounded bg-black/30 flex items-center justify-center relative overflow-hidden">
-                        <MediaTileThumb item={it} />
-                        {it.offline ? (
-                          <div className="absolute top-1 right-1 text-amber-400" title="Media offline">
-                            <WifiSlashIcon className="size-3" />
+                      <MediaThumbnail {...mediaItemThumbnailProps(it)}>
+                        {!it.offline && unusable && (
+                          <div
+                            className="absolute top-1 right-1 text-amber-400"
+                            title="Not probed — this clip can't be placed on the timeline yet. Right-click › Re-probe."
+                          >
+                            <WarningIcon className="size-3" />
                           </div>
-                        ) : (
-                          unusable && (
-                            <div
-                              className="absolute top-1 right-1 text-amber-400"
-                              title="Not probed — this clip can't be placed on the timeline yet. Right-click › Re-probe."
-                            >
-                              <WarningIcon className="size-3" />
-                            </div>
-                          )
                         )}
-                      </div>
+                      </MediaThumbnail>
                       <span className="text-[10px] truncate text-text-secondary group-hover:text-text-primary">
                         {it.name}
                       </span>
