@@ -84,6 +84,7 @@ Pinned in `package.json`:
 | export | rebuilt on | shim |
 |---|---|---|
 | `Text` + typography table | (unchanged) | `app/src/components/ui/Text.tsx` |
+| `TreeView` / `TreeItem` | (own, D-436) | none — new. Generic WAI-ARIA disclosure tree: `role=tree/treeitem`, caret, nesting, Up/Down/Home/End/Left/Right/Enter, controlled or uncontrolled `open`, `rowProps` + `wrapRow` extension points (drag, context menu). No domain knowledge; first consumer is the Sources panel's folder list. Tests: `src/tree-view.dom.test.tsx` (`npm test -w @apelles/ui`). |
 | `LabeledSwitch` | `<Switch>` | `app/src/components/ui/Switch.tsx` → `LabeledSwitch as default` |
 | `CollapsibleSection` | `<Collapsible>` | `app/src/components/ui/CollapsibleSection.tsx` |
 | `Button` (see above) | `<Button>` | `app/src/components/ui/Button.tsx` |

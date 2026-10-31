@@ -440,3 +440,7 @@ The timeline library's interact.js resize is no longer used. Spec and as-built n
 **Deferred** (later tracked steps): multi-track, audio, transitions, transcript
 cut, GPU compositing, grade-in-preview, OTIO export, MCP, timeline
 rename/delete. See `docs/notes/editor-mvp.md`.
+
+## `MediaThumbnail` (D-436)
+
+The one kind-aware picture well for a piece of media: poster `src`, else by `kind` (`video` / `audio` / `image` / `motion` / `text`) a placeholder glyph, or for `audio` the file's own waveform (`Waveform variant="band"` over the cached `getPeaks`, `clip-audio` tokens) with a glyph fallback while peaks load; `status` `loading` / `offline`; a duration badge; `children` as overlays. `mediaItemThumbnailProps(item)` maps a media-pool item. It does not fetch posters or know about the pool UI. Consumers: Sources panel tiles, `ProjectLauncher`, `ShotStrip`. Tests: `src/MediaThumbnail.dom.test.tsx`.

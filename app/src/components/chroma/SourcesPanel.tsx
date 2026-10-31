@@ -37,7 +37,7 @@
 // checkbox for a real multi-select "Select all" / "Delete N" bulk action
 // (`chroma_media_remove` takes a batch of ids for exactly this, one disk
 // write for the whole selection rather than one per item).
-import { useEffect, useMemo, useState, type DragEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'react-toastify';
 import {
@@ -49,13 +49,11 @@ import {
   FolderIcon,
   FolderOpenIcon,
   FolderPlusIcon,
-  ImageIcon,
   PlusIcon,
   ArrowsClockwiseIcon,
   MagnifyingGlassIcon,
   SquareIcon,
   TrashIcon,
-  WifiSlashIcon,
   XIcon,
 } from '@phosphor-icons/react';
 import {
@@ -70,13 +68,26 @@ import {
   DialogHeader,
   DialogTitle,
   Input,
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+  TreeItem,
+  TreeView,
   cn,
 } from '@apelles/ui';
+import { useShellStore } from '@apelles/shell';
 import { useMediaPoolStore } from '@apelles/bridge';
-import { CHROMA_MEDIA_DRAG_MIME } from '@apelles/editor';
+import { CHROMA_MEDIA_DRAG_MIME, MediaThumbnail, mediaItemThumbnailProps } from '@apelles/editor';
 
 import { useSessionStore, type ProjectOpenDto } from '../../store/useSessionStore';
 import { pickClips } from './ProjectLauncher';
+
+// D-436 — the folder list / media grid split (`@apelles/ui` resizable, the
+// standing resizable-panes rule). Percentages of the height under the folder
+// header: the list needs room for a few rows, the grid never less than ~30%.
+const FOLDERS_PANE_DEFAULT = '28%';
+const FOLDERS_PANE_MIN = '8%';
+const FOLDERS_PANE_MAX = '70%';
 
 // --- bin tree, built from the known folder-path strings (D-059) ------------
 
@@ -202,98 +213,83 @@ function setCompactDragImage(e: DragEvent, label: string): void {
 
 function FolderRow({
   node,
-  depth,
   activeFolder,
   setActiveFolder,
+  closedFolders,
+  toggleFolder,
   onDropMedia,
   onNewFolder,
 }: {
   node: FolderNode;
-  depth: number;
   activeFolder: string | null;
   setActiveFolder: (p: string | null) => void;
+  closedFolders: ReadonlySet<string>;
+  toggleFolder: (path: string, open: boolean) => void;
   onDropMedia: (mediaId: string, folder: string) => void;
   onNewFolder: (parentPath: string) => void;
 }) {
-  const [open, setOpen] = useState(true);
   const [dragOver, setDragOver] = useState(false);
-  const hasChildren = node.children.length > 0;
+  const selected = activeFolder === node.path;
 
   return (
-    <div>
-      <ContextMenu>
-        <ContextMenuTrigger>
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => setActiveFolder(activeFolder === node.path ? null : node.path)}
-            onDragOver={(e) => {
-              if (!isMediaDrag(e)) return;
-              e.preventDefault();
-              setDragOver(true);
-            }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => {
-              setDragOver(false);
-              const raw = e.dataTransfer.getData(CHROMA_MEDIA_DRAG_MIME);
-              if (!raw) return;
-              e.preventDefault();
-              try {
-                const media = JSON.parse(raw) as { id: string };
-                onDropMedia(media.id, node.path);
-              } catch {
-                /* ignore malformed payload */
-              }
-            }}
-            className={cn(
-              'flex items-center gap-1 py-1 pr-2 rounded text-[11px] cursor-pointer select-none',
-              activeFolder === node.path
-                ? 'bg-accent/15 text-text-primary'
-                : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
-              dragOver && 'ring-1 ring-accent bg-accent/10',
-            )}
-            style={{ paddingLeft: 6 + depth * 14 }}
-          >
-            <span
-              onClick={(e) => {
-                if (!hasChildren) return;
-                e.stopPropagation();
-                setOpen((o) => !o);
-              }}
-              className={cn('shrink-0', !hasChildren && 'opacity-0')}
-            >
-              <CaretRightIcon className={cn('size-3 transition-transform', open && 'rotate-90')} />
-            </span>
-            {activeFolder === node.path ? (
-              <FolderOpenIcon className="size-3 shrink-0" />
-            ) : (
-              <FolderIcon className="size-3 shrink-0" />
-            )}
-            <span className="truncate">{node.name}</span>
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onClick={() => onNewFolder(node.path)}>
-            <FolderPlusIcon className="size-3.5" /> New folder
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-      {open && hasChildren && (
-        <div>
-          {node.children.map((c) => (
-            <FolderRow
-              key={c.path}
-              node={c}
-              depth={depth + 1}
-              activeFolder={activeFolder}
-              setActiveFolder={setActiveFolder}
-              onDropMedia={onDropMedia}
-              onNewFolder={onNewFolder}
-            />
-          ))}
-        </div>
+    <TreeItem
+      label={node.name}
+      icon={
+        selected ? (
+          <FolderOpenIcon className="size-3 shrink-0" />
+        ) : (
+          <FolderIcon className="size-3 shrink-0" />
+        )
+      }
+      selected={selected}
+      onSelect={() => setActiveFolder(selected ? null : node.path)}
+      open={!closedFolders.has(node.path)}
+      onOpenChange={(open) => toggleFolder(node.path, open)}
+      rowProps={{
+        onDragOver: (e) => {
+          if (!isMediaDrag(e)) return;
+          e.preventDefault();
+          setDragOver(true);
+        },
+        onDragLeave: () => setDragOver(false),
+        onDrop: (e) => {
+          setDragOver(false);
+          const raw = e.dataTransfer.getData(CHROMA_MEDIA_DRAG_MIME);
+          if (!raw) return;
+          e.preventDefault();
+          try {
+            const media = JSON.parse(raw) as { id: string };
+            onDropMedia(media.id, node.path);
+          } catch {
+            /* ignore malformed payload */
+          }
+        },
+        className: dragOver ? 'ring-1 ring-accent bg-accent/10' : undefined,
+      }}
+      wrapRow={(row) => (
+        <ContextMenu>
+          <ContextMenuTrigger>{row}</ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem onClick={() => onNewFolder(node.path)}>
+              <FolderPlusIcon className="size-3.5" /> New folder
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
       )}
-    </div>
+    >
+      {node.children.map((c) => (
+        <FolderRow
+          key={c.path}
+          node={c}
+          activeFolder={activeFolder}
+          setActiveFolder={setActiveFolder}
+          closedFolders={closedFolders}
+          toggleFolder={toggleFolder}
+          onDropMedia={onDropMedia}
+          onNewFolder={onNewFolder}
+        />
+      ))}
+    </TreeItem>
   );
 }
 
@@ -313,6 +309,35 @@ export function SourcesPanel() {
 
   const [search, setSearch] = useState('');
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
+  // D-436 — whether the bin list is expanded lives in the shell store (session
+  // only, like every other piece of panel chrome there) so `debug_ui_state` /
+  // `debug_set_popover_open {id: 'sources-folders'}` see and drive the very
+  // flag the caret writes. Nested folders the user collapsed are panel-local
+  // (reset per project below): lifted out of `FolderRow` so collapsing and
+  // re-expanding the whole list does not forget them.
+  const foldersOpen = useShellStore((s) => s.sourcesFoldersOpen);
+  const setFoldersOpen = useShellStore((s) => s.setSourcesFoldersOpen);
+  // Collapsing moves the tree between the resizable pane and the fixed header
+  // slot, which remounts it; a keyboard user would lose focus (and the Right
+  // key that re-expands). Put focus back on the root row after the swap.
+  const refocusRoot = useRef(false);
+  const changeFoldersOpen = (open: boolean) => {
+    refocusRoot.current = true;
+    setFoldersOpen(open);
+  };
+  useEffect(() => {
+    if (!refocusRoot.current) return;
+    refocusRoot.current = false;
+    document.querySelector<HTMLElement>('[data-chroma-folders-header]')?.focus();
+  }, [foldersOpen]);
+  const [closedFolders, setClosedFolders] = useState<ReadonlySet<string>>(new Set());
+  const toggleFolder = (path: string, open: boolean) =>
+    setClosedFolders((prev) => {
+      const next = new Set(prev);
+      if (open) next.delete(path);
+      else next.add(path);
+      return next;
+    });
   const [importing, setImporting] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
   // B-073 — which row is mid-re-probe, so its action can show it is working.
@@ -340,6 +365,7 @@ export function SourcesPanel() {
   const openProjectKey = useMediaPoolStore((s) => s.openProjectKey);
   useEffect(() => {
     setActiveFolder(null);
+    setClosedFolders(new Set());
     setSelecting(false);
     setSelectedIds(new Set());
   }, [openProjectKey]);
@@ -471,6 +497,221 @@ export function SourcesPanel() {
 
   if (!projectOpen) return null;
 
+  // D-436 — the bin list as a `@apelles/ui` TreeView: "All media" is the root
+  // item (caret = collapse the whole list, FCP's Libraries sidebar / Resolve's
+  // Media Pool bin list; label = select), its children are the folders. While
+  // collapsed the root row names the selected folder so the grid is never
+  // unexplained.
+  const folderTree = (
+    <ContextMenu>
+      <ContextMenuTrigger>
+        <TreeView>
+          <TreeItem
+            label={
+              <>
+                All media
+                {!foldersOpen && activeFolder !== null && (
+                  <span
+                    data-chroma-active-folder
+                    className="flex min-w-0 items-center gap-1 text-text-primary"
+                    title={activeFolder}
+                  >
+                    <CaretRightIcon className="size-2.5 shrink-0 text-text-secondary" />
+                    <FolderOpenIcon className="size-3 shrink-0" />
+                    <span className="truncate">{activeFolder.split('/').pop()}</span>
+                  </span>
+                )}
+              </>
+            }
+            icon={<FilmStripIcon className="size-3" />}
+            selected={activeFolder === null}
+            onSelect={() => setActiveFolder(null)}
+            open={foldersOpen}
+            onOpenChange={changeFoldersOpen}
+            expandable
+            rowProps={{ 'data-chroma-folders-header': '' }}
+            trailing={
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setNewFolderParent(null);
+                }}
+                title="New folder"
+                aria-label="New folder"
+                className="size-5 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover"
+              >
+                <FolderPlusIcon className="size-3" />
+              </button>
+            }
+          >
+            {tree.map((n) => (
+              <FolderRow
+                key={n.path}
+                node={n}
+                activeFolder={activeFolder}
+                setActiveFolder={setActiveFolder}
+                closedFolders={closedFolders}
+                toggleFolder={toggleFolder}
+                onDropMedia={doMove}
+                onNewFolder={setNewFolderParent}
+              />
+            ))}
+            {tree.length === 0 && <p className="px-2 py-1 text-[11px] text-text-secondary">No folders yet.</p>}
+          </TreeItem>
+        </TreeView>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onClick={() => setNewFolderParent(null)}>
+          <FolderPlusIcon className="size-3.5" /> New folder
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+
+  const mediaGrid = (
+      <div className="h-full min-h-0 overflow-y-auto p-2" data-chroma-media-grid>
+        {loading && items.length === 0 ? (
+          <p className="text-[11px] text-text-secondary p-2">Loading…</p>
+        ) : filtered.length === 0 ? (
+          <p className="text-[11px] text-text-secondary p-2">
+            {items.length === 0
+              ? 'No media yet — Import to add clips to this project (referenced in place, never copied).'
+              : 'No media matches.'}
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            {filtered.map((it) => {
+              const isSelected = selectedIds.has(it.id);
+              // B-073 — an item with no probed frame count cannot be placed on
+              // the timeline (`editor_add_clip` refuses it, and a drag builds a
+              // zero-length clip). It used to look identical to a healthy one
+              // unless it also happened to be offline, so the card says so and
+              // offers the repair.
+              //
+              // D-292 — a STILL IMAGE is placeable with no frame count at all:
+              // it has no length of its own, and the drop synthesizes one
+              // (`mediaSourceFacts`). Asking `it.image` here rather than
+              // widening the frame-count test is what keeps "usable" meaning
+              // the same thing the backend's own `MediaItem::is_probed` means.
+              const unusable = !it.video?.frameCount && !it.image;
+              return (
+                <ContextMenu key={it.id}>
+                  <ContextMenuTrigger>
+                    <div
+                      draggable={!selecting}
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = 'copy';
+                        e.dataTransfer.setData(
+                          CHROMA_MEDIA_DRAG_MIME,
+                          JSON.stringify({
+                            id: it.id,
+                            sourcePath: it.sourcePath,
+                            name: it.name,
+                            frameCount: it.video?.frameCount ?? null,
+                            // D-129 — lets the drop build a linked audio half
+                            // for a source that really has one. `null` (a pool
+                            // item not yet resolved by `chroma_media_list`'s
+                            // one-time backfill) means "unknown", and the drop
+                            // conservatively creates no audio half.
+                            hasAudio: it.video?.hasAudio ?? null,
+                            // B-075/D-193 — the source's real frame rate, so a
+                            // dropped clip's `source_start`/`duration` convert
+                            // to real seconds at export time instead of being
+                            // silently misread at the project/export fps.
+                            // D-292 — absent for a still, which has no native
+                            // rate; the drop reads that off the source path
+                            // (`isStillSource`) and synthesizes a span at the
+                            // project's own rate instead.
+                            fps: it.video?.fps ?? null,
+                          }),
+                        );
+                        setCompactDragImage(e, it.name);
+                      }}
+                      onClick={() => selecting && toggleSelected(it.id)}
+                      title={it.sourcePath}
+                      className={cn(
+                        'group relative flex flex-col gap-1 rounded-md border p-1.5 hover:border-accent/60',
+                        selecting ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing',
+                        isSelected ? 'border-accent bg-accent/10' : 'border-border-color bg-bg-primary',
+                      )}
+                    >
+                      <MediaThumbnail {...mediaItemThumbnailProps(it)}>
+                        {!it.offline && unusable && (
+                          <div
+                            className="absolute top-1 right-1 text-amber-400"
+                            title="Not probed — this clip can't be placed on the timeline yet. Right-click › Re-probe."
+                          >
+                            <WarningIcon className="size-3" />
+                          </div>
+                        )}
+                      </MediaThumbnail>
+                      <span className="text-[10px] truncate text-text-secondary group-hover:text-text-primary">
+                        {it.name}
+                      </span>
+                      {selecting ? (
+                        // D-061: a real checkbox, always visible (not just
+                        // on hover) — the whole point of selection mode is
+                        // seeing at a glance what's selected before
+                        // committing to Delete.
+                        <div
+                          className={cn(
+                            'absolute top-1 left-1 size-5 rounded flex items-center justify-center border',
+                            isSelected
+                              ? 'bg-accent border-accent text-button-text'
+                              : 'bg-bg-primary/90 border-border-color text-transparent',
+                          )}
+                        >
+                          <CheckIcon className="size-3" />
+                        </div>
+                      ) : (
+                        <>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void doRemove([it.id], it.name);
+                            }}
+                            title="Remove from pool"
+                            aria-label={`Remove ${it.name} from the pool`}
+                            className="absolute top-1 left-1 size-5 rounded-full bg-bg-primary/90 border border-border-color flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:border-destructive hover:text-destructive"
+                          >
+                            <TrashIcon className="size-3" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void addToGrading(it.id);
+                            }}
+                            disabled={addingId === it.id || it.offline}
+                            title="Add to grading"
+                            aria-label={`Add ${it.name} to grading`}
+                            className="absolute top-1 right-1 size-5 rounded-full bg-bg-primary/90 border border-border-color flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-40 hover:border-accent"
+                          >
+                            <PlusIcon className="size-3" />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </ContextMenuTrigger>
+                  <ContextMenuContent>
+                    <ContextMenuItem
+                      onClick={() => void doReprobe(it.id, it.name)}
+                      disabled={reprobingId === it.id}
+                    >
+                      <ArrowsClockwiseIcon className={cn('size-3.5', reprobingId === it.id && 'animate-spin')} />{' '}
+                      {reprobingId === it.id ? 'Re-probing…' : 'Re-probe'}
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => void doRemove([it.id], it.name)} variant="destructive">
+                      <TrashIcon className="size-3.5" /> Remove from pool
+                    </ContextMenuItem>
+                  </ContextMenuContent>
+                </ContextMenu>
+              );
+            })}
+          </div>
+        )}
+      </div>
+  );
+
   return (
     <div className="h-full w-full flex flex-col bg-surface text-text-primary">
       <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-2 border-b border-border-color">
@@ -545,52 +786,6 @@ export function SourcesPanel() {
         </div>
       )}
 
-      <ContextMenu>
-        <ContextMenuTrigger>
-          <div className="shrink-0 max-h-32 overflow-y-auto px-1 py-1 border-b border-border-color">
-            <div className="flex items-center">
-              <div
-                role="button"
-                tabIndex={0}
-                onClick={() => setActiveFolder(null)}
-                className={cn(
-                  'flex-1 flex items-center gap-1 py-1 pl-1.5 pr-2 rounded text-[11px] cursor-pointer select-none',
-                  activeFolder === null
-                    ? 'bg-accent/15 text-text-primary'
-                    : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
-                )}
-              >
-                <FilmStripIcon className="size-3" /> All media
-              </div>
-              <button
-                onClick={() => setNewFolderParent(null)}
-                title="New folder"
-                aria-label="New folder"
-                className="shrink-0 size-5 mr-1 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover"
-              >
-                <FolderPlusIcon className="size-3" />
-              </button>
-            </div>
-            {tree.map((n) => (
-              <FolderRow
-                key={n.path}
-                node={n}
-                depth={0}
-                activeFolder={activeFolder}
-                setActiveFolder={setActiveFolder}
-                onDropMedia={doMove}
-                onNewFolder={setNewFolderParent}
-              />
-            ))}
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onClick={() => setNewFolderParent(null)}>
-            <FolderPlusIcon className="size-3.5" /> New folder
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-
       {newFolderParent !== undefined && (
         <NewFolderDialog
           parentPath={newFolderParent}
@@ -599,168 +794,25 @@ export function SourcesPanel() {
         />
       )}
 
-      <div className="flex-1 min-h-0 overflow-y-auto p-2">
-        {loading && items.length === 0 ? (
-          <p className="text-[11px] text-text-secondary p-2">Loading…</p>
-        ) : filtered.length === 0 ? (
-          <p className="text-[11px] text-text-secondary p-2">
-            {items.length === 0
-              ? 'No media yet — Import to add clips to this project (referenced in place, never copied).'
-              : 'No media matches.'}
-          </p>
-        ) : (
-          <div className="grid grid-cols-2 gap-2">
-            {filtered.map((it) => {
-              const isSelected = selectedIds.has(it.id);
-              // B-073 — an item with no probed frame count cannot be placed on
-              // the timeline (`editor_add_clip` refuses it, and a drag builds a
-              // zero-length clip). It used to look identical to a healthy one
-              // unless it also happened to be offline, so the card says so and
-              // offers the repair.
-              //
-              // D-292 — a STILL IMAGE is placeable with no frame count at all:
-              // it has no length of its own, and the drop synthesizes one
-              // (`mediaSourceFacts`). Asking `it.image` here rather than
-              // widening the frame-count test is what keeps "usable" meaning
-              // the same thing the backend's own `MediaItem::is_probed` means.
-              const unusable = !it.video?.frameCount && !it.image;
-              return (
-                <ContextMenu key={it.id}>
-                  <ContextMenuTrigger>
-                    <div
-                      draggable={!selecting}
-                      onDragStart={(e) => {
-                        e.dataTransfer.effectAllowed = 'copy';
-                        e.dataTransfer.setData(
-                          CHROMA_MEDIA_DRAG_MIME,
-                          JSON.stringify({
-                            id: it.id,
-                            sourcePath: it.sourcePath,
-                            name: it.name,
-                            frameCount: it.video?.frameCount ?? null,
-                            // D-129 — lets the drop build a linked audio half
-                            // for a source that really has one. `null` (a pool
-                            // item not yet resolved by `chroma_media_list`'s
-                            // one-time backfill) means "unknown", and the drop
-                            // conservatively creates no audio half.
-                            hasAudio: it.video?.hasAudio ?? null,
-                            // B-075/D-193 — the source's real frame rate, so a
-                            // dropped clip's `source_start`/`duration` convert
-                            // to real seconds at export time instead of being
-                            // silently misread at the project/export fps.
-                            // D-292 — absent for a still, which has no native
-                            // rate; the drop reads that off the source path
-                            // (`isStillSource`) and synthesizes a span at the
-                            // project's own rate instead.
-                            fps: it.video?.fps ?? null,
-                          }),
-                        );
-                        setCompactDragImage(e, it.name);
-                      }}
-                      onClick={() => selecting && toggleSelected(it.id)}
-                      title={it.sourcePath}
-                      className={cn(
-                        'group relative flex flex-col gap-1 rounded-md border p-1.5 hover:border-accent/60',
-                        selecting ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing',
-                        isSelected ? 'border-accent bg-accent/10' : 'border-border-color bg-bg-primary',
-                      )}
-                    >
-                      <div className="aspect-video w-full rounded bg-black/30 flex items-center justify-center relative overflow-hidden">
-                        {it.thumb ? (
-                          <img
-                            src={it.thumb}
-                            alt=""
-                            draggable={false}
-                            className="absolute inset-0 h-full w-full object-cover"
-                          />
-                        ) : it.image ? (
-                          // D-292 — a still that has no cached thumbnail yet
-                          // says so honestly: the film icon would claim it is
-                          // footage.
-                          <ImageIcon className="size-4 text-text-secondary/50" />
-                        ) : (
-                          <FilmStripIcon className="size-4 text-text-secondary/50" />
-                        )}
-                        {it.offline ? (
-                          <div className="absolute top-1 right-1 text-amber-400" title="Media offline">
-                            <WifiSlashIcon className="size-3" />
-                          </div>
-                        ) : (
-                          unusable && (
-                            <div
-                              className="absolute top-1 right-1 text-amber-400"
-                              title="Not probed — this clip can't be placed on the timeline yet. Right-click › Re-probe."
-                            >
-                              <WarningIcon className="size-3" />
-                            </div>
-                          )
-                        )}
-                      </div>
-                      <span className="text-[10px] truncate text-text-secondary group-hover:text-text-primary">
-                        {it.name}
-                      </span>
-                      {selecting ? (
-                        // D-061: a real checkbox, always visible (not just
-                        // on hover) — the whole point of selection mode is
-                        // seeing at a glance what's selected before
-                        // committing to Delete.
-                        <div
-                          className={cn(
-                            'absolute top-1 left-1 size-5 rounded flex items-center justify-center border',
-                            isSelected
-                              ? 'bg-accent border-accent text-button-text'
-                              : 'bg-bg-primary/90 border-border-color text-transparent',
-                          )}
-                        >
-                          <CheckIcon className="size-3" />
-                        </div>
-                      ) : (
-                        <>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void doRemove([it.id], it.name);
-                            }}
-                            title="Remove from pool"
-                            aria-label={`Remove ${it.name} from the pool`}
-                            className="absolute top-1 left-1 size-5 rounded-full bg-bg-primary/90 border border-border-color flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:border-destructive hover:text-destructive"
-                          >
-                            <TrashIcon className="size-3" />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void addToGrading(it.id);
-                            }}
-                            disabled={addingId === it.id || it.offline}
-                            title="Add to grading"
-                            aria-label={`Add ${it.name} to grading`}
-                            className="absolute top-1 right-1 size-5 rounded-full bg-bg-primary/90 border border-border-color flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-40 hover:border-accent"
-                          >
-                            <PlusIcon className="size-3" />
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </ContextMenuTrigger>
-                  <ContextMenuContent>
-                    <ContextMenuItem
-                      onClick={() => void doReprobe(it.id, it.name)}
-                      disabled={reprobingId === it.id}
-                    >
-                      <ArrowsClockwiseIcon className={cn('size-3.5', reprobingId === it.id && 'animate-spin')} />{' '}
-                      {reprobingId === it.id ? 'Re-probing…' : 'Re-probe'}
-                    </ContextMenuItem>
-                    <ContextMenuItem onClick={() => void doRemove([it.id], it.name)} variant="destructive">
-                      <TrashIcon className="size-3.5" /> Remove from pool
-                    </ContextMenuItem>
-                  </ContextMenuContent>
-                </ContextMenu>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      {foldersOpen ? (
+        <ResizablePanelGroup orientation="vertical" className="flex-1 min-h-0">
+          <ResizablePanel
+            data-chroma-folders-pane
+            defaultSize={FOLDERS_PANE_DEFAULT}
+            minSize={FOLDERS_PANE_MIN}
+            maxSize={FOLDERS_PANE_MAX}
+          >
+            <div className="h-full overflow-y-auto px-1 py-1">{folderTree}</div>
+          </ResizablePanel>
+          <ResizableHandle />
+          <ResizablePanel>{mediaGrid}</ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        <>
+          <div className="shrink-0 px-1 py-1 border-b border-border-color">{folderTree}</div>
+          <div className="flex-1 min-h-0">{mediaGrid}</div>
+        </>
+      )}
     </div>
   );
 }

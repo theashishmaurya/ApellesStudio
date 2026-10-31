@@ -6,6 +6,17 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-436 — The Sources panel's folder list collapses behind a caret; the list / grid split is resizable
+
+- **Context.** The bin tree (All media > Music, SFX, ...) was always expanded above the media grid, capped at a fixed `max-h-32`, taking vertical space the grid needs (owner screenshot `scratch/bug-refs/2026-11-01-sources-folders.png`: "a way to collapse the folders"). Folders nest (`FolderNode.children`), so per-folder carets already existed but defaulted open and their state died with the row.
+- **Reference.** Final Cut Pro's Libraries / Events sidebar uses disclosure triangles per library and event, and a button that hides the whole sidebar; DaVinci Resolve's Media Pool has a collapsible bin list with a toggle to show or hide it (the bin list is its own resizable pane beside the clips). Both keep the bin selection visible after the list is hidden.
+- **Options.** (a) Collapse only per folder (already there); (b) a single root caret on the header row, plus per-folder carets, plus a resizable pane; (c) hide the list behind a popover. 
+- **Choice.** (b). A Phosphor `CaretDown`/`CaretRight` before "All media" collapses the whole list; clicking a label still selects; Left/Right collapse/expand (tree-view keys) on a folder row and on All media; while collapsed the header names the selected folder. The list / grid split is a `@apelles/ui` vertical `ResizablePanelGroup` (standing rule), present only while expanded. Nested-folder collapse state was lifted out of `FolderRow` so it survives collapsing the whole list.
+- **Shared components (owner: "write shared code so other places can use it").** The disclosure is the generic `TreeView`/`TreeItem` in `@apelles/ui` (no domain knowledge; `rowProps`/`wrapRow` for drag and context menus) rather than Sources-private code; the tile picture well is `MediaThumbnail` in `@apelles/editor` (it needs the timeline's `Waveform`/`getPeaks` and the bridge's media types, and `ui` may not depend on either). Migrated call sites: Sources tiles, `ProjectLauncher` cards, Colorist `ShotStrip`. Not migrated: `EditIndexPanel` marker poster (blank on purpose when no clip is under the marker; a kind glyph would lie), `BrandKitDialog` asset thumb (`@apelles/brand` sits below `@apelles/editor`; needs the component moved down first), Motion `LayerThumbnail` (a live Remotion `Thumbnail`, not a media poster), the timeline clip's own filmstrip/waveform band (`TimelinePane`/`ClipBlock`, per-clip geometry), Clipper panel (no thumbnails today).
+- **State and AI parity.** The root open flag is `useShellStore.sourcesFoldersOpen` (session only, default open, like the rest of the panel chrome; not persisted per project). `debug_get_ui_state` reports `shell.sourcesFoldersOpen`; `debug_set_popover_open {id: 'sources-folders', open}` drives the same store action as the caret. No new MCP tool: the existing popover op already is the generic panel-state surface (D-252, B-341).
+
+---
+
 ## D-435 — The Agent activity feed is a chrome-bar button + popover, not a fixed bottom-left dock (fixes B-341)
 
 - **Context.** D-298 made the feed shell-level as a `fixed left-3 bottom-3 z-40 w-[340px]` dock (up to 45 vh). In the Edit tab it sat over the timeline toolbar, track headers and the first lanes, reopened on every agent action (B-159's dismissal only lasted until the next row), and 10 harness scenarios failed on it (B-341). A marker flag also painted over it (B-342).

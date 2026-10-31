@@ -110,6 +110,15 @@ export interface MediaItem {
   motionSceneId?: string | null;
 }
 
+/** B-089 — a pure-audio source (no video stream) is probed as a real item whose
+ *  `video` facts carry a genuine 0x0 resolution (`probe_audio_only`) and a
+ *  decodeable audio stream. The one place that fact is read, so a tile or a
+ *  drop never restates the sentinel. */
+export function isAudioOnlyItem(item: Pick<MediaItem, 'video' | 'image'>): boolean {
+  const v = item.video;
+  return !!v && v.width === 0 && v.height === 0 && v.hasAudio !== false;
+}
+
 interface MediaPoolState {
   items: MediaItem[];
   /** every known bin path (D-059) — union of explicitly-created folders and

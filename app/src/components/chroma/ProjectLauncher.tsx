@@ -17,6 +17,8 @@ import { homeDir } from '@tauri-apps/api/path';
 import { FolderOpenIcon, PlusIcon, FilmStripIcon, CircleNotchIcon, XIcon, TrashIcon } from '@phosphor-icons/react';
 import { toast } from 'react-toastify';
 
+import { MediaThumbnail } from '@apelles/editor';
+
 import { useSessionStore } from '../../store/useSessionStore';
 import ConfirmModal from '../modals/ConfirmModal';
 
@@ -243,12 +245,7 @@ function ProjectCard({
         disabled ? 'opacity-60 pointer-events-none' : 'hover:border-accent cursor-pointer'
       }`}
     >
-      <div className="aspect-video bg-bg-primary flex items-center justify-center overflow-hidden relative">
-        {p.thumb ? (
-          <img src={p.thumb} draggable={false} className="w-full h-full object-cover" />
-        ) : (
-          <FilmStripIcon size={22} className="text-text-secondary/50" />
-        )}
+      <MediaThumbnail kind="video" src={p.thumb} className="bg-bg-primary rounded-none">
         {opening && (
           <div className="absolute inset-0 bg-bg-primary/70 flex items-center justify-center gap-1.5 text-text-primary text-xs font-medium">
             <CircleNotchIcon size={14} className="animate-spin" /> Opening…
@@ -269,7 +266,7 @@ function ProjectCard({
             <TrashIcon size={13} />
           </button>
         )}
-      </div>
+      </MediaThumbnail>
       <div className="px-3 py-2">
         <div className="text-sm font-medium text-text-primary truncate">{p.name}</div>
         <div className="text-[11px] text-text-secondary mt-0.5">
