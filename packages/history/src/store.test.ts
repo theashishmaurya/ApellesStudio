@@ -226,3 +226,38 @@ describe('request source (D-434)', () => {
     expect(after.redoStack).toEqual([]);
   });
 });
+
+describe('coalesceKey (D-432, P4)', () => {
+  const entry = (label: string, key?: string) => ({
+    tab: 'edit',
+    label,
+    undo: vi.fn(),
+    redo: vi.fn(),
+    coalesceKey: key,
+  });
+
+  it('folds back-to-back entries with the same key into one, keeping the first undo and the last redo', () => {
+    const first = entry('Scale 1', 'g1');
+    const second = entry('Scale 2', 'g1');
+    useHistoryStore.getState().push(first);
+    useHistoryStore.getState().push(second);
+    const { undoStack } = useHistoryStore.getState();
+    expect(undoStack).toHaveLength(1);
+    expect(undoStack[0]?.label).toBe('Scale 2');
+    useHistoryStore.getState().undo();
+    expect(first.undo).toHaveBeenCalledTimes(1);
+    expect(second.undo).not.toHaveBeenCalled();
+    useHistoryStore.getState().redo();
+    expect(second.redo).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps entries with different keys, no key, or an interleaved entry apart', () => {
+    const h = useHistoryStore.getState();
+    h.push(entry('a', 'g1'));
+    h.push(entry('b', 'g2'));
+    h.push(entry('c'));
+    h.push(entry('d'));
+    h.push(entry('e', 'g1'));
+    expect(useHistoryStore.getState().undoStack).toHaveLength(5);
+  });
+});

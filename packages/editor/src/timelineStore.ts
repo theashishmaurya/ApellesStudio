@@ -308,6 +308,19 @@ interface EditorTimelineState {
    *  survives selecting a title (which has no Audio tab) and comes back when
    *  they select a clip that does. */
   inspectorTab: ClipInspectorTab;
+  /** D-432 (P4) — which Inspector sections the user has opened or closed, by
+   *  section id (`transform`, `crop`, `fade`, …). A section with no entry shows
+   *  its own default (`useInspectorSection`'s `defaultOpen`), so this holds only
+   *  the user's deliberate choices.
+   *
+   *  In the store, not component state, for the two reasons `inspectorTab` is:
+   *  the panel remounts per selection (`key={clip.id}`) and would forget, and
+   *  `debug_get_ui_state` reports it so an agent can read what is expanded
+   *  (CLAUDE.md human + AI parity). Session chrome in spirit — never part of
+   *  `Timeline`, never undoable (D-216) — but remembered across launches in
+   *  `localStorage` (`inspectorSectionsStorage`), wrapped in try/catch since a
+   *  private window or blocked storage must not break the panel. */
+  inspectorSections: Record<string, boolean>;
   /** D-232 — whether the viewer shows its audio waveform strip (`ScrubWaveform`,
    *  the "waveform toggle" half of roadmap item 27).
    *
@@ -527,6 +540,10 @@ interface EditorTimelineState {
   /** D-246 — switch the clip Inspector's Video/Audio tab. The one writer for
    *  both the human's tab click (`ClipInspectorPanel`) and the debug op. */
   setInspectorTab: (tab: ClipInspectorTab) => void;
+  /** D-432 (P4) — open / close one Inspector section by id. The one writer for
+   *  the human's header click and any future op. Persisted per user
+   *  (`inspectorSectionsStorage`), not per project. */
+  setInspectorSectionOpen: (id: string, open: boolean) => void;
   /** D-232 — show/hide the viewer's waveform strip. The one writer for both the
    *  human's toggle button (`Player`, via `PreviewPane`) and
    *  `editor_set_waveform_view`. */
@@ -633,6 +650,51 @@ interface EditorTimelineState {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** D-432 (P4) — the id of the history group currently open, or `null`.
+ *  While open, every `applyOp` pushes its history entry with this as the
+ *  `coalesceKey`, so a gesture that applies an op per frame (an Inspector
+ *  number scrub) is ONE undo step. */
+let historyGroupKey: string | null = null;
+let historyGroupSeq = 0;
+
+/** Open a history group; ops applied until `endHistoryGroup` fold into one
+ *  undo entry. Not re-entrant: a second `begin` replaces the key. */
+export function beginHistoryGroup(): void {
+  historyGroupSeq += 1;
+  historyGroupKey = `group-${historyGroupSeq}`;
+}
+
+/** Close the current history group. Safe to call with none open. */
+export function endHistoryGroup(): void {
+  historyGroupKey = null;
+}
+
+const INSPECTOR_SECTIONS_STORAGE_KEY = 'apelles.editor.inspectorSections';
+
+/** D-432 (P4) — read the remembered section open-state. Every failure (no
+ *  `localStorage`, blocked, corrupt JSON, wrong shape) is an empty map. */
+function readInspectorSections(): Record<string, boolean> {
+  try {
+    const raw = globalThis.localStorage?.getItem(INSPECTOR_SECTIONS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
+    const out: Record<string, boolean> = {};
+    for (const [id, open] of Object.entries(parsed)) if (typeof open === 'boolean') out[id] = open;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeInspectorSections(sections: Record<string, boolean>): void {
+  try {
+    globalThis.localStorage?.setItem(INSPECTOR_SECTIONS_STORAGE_KEY, JSON.stringify(sections));
+  } catch {
+    // Storage unavailable: the choice still holds for this session.
+  }
+}
 
 /** B-272 — counts every local write to the active timeline (`applyOp`,
  *  `restoreSnapshot`). `load()` compares it across its fetch: if it moved, the
@@ -788,6 +850,8 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   // D-246 — Video: the tab every clip type has, and where the geometry a
   // user reaches for first lives. Sticky from there; see the field's doc.
   inspectorTab: DEFAULT_CLIP_INSPECTOR_TAB,
+  // D-432 (P4) — the user's remembered open/closed sections.
+  inspectorSections: readInspectorSections(),
   // D-232 — off by default; see the field's own doc.
   waveformView: false,
   safeAreaView: 'off',
@@ -1014,6 +1078,13 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   setInspectorOpen: (open) => set({ inspectorOpen: open }),
 
   setInspectorTab: (tab) => set({ inspectorTab: tab }),
+  setInspectorSectionOpen: (id, open) =>
+    set((s) => {
+      if (s.inspectorSections[id] === open) return s;
+      const inspectorSections = { ...s.inspectorSections, [id]: open };
+      writeInspectorSections(inspectorSections);
+      return { inspectorSections };
+    }),
 
   setWaveformView: (open) => set({ waveformView: open }),
   setSafeAreaView: (view) => set({ safeAreaView: view }),
@@ -1117,6 +1188,9 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
       label: labelForOp(op, before),
       undo: () => get().restoreSnapshot(before),
       redo: () => get().restoreSnapshot(after),
+      // D-432 (P4) — inside a scrub's history group this folds the per-frame
+      // entries into one; outside any group it is `undefined` (no folding).
+      coalesceKey: historyGroupKey ?? undefined,
     });
   },
 

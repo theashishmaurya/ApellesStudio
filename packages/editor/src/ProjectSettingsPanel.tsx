@@ -36,6 +36,7 @@
  */
 import { InspectorEmptyState } from '@apelles/inspector';
 
+import { EditorSection } from './EditorSection';
 import { ProjectSettingsForm } from './ProjectSettingsForm';
 import { TimelineOutputForm } from './TimelineOutputForm';
 import { useEditorTimelineStore } from './timelineStore';
@@ -50,30 +51,33 @@ export function ProjectSettingsPanel() {
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-0 text-xs" data-chroma-panel="project-settings">
-      {/* Same header treatment `ClipInspectorPanel`'s own clip-name block
-          uses (border-bottom, `p-3 pb-2`) — this column always opens on
-          SOME fixed header over a scrolling body, whichever content is
-          showing. */}
-      <div className="flex shrink-0 flex-col gap-1 border-b border-border-color p-3 pb-2">
-        <div className="text-text-primary font-medium">Project Settings</div>
-        <p className="text-text-secondary/60 text-[10px] leading-snug">
-          Select a clip to edit its properties — or set the project&apos;s own output spec here.
-        </p>
+      {/* D-432 — the same 44 px header the clip Inspector has, so the column
+          reads as one panel whichever content it shows. */}
+      <div className="border-border-color flex h-11 shrink-0 items-center gap-2 border-b px-3">
+        <div className="text-text-primary min-w-0 flex-1 truncate text-base font-semibold">Project Settings</div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {settings === null && !error && <InspectorEmptyState>Loading project settings…</InspectorEmptyState>}
-        {error && <p className="pb-2 text-[11px] text-red-400">Could not load project settings: {error}</p>}
-        {settings !== null && <ProjectSettingsForm settings={settings} onChange={save} disabled={saving} />}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {settings === null && !error && (
+          <div className="px-3 pt-3">
+            <InspectorEmptyState>Loading project settings…</InspectorEmptyState>
+          </div>
+        )}
+        {error && <p className="text-destructive px-3 pt-3 text-2xs">Could not load project settings: {error}</p>}
+        {settings !== null && (
+          <EditorSection id="project-settings" label="Project">
+            <ProjectSettingsForm settings={settings} onChange={save} disabled={saving} />
+          </EditorSection>
+        )}
         {timelineId !== null && (
           // D-411 Phase 0 — Resolve's per-timeline "Use Project Settings": a
           // short can be 9:16 while the project (and its long-form) is 16:9.
-          <div className="mt-4 flex flex-col gap-2 border-t border-border-color pt-3">
-            <div className="text-text-primary font-medium">
-              This timeline <span className="text-text-secondary font-normal">· {timelineName || 'Untitled'}</span>
-            </div>
+          <EditorSection id="timeline-settings" label="This timeline" meta={timelineName || 'Untitled'}>
             <TimelineOutputForm key={timelineId} />
-          </div>
+          </EditorSection>
         )}
+        <p className="text-text-tertiary px-3 py-2 text-2xs leading-snug">
+          Select a clip to edit its properties — or set the project&apos;s own output spec here.
+        </p>
       </div>
     </div>
   );

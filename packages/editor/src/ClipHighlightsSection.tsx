@@ -23,7 +23,7 @@
 import { useState } from 'react';
 import { PlusIcon, XIcon, SparkleIcon } from '@phosphor-icons/react';
 import { Button, ScrubbableNumberInput } from '@apelles/ui';
-import { InspectorSection } from '@apelles/inspector';
+import { EditorSection } from './EditorSection';
 import {
   DEFAULT_HIGHLIGHT_COLOR,
   DEFAULT_HIGHLIGHT_OPACITY,
@@ -110,7 +110,7 @@ export function ClipHighlightsSection() {
   };
 
   return (
-    <InspectorSection label="Highlights">
+    <EditorSection id="highlights" label="Highlights">
       <div className="flex flex-wrap items-center gap-1.5 pb-1">
         <Button
           type="button"
@@ -219,6 +219,6 @@ export function ClipHighlightsSection() {
             ? 'A highlighter pen that sweeps over words in this clip’s picture while they are spoken. Add one, drag its box in the viewer, or let the transcript place them.'
             : 'Start and Len are in this clip’s source frames. Turn on Edit boxes to drag them in the viewer.')}
       </p>
-    </InspectorSection>
+    </EditorSection>
   );
 }

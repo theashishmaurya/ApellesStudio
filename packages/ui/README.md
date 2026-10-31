@@ -73,6 +73,8 @@ Pinned in `package.json`:
 | `ScrollArea`, `ScrollBar` | `@base-ui/react/scroll-area` | |
 | `Separator` | `@base-ui/react/separator` | |
 | `Input` | `@base-ui/react/input` | + `bgClassName` prop (default `bg-surface`) — back-compat. A `type="number"` gets `tabular-nums` and `NUMBER_INPUT_SPINNER_SUPPRESSION` — **no native spin buttons, app-wide** (B-113/D-253) |
+| `NumberScrubber` | `role="spinbutton"` text field | the Inspector's number field (D-432 P4): drag to scrub (1 step/px, Shift x10, Alt x0.1), click to type with arithmetic (`+10`, `*2`), arrows, per-frame coalesced `onChange`, `onScrubStart/End` to bracket one undo step. `lib/number-expression.ts` is its parser |
+| `InspectorRow` | grid | one label (92 px) / control / fixed 80 px keyframe-slot row (D-432 P4) |
 | `ScrubbableNumberInput` | `<Input type="number">` + `useNumberField` | the app's numeric field: drag it horizontally to change the value (Resolve's "virtual slider"), click it to type an exact one. Added D-253 — see below |
 | `Textarea` | plain `<textarea>` | (Base UI has no textarea primitive — canonical for shadcn too). Classes mirror `Input` field for field, same `bgClassName` prop/default. Added D-222 |
 | `Label` | plain `<label>` | (Base UI has no Label primitive — canonical for shadcn too) |

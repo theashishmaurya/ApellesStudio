@@ -59,6 +59,7 @@ const { useEditorTimelineStore } = await import('./timelineStore');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
 const { useHistoryStore } = await import('@apelles/history');
 import type { Clip, Timeline } from './timeline';
+import { sectionTitles } from './testUtils/inspectorDom';
 
 const CLIP_ID = 'clip-1';
 
@@ -121,7 +122,7 @@ function triggers(): HTMLElement[] {
 }
 
 function trigger(label: string): HTMLElement {
-  const hit = triggers().find((t) => t.textContent === label);
+  const hit = triggers().find((t) => t.getAttribute('aria-label') === label);
   if (!hit) throw new Error(`no ${label} tab`);
   return hit;
 }
@@ -156,12 +157,11 @@ describe('clip Inspector tab chrome (B-124 / D-254)', () => {
     await render();
     // Both triggers carry the same rule — it is the attribute that moves, not
     // the class — so reading either one pins it.
+    // D-432 — an icon tab: the active one is an accent icon on bg-secondary
+    // (the old accent underline went with the full-width line tabs).
     const cls = trigger('Video').className;
-    expect(cls).toContain('data-active:border-b-accent');
-    expect(cls).toContain('data-active:text-text-primary');
-    // `accent` / `text-primary` are the fork's own vars (D-042's one token
-    // source), which is what makes this the same underline the shell's
-    // Edit/Motion/Colorist switcher and `TimelineSwitcher` already draw.
+    expect(cls).toContain('data-active:bg-bg-secondary');
+    expect(cls).toContain('data-active:text-accent-text');
     expect(cls).not.toContain('data-selected:');
   });
 
@@ -186,29 +186,32 @@ describe('clip Inspector tab chrome (B-124 / D-254)', () => {
     // as the real webview does, it must be inert, because that is the single
     // signal the hiding rule above depends on.
     for (const p of panels()) {
-      const isAudio = p.querySelector('h3')?.textContent === 'Audio';
+      const isAudio = sectionTitles(p).includes('Audio');
       if (!isAudio) expect(p.hasAttribute('inert')).toBe(true);
     }
     // Whatever is NOT inert is the audio panel, and there is exactly one.
     const live = panels().filter((p) => !p.hasAttribute('inert'));
     expect(live).toHaveLength(1);
-    expect(live[0].querySelector('h3')?.textContent).toBe('Audio');
+    expect(sectionTitles(live[0])).toContain('Audio');
   });
 
-  it('separates adjacent sections with a real rule, on BOTH tabs', async () => {
+  it('separates sections with a real rule, on BOTH tabs (each section owns its bottom border)', async () => {
     await render();
 
     const videoPanel = panels().filter((p) => !p.hasAttribute('inert'))[0];
-    expect(videoPanel.className).toContain('[&>*+*]:border-t');
-    expect(videoPanel.className).toContain('[&>*+*]:border-border-color');
-    // Six sections on Video ⇒ five seams, and the rule is a `* + *` so it can
-    // never land above the first one.
-    expect([...videoPanel.children].length).toBe(7);
+    const videoSections = [...videoPanel.children] as HTMLElement[];
+    // D-432 — the rule moved from a `* + *` selector on the panel into the
+    // section itself, so a section can never lose its divider by being
+    // reordered, and sections are full-bleed (no panel padding).
+    expect(videoSections.length).toBeGreaterThanOrEqual(7);
+    for (const sec of videoSections) {
+      expect(sec.hasAttribute('data-chroma-section')).toBe(true);
+      expect(sec.className).toContain('border-b');
+      expect(sec.className).toContain('border-border-color');
+    }
 
     await clickTab('Audio');
     const audioPanel = panels().filter((p) => !p.hasAttribute('inert'))[0];
-    expect(audioPanel.className).toContain('[&>*+*]:border-t');
-    expect(audioPanel.className).toContain('[&>*+*]:border-border-color');
-    expect([...audioPanel.children].length).toBe(2);
+    expect([...audioPanel.children].map((c) => c.getAttribute('data-chroma-section'))).toEqual(['audio', 'eq']);
   });
 });

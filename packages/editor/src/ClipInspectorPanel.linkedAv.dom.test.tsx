@@ -45,6 +45,8 @@ const { useEditorTimelineStore } = await import('./timelineStore');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
 const { useHistoryStore } = await import('@apelles/history');
 import type { Clip, Timeline } from './timeline';
+import { typeNumber } from './testUtils/numberField';
+import { fieldByLabel, sectionTitles, tabByLabel, tabLabels as tabLabelsOf } from './testUtils/inspectorDom';
 
 const VIDEO_ID = 'hook-v';
 const AUDIO_ID = 'hook-a';
@@ -133,18 +135,14 @@ async function render(track: number, id: string, tabLabel: 'Video' | 'Audio') {
   select(track, id);
   mounted = mount(React.createElement(EditorInspectorPanel), { strictMode: true });
   await waitFrames(2);
-  const el = [...(mounted.container.querySelectorAll('[role="tab"]') ?? [])].find(
-    (t) => t.textContent === tabLabel,
-  ) as HTMLElement | undefined;
+  const el = tabByLabel(mounted.container, tabLabel);
   if (!el) throw new Error(`no ${tabLabel} tab`);
   actSync(() => el.click());
   await waitFrames(2);
 }
 
 function field(label: string): HTMLInputElement {
-  const labels = [...(mounted?.container.querySelectorAll('label') ?? [])];
-  const hit = labels.find((l) => l.querySelector('span')?.textContent === label);
-  const input = hit?.querySelector('input');
+  const input = fieldByLabel(mounted?.container, label);
   if (!input) throw new Error(`no field labelled "${label}"`);
   return input as HTMLInputElement;
 }
@@ -156,11 +154,7 @@ function keyframeToggle(label: string): HTMLElement {
 }
 
 function type(input: HTMLInputElement, value: number) {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-  actSync(() => {
-    setter?.call(input, String(value));
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
+  typeNumber(input, value);
 }
 
 function clipAt(track: number): Clip {
@@ -206,9 +200,7 @@ describe.each(SELECTIONS)('with $name selected (B-334)', ({ track, id }) => {
   it('the EQ edits the audio partner’s bands', async () => {
     await render(track, id, 'Audio');
     // Band 1's Gain is the first "Gain" row.
-    const gain = [...(mounted?.container.querySelectorAll('label') ?? [])]
-      .filter((l) => l.querySelector('span')?.textContent === 'Gain')
-      .map((l) => l.querySelector('input'))[0] as HTMLInputElement;
+    const gain = fieldByLabel(mounted?.container, 'Gain') as HTMLInputElement;
     type(gain, 6);
     await waitFrames(2);
     expect(clipAt(1).eq_bands?.[0]?.gain_db).toBe(6);
@@ -228,7 +220,7 @@ describe.each(SELECTIONS)('with $name selected (B-334)', ({ track, id }) => {
 
   it('shows no Audio-only controls on the Video tab and no picture controls on the Audio tab', async () => {
     await render(track, id, 'Video');
-    const headings = [...(mounted?.container.querySelectorAll('h3') ?? [])].map((h) => h.textContent);
+    const headings = sectionTitles(mounted?.container);
     expect(headings).toContain('Transform');
     expect(headings).not.toContain('Audio');
     expect(headings).not.toContain('EQ');

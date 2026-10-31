@@ -4,7 +4,7 @@ The Global Inspector's shared chrome (D-103, Phase 4 of `docs/notes/global-inspe
 
 ## What this is
 
-Two tiny, presentation-only components — `InspectorEmptyState` and `InspectorSection` —
+Two tiny, presentation-only components (D-432 P4: `InspectorSection` is now collapsible when given `open` / `onOpenChange`, with lazy body, `meta` and `actions`; the 10 px uppercase heading is gone) — `InspectorEmptyState` and `InspectorSection` —
 factored out of `@apelles/motion`'s `InspectorPanel.tsx` (Phase 2, D-099) and
 `@apelles/editor`'s `ClipInspectorPanel.tsx` (Phase 3, D-102), which had converged on
 byte-identical Tailwind classes for their "nothing selected" message and their

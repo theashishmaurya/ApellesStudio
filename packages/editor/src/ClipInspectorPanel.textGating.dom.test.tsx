@@ -38,6 +38,7 @@ const { useEditorTimelineStore } = await import('./timelineStore');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
 import type { Clip, Timeline } from './timeline';
 import { DEFAULT_TEXT_FONT } from './timeline';
+import { fieldByLabel, sectionTitles, tabByLabel, tabLabels as tabLabelsOf } from './testUtils/inspectorDom';
 
 const VIDEO_CLIP_ID = 'clip-1';
 const TEXT_CLIP_ID = 'title-1';
@@ -116,25 +117,21 @@ async function render() {
  *  text-clip cases below deliberately never call this: a title has no Audio
  *  tab at all, which is what `tabExists('Audio')` asserts instead. */
 async function showAudioTab() {
-  const tab = [...(mounted?.container.querySelectorAll('button') ?? [])].find(
-    (b) => b.textContent === 'Audio',
-  );
+  const tab = tabByLabel(mounted?.container, 'Audio');
   if (!tab) throw new Error('no Audio tab');
   actSync(() => tab.click());
   await waitFrames(2);
 }
 
 function tabExists(label: string): boolean {
-  return [...(mounted?.container.querySelectorAll('button') ?? [])].some(
-    (b) => b.textContent === label,
-  );
+  return !!tabByLabel(mounted?.container, label);
 }
 
 describe("a text clip's Inspector hides rows that do nothing for it", () => {
   it('an ordinary video clip gets every row: Scale, Rotation, Width, Height, and the Crop section', async () => {
     selectClip(VIDEO_CLIP_ID);
     await render();
-    for (const label of ['Opacity', 'Position X', 'Position Y', 'Scale', 'Rotation', 'Width', 'Height', 'Left', 'Right', 'Top', 'Bottom']) {
+    for (const label of ['Opacity', 'Position X', 'Position Y', 'Scale', 'Rotation', 'Size', 'Crop left', 'Crop right', 'Crop top', 'Crop bottom']) {
       expect(labelExists(label)).toBe(true);
     }
     // D-223 — and its own audio level, which a media clip really has (its
@@ -156,7 +153,7 @@ describe("a text clip's Inspector hides rows that do nothing for it", () => {
     for (const label of ['Opacity', 'Position X', 'Position Y']) {
       expect(labelExists(label)).toBe(true);
     }
-    for (const label of ['Scale', 'Rotation', 'Width', 'Height', 'Left', 'Right', 'Top', 'Bottom']) {
+    for (const label of ['Scale', 'Rotation', 'Size', 'Crop left', 'Crop right', 'Crop top', 'Crop bottom']) {
       expect(labelExists(label)).toBe(false);
     }
     // D-223 — a generated title has no audio stream at all, so its Volume and

@@ -1,34 +1,20 @@
 // @vitest-environment jsdom
 /**
- * @apelles/editor — B-113: a crop value is readable, and no spinner arrows sit
- * on top of it.
+ * @apelles/editor — the Inspector's numeric field on a real panel (B-113 →
+ * D-432 P4).
  *
- * **The defect.** The owner, working a real project, screenshotted the Crop
- * section reading `0.0` with the up/down arrows drawn over the missing digits;
- * the stored value was `0.052212` (what an on-canvas crop drag writes). Two
- * causes, both real: the field was `w-16` with `px-3` and WebKit's
- * `::-webkit-inner-spin-button` painted over its right edge, and the raw float
- * was rendered at full precision, which no field this narrow can show.
+ * **History.** B-113: a crop value showed `0.0` with native spinner arrows
+ * painted over the digits (stored `0.052212`, an 80 px field). D-253 removed
+ * the spinner; D-432 P4 replaced the native `type="number"` input with
+ * `NumberScrubber` (a `role="spinbutton"` text field with no spinner at all).
+ * What stays true, and is asserted here: a resting field shows a `step`-derived
+ * ROUNDING, focusing it shows the exact stored value, the tooltip carries the
+ * exact value, typing writes full precision, and an external write (undo) wins
+ * over a pinned draft immediately (B-135).
  *
- * **B-113's first fix was wrong about the first cause, and this file's
- * assertions moved with it (D-253).** It reserved a `pr-5` strip for the
- * spinner — but WebKit lays the spin button out INSIDE the padding box, so the
- * padding moved the digits and the arrows left together and the overlap
- * survived intact; the owner's screenshot showed Transform and Crop still
- * broken after that landed. The spinner is now suppressed outright for every
- * `type="number"` in the app, which is what the class assertion below checks.
- *
- * **What this test can and cannot prove — stated rather than implied.** jsdom
- * has no layout engine: every `getBoundingClientRect()` here is zeros, so a
- * literal "these two boxes overlap" assertion is not available and a test
- * claiming to make one would be measuring nothing. What IS real and is
- * asserted: the value string the panel actually renders for a real crop value,
- * against the field's own declared geometry (`numericField.ts`, whose px
- * constants are the rendered Tailwind utilities' own values), including the
- * strip `@apelles/ui`'s Input reserves for the spinner. A value that fits that
- * budget cannot be under the arrows; a value that does not, is — which is
- * exactly what the pre-fix case below still demonstrates. The final visual
- * confirmation is the owner's own, against the running app.
+ * jsdom has no layout engine, so what this file proves is the rendered value
+ * STRING and the declared row geometry (92 px label column, 80 px slot), not
+ * pixels; the visual proof is `scratch/ui-redesign-p4/`.
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
@@ -54,13 +40,9 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 const { useEditorTimelineStore } = await import('./timelineStore');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
-import { NUMBER_INPUT_SPINNER_SUPPRESSION } from '@apelles/ui';
-import {
-  NUM_FIELD,
-  numericFieldCapacityChars,
-  numericFieldFits,
-  numericFieldTextWidthPx,
-} from './numericField';
+import { INSPECTOR_ROW } from '@apelles/ui';
+import { fieldByLabel } from './testUtils/inspectorDom';
+import { typeNumber } from './testUtils/numberField';
 import type { Clip, Timeline } from './timeline';
 
 const CLIP_ID = 'clip-1';
@@ -122,11 +104,9 @@ async function render() {
 /** The number field of the row with this label, found the way a human finds
  *  it: by the label text beside it. */
 function field(label: string): HTMLInputElement {
-  const labels = [...(mounted?.container.querySelectorAll('label') ?? [])];
-  const hit = labels.find((l) => l.querySelector('span')?.textContent === label);
-  const input = hit?.querySelector('input');
+  const input = fieldByLabel(mounted?.container, label);
   if (!input) throw new Error(`no field labelled "${label}"`);
-  return input as HTMLInputElement;
+  return input;
 }
 
 function currentClip(): Clip {
@@ -135,68 +115,41 @@ function currentClip(): Clip {
   return tl.tracks[0].clips[0];
 }
 
-describe('the Inspector’s numeric field clears its own spinner (B-113)', () => {
-  it('renders a real dragged crop value short enough to fit clear of the arrows', async () => {
+describe('the Inspector’s numeric field (B-113 → D-432)', () => {
+  it('rests on a rounded value of a real dragged crop, short enough to read', async () => {
     await render();
-    const shown = field('Left').value;
-
-    // The regression itself: the raw stored value could never have fitted.
-    expect(numericFieldFits(String(REAL_CROP_VALUE))).toBe(false);
-    // What is on screen now does — every character of it, inside the width
-    // left over once the spinner's strip is taken out.
-    expect(
-      numericFieldFits(shown),
-      `"${shown}" is ${shown.length} chars; the field fits ${numericFieldCapacityChars()} ` +
-        `(${numericFieldTextWidthPx()}px at ${NUM_FIELD.charPx}px/char)`,
-    ).toBe(true);
-    // …and it is still the same number, to the precision the field claims.
-    expect(Number(shown)).toBeCloseTo(REAL_CROP_VALUE, 3);
+    const shown = field('Crop left').value;
+    expect(shown).toBe('0.052');
+    expect(Number(shown)).not.toBe(REAL_CROP_VALUE);
+    expect(field('Crop top').value).toBe('0.123');
+    expect(field('Position X').value).toBe('-0.523');
   });
 
-  it('suppresses the spinner on the rendered element, not just in theory', async () => {
+  it('is a spinbutton with no native number input behind it (nothing to paint spinner arrows)', async () => {
     await render();
-    const input = field('Left');
-    // The suppression comes from `@apelles/ui`'s Input for every
-    // `type="number"`, which is where the defect actually lived — one class
-    // set, applied once, rather than per call site.
-    expect(input.type).toBe('number');
-    for (const cls of NUMBER_INPUT_SPINNER_SUPPRESSION.split(/\s+/)) {
-      expect(input.className.split(/\s+/)).toContain(cls);
-    }
-    // The field cannot be squeezed narrower than the width the fit budget was
-    // computed against, however narrow the Inspector is dragged.
-    expect(input.className.split(/\s+/)).toContain('shrink-0');
-    expect(input.className.split(/\s+/)).toContain('w-20');
-    // No call site adds its own horizontal padding on top of the `px-3` the
-    // shadcn base carries and `NUM_FIELD.padRightPx` records — a second
-    // `pr-*`/`pl-*` is what would make that budget a lie.
-    expect(input.className.match(/\bpr-[\w.[\]-]+/g)).toBe(null);
-    expect(input.className.match(/\bpl-[\w.[\]-]+/g)).toEqual(['pl-2']);
+    const input = field('Crop left');
+    expect(input.getAttribute('role')).toBe('spinbutton');
+    expect(input.type).toBe('text');
+    expect(input.getAttribute('aria-valuenow')).toBe(String(REAL_CROP_VALUE));
+    expect(input.getAttribute('aria-label')).toBe('Crop left');
   });
 
-  it('every numeric row on the panel fits, not only the crop ones', async () => {
+  it('has the declared row geometry: a 92 px label column and an 80 px keyframe slot', async () => {
     await render();
-    // Position X carries a dragged full-precision value in this fixture too,
-    // and the transform rows looked fine in the owner's screenshot only
-    // because their values happened to be short that day.
-    for (const label of ['Opacity', 'Position X', 'Position Y', 'Scale', 'Rotation', 'Left', 'Right', 'Top', 'Bottom']) {
-      const shown = field(label).value;
-      expect(numericFieldFits(shown), `${label} shows "${shown}"`).toBe(true);
-    }
+    const row = field('Crop left').closest('[data-slot="inspector-row"]') as HTMLElement;
+    expect(row.className).toContain(`grid-cols-[${INSPECTOR_ROW.LABEL_PX}px_minmax(0,1fr)_${INSPECTOR_ROW.SLOT_PX}px]`);
+    expect(row.querySelector('[data-slot="inspector-slot"]')).toBeTruthy();
   });
 
   it('focusing the field shows the exact stored value back — nothing is lost', async () => {
     await render();
-    const input = field('Left');
+    const input = field('Crop left');
     expect(input.value).toBe('0.052');
 
-    // A real focus, not a synthesised event: React delegates `onFocus` off
-    // `focusin`, which only `HTMLElement.focus()` actually raises.
     actSync(() => input.focus());
     await waitFrames(1);
     // The rounding is a DISPLAY rounding: the moment the user is in the field,
-    // the number they can edit is the real one, so a spinner step or an
-    // arrow-key nudge starts from the stored value, not from a rounded copy.
+    // the number they can edit is the real one.
     expect(input.value).toBe(String(REAL_CROP_VALUE));
 
     actSync(() => input.blur());
@@ -206,24 +159,24 @@ describe('the Inspector’s numeric field clears its own spinner (B-113)', () =>
     expect(currentClip().crop_left).toBe(REAL_CROP_VALUE);
   });
 
-  it('the tooltip carries the exact value whenever the display is rounded', async () => {
+  it('the tooltip carries the exact value', async () => {
     await render();
-    expect(field('Left').getAttribute('title')).toBe(`Left: ${REAL_CROP_VALUE}`);
-    // …and says nothing at all when there is nothing to add.
-    expect(field('Opacity').getAttribute('title')).toBeNull();
+    const wrapper = field('Crop left').closest('[data-slot="number-scrubber"]');
+    expect(wrapper?.getAttribute('title')).toBe(`Crop left: ${REAL_CROP_VALUE}`);
   });
 
   it('typing still writes full precision — the rounding is display-only', async () => {
     await render();
-    const input = field('Left');
-    actSync(() => input.focus());
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    actSync(() => {
-      setter?.call(input, '0.123456');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    });
+    typeNumber(field('Crop left'), '0.123456');
     await waitFrames(1);
     expect(currentClip().crop_left).toBe(0.123456);
+  });
+
+  it('accepts arithmetic against the stored value (+0.1 on 0.052212)', async () => {
+    await render();
+    typeNumber(field('Crop left'), '+0.1');
+    await waitFrames(1);
+    expect(currentClip().crop_left).toBeCloseTo(0.152212, 6);
   });
 });
 
@@ -233,9 +186,7 @@ describe('B-135: an external value change reaches a focused field immediately, n
     const input = field('Opacity');
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
 
-    // Type a value — this is what leaves a draft behind (B-135's own defect
-    // needed one: a field that was merely focused, never edited, had no
-    // draft to pin it, and already updated live).
+    // Type without committing: this leaves a draft behind.
     actSync(() => input.focus());
     actSync(() => {
       setter?.call(input, '0.35');
@@ -244,24 +195,17 @@ describe('B-135: an external value change reaches a focused field immediately, n
     await waitFrames(1);
     expect(input.value).toBe('0.35');
 
-    // An external write to the SAME property — exactly what undo does: it
-    // pops the history stack and applies the previous value directly to the
-    // store, with no idea this field exists or that it has a draft.
+    // An external write to the SAME property — exactly what undo does.
     actSync(() => {
       useEditorTimelineStore.setState((s) => {
         const tl = s.timeline;
         if (!tl) return s;
         const clip = tl.tracks[0].clips[0] as unknown as { opacity?: number };
-        clip.opacity = 1;
+        clip.opacity = 0.5;
         return { ...s, timeline: { ...tl } };
       });
     });
     await waitFrames(1);
-
-    // The defect: this stayed '0.35' (the stale draft) until blur. The fix:
-    // an update that did not come from this field's own last `onValueChange`
-    // clears the draft immediately, so the field shows the real value while
-    // STILL focused — no blur required.
-    expect(input.value).toBe('1');
+    expect(input.value).toBe('0.5');
   });
 });
