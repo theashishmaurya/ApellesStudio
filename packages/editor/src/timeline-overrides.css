@@ -18,6 +18,23 @@
 }
 
 /*
+ * B-347 F2 — contain a clip's size change. A trim writes `width` on the clip
+ * BODY (`useEditGesture.ts`), whose box then overflows the library's
+ * absolutely-positioned action wrapper; that overflow change propagated to the
+ * `overflow: overlay` edit-area scroller and re-laid-out its flex boxes and
+ * scrollbars (57-78 % of a ripple's move-phase main thread, measured in
+ * `docs/notes/timeline-drag-perf.md`). The wrapper's own size is set inline by
+ * the library (left / width / row height), so size containment is safe, and
+ * layout containment keeps its subtree's layout (and overflow) inside it. Not
+ * `paint`: the clip body already paints inside its own `contain: layout paint
+ * style` box (`TimelinePane.tsx`), and a paint clip here would cut whatever a
+ * future overlay draws outside the wrapper.
+ */
+.timeline-editor-action {
+  contain: layout size style;
+}
+
+/*
  * D-432 §4.6 — the playhead: a crisp 1 px `--color-playhead` line (the library
  * drew two blue `#5297FF` borders and scaled them by half, which renders
  * blurry), above clips and markers in the timeline's own layer scale.

@@ -20,4 +20,11 @@ describe('timeline-overrides.css', () => {
     expect(css).toMatch(/\.timeline-editor-action\s*\{\s*background-color:\s*transparent/);
     expect(css).not.toMatch(/-stretch/);
   });
+
+  it('contains a clip wrapper`s size change without clipping its paint (B-347 F2)', () => {
+    const rule = /\.timeline-editor-action\s*\{[^}]*\bcontain:\s*([^;}]+)/.exec(css);
+    const tokens = (rule?.[1] ?? '').trim().split(/\s+/);
+    expect(tokens).toEqual(expect.arrayContaining(['layout', 'size', 'style']));
+    expect(tokens).not.toContain('paint');
+  });
 });

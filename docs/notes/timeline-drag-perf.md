@@ -239,6 +239,13 @@ Each line is a landed fix. None is re-profiled against the live app yet (that ne
   and clamps with no layout read. Pinned by `EditFeedbackLayer.dom.test.tsx` (a spy on
   `offsetWidth` counts one read per gesture). Expected: the forced layout leaves the input
   handler (-1 layout per extra move at 120 Hz).
+- **F2 done.** `.timeline-editor-action { contain: layout size style }` in
+  `timeline-overrides.css` (not `paint`). Nothing legitimately draws outside the wrapper:
+  its only child is the `ClipBlock` body, which already has its own `contain: layout paint
+  style`, and the brackets, readout, snap guide, transitions, markers and the playhead all
+  live in the pane's overlay layers, not in the action. Pinned as text in
+  `timelineOverrides.test.ts` (jsdom applies no CSS). Expected: move-phase layout
+  ~8 ms -> < 1 ms per preview; **unverified live**: re-profile with the F6 build.
 
 ## Instrument next (exact additions; debug-only)
 
