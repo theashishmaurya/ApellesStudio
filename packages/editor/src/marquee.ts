@@ -224,18 +224,15 @@ export function composeMarqueeSelection(
   return next;
 }
 
-/** The pixel geometry `TimelinePane.tsx` already uses to place every overlay
- *  in the edit area: `START_LEFT_PX`, `RULER_AND_MARGIN_PX`, `ROW_HEIGHT`, the
- *  current zoom, and the current scroll. Passed in rather than imported so
- *  this module stays free of that component's module-scope constants (and so
- *  the tests can state them explicitly). */
-export interface MarqueeViewport {
+/** The zoom and row geometry of the lanes' CONTENT box (D-437 S8: the marquee
+ *  is drawn inside the lanes' scroller, so its box needs no scroll offset).
+ *  Passed in rather than imported so this module stays free of
+ *  `TimelinePane.tsx`'s module-scope constants (and so the tests can state them
+ *  explicitly). */
+export interface MarqueeGeometry {
   fps: number;
   pxPerSec: number;
-  scrollLeft: number;
-  scrollTop: number;
   startLeftPx: number;
-  rulerPx: number;
   /** the default row height; with no `rowTops` every row is this tall */
   rowHeight: number;
   /** D-432 P3 — each row's top (`trackHeight.ts` `trackTops`, one entry past
@@ -244,9 +241,19 @@ export interface MarqueeViewport {
   rowTops?: readonly number[];
 }
 
+/** The geometry plus where the content sits in the edit area right now: the
+ *  current scroll and `RULER_AND_MARGIN_PX` (the scroller's top). What a
+ *  pointer position in edit-area pixels needs to become timeline units. */
+export interface MarqueeViewport extends MarqueeGeometry {
+  scrollLeft: number;
+  scrollTop: number;
+  rulerPx: number;
+}
+
 /** Edit-area-relative pixels for the pointer at `clientX`/`clientY`, converted
- *  to timeline units. The exact inverse of `marqueeOverlayBox` below, and the
- *  same conversion the edit area's own click handler already does inline. */
+ *  to timeline units. The inverse of `marqueeContentBox` below (shifted by
+ *  `rulerPx` and the scroll), and the same conversion the edit area's own click
+ *  handler already does inline. */
 export function marqueeAnchorFromPoint(
   offsetX: number,
   offsetY: number,
@@ -260,18 +267,18 @@ export function marqueeAnchorFromPoint(
   };
 }
 
-/** Where the live marquee paints, in the same edit-area-relative coordinate
- *  space every other overlay in `TimelinePane.tsx` uses. Recomputed from the
- *  rect on every render rather than stored, so a scroll or zoom mid-drag moves
- *  the rectangle with the content it actually encloses. */
-export function marqueeOverlayBox(
+/** Where the live marquee paints, in the lanes' content coordinates (it is
+ *  rendered inside their scroller, D-437 S8). Recomputed from the rect on
+ *  every render rather than stored, so a zoom mid-drag rescales the rectangle
+ *  with the content it actually encloses, and a scroll moves it natively. */
+export function marqueeContentBox(
   rect: MarqueeRect,
-  v: MarqueeViewport,
+  v: MarqueeGeometry,
 ): { left: number; top: number; width: number; height: number } {
-  const left = v.startLeftPx + (rect.frameStart / v.fps) * v.pxPerSec - v.scrollLeft;
-  const right = v.startLeftPx + (rect.frameEnd / v.fps) * v.pxPerSec - v.scrollLeft;
+  const left = v.startLeftPx + (rect.frameStart / v.fps) * v.pxPerSec;
+  const right = v.startLeftPx + (rect.frameEnd / v.fps) * v.pxPerSec;
   const yOf = (row: number) => (v.rowTops ? yAtRow(v.rowTops, row, v.rowHeight) : row * v.rowHeight);
-  const top = v.rulerPx + yOf(rect.rowStart) - v.scrollTop;
-  const bottom = v.rulerPx + yOf(rect.rowEnd) - v.scrollTop;
+  const top = yOf(rect.rowStart);
+  const bottom = yOf(rect.rowEnd);
   return { left, top, width: right - left, height: bottom - top };
 }

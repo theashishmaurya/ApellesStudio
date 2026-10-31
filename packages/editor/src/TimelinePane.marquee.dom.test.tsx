@@ -352,6 +352,33 @@ describe('marquee-select — real DOM, real PointerEvents (D-137 via D-142 harne
     ]);
   });
 
+  it('10. a drag pressed on a real lane row inside the scroller, after a scroll, selects the 3 clips it crosses (the harness\'s select-marquee shape)', async () => {
+    // D-437 S8 — the harness's `select-marquee` scenario failed live after
+    // S4–S7 (0 selected). The shape it drags: press on empty space to the right
+    // of the clips (the target is a lane's own row element, inside the native
+    // scroller), sweep left and down across three rows. Here also after a
+    // horizontal scroll, so the anchor must come from the live scroll position.
+    const scroller = mounted!.container.querySelector<HTMLElement>('[data-testid="timeline-scroller"]')!;
+    actSync(() => {
+      scroller.scrollLeft = 45;
+      scroller.dispatchEvent(new Event('scroll'));
+    });
+    const row0 = mounted!.container.querySelector<HTMLElement>('[data-testid="timeline-track-row"][data-chroma-track="0"]')!;
+    expect(row0).not.toBeNull();
+    // From frame 200 on track 0 (right of 'd', left of 'b' at 240) to frame 10
+    // on track 2: crosses 'a' [0,48), 'c' [24,72) and 'd' [120,168).
+    await dragPointer(row0, [
+      { x: xAtFrame(200) - 45, y: yAtTrack(0, 15) },
+      { x: xAtFrame(100) - 45, y: yAtTrack(1) },
+      { x: xAtFrame(10) - 45, y: yAtTrack(2, 37) },
+    ]);
+    expect(selection()).toEqual([
+      { track: 0, id: 'a' },
+      { track: 1, id: 'c' },
+      { track: 2, id: 'd' },
+    ]);
+  });
+
   it('9. a ctrl-wheel zoom mid-drag is read live, not from a stale closure — the band rescales with the content it encloses', async () => {
     // `TimelinePane.tsx`'s own `ZOOM_STEP` (1.2) — each ctrl-wheel tick
     // multiplies `pxPerSec` by this. Four ticks ≈ 1.2^4 ≈ 2.07x, a change
@@ -361,7 +388,7 @@ describe('marquee-select — real DOM, real PointerEvents (D-137 via D-142 harne
 
     // Capture the marquee's rendered pixel band BEFORE and AFTER a real
     // mid-drag zoom, same anchor and same live pointer position throughout —
-    // proving `marqueeOverlayBox` re-derives from the LIVE viewport
+    // proving `marqueeContentBox` re-derives from the LIVE viewport
     // (`marqueeLatestRef`) on every render, not a `pxPerSec` value closed
     // over back at `pointerdown` (a stale closure would leave this
     // unchanged).
@@ -381,7 +408,7 @@ describe('marquee-select — real DOM, real PointerEvents (D-137 via D-142 harne
     // pair, set by the LAST real move) never changes here, only the pixels
     // it paints at — if the overlay's width still tracked the zoom with zero
     // new pointer input, that proves it derives from the LIVE `pxPerSec` on
-    // every render (`marqueeOverlayBox(marquee, marqueeViewport)`), not one
+    // every render (`marqueeContentBox(marquee, marqueeGeometry)`), not one
     // closed over back at `pointerdown` — a stale closure would leave the
     // band frozen at `widthBefore` until the next explicit move.
     for (let i = 0; i < ticks; i++) {

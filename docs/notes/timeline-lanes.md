@@ -1,6 +1,6 @@
 # Timeline lanes: replacing `@xzdarcy/react-timeline-editor` (D-437 build plan)
 
-Status: **plan, 2026-11-01. Built so far: S0, S1, S2, S3a, S3b, S4, S5, S6, S7 (live paint A/B pending) — `TimelinePane` renders the lanes and our playhead since S4; the library package and its selectors are gone (S5, S6). See each step's "Built" note.** Decision: D-437 (`docs/08-decisions.md`).
+Status: **plan, 2026-11-01. Built so far: S0, S1, S2, S3a, S3b, S4, S5, S6, S7 (live paint A/B pending), S8 (live check pending) — `TimelinePane` renders the lanes and our playhead since S4; the library package and its selectors are gone (S5, S6). See each step's "Built" note.** Decision: D-437 (`docs/08-decisions.md`).
 Evidence: `docs/notes/timeline-drag-perf.md` (B-347), the live harness runs under
 `scratch/ui-harness/runs/` (run 4: `2026-10-31T21-00-23-799Z`). Builds on D-432 P2/P3
 (`docs/notes/ui-redesign.md` §6b, §6c) and the harness (`docs/notes/ui-harness.md`).
@@ -802,6 +802,94 @@ is paint)._
 - Acceptance: a DOM test that a scroll event causes **zero** `TimelinePane` renders and
   lane renders only on bucket crossings; harness scroll scenarios green at 300 clips;
   view attributes still correct (`scroll-horizontal-wheel` reads them).
+- **Built (2026-11-01).** `lanes/timelineScroll.ts`: a per-pane store (zustand `createStore`, one
+  per `TimelinePane` via `useState`) mirroring the native scroller's `left`/`top`; its writers are the
+  scroller's `scroll` event (`onTimelineScroll`, which also keeps B-326's "user took the wheel"
+  check), the zoom anchor's layout effect and the B-357 mount adoption. Nothing writes the scroller
+  from it, so B-291's echo loop cannot return. The pane's `scrollLeft`/`scrollTop` state and
+  `scrollRef` are gone. Readers: **handlers** (drop math, the empty-space click, dnd-kit's B-145
+  origin and `dragPx`, the transition drop, the height drag, the skimmer, the playback follower,
+  `zoomBy`, the marquee's point conversion) call `scroll.getState()` at event time; the edit gesture's
+  `EditGestureView` takes `scroll: () => {left, top}` instead of two numbers; **one listener**
+  (`applyScrollSinks`, subscribed in a layout effect declared before the zoom/adoption effects) writes
+  the header column's `transform: translateY` (R3: the same write path as every other sink), the
+  playhead's `setScroll` and the edit area's `data-chroma-scroll-left/-top` (React no longer renders
+  those two attributes, so a render never resets them; the harness's `view.scrollLeft` stays truthful);
+  **`TimelineLanes`** subscribes itself, selecting `windowScrollLeft(left, viewportWidth)`, so a scroll
+  inside a bucket renders nothing and a crossing renders the lanes only (its `windowLeft` prop became
+  `scroll`); **the pinned strips** (ruler, beat lane, marker strip, curve lane) are wrapped in
+  `WithScrollLeft`, which re-renders the strip and not the pane, and keep their plain `scrollLeft`
+  prop. **Content-space overlays** (`TimelineLanes` `children`, rendered after the lanes inside the
+  content box): the gap highlight, `TransitionBadges`, `TimelineDragPreview`, the marquee
+  (`marqueeContentBox`, replacing `marqueeOverlayBox`; `MarqueeViewport` = `MarqueeGeometry` + scroll),
+  the `TrackDropZone`s and the lane height zones. `TransitionBadges`/`TimelineDragPreview` lost their
+  `scrollLeft`/`scrollTop`/`rulerAndMarginPx` props (content coordinates only).
+  **Zoom:** the anchor's layout effect writes `scroller.scrollLeft` once and then the store, so a zoom
+  step is ONE pane render (was two: the old `setScrollLeft` in the layout effect re-rendered the whole
+  pane synchronously), and **ctrl-wheel/pinch events are coalesced to one zoom per animation frame**
+  (factors multiply, the latest pointer x anchors). That second change is the zoom finding below.
+  **Render counts** (`TimelinePane.scrollRenders.dom.test.tsx`; pane renders counted through
+  `useViewportWidth`, which only the pane calls; lane renders through `laneWindow`, which only the
+  lanes call; clip renders at `LaneClip`'s memo): 3000 px of horizontal scroll in 60 frames at a
+  1200 px viewport = **0 pane renders, 5 lane renders** (one per 600 px bucket); 4 scrolls inside one
+  bucket = 0/0/0; a vertical scroll writes `translateY(-Npx)` on the header column with 0 pane renders;
+  the transition badge keeps its content `left` across a scroll (same node); a marker flag and the
+  ruler labels move with the scroll (strip re-render); a pinch frame of 3 ctrl-wheels = 0 pane renders
+  until the frame, then 1, at `pxPerSec × 1.2³`; playback follow pages the scroller and its echo
+  renders no pane. `TimelinePane.marquee.dom.test.tsx` test 10: a drag pressed on a real lane row
+  inside the scroller, after a 45 px scroll, selects the 3 clips it crosses.
+  **The zoom-step finding (live: pinch frames 122–318 ms, later 181–247 ms; one wheel step 47 ms).**
+  Headless Chromium on `app/harness.html?mode=edit`, dev bundle, 300 clips on 8 tracks all on screen
+  (fully zoomed out), scratch CDP driver: a CPU profile of a zoom step is React work, not layout or
+  paint (trace for 2 steps: Layout 5 ms, Paint 6 ms, UpdateLayoutTree 4 ms; the rest script). Inside
+  it: every visible `LaneClip` re-renders (its `leftPx`/`widthPx` changed; by design, §2.3), with
+  `ClipFadeOverlay`, `ClipBlock` and `ClipBody` under it, plus React's dev-only cost (`jsxDEV`,
+  `validateProperty`, `logComponentRender`) as the largest single bucket. One step = 31–37 ms
+  script before S8 (two pane renders) and about 30 ms after (one). **Why a pinch frame was 4–6× that:**
+  a trackpad pinch delivers several ctrl-wheel events per frame, each its own task; each was a
+  `setPxPerSec` → a synchronous render of the pane and all 300 clips. Measured, 4 wheel events in
+  separate tasks inside one frame: **134–239 ms to the painted frame before, 52–55 ms after**
+  (coalesced: one render per frame). What is left for S9/§7: a single zoom step still re-renders every
+  visible clip (≈ 30 ms in the dev bundle at 300 visible; production React should be several times
+  cheaper, which S9's production-bundle run must confirm against the ≤ 33 ms target). If it misses,
+  the next lever is §7's CSS-variable zoom (positions as `calc(var(--px-per-frame) × start)`), not
+  layout or paint work. `ClipFadeOverlay` was the largest component bucket under `LaneClip` (≈ 5 ms per
+  step at 300 clips, dev) and is the first thing to look at if a cheaper per-clip zoom is wanted.
+  **Playback at 300 clips (live 28 fps):** inside the pane, a played frame costs the playhead's
+  transform write and the follower's check; a page flip used to render the whole pane (the scroll
+  state) and now renders only the lanes' bucket. The per-frame React subscribers to `playhead` are
+  outside the pane: `PreviewPane`, `EditorInspectorPanel`, `ClipHighlightsSection`, `HighlightOverlay`
+  and `ClipCurveEditor` (when open). Not measured here (the harness page has no real player); for
+  S9 to profile live.
+  **Visual check:** headless Chromium on `app/harness.html?mode=edit` (dev server on a private port,
+  stopped after), same 300-clip state before (main, S7) and after:
+  `scratch/d437-s8/{before,after}-{1-initial,2-zoomed-out,3-zoomed-scrolled}.png` (main checkout's
+  `scratch/`), with `{before,after}-results.json` and the zoom traces. Shot 3 (zoomed in, scrolled
+  362 px right and 60 px down): headers and rows agree to the pixel (track 1's header top = its row
+  top, 671 px, in both), the header column moved by `translateY(-60px)` after vs. a React `top` before.
+  **select-marquee (live regression after S4–S7, 0 selected):** not reproducible here. Real mouse
+  input in headless Chromium (CDP) and in Playwright's WebKit (WebKit 2227) on the harness page, with
+  the scenario's shape (press right of the clips on track 0, sweep to frame 40 on track 1), selects
+  all 3 on both S4–S7 code and S8 code, also after a preceding click + Shift-click and a reseed, and
+  with a document text selection over the lanes. S8 moves the marquee into the scroller and reads the
+  scroll live at each pointer event; a live harness rerun has to say whether it still fails.
+  **Deviations:** (1) the pinned strips subscribe through a `WithScrollLeft` render-prop wrapper
+  rather than each taking the store, so their components and suites are unchanged; (2) the edit
+  feedback layer (brackets, readout, snap guide, blade line) and the skim line stay pinned in edit-area
+  coordinates, not inside the scroller: the snap guide and skim line run through the ruler and the
+  readout sits above row 0, which the scroller would clip; they are imperative and read the scroll at
+  each pointer event (a wheel scroll mid-trim leaves them stale until the next pointer move, as
+  before); (3) a new-track drag ghost above the first row shows only its lower half (the upper half is
+  outside the scroller); (4) with the drop zones inside the content box, jsdom's inline-style rect stub
+  now gives dnd-kit a drop target, so a plain body drag in `trim`/`trimTools` suites can really move a
+  clip: those three tests now assert what they meant (no clip's source window or duration changed),
+  not that nothing moved; (5) the coalesced zoom lands on the next frame, not synchronously in the
+  wheel event.
+  **Check live with the harness:** `select-marquee` (above); the 300-clip zoom scenarios
+  (`zoom-trackpad-pinch`, `zoom-ctrl-wheel-anchored`, perf-300 zoom); `scroll-horizontal-wheel` and
+  `scroll-vertical-wheel` (header sync now a transform); dnd-kit autoscroll and drop resolution with the
+  drop zones inside the scroller (a clip drag that scrolls the lanes mid-drag); transition badge
+  popovers inside the scroller; WKWebView overlay scrollbars over the content-space overlays.
 
 ### S9 — verification
 - Production-bundle run of §4's table at 3 and 300 clips. Results section in this note.
