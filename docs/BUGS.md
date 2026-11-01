@@ -4,6 +4,19 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-361 — clicking a caption preset drops a placeholder "Your caption here" clip (and errors when the playhead frame is taken) instead of captioning the video from its transcript
+
+status: open (owner ask 2026-11-01; queued with the v0.3.0 checklist, roadmap 00r) · severity: medium (the first thing a creator tries in the Captions library) · area: `packages/editor/src/captionPresetAction.ts` (`applyCaptionPreset`), the Captions library panel, MCP `editor_add_caption_preset` / preset tool, `CaptionsFromTranscriptButton.tsx`, `captionsFromTranscript.ts`
+
+- **Seen:** the owner, live, with screenshots `scratch/bug-refs/2026-11-01-caption-preset-not-fit.png` and `…-caption-preset-click.png`. Clicking "Highlight" showed *"the preset was applied but the caption did not fit — is that frame occupied?"*. The owner said: "when I click on caption it should automatically do it with Transcribe instead of adding a normal one".
+- **Why the error:** `applyCaptionPreset` styles the subtitle track (step 2, which succeeded), then drops a 3 s sample clip (`DEFAULT_PRESET_CAPTION_TEXT`) at the playhead (step 3). `add_clip` refuses an occupied frame, so a track that already has a caption at the playhead reports a partial failure.
+- **Wanted behaviour** (one path, the same for the GUI click and the MCP tool, per the human + AI rule):
+  1. **The subtitle track already has captions:** restyle them with the preset. No placeholder, no error.
+  2. **No captions, and the timeline's speech has a transcript:** generate captions from it (`captionsFromTranscript`) in that preset's style.
+  3. **No transcript yet:** start transcription, show progress, then generate captions in that style when it lands.
+  4. **The placeholder sample stays only as an explicit option** (e.g. dragging a preset onto a spot, or a "Preview with sample text" action), never as the click's default.
+- **Tests:** DOM tests for all three cases plus the transcription-pending path; op-layer parity for the MCP tool.
+
 ## B-360 — a clip dragged from the media browser onto a new track always landed at frame 0, not where it was dropped
 
 status: **fixed** (2026-11-01) · severity: high (every drag-in below or above the tracks went to the start of the timeline) · area: `packages/editor/src/TimelinePane.tsx` (`placeDroppedClip`)
