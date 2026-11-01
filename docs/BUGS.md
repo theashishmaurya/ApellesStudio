@@ -4,6 +4,17 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-368 — placing a Motion render on the timeline adds a linked audio clip, though the render has no sound (it carries a silent AAC track)
+
+status: open (owner, 2026-11-01; queued with the v0.3.0 checklist) · severity: medium (every Motion card adds a junk audio clip, clutters the audio tracks, and its silent "audio" can trigger ducking or loudness logic) · area: `packages/motion-engine/scripts/render.mts` (`renderMedia` options), the media probe's `hasAudio` (D-129), `linkedClipsFromDraggedMedia`
+
+- **Seen:** the owner's screenshot `scratch/bug-refs/2026-11-01-motion-clip-gets-audio.png`. "M five-jobs" placed on V2 also produced a green "M five-jobs" audio clip on an audio track, with no waveform.
+- **Measured:** `motion/renders/five-jobs.mp4` has streams `h264` + **`aac`**. The audio is silent: `volumedetect` gives a mean of **−91.0 dB** over 860,160 samples. The probe therefore reports `hasAudio: true`, and D-129 builds a linked audio half for it.
+- **Fix, both halves:**
+  1. **Render:** a Motion scene with no soundtrack or audio layer renders **without an audio stream** (Remotion's `muted` / no enforced audio track in `renderMedia`). A scene with a soundtrack keeps its audio.
+  2. **Import / probe:** a source whose audio stream is digital silence (below about −80 dB mean and peak) is treated as `hasAudio: false`, so already-rendered files and any other silent-track media (screen recordings and so on) stop getting junk audio halves. Cache the result with the probe facts.
+- **Tests:** a render without audio has no audio stream; a render with a soundtrack keeps it; the probe classifies a silent-AAC fixture as no audio; a drop of a silent-track file creates no linked audio clip.
+
 ## B-367 — the Export dialog needs a redesign: a raw form with per-clip "fit / Freeze" rows, no presets, and no direct publishing
 
 status: open (owner, 2026-11-01) · severity: medium (UX; the last step of every edit) · area: the Edit tab's Export dialog (`ExportDialog` / `timelinePipeExport.ts` UI), the export queue
