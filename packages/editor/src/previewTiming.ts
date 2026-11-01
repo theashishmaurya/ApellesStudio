@@ -46,7 +46,7 @@
  *   the same picture.
  *
  * **Debug-only.** Every call site in `PreviewPane.tsx` is wrapped in
- * `if (import.meta.env.DEV)`, so a production build constant-folds them away
+ * `if (import.meta.env.APELLES_DEBUG_TOOLS === 'true')`, so a production build constant-folds them away
  * and this module is tree-shaken out along with them (D-219's frontend gate).
  * Pure and injectable (`at` is a parameter) so the statistics are unit-tested
  * without a clock — see `previewTiming.test.ts`.

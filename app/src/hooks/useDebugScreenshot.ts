@@ -48,8 +48,8 @@ export function useDebugScreenshot(): void {
     // now, so in a release build the command does not exist and this shortcut
     // would only ever toast "command not found". Gated with it, on the
     // frontend's equivalent compile-time constant: `vite build` folds
-    // `import.meta.env.DEV` to `false` and drops everything below.
-    if (!import.meta.env.DEV) return;
+    // `import.meta.env.APELLES_DEBUG_TOOLS` to `'false'` and drops everything below.
+    if (import.meta.env.APELLES_DEBUG_TOOLS !== 'true') return;
 
     const onKeyDown = async (event: KeyboardEvent) => {
       if (!event.shiftKey || !(event.metaKey || event.ctrlKey) || event.altKey) {

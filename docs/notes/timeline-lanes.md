@@ -578,6 +578,12 @@ later web change (the bundle is a snapshot of `app/dist`). Still to do on an **u
 confirm `build.perfMarks` via `debug_perf_entries`, then the `perf-300` runs for the S0c
 baseline and S9.
 
+**B-358 (2026-11-01):** the first launch of that app showed `no frontend registry subscribed for op
+'debug_perf_entries'`: the frontend debug tooling was gated on `import.meta.env.DEV`, which a
+`tauri build --debug` bundle does not have. It is now gated on `APELLES_DEBUG_TOOLS` (on for
+`TAURI_ENV_DEBUG=true`, like the perf marks), so this app must be **rebuilt** once to pick it up;
+`debug_perf_entries` then reports `build: {dev: false, perfMarks: true, debugTools: true}`.
+
 #### Baseline
 
 _Not run yet. Fill in from `scratch/perf-baseline/dev` and `scratch/perf-baseline/prod`: commit

@@ -41,7 +41,7 @@
  *
  * Debug-only: nothing imports this statically. `debugOps.ts` does, and that
  *   module is itself reached only through the `import()` inside
- *   `useDebugControl`'s `import.meta.env.DEV` branch, so this file lands in
+ *   `useDebugControl`'s `import.meta.env.APELLES_DEBUG_TOOLS` branch, so this file lands in
  *   the same dropped chunk. See `docs/notes/debug-tooling.md`'s gate
  *   verification.
  */

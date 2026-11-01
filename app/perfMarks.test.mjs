@@ -1,7 +1,7 @@
 // The perf-mark gate (D-437 S0a): the Tauri env contract, in one place.
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { perfMarksDefine, perfMarksEnabled } from './perfMarks.mjs';
+import { buildDefines, debugToolsEnabled, perfMarksDefine, perfMarksEnabled } from './perfMarks.mjs';
 
 const saved = { debug: process.env.TAURI_ENV_DEBUG, force: process.env.APELLES_PERF_MARKS };
 afterEach(() => {
@@ -42,5 +42,27 @@ describe('perfMarksEnabled', () => {
   it('defines the constant as a JSON literal Vite can substitute', () => {
     process.env.TAURI_ENV_DEBUG = 'true';
     expect(perfMarksDefine('build')).toEqual({ 'import.meta.env.APELLES_PERF_MARKS': '"true"' });
+  });
+});
+
+describe('debugToolsEnabled / buildDefines (B-358)', () => {
+  it('mirrors debug_assertions: on for vite dev and tauri debug, off for a release build', () => {
+    delete process.env.TAURI_ENV_DEBUG;
+    expect(debugToolsEnabled('serve')).toBe(true);
+    process.env.TAURI_ENV_DEBUG = 'true';
+    expect(debugToolsEnabled('build')).toBe(true);
+    process.env.TAURI_ENV_DEBUG = 'false';
+    expect(debugToolsEnabled('build')).toBe(false);
+    delete process.env.TAURI_ENV_DEBUG;
+    expect(debugToolsEnabled('build')).toBe(false);
+  });
+
+  it('forcing the perf marks does not turn the debug tooling on', () => {
+    delete process.env.TAURI_ENV_DEBUG;
+    process.env.APELLES_PERF_MARKS = '1';
+    expect(buildDefines('build')).toEqual({
+      'import.meta.env.APELLES_PERF_MARKS': '"true"',
+      'import.meta.env.APELLES_DEBUG_TOOLS': '"false"',
+    });
   });
 });

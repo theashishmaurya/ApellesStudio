@@ -15,8 +15,10 @@ Nothing in this package may reach a production build (CLAUDE.md's standing
 rule). The gate is **compile-time, not a runtime flag**:
 
 - `useDebugControl()`'s whole effect body is behind
-  `if (!import.meta.env.DEV) return;` — Vite substitutes the literal `false`
-  in a production build, so the branch is constant-folded away.
+  `if (import.meta.env.APELLES_DEBUG_TOOLS !== 'true') return;` — the define
+  (`app/perfMarks.mjs`, B-358) is `'true'` for `vite dev` and `tauri build --debug`
+  (`TAURI_ENV_DEBUG=true`, exactly when Rust has `debug_assertions`) and `'false'`
+  in a release build, so the branch is constant-folded away there.
 - The registry itself is reached through a **dynamic `import('./debugOps')`
   inside that branch**, so Rollup drops `debugOps.ts` (and, transitively,
   `domTree.ts` and `uiState.ts`) from the output entirely rather than merely

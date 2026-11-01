@@ -509,7 +509,8 @@ grep -l 'apelles:edit:' app/dist/assets/*.js
 # suspends the WKWebView, so every frontend op answers "got no reply from the frontend".
 open -n --env CHROMA_CONTROL_PORT=19798 target/debug/bundle/macos/Apelles.app
 
-# confirm which bundle answers: build.dev must be false, build.perfMarks true
+# confirm which bundle answers: build.dev must be false, build.perfMarks and build.debugTools true
+# (debugTools false or "no frontend registry subscribed" = a bundle built before B-358: rebuild)
 curl -s -X POST 127.0.0.1:19798/op -d '{"op":"debug_perf_entries","args":{},"timeout_ms":3000}' | grep -o '"build":{[^}]*}'
 
 npm run harness --workspace @apelles/ui-harness -- --filter perf-300 --port 19798 \

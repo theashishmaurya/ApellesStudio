@@ -11,7 +11,7 @@
  * **Debug-only, always** (CLAUDE.md's standing rule; scope/tracker in
  * `docs/notes/debug-tooling.md`). `useDebugControl` is deliberately the only
  * VALUE this barrel exports: it reaches the registry through a dynamic
- * `import()` inside an `import.meta.env.DEV` branch, so a production build
+ * `import()` inside an `import.meta.env.APELLES_DEBUG_TOOLS` branch, so a production build
  * drops every op body along with `debugOps.ts`, `domTree.ts` and
  * `uiState.ts`. Re-exporting those modules' functions here would put them
  * back in the app's static import graph for no gain — nothing outside this
