@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-01** — **The toolbar's marker counter/list is removed** (owner): only the add-marker button remains. Markers are listed, jumped to and deleted in the Index panel and in each flag's own editor, so B-114's delete stays reachable. `MarkerListMenu` and the `timeline-marker-list` test id are deleted; marker tests 10–13 are replaced by one that pins the toolbar has no counter.
 - **2026-11-01** — **B-366 logged** (owner): every Inspector Video-tab section's contents need the same intuitive pass. Added to roadmap 00c.
 - **2026-11-01** — **B-365 logged** (owner): the Inspector's Audio tab (Audio + EQ) is not intuitive: raw band ids, no units, an unlabelled graph, 12 stacked fields. Added to roadmap 00c's UX redesign.
 - **2026-11-01** — **B-364 logged** (owner): the Music Edits panel is not intuitive. Roadmap 00c is broadened into a UX redesign of all the browser tool panels after v0.3.0.

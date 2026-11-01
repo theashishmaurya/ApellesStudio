@@ -105,7 +105,6 @@ export const TIMELINE_TEST_IDS = {
   zoomOut: 'timeline-zoom-out',
   zoomReadout: 'timeline-zoom-readout',
   addMarker: 'timeline-add-marker',
-  markerList: 'timeline-marker-list',
   /** D-432 P3 — the view toggles and the Clip Appearance popover
    *  (`TimelineViewControls.tsx`): Snapping (N), Skimming (S), the popover's
    *  trigger and body, its zoom slider and its names / badges switches. The

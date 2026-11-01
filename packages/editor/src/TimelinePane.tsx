@@ -356,7 +356,6 @@ import { animatedParams } from './clipKeyframes';
 import { ClipCurveEditor } from './ClipCurveEditor';
 import {
   AddMarkerButton,
-  MarkerListMenu,
   MarkerStrip,
   MARKER_STRIP_HEIGHT,
 } from './TimelineMarkers';
@@ -3361,19 +3360,11 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
               click-to-add they were here. What is left in this toolbar is
               exactly what acts on the timeline you already have. */}
           {/* D-222 — markers. A marker annotates a POSITION in this timeline,
-              so unlike the library items it genuinely belongs in this toolbar;
-              the list appears beside the add button only once there is
-              something in it. */}
+              so the add button belongs in this toolbar. The owner removed the
+              toolbar's marker list / counter (2026-11-01): markers are listed,
+              jumped to and deleted in the Index panel, and on the flag's own
+              editor (B-114's delete stays reachable from both). */}
           <AddMarkerButton onAdd={() => doAddMarker(true)} shortcut="M" />
-          <MarkerListMenu
-            timeline={timeline}
-            fps={fps}
-            onJump={setPlayhead}
-            // B-114 — the same `remove_marker` op the strip's own popover
-            // Delete drives (see `MarkerListMenu`'s doc for why the list
-            // needed its own delete at all).
-            onRemove={(id) => applyOp({ kind: 'remove_marker', id })}
-          />
           {/* D-226 — the transitions library. Beside Title/Marker for the same
               reason those two sit together: all three are "bring something new
               into the edit", none is scoped to the current selection. The drag
