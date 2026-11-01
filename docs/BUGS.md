@@ -4,6 +4,21 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-359 — the app still differs from the approved D-432 mockup in eight places (comparison pass 2026-11-01)
+
+status: open (queued with B-354, after D-437 S10) · severity: minor (polish), except item 6 (medium: the playhead goes off screen) · area: Inspector header and rows, the browser header, the timeline toolbar, track headers, view follow, marker lines
+
+- The full list, with screenshots: `docs/notes/ui-redesign.md` › "Mockup vs app comparison (2026-11-01)".
+- In short:
+  - the Inspector header's duration and its 4 icon tabs;
+  - paired X/Y rows and inline sliders;
+  - the browser's extra header row;
+  - the toolbar regroup and zoom slider (shared with B-354);
+  - the target-track badge;
+  - **the view not following a programmatic seek, and the zoom persisting across runs and timelines**;
+  - marker lines through the lanes;
+  - the empty states and volume popover (B-354).
+
 ## B-358 - the production-React debug app (`tauri build --debug`) had the Rust `debug_*` ops but no frontend registry, so the UI harness could not drive it
 
 **Found:** 2026-11-01, launching the S9 perf app. Its log said `no frontend registry subscribed for op 'debug_perf_entries'`.

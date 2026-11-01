@@ -260,7 +260,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    2. D-437 S10: release < 50 ms, zoom, playback at 300 clips (`docs/notes/timeline-lanes.md` S10; worktree `agent-a22c86466a8ce7faa`, no commits).
    3. B-354: toolbar regroup, empty states, Cmd+4, volume popover.
    4. B-348's missing NLE keys: J/K/L, I/O, Shift+Delete ripple delete.
-   5. A full mockup-vs-app comparison pass.
+   5. ~~Mockup-vs-app comparison pass~~: done 2026-11-01; its gaps are B-359 (fix with B-354).
    6. B-340: export memory bound.
    7. Then the Motion/Colorist redesign (00b).
 00b. **Motion- and Colorist-tab redesign — follow-up to D-432, not started.** After Edit's P2, run the same process per tab: research the real references (Motion: its layer timeline + scene list, reusing P2's clip/handle design; Colorist: DaVinci Resolve's Color page — node/adjustment panel, scopes, wheels), a mockup for owner approval, then phases. Until then those tabs pick up only the shared P1 tokens/type, P4 controls and P5 chrome.

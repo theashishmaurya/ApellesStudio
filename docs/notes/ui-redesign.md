@@ -1025,3 +1025,34 @@ replacing it is a separate D-NNN, not part of this redesign.
 6. **Viewer scrub bar.** Remove the big progress slider under the picture entirely, or keep a thin 3 px one?
 7. **Number fields.** Do they need arithmetic (`+10`, `*2`), as Resolve and Premiere allow?
 8. **Palmier's floating panels vs. FCP's flat panels.** The spec picks flat, per "calm, Mac-native". Confirm.
+
+
+## Mockup vs app comparison (2026-11-01, after P1–P5 and D-437 S8)
+
+Screenshots: `scratch/ui-compare/app-now.png` (the live dev app, "Nemotron Transcribe" › Voiceover v2) and `scratch/ui-compare/mockup-rest.png` (the mockup's "Rest" state). Static comparison of the rest state only; the mid-roll and marker-editor states were not re-checked live.
+
+**Matches the mock:**
+- top bar: breadcrumb, centred Edit/Motion/Colorist, Export on the right;
+- the browser with its tab row, search and folder tree;
+- the viewer header: format · fps, timeline name centred, `− Fit +`, the toggles;
+- the transport: amber timecode, centred buttons, thin scrub line;
+- the full-width timeline;
+- the toolbar's centred timeline name and timecode;
+- our ruler and the marker strip;
+- the V/A badge track headers with no per-row trash;
+- the FCP clip anatomy: name strip, filmstrip, waveform band;
+- the collapsed Inspector sections.
+
+**Intended differences:**
+- terracotta accent instead of the mock's blue (owner, D-432);
+- Inspector sections collapsed by default (owner, 2026-11-01).
+
+**Gaps, open as B-359:**
+1. The Inspector header lacks the clip duration timecode on the right, and has 2 icon tabs (Video / Audio) where the mock has 4 (Video / Audio / Speed / Info). P4 deviation.
+2. Inspector rows: the mock pairs Position X / Y on one row and gives Scale / Rotation / Opacity inline sliders next to the value; the app uses one field per row and has no sliders. P4 deviation.
+3. Browser: the app has an extra "SOURCES · Select · + Import" header row. The mock puts `+ Import` on the tab row and shows "All media · N items" as a single row, so the app has less room for thumbnails.
+4. Timeline toolbar: the mock's grouping is tools | markers | snapping/link/waveform | a zoom slider. The app has more loose icons, the "128 BPM" text and `− 20% +` instead of a slider. This is B-354's regroup.
+5. Track headers: the mock highlights the target track's badge (accent V1) and shows the track's own name. The app's tracks are still "Video 1 / Audio 1" (the project's data), and there is no target-track concept yet. P3 deviation.
+6. **The playhead is off screen after a seek through MCP:** `editor_set_playhead` to 0:06 left the timeline scrolled at 3:55–5:05 with zoom at 20 %. The view doesn't follow a programmatic seek, and the zoom a harness run left behind persists in the session's view store. To check: does the view follow a seek (the B-326 follow covers playback), and should the zoom be per timeline?
+7. Faint vertical lines run through the lanes at marker positions in the app; the mock has none. Decide whether markers should draw through the lanes; FCP draws them in the ruler only.
+8. Empty states and the volume popover are still missing (B-354).
