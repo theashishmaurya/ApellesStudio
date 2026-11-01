@@ -4,6 +4,20 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-367 — the Export dialog needs a redesign: a raw form with per-clip "fit / Freeze" rows, no presets, and no direct publishing
+
+status: open (owner, 2026-11-01) · severity: medium (UX; the last step of every edit) · area: the Edit tab's Export dialog (`ExportDialog` / `timelinePipeExport.ts` UI), the export queue
+
+- **Seen:** the owner's screenshot `scratch/bug-refs/2026-11-01-export-dialog.png`. It shows Timeline, Output file + Choose…, Width × Height, FPS, Audio loudness "Off (as mixed)", then a long **"Per-clip export options"** list (each clip with a `fit` dropdown and a **Freeze** toggle), a note about audio, and Close / **Add to queue**.
+- **The owner:** "this needs a redesign as well … and no other export freeze and all, so think of that".
+- **What's wrong:**
+  1. **Per-clip "fit / Freeze" rows** don't belong in an export dialog. Framing is decided on the timeline (clip scaling, D-425), and "Freeze" is unexplained jargon. Move any real per-clip choice to the Inspector and drop these rows from export.
+  2. **No presets:** a creator thinks "YouTube 4K", "Shorts / Reels 9:16", "ProRes master", not width/height/fps fields. Add presets with an "Advanced" disclosure for custom values.
+  3. **Loudness defaults to "Off"**: the platform target (−14 LUFS for YouTube) should follow the chosen preset.
+  4. **The output file must be picked before anything happens.** Default to a sensible name and folder (`~/Movies/<project>/<timeline>.mp4`), changeable.
+  5. **Exporting must never freeze the app.** It already queues ("Add to queue"); keep it fully in the background, with progress in the top bar, editing allowed meanwhile, a notification when done, and "Reveal in Finder" / "Post…" actions. Covered with B-340's memory bound.
+- **Direction:** the same research → mockup → build pass (roadmap 00c). References: FCP's Share destinations, Resolve's Deliver page quick exports, Premiere's Quick Export, CapCut's export sheet. Direct publishing is its own backlog item (roadmap 00d).
+
 ## B-366 — the contents of every Inspector Video-tab section need the same intuitive pass (Transform, Compositing, Crop, Dynamic zoom, Highlights, Speed, Fade, Keyframes)
 
 status: open (owner, 2026-11-01: "all the things inside this as well") · severity: medium (UX) · area: `packages/editor/src/ClipInspectorPanel.tsx` and every section component it renders; `@apelles/ui`'s `InspectorRow` / `NumberScrubber`
@@ -169,6 +183,7 @@ status: open (queued after D-437) · severity: minor · area: `TimelinePane.tsx`
   - Cmd+4 to toggle the Inspector is missing.
   - The volume control has no popover.
   - The toolbar centre is a flex item about 20 px off true centre.
+- **Owner reference (2026-11-01):** `scratch/bug-refs/2026-11-01-mockup-toolbar.png`, the mockup's toolbar. The tools (Select / Ripple / Roll / Slip / Slide / Blade) sit in **one rounded segmented group**, then a divider, then Split, Add marker and the AI action. The app's toolbar doesn't match it yet.
 - **Queue:** after D-437 S4, as one Sonnet pass with a live screenshot compared against the mockup.
 
 ## B-352 — the UI harness reports "no frames sampled" instead of detecting a locked screen, and `debug_activate_app` reports success without bringing Apelles forward
