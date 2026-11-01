@@ -4,6 +4,23 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-366 — the contents of every Inspector Video-tab section need the same intuitive pass (Transform, Compositing, Crop, Dynamic zoom, Highlights, Speed, Fade, Keyframes)
+
+status: open (owner, 2026-11-01: "all the things inside this as well") · severity: medium (UX) · area: `packages/editor/src/ClipInspectorPanel.tsx` and every section component it renders; `@apelles/ui`'s `InspectorRow` / `NumberScrubber`
+
+- **Seen:** the owner's screenshot `scratch/bug-refs/2026-11-01-inspector-video-sections.png`: the Video tab with all 8 sections collapsed (by design since 2026-11-01).
+- **Scope:** an audit of every section's contents with the same yardstick as B-363/B-364/B-365:
+  - plain labels and units everywhere (px, %, °, s, dB, fps);
+  - no raw ids or internal terms;
+  - controls labelled or with tooltips;
+  - related values grouped: Position X/Y on one row, Size W/H linked;
+  - inline sliders where the mockup has them (Scale, Rotation, Opacity; B-359 item 2);
+  - a clear reset per row and per section;
+  - previews where an action isn't obvious (Dynamic zoom's start/end boxes, Highlights, Speed ramps);
+  - a one-line header summary when a section is collapsed (e.g. Speed "100%", Fade "0:12 in · 0:00 out", as in the mockup), so users don't have to open it to see its state.
+- **Also from B-359:** the Inspector header gets the clip duration on the right, and the icon tabs (Video / Audio / Speed / Info) are decided in the same pass.
+- **Direction:** part of roadmap 00c's research → mockup → build UX pass. References: DaVinci Resolve's Inspector, FCP's Video Inspector, Premiere's Effect Controls. Human + AI parity is unchanged: the same `editor_*` ops.
+
 ## B-365 — the Inspector's Audio tab (Audio + EQ) is not intuitive: raw ids, no units, an unlabelled graph and a tall list of 12 numeric fields
 
 status: open (owner, 2026-11-01: "EQ and audio as well") · severity: medium (UX) · area: the clip Inspector's Audio tab (`ClipInspectorPanel`'s audio and EQ sections, the EQ graph component)
