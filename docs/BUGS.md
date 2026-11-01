@@ -4,6 +4,20 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-365 — the Inspector's Audio tab (Audio + EQ) is not intuitive: raw ids, no units, an unlabelled graph and a tall list of 12 numeric fields
+
+status: open (owner, 2026-11-01: "EQ and audio as well") · severity: medium (UX) · area: the clip Inspector's Audio tab (`ClipInspectorPanel`'s audio and EQ sections, the EQ graph component)
+
+- **Seen:** the owner's screenshot `scratch/bug-refs/2026-11-01-eq-audio-not-intuitive.png`.
+- **What reads as broken or confusing:**
+  1. **Band types show raw ids**: `low_shelf`, `peak`. They should be words and icons: Low shelf, Bell, High shelf, High-pass, Low-pass.
+  2. **No units**: Freq `120` (Hz), Gain `0` (dB), and a `Q` with no hint what it does. Large values should read as "2.5 kHz".
+  3. **The curve graph has no axes**: no frequency labels (20 Hz, 100, 1k, 10k), no dB scale and no 0 dB line label. It's unclear whether the numbered nodes can be dragged (they should: drag sets freq and gain, scroll or modifier-drag sets Q, double-click resets).
+  4. **Four bands × three full-width rows** make a tall list of 12 near-identical number fields under the graph. Resolve and Premiere use the graph as the main control, with a compact per-band strip (on/off, type, freq, gain, Q) or one selected band's fields.
+  5. **No per-band bypass** is visible in this view.
+  6. **The "Audio" section** (collapsed in the shot) is part of the same tab and gets the same review: volume in dB with a fader/meter, pan, fades, ducking state.
+- **Direction:** part of the same research → mockup → build UX pass (roadmap 00c). References: DaVinci Resolve's Fairlight / Inspector EQ, Premiere's Parametric EQ, FCP's Channel EQ. P4's `NumberScrubber` units already exist, so use them (Hz, dB). Human + AI parity is unchanged: the same `editor_set_clip_eq`.
+
 ## B-364 — the Music Edits panel is not intuitive: unitless fades in a reversed order, jargon choices, unclear In/Out buttons and actions
 
 status: open (owner, 2026-11-01: "this needs an intuitive redesign as well") · severity: medium (UX) · area: `packages/editor/src/MusicEditsPanel.tsx`

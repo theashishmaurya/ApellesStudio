@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-01** — **B-365 logged** (owner): the Inspector's Audio tab (Audio + EQ) is not intuitive: raw band ids, no units, an unlabelled graph, 12 stacked fields. Added to roadmap 00c's UX redesign.
 - **2026-11-01** — **B-364 logged** (owner): the Music Edits panel is not intuitive. Roadmap 00c is broadened into a UX redesign of all the browser tool panels after v0.3.0.
 - **2026-11-01** — **B-363 logged** (owner): the Clipper panel is not intuitive (jargon, unlabelled controls, too narrow). Queued as a research → mockup → build redesign after v0.3.0 (roadmap 00c).
 - **2026-11-01** — **B-362 logged** (owner): the Clipper panel scrolls horizontally inside the media browser. Added to the v0.3.0 checklist.
