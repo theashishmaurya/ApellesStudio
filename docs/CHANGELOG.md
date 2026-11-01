@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-01** — **v0.3.0 release checklist logged** (`docs/04-roadmap.md` 00r): 5 blockers (release-build smoke test, an owner edit, an export check, the view following a seek (B-359 #6), production pinch zoom) and 2 decide-at-release items (playback at 300 clips, the release frame). The owner chose to fix them first and release once subagent credits are back.
 - **2026-11-01** — **B-360 fixed:** a clip dragged in from the media browser below or above the tracks lands where it was dropped (snapping onto the playhead when released near it), not at frame 0. The UI harness gained `debug_pointer`'s `html5Drag` action (a native injected drag never starts macOS's drag session) and two live drop scenarios, both passing.
 - **2026-11-01** — **Session wrap (paused):**
   - **Done:** the Edit tab redesign P1–P5 (D-432) and D-437 S0–S8. The timeline now renders our own culled, memoised lanes and playhead; `@xzdarcy/react-timeline-editor`, interact.js and react-virtualized are removed.
