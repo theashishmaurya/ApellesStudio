@@ -4,6 +4,14 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-362 — the Clipper panel scrolls horizontally inside the media browser; its content is wider than the column
+
+status: open (owner, 2026-11-01; queued with the v0.3.0 checklist) · severity: minor (layout) · area: `packages/editor/src/clipper/ClipperPanel.tsx`, `packages/editor/src/EditBrowser.tsx` (the browser's tab body)
+
+- **Seen:** the owner's screenshot `scratch/bug-refs/2026-11-01-clipper-horizontal-scroll.png`. A horizontal scrollbar sits at the bottom of the Clipper tab, its left edge is cut off ("…PER", "…ine Voiceover v2"), and the timeline picker reads "Voiceover v2 · 30/10/2026, 10:09:38 AM".
+- **Likely cause (not yet confirmed):** a child forces the column wider than the browser. The run picker trigger's long label won't shrink, or the proposal rows / "Build" row are flex items without `min-w-0`, inside an `EditBrowser` tab body that has no `overflow-x` rule. D-432 P5 moved the Clipper from its own rail panel into the browser tabs, so a width the old panel tolerated now overflows.
+- **Fix:** truncate the picker label with an ellipsis and a full-text tooltip; `min-w-0` on the flex rows so text wraps; and make the browser's tab body `overflow-x: hidden` only after the real overflow is fixed, not as a mask. Add a DOM test that the panel's `scrollWidth` does not exceed its `clientWidth` at the default browser width (280 px) and at its minimum (220 px).
+
 ## B-361 — clicking a caption preset drops a placeholder "Your caption here" clip (and errors when the playhead frame is taken) instead of captioning the video from its transcript
 
 status: open (owner ask 2026-11-01; queued with the v0.3.0 checklist, roadmap 00r) · severity: medium (the first thing a creator tries in the Captions library) · area: `packages/editor/src/captionPresetAction.ts` (`applyCaptionPreset`), the Captions library panel, MCP `editor_add_caption_preset` / preset tool, `CaptionsFromTranscriptButton.tsx`, `captionsFromTranscript.ts`
