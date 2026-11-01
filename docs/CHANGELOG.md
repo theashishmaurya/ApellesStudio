@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-01** — **B-364 logged** (owner): the Music Edits panel is not intuitive. Roadmap 00c is broadened into a UX redesign of all the browser tool panels after v0.3.0.
 - **2026-11-01** — **B-363 logged** (owner): the Clipper panel is not intuitive (jargon, unlabelled controls, too narrow). Queued as a research → mockup → build redesign after v0.3.0 (roadmap 00c).
 - **2026-11-01** — **B-362 logged** (owner): the Clipper panel scrolls horizontally inside the media browser. Added to the v0.3.0 checklist.
 - **2026-11-01** — **B-361 logged** (owner): a caption preset click should caption the video from its transcript (or restyle existing captions), not drop a placeholder clip that errors when the playhead frame is taken. Added to the v0.3.0 checklist.

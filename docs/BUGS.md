@@ -4,6 +4,21 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-364 — the Music Edits panel is not intuitive: unitless fades in a reversed order, jargon choices, unclear In/Out buttons and actions
+
+status: open (owner, 2026-11-01: "this needs an intuitive redesign as well") · severity: medium (UX) · area: `packages/editor/src/MusicEditsPanel.tsx`
+
+- **Seen:** the owner's screenshot `scratch/bug-refs/2026-11-01-music-edits-not-intuitive.png`. The left edge is clipped too, the same column overflow as B-362, which suggests B-362's cause is in the browser's tab body and affects every tab.
+- **What reads as broken or confusing:**
+  1. **"Fades `6` out `8` in"**: no unit (frames? tenths of a second?), the out field comes before the in field, and nothing says what fades (the bed, around the dropout).
+  2. **"Bed: Auto — the track with music there"**: unclear which track it will touch. It should name the track ("A3 · Electronic Vibrations").
+  3. **"Re-entry: Re-enter where it would be"**: jargon. It's the choice between the music continuing as if it never stopped and resuming where it was cut; that needs plain labels or a tiny diagram.
+  4. **"In —" / "Out —" pills**: they look like labels but are buttons that set the range from the playhead. Show the timecodes and a "Set from playhead" affordance, and show the range on the timeline.
+  5. **"Dropout"** dropdown: the kind of music edit, which needs a one-line description of what each kind does.
+  6. **"Cut now" vs "Add to list"** (apply now vs queue for review) and **"Breath before playhead"**: no explanation of what happens or what the list is.
+  7. The empty state is a paragraph of instructions rather than a clear first action.
+- **Direction:** fold it into the same research → mockup → build pass as the Clipper (roadmap 00c, broadened to the browser's tool panels). Look at how Resolve's Fairlight, Premiere's Essential Sound / Remix and Descript handle music ducking, dropouts and remix. Plain language with units, the range shown on the timeline, a preview of the edit before applying, then the list.
+
 ## B-363 — the Clipper panel is not intuitive: developer jargon, unlabelled controls, and the whole review flow squeezed into the browser column
 
 status: open (owner, 2026-11-01: "clipper UI is not intuitive at all") · severity: medium (UX; the Clipper is a headline feature) · area: `packages/editor/src/clipper/ClipperPanel.tsx` and its sections; the D-432 redesign language
