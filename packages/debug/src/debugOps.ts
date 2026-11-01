@@ -22,7 +22,7 @@
  *
  * **This whole module is debug-only and never reaches a production build.**
  *   Nothing imports it statically: `useDebugControl.ts` reaches it through a
- *   `import()` inside an `if (import.meta.env.DEV)` branch, so a production
+ *   `import()` inside an `import.meta.env.APELLES_DEBUG_TOOLS` branch, so a production
  *   `vite build` constant-folds that branch away and Rollup drops this module
  *   and its chunk entirely. That is the frontend's equivalent of the
  *   `#[cfg(debug_assertions)]` gate on the Rust half (D-219, B-100), and it is
@@ -428,7 +428,7 @@ export const DEBUG_OPS: Record<string, OpHandler> = {
       idle = await waitForIdle(browserIdleDeps(), ms);
     }
     const entries = readPerfEntries(performance, prefix, a?.clear === true);
-    return { ok: true, prefix, entries, build: { dev: import.meta.env.DEV, perfMarks: import.meta.env.APELLES_PERF_MARKS === 'true' }, ...(idle ? { idle } : {}) };
+    return { ok: true, prefix, entries, build: { dev: import.meta.env.DEV, perfMarks: import.meta.env.APELLES_PERF_MARKS === 'true', debugTools: import.meta.env.APELLES_DEBUG_TOOLS === 'true' }, ...(idle ? { idle } : {}) };
   },
 
   debug_set_fps_overlay: (a) => {

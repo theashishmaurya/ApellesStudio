@@ -6,4 +6,6 @@
  */
 interface ImportMetaEnv {
   readonly APELLES_PERF_MARKS?: 'true' | 'false';
+  /** B-358: 'true' when the debug tooling is compiled in (`vite dev`, `tauri build --debug`); see `app/perfMarks.mjs`. */
+  readonly APELLES_DEBUG_TOOLS?: 'true' | 'false';
 }

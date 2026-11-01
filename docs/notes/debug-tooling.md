@@ -22,11 +22,25 @@ then — **B-100**):
   `tauri-macros` 2.6.3's `command/handler.rs`, so the IPC name genuinely does not
   exist in a release build), and on `control.rs`'s `native_op`, which has a
   `None`-returning release twin so its call site reads the same either way.
-- **Frontend.** `import.meta.env.DEV` — Vite substitutes the literal `false` in a
-  production build — **plus** a dynamic `import()` of the op registry inside that
+- **Frontend.** `import.meta.env.APELLES_DEBUG_TOOLS` (B-358) — a build-time define from
+  `app/perfMarks.mjs`: `'true'` for `vite serve` and for `TAURI_ENV_DEBUG=true` (`tauri build
+  --debug`, `tauri dev`), `'false'` for a release — **plus** a dynamic `import()` of the op registry inside that
   branch, so Rollup drops the whole chunk rather than merely leaving it unreachable.
   `@apelles/debug`'s barrel exports exactly one value (the hook) so nothing else is in
   the app's static import graph.
+- **The gate rule: debug tooling = debug builds, BOTH halves.** The frontend gate mirrors
+  `debug_assertions` (Tauri sets `TAURI_ENV_DEBUG` from the same profile), so the Rust ops
+  and the frontend registry that answers them exist in exactly the same builds. It used to
+  be `import.meta.env.DEV` (Vite dev server only), which left `tauri build --debug`
+  (production React, Rust debug ops) with ops and no registry: every frontend op answered
+  "no frontend registry subscribed" (**B-358**). Every new frontend debug-tooling gate uses
+  `APELLES_DEBUG_TOOLS`, never `DEV`. Kept on `DEV` on purpose: `debug_perf_entries`'s
+  `build.dev` read-back (it reports which React bundle is running), and the HMR/dev-warning
+  uses that are not tooling. Moved to the new gate: `useDebugControl`, `useDebugScreenshot`,
+  and the `previewTiming` call sites in `PreviewPane` (they feed `debug_frame_timing`, so
+  they are debug tooling). `debug_perf_entries`'s `build` report now also carries
+  `debugTools`. Pinned by `packages/debug/src/debugGate.bundle.test.ts` (release bundle: no
+  `debug_*` op name; debug bundle: has them) and `app/perfMarks.test.mjs`.
 - **Checked, not assumed.** See "Gate verification" at the bottom for the real
   `vite build` + bundle grep.
 
@@ -664,3 +678,8 @@ existing piece-2 setters — compile-gated out of a production build like
 everything else here. Until it exists, screenshot verification of the lower-left
 of any canvas is incomplete, and a verification pass should say so rather than
 claim full coverage.
+
+- **Re-run 2026-11-01 for B-358.** A real `vite build` of `app/` with `TAURI_ENV_DEBUG=false`:
+  `debug_pointer`, `debug_perf_entries`, `debug_set_editor_layout` **0** occurrences each in
+  `dist/assets/*.js`; with `TAURI_ENV_DEBUG=true`: 8 / 2 / 2. `editor_set_selection` (the
+  control) is present in both.

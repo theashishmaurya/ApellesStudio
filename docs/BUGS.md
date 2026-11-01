@@ -4,6 +4,12 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-358 - the production-React debug app (`tauri build --debug`) had the Rust `debug_*` ops but no frontend registry, so the UI harness could not drive it
+
+**Found:** 2026-11-01, launching the S9 perf app. Its log said `no frontend registry subscribed for op 'debug_perf_entries'`.
+**Cause:** the Rust half of the debug tooling is gated on `#[cfg(debug_assertions)]`, the frontend half on `import.meta.env.DEV` (Vite dev server only). In `tauri build --debug` the first is on and the second off, in exactly the build the D-437 perf baseline needs.
+**Fix:** one define, `import.meta.env.APELLES_DEBUG_TOOLS`, decided in `app/perfMarks.mjs` (on for `vite serve` and `TAURI_ENV_DEBUG=true`, off for a release), used by `useDebugControl`, `useDebugScreenshot` and the `previewTiming` call sites; wired into the app and the debug / editor / app vitest configs. Pinned by `packages/debug/src/debugGate.bundle.test.ts` and `app/perfMarks.test.mjs`. See `docs/notes/debug-tooling.md`.
+
 ## B-357 — on the new lanes, the pane's scroll state outlived its scroller, a wheel over the ruler or a lane's height zone did not pan, and a transition badge blocked trimming the cut under it
 
 status: **fixed** (2026-11-01, D-437 S5/S6) · severity: minor to moderate · area: `packages/editor/src/TimelinePane.tsx`, `TimelineTransitions.tsx`, `packages/ui-harness` fixture and scenarios

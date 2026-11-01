@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import babel from '@rolldown/plugin-babel';
 import tailwindcss from '@tailwindcss/vite';
-import { perfMarksDefine, tauriDebugBuild } from './perfMarks.mjs';
+import { buildDefines, tauriDebugBuild } from './perfMarks.mjs';
 
 const host = process.env.TAURI_DEV_HOST;
 
@@ -21,8 +21,9 @@ const host = process.env.TAURI_DEV_HOST;
 // compiler just leaves that one component uncompiled.
 // https://react.dev/learn/react-compiler/installation
 export default defineConfig(async ({ command }) => ({
-  // D-437 S0a: the perf marks are in `vite dev` and `tauri build --debug`, out of a release.
-  define: perfMarksDefine(command),
+  // D-437 S0a / B-358: the perf marks and the debug tooling are in `vite dev` and
+  // `tauri build --debug`, out of a release.
+  define: buildDefines(command),
   plugins: [
     tailwindcss(),
     react(),

@@ -485,11 +485,11 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
     shownFrame.current = frame;
     // D-219 (debug-tooling piece 5) — one timestamp per frame that reaches
     // the screen, so `debug_frame_timing` can report the real playback
-    // interval D-217 had no way to measure. `import.meta.env.DEV` is folded
-    // to `false` by `vite build`, so this line and `previewTiming.ts` itself
+    // interval D-217 had no way to measure. `import.meta.env.APELLES_DEBUG_TOOLS` is folded
+    // to `'false'` by a release `vite build`, so this line and `previewTiming.ts` itself
     // are dropped from a production bundle — it is a compile-time gate, not
     // a flag.
-    if (import.meta.env.DEV) recordPreviewTiming('paint');
+    if (import.meta.env.APELLES_DEBUG_TOOLS === 'true') recordPreviewTiming('paint');
     const url = URL.createObjectURL(new Blob([bytes], { type: PREVIEW_MIME }));
     const previous = frameUrl.current;
     frameUrl.current = url;
@@ -558,7 +558,7 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
         // report needs, because the paused path asks the decode pipe for
         // frames BEHIND its read head, which costs a respawn + keyframe seek
         // (`decode_pipe.rs` measures 248-337 ms against 6.7 ms sequential)
-        // rather than D-290's ~3.5 ms. Same `import.meta.env.DEV` compile-time
+        // rather than D-290's ~3.5 ms. Same `import.meta.env.APELLES_DEBUG_TOOLS` compile-time
         // gate as every other call site here.
         //
         // A plain `const` + an `if`, NOT `DEV ? now() : 0`. This sits inside a
@@ -574,7 +574,7 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
           pos: Math.max(0, Math.round(at)),
           maxLongEdge: longEdge,
         });
-        if (import.meta.env.DEV) recordPreviewSpan('scrub', performance.now() - began);
+        if (import.meta.env.APELLES_DEBUG_TOOLS === 'true') recordPreviewSpan('scrub', performance.now() - began);
         showFrame(bytes, at);
         setDecodeErr(null);
       } catch (e) {
@@ -679,8 +679,8 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
       // loop got to run at all. A stalled `raf` channel next to a healthy
       // `paint` one is the signature of a THROTTLED (backgrounded) window,
       // which is precisely the blocker that stopped D-217 measuring this from
-      // outside. Same `import.meta.env.DEV` compile-time gate as `showFrame`.
-      if (import.meta.env.DEV) recordPreviewTiming('raf');
+      // outside. Same `import.meta.env.APELLES_DEBUG_TOOLS` compile-time gate as `showFrame`.
+      if (import.meta.env.APELLES_DEBUG_TOOLS === 'true') recordPreviewTiming('raf');
       // D-290 — the `tick` span starts here and is closed just before the next
       // `requestAnimationFrame` below, so it covers one whole pass of this
       // loop and nothing else. Same compile-time gate as every other line in
@@ -721,7 +721,7 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
             // one is worthless and would spawn an `ffmpeg` per dragged frame.
             playing: true,
           });
-          if (import.meta.env.DEV) recordPreviewSpan('fetch', performance.now() - fetchStart);
+          if (import.meta.env.APELLES_DEBUG_TOOLS === 'true') recordPreviewSpan('fetch', performance.now() - fetchStart);
           showFrame(bytes, want);
         } catch {
           /* keep going — a heavy clip can drop frames */
@@ -754,7 +754,7 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
           fetchFrame(queued, PREVIEW_LONG_EDGE);
         }
       }
-      if (import.meta.env.DEV) recordPreviewSpan('tick', performance.now() - tickStart);
+      if (import.meta.env.APELLES_DEBUG_TOOLS === 'true') recordPreviewSpan('tick', performance.now() - tickStart);
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);

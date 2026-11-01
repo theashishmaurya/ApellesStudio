@@ -1,6 +1,6 @@
 /**
- * useDebugControl.ts — mounts the `debug_*` op registry, in dev builds only
- * (D-219).
+ * useDebugControl.ts — mounts the `debug_*` op registry, in debug builds only
+ * (D-219, B-358).
  *
  * What it is: one hook, mounted once from `app/src/App.tsx` next to
  *   `useChromaControl()`, that listens on the same `chroma://request` /
@@ -8,7 +8,7 @@
  *   the `debug_` namespace from `debugOps.ts`.
  *
  * What it does NOT do: anything at all in a production build. The whole body
- *   sits behind `if (!import.meta.env.DEV) return;`, which Vite replaces with
+ *   sits behind `if (import.meta.env.APELLES_DEBUG_TOOLS !== 'true') return;`, which Vite replaces with
  *   `if (!false) return;` at build time, and the registry itself is reached
  *   through a dynamic `import()` inside that branch — so Rollup's dead-code
  *   pass drops both the branch and `debugOps.ts`'s entire chunk, along with
@@ -68,7 +68,7 @@ export function useDebugControl(): void {
   const evaluation = REGISTRY_EVALUATION;
   useEffect(() => {
     void evaluation;
-    if (!import.meta.env.DEV) return;
+    if (import.meta.env.APELLES_DEBUG_TOOLS !== 'true') return;
 
     let disposed = false;
     // B-272 — this subscription's identity; see `@apelles/bridge`'s `controlBridge`.

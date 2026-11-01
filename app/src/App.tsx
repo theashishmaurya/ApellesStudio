@@ -182,8 +182,9 @@ function App() {
   useDebugScreenshot();
   // D-219: the `debug_*` UI-state / DOM-tree / frame-timing op registry —
   // the other half of the same "an agent can drive and inspect the real app"
-  // loop D-210's screenshot started. Dev builds only: the hook's whole body
-  // is behind `import.meta.env.DEV` and the registry itself is a dynamic
+  // loop D-210's screenshot started. Debug builds only (dev server and
+  // `tauri build --debug`): the hook's whole body
+  // is behind `import.meta.env.APELLES_DEBUG_TOOLS` and the registry itself is a dynamic
   // import inside that branch, so a production build drops it (see
   // `@apelles/debug`'s README). Mounted here, next to the three above, for the
   // same "reachable regardless of which tab is active" reason.

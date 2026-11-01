@@ -1,7 +1,7 @@
 import { defineConfig, type Plugin } from 'vitest/config';
 import { transformAsync } from '@babel/core';
 import { reactCompilerPreset } from '@vitejs/plugin-react';
-import { perfMarksDefine } from '../../app/perfMarks.mjs';
+import { buildDefines } from '../../app/perfMarks.mjs';
 
 /**
  * B-287 — the app builds every component through the React Compiler (D-091,
@@ -35,8 +35,8 @@ function reactCompiler(): Plugin {
 }
 
 export default defineConfig({
-  // the marks are ON in tests (a vitest run is `serve`), as under `vite dev`
-  define: perfMarksDefine('serve'),
+  // the marks and debug tooling are ON in tests (a vitest run is `serve`), as under `vite dev`
+  define: buildDefines('serve'),
   plugins: [reactCompiler()],
   test: {
     environment: 'node',

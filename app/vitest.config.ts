@@ -6,8 +6,11 @@
 // as far as a live session. Same `vitest run` / `environment: 'node'` shape
 // every `packages/*` workspace already uses; nothing bespoke.
 import { defineConfig } from 'vitest/config';
+import { buildDefines } from './perfMarks.mjs';
 
 export default defineConfig({
+  // the debug tooling is ON in tests (a vitest run is `serve`), as under `vite dev`
+  define: buildDefines('serve'),
   test: {
     environment: 'node',
   },
