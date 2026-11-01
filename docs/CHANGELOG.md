@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-01** — **B-363 logged** (owner): the Clipper panel is not intuitive (jargon, unlabelled controls, too narrow). Queued as a research → mockup → build redesign after v0.3.0 (roadmap 00c).
 - **2026-11-01** — **B-362 logged** (owner): the Clipper panel scrolls horizontally inside the media browser. Added to the v0.3.0 checklist.
 - **2026-11-01** — **B-361 logged** (owner): a caption preset click should caption the video from its transcript (or restyle existing captions), not drop a placeholder clip that errors when the playhead frame is taken. Added to the v0.3.0 checklist.
 - **2026-11-01** — **v0.3.0 release checklist logged** (`docs/04-roadmap.md` 00r): 5 blockers (release-build smoke test, an owner edit, an export check, the view following a seek (B-359 #6), production pinch zoom) and 2 decide-at-release items (playback at 300 clips, the release frame). The owner chose to fix them first and release once subagent credits are back.
