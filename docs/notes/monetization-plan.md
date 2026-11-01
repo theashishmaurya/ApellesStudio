@@ -154,6 +154,30 @@ During the bake-off, use **OpenRouter** for one API across all candidates, then 
 3. Paddle as MoR: OK to start the verification (India payouts)?
 4. Should BYOK chat be free forever? (Recommended: yes. It costs us nothing and grows adoption.)
 
+## 12. Third revenue line: a managed service ("Apelles Studio"), owner reference 2026-11-01
+
+**Reference:** the Palmier Service (`scratch/bug-refs/2026-11-01-palmier-service-reference.png`): "our team builds the workflow and delivers the finished videos. You review the cuts and pay per video. Built for formats you run every week: social ads, clips, and series."
+
+**Why it fits Apelles now:**
+- **The owner already does this.** The Nemotron edit, its 4 shorts and the upload package were produced by Apelles plus agents in a session.
+- **Revenue well before a large subscriber base.** A few clients at $300–1,500 / month beat hundreds of $20 Pro users at this stage.
+- **Every client format becomes a reusable skill or template** in the product, so the service is the product's research loop.
+- **High margin:** agents do the edit and a human reviews.
+
+**The risk:** it doesn't scale and consumes founder time. Rule: a format must be mostly automated after 3–4 deliveries, or it gets repriced or dropped.
+
+**Pilot:**
+- 3–5 design partners (creators, podcasters, small brands), each with one weekly format.
+- Pay per video or a monthly package. Starting points to test: a shorts pack (5 from one long video) $75–150; a long-form edit $200–500; a weekly series retainer $400–1,500 / month.
+- A shared channel (Slack / WhatsApp) plus a review link.
+- Everything is made in Apelles, credited "made with Apelles".
+- Billing can go through the same MoR (Paddle invoices / one-off products), or plain invoices to start.
+
+**Order of revenue lines:**
+1. **Service now** (it funds development and shows what to automate);
+2. **Pro self-serve** (§2, built from what the service automated);
+3. **The free open-source editor** throughout (the funnel and trust).
+
 ---
 Sources (third-party price and payment guides, mid-2026; verify on the providers' own pages):
 - DeepSeek V3 pricing: <https://deploybase.ai/articles/deepseek-v3-pricing>, <https://www.llmreference.com/model/deepseek-v3/deepinfra>

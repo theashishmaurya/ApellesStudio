@@ -33,7 +33,7 @@ Status: `open` · `decided` · `revisit`
 
 (c) matches what creators already pay for (Descript, Opus Clip, CapCut Pro), keeps the local-first promise, and keeps margin healthy if the default model is cheap and premium models go through credits.
 
-**Open:** the owner's answers to §11 of the plan (price point, launch timing, Paddle verification, BYOK free forever).
+**Open:** the owner's answers to §11 of the plan (price point, launch timing, Paddle verification, BYOK free forever). **Added 2026-11-01:** a third revenue line, a managed "Apelles Studio" service (pay per video for recurring formats, a Palmier-style reference) as the near-term earner, with each client format turned into a product skill (plan §12).
 
 ## D-437 — Replace `@xzdarcy/react-timeline-editor` with Apelles' own lane renderer (memoised clips, horizontal culling), no new dependency
 
