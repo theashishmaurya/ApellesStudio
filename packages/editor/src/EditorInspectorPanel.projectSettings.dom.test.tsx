@@ -88,6 +88,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 }));
 
 const { useEditorTimelineStore } = await import('./timelineStore');
+const { openAllInspectorSections, resetInspectorSections } = await import('./testUtils/inspectorSections');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
 import type { Clip, Timeline } from './timeline';
 
@@ -110,6 +111,8 @@ function fixtureTimeline(): Timeline {
 let mounted: MountedComponent | null = null;
 
 beforeEach(() => {
+  // every Inspector section starts collapsed; these suites query inside them
+  openAllInspectorSections(useEditorTimelineStore);
   backend.settings = {};
   backend.setCalls = [];
   bus.listeners.clear();
@@ -163,6 +166,21 @@ describe('EditorInspectorPanel — Project Settings (D-274)', () => {
     expect(text()).toContain('Colour space');
     // The generic clip-Inspector empty state is gone from this branch.
     expect(text()).not.toContain('Select a clip to edit its properties.');
+  });
+
+  it('starts the Project and This timeline sections collapsed until the user opens one', async () => {
+    resetInspectorSections(useEditorTimelineStore);
+    await render();
+    const expanded = (id: string) =>
+      mounted?.container.querySelector(`[data-chroma-section="${id}"] button[aria-expanded]`)?.getAttribute('aria-expanded');
+    expect(expanded('project-settings')).toBe('false');
+    expect(expanded('timeline-settings')).toBe('false');
+    expect(text()).not.toContain('Resolution');
+
+    await click(mounted?.container.querySelector('[data-chroma-section="project-settings"] button[aria-expanded]') as HTMLElement);
+    expect(expanded('project-settings')).toBe('true');
+    expect(expanded('timeline-settings')).toBe('false');
+    expect(text()).toContain('Resolution');
   });
 
   it('falls back to the ordinary ClipInspectorPanel once a clip is selected', async () => {

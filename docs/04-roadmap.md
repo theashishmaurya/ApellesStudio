@@ -256,7 +256,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 00a. **Own timeline lane renderer — D-437 (decided 2026-11-01), after P3.** Replace `@xzdarcy/react-timeline-editor`: memoised clip blocks, horizontal culling, our own ruler/playhead; target the edit release under 30 ms at 300 clips (B-347). **Progress:** S0–S8 built 2026-11-01 (the pane renders the lanes and our playhead since S4; S7 paint isolation per item in the plan note, live A/B pending; S8 a scroll renders the pane zero times and pinch zoom is one step per frame; live harness confirmation pending, incl. `select-marquee`); next S9 (verification). Plan: `docs/notes/timeline-lanes.md`.
 00a2. **Redesign follow-ups, queued after D-437 S4:** B-353 fixed with S7; B-354 (toolbar regroup, empty states, Cmd+4, volume popover); then a full mockup-vs-app comparison pass.
 00a3. **PAUSED 2026-11-01 (owner: out of subagent credits)**, resume in this order:
-   1. Inspector sections collapsed by default (owner ask; uncommitted in `.claude/worktrees/agent-a67e3610237e9cfeb`: `EditorSection.tsx` default plus a test helper for ~78 suites; finish the tests and merge).
+   1. ~~Inspector sections collapsed by default~~: **done**, merged 2026-11-01.
    2. D-437 S10: release < 50 ms, zoom, playback at 300 clips (`docs/notes/timeline-lanes.md` S10; worktree `agent-a22c86466a8ce7faa`, no commits).
    3. B-354: toolbar regroup, empty states, Cmd+4, volume popover.
    4. B-348's missing NLE keys: J/K/L, I/O, Shift+Delete ripple delete.

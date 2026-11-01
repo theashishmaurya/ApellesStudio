@@ -42,6 +42,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 const { useEditorTimelineStore } = await import('./timelineStore');
+const { openAllInspectorSections } = await import('./testUtils/inspectorSections');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
 const { useHistoryStore } = await import('@apelles/history');
 import type { Clip, Timeline } from './timeline';
@@ -107,6 +108,8 @@ function select(track: number, id: string) {
 }
 
 beforeEach(() => {
+  // every Inspector section starts collapsed; these suites query inside them
+  openAllInspectorSections(useEditorTimelineStore);
   restoreResizeObserver = installResizeObserverStub();
   restoreOffsetMetrics = stubOffsetMetrics(280, 92);
   useHistoryStore.getState().clear();

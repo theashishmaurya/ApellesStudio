@@ -40,6 +40,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 const { useEditorTimelineStore } = await import('./timelineStore');
+const { openAllInspectorSections, resetInspectorSections, ALL_INSPECTOR_SECTION_IDS } = await import('./testUtils/inspectorSections');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
 const { useHistoryStore } = await import('@apelles/history');
 import type { Clip, Timeline } from './timeline';
@@ -70,6 +71,8 @@ let restoreResizeObserver: (() => void) | null = null;
 let restoreCapture: (() => void) | null = null;
 
 beforeEach(() => {
+  // every Inspector section starts collapsed; these suites query inside them
+  openAllInspectorSections(useEditorTimelineStore);
   restoreResizeObserver = installResizeObserverStub();
   restoreCapture = installPointerCaptureStub();
   useHistoryStore.getState().clear();
@@ -83,7 +86,6 @@ beforeEach(() => {
     selection: [{ track: 0, id: CLIP_ID }],
     selectedGap: null,
     inspectorTab: 'video',
-    inspectorSections: {},
   });
 });
 
@@ -188,42 +190,59 @@ describe('the keyframe slot does not shift', () => {
 });
 
 describe('collapsible sections', () => {
-  it('collapse on their header, unmount their rows, and remember it in the store', async () => {
+  // The rest of this file works inside open sections; this block is the one
+  // that exercises the real default, so it starts from a forgotten store.
+  beforeEach(() => resetInspectorSections(useEditorTimelineStore));
+
+  it('every section starts collapsed on a fresh store (owner, 2026-11-01)', async () => {
     await render();
-    expect(sectionTitles(mounted?.container)).toContain('Crop');
-    expect(sectionButton('crop').getAttribute('aria-expanded')).toBe('true');
-    expect(rows().map(labelOf)).toContain('Crop left');
-
-    actSync(() => sectionButton('crop').click());
-    await waitFrames(2);
-    expect(sectionButton('crop').getAttribute('aria-expanded')).toBe('false');
-    expect(rows().map(labelOf)).not.toContain('Crop left');
-    // Lazy: a closed section mounts no body at all.
-    expect(mounted?.container.querySelector('#inspector-section-crop')).toBeNull();
-    expect(useEditorTimelineStore.getState().inspectorSections.crop).toBe(false);
-
-    actSync(() => sectionButton('crop').click());
-    await waitFrames(2);
-    expect(rows().map(labelOf)).toContain('Crop left');
-    expect(useEditorTimelineStore.getState().inspectorSections.crop).toBe(true);
+    const ids = [...(mounted?.container.querySelectorAll('[data-chroma-section]') ?? [])].map((s) =>
+      s.getAttribute('data-chroma-section'),
+    );
+    expect(ids).toEqual(expect.arrayContaining(['transform', 'compositing', 'crop', 'dynamic-zoom', 'speed', 'fade', 'keyframes']));
+    for (const id of ids) {
+      expect(sectionButton(id as string).getAttribute('aria-expanded'), String(id)).toBe('false');
+      expect(ALL_INSPECTOR_SECTION_IDS as readonly string[], `${id} is in the test helper's list`).toContain(id);
+    }
+    // Lazy: nothing inside a collapsed section is mounted.
+    expect(rows()).toHaveLength(0);
+    expect(useEditorTimelineStore.getState().inspectorSections).toEqual({});
   });
 
-  it('survives a remount (the panel remounts per selection)', async () => {
+  it('open on the header, mount the rows, and remember it in the store', async () => {
+    await render();
+    expect(rows().map(labelOf)).not.toContain('Crop left');
+
+    actSync(() => sectionButton('crop').click());
+    await waitFrames(2);
+    expect(sectionButton('crop').getAttribute('aria-expanded')).toBe('true');
+    expect(rows().map(labelOf)).toContain('Crop left');
+    expect(useEditorTimelineStore.getState().inspectorSections.crop).toBe(true);
+    // Only the opened section opened.
+    expect(sectionButton('transform').getAttribute('aria-expanded')).toBe('false');
+
+    actSync(() => sectionButton('crop').click());
+    await waitFrames(2);
+    expect(rows().map(labelOf)).not.toContain('Crop left');
+    expect(mounted?.container.querySelector('#inspector-section-crop')).toBeNull();
+    expect(useEditorTimelineStore.getState().inspectorSections.crop).toBe(false);
+  });
+
+  it('a remembered open survives a remount (the panel remounts per selection)', async () => {
     await render();
     actSync(() => sectionButton('transform').click());
     await waitFrames(2);
     mounted?.unmount();
     await render();
-    expect(sectionButton('transform').getAttribute('aria-expanded')).toBe('false');
+    expect(sectionButton('transform').getAttribute('aria-expanded')).toBe('true');
+    expect(sectionButton('crop').getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('starts Dynamic zoom and Highlights closed and the rest open', async () => {
+  it('persists the choice per user (localStorage) so a new session restores it', async () => {
     await render();
-    expect(sectionButton('dynamic-zoom').getAttribute('aria-expanded')).toBe('false');
-    expect(sectionButton('highlights').getAttribute('aria-expanded')).toBe('false');
-    for (const id of ['transform', 'compositing', 'crop', 'speed', 'fade', 'keyframes']) {
-      expect(sectionButton(id).getAttribute('aria-expanded'), id).toBe('true');
-    }
+    actSync(() => sectionButton('fade').click());
+    await waitFrames(2);
+    expect(JSON.parse(globalThis.localStorage.getItem('apelles.editor.inspectorSections') ?? '{}')).toEqual({ fade: true });
   });
 });
 
