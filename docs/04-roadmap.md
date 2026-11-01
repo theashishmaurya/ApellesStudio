@@ -287,6 +287,14 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    - **Uploads run in the background queue**, like exports: progress in the top bar, editing never blocked.
    - **Monetisation fit:** a natural Pro feature, alongside the AI chat (see the monetisation discussion, 2026-11-01).
 00e. **Monetization (D-438, proposed):** model bake-off + BYOK/local chat MVP (month 1), then backend v1 + Paddle + a private Pro beta (month 2), then a public Pro launch with v0.4.0 (month 3), then publishing / cloud / marketplace. Plan: `docs/notes/monetization-plan.md`.
+00f. **Headless / background mode and concurrent projects for agents (proposal; owner reference: Palmier 0.12.0 "Headless and multiple agents", 2026-11-01).** Today MCP needs the app window open, because the Edit store and ops live in the webview, and only one project is open at a time (an agent switching projects switches the user's app). Three phases, each its own D-NNN when started:
+   1. **Background mode:** the app runs windowless (menu bar / agent-launched); MCP, edits and export all work; the window opens on demand.
+   2. **Concurrent projects:** a `project` id on every MCP tool, and one store per open project in the edit layer instead of a global one; the window shows the chosen project.
+   3. **A true headless engine:** the same ops and renderer outside the app (Node or the Rust crates) for CI, servers and Pro cloud renders (D-438).
+   - **Related, from the same Palmier release:**
+     - a usage dashboard (needed for Pro, D-438);
+     - named timeline snapshots that agents can create (we have per-project undo only);
+     - HDR / colour management (Colorist, later).
 00b. **Motion- and Colorist-tab redesign — follow-up to D-432, not started.** After Edit's P2, run the same process per tab: research the real references (Motion: its layer timeline + scene list, reusing P2's clip/handle design; Colorist: DaVinci Resolve's Color page — node/adjustment panel, scopes, wheels), a mockup for owner approval, then phases. Until then those tabs pick up only the shared P1 tokens/type, P4 controls and P5 chrome.
 0. **Timeline UI test + measurement harness, then sweep and fix (D-434)** (owner, 2026-10-31: "the timeline is way buggy, nothing works as it should — set up a harness for measuring and testing, drive it, and fix it").
    - [x] **Phase 1 — the harness** (D-434, 2026-10-31): `debug_pointer` / `debug_key` (trusted native input into the WKWebView), `debug_set_occlusion_throttling`, stable timeline test ids, `packages/ui-harness` with a 49-scenario starter suite (edit tools first: trim, ripple, roll, slip, slide, split — store result, live feedback mid-drag, cursor, GUI-vs-MCP parity, frame budget). How to run: `docs/notes/ui-harness.md`.
