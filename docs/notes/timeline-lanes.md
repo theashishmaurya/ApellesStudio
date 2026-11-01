@@ -910,6 +910,31 @@ is paint)._
 - Production-bundle run of §4's table at 3 and 300 clips. Results section in this note.
   D-437 status line ("built"). `docs/04-roadmap.md` tick. B-347 updated. CHANGELOG.
 
+**Results so far (2026-11-01, 300 clips / 8 tracks, the `perf-300` scenarios).** Reports under `scratch/perf-baseline/`: `dev-before-s4` (old library), `dev-after-s4`, `dev-after-s7`, `dev-after-s8`, `prod` (production-React debug build, `build: {debugTools: true, dev: false, perfMarks: true}`).
+
+| | old library (dev) | after S4 (dev) | after S8 (dev) | **after S8, production** | budget |
+|---|---|---|---|---|---|
+| drag move p95 | 19–60 ms | 20–28 | 19–28 | **20–24** | ≤ 33 (aim 16.7) |
+| drag worst frame | 91–123 ms | 24–98 | 27–48 | **30–53** | ≤ 50 |
+| release frame | 254–321 ms | 35–100 | 51–98 | **52–87** | < 50 (target < 30) |
+| React commit on release | 100–124 ms | 48–62 | 44–65 | **32–67** | ≤ 10–20 |
+| pinch zoom frame | up to 1037 ms | 122–318 | 65–88 | *not measured* (see below) | ≤ 33 |
+| playback (rAF / paint fps) | — | 28 / 24 | 28 / 24 | **26 / 22** | ≥ 50 / ≥ 24 |
+
+- Correctness: the full 55-scenario suite is 52/55 on the dev app after S8. The 3 failures are the unbuilt features of B-348 (Shift+Delete, J/K/L, I/O). Production `perf-300` is 9/12: `perf-300-move-clip` resolved its target outside the visible area, and both pinch scenarios left `pxPerSec` at 90. The production app opens in a smaller default window, so whether pinch genuinely fails in a production bundle is **unverified**.
+- **Not met yet:** release < 50 ms, the zoom step, and playback at 300 clips. These are the next step.
+
+### S10 — release, zoom and playback (paused 2026-11-01, not built)
+- **Started then paused** (the owner ran out of subagent credits). Worktree `.claude/worktrees/agent-a22c86466a8ce7faa`, no commits.
+- **Brief:**
+  - profile what a release commit re-renders at 300 clips and fix the leaking memo boundaries;
+  - `ClipFadeOverlay`'s per-clip cost (about 5 ms per zoom step in dev);
+  - CSS-variable zoom, so a zoom step re-renders nothing;
+  - move the per-frame `playhead` subscribers outside the pane (`PreviewPane`, `EditorInspectorPanel`, `ClipHighlightsSection`, `HighlightOverlay`, `ClipCurveEditor`) off React state;
+  - settle the production pinch question and make the harness size the window to a fixed layout before measuring.
+- **Goals:** release < 50 ms worst, React commit ≤ 20 ms, zoom step ≤ 33 ms, playback rAF ≥ 50 fps, all at 300 clips in production.
+- **Operational note (S5 aftermath):** removing a dependency left Vite's dep-optimizer cache (`app/node_modules/.vite`) pointing at the deleted package. On its next re-optimise the dev page failed to reload and went blank. After removing a dependency, clear `app/node_modules/.vite` and `node_modules/.vite` and restart `tauri:dev`.
+
 ## 6. Risks and how each is handled
 
 | # | risk | handling |
