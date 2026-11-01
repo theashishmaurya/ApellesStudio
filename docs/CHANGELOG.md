@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-01** — **Roadmap 00g added:** a Motion style library (an `apelles-motion-styles` skill, then templates for the top 10 explainer styles, then whole-video themes, plus "not AI-made" rules), for v0.4.0. It uses an external style guide as a reference for categories and structure only.
 - **2026-11-01** — **D-438 extended:** a managed-service revenue line ("Apelles Studio": pay per video for weekly formats, a 3–5 design-partner pilot) as the near-term earner ahead of Pro (`docs/notes/monetization-plan.md` §12).
 - **2026-11-01** — **Roadmap 00f added:** headless/background mode and concurrent projects for agents (three phases), after Palmier 0.12.0's "Headless and multiple agents". Related items logged: a usage dashboard, named timeline snapshots, HDR.
 - **2026-11-01** — **D-438 proposed: the monetization plan** (`docs/notes/monetization-plan.md`): the editor free and open forever; Apelles Pro $20/mo for hosted AI, cloud compute and publishing; a thin Cloudflare backend; keys in Worker secrets and the macOS Keychain; Paddle as merchant of record; the default model chosen by a bake-off on our harness.

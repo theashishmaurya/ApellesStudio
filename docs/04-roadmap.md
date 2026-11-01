@@ -295,6 +295,12 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      - a usage dashboard (needed for Pro, D-438);
      - named timeline snapshots that agents can create (we have per-project undo only);
      - HDR / colour management (Colorist, later).
+00g. **Motion style library (proposal, owner 2026-11-01):** a new `apelles-motion-styles` skill. One card per style, in Apelles' own words: when to use, brand-kit palette tokens, free fonts, safe-area layout, motion rules, a "never" list, and the Motion primitives/templates that build it.
+   - Then real reusable Motion templates for the top 10 explainer/proof styles: Headline Highlight, Stat Chart, Ranking Bars, Screen Zoom, Notification Stack, Post Receipt, Versus, Timeline, Before/After, Day Counter.
+   - Then whole-video Motion themes: Swiss, Risograph, Editorial, Blueprint, CRT.
+   - Plus our own "doesn't look AI-made" rules in the explainer and Motion skills.
+   - Reference for categories and card structure only, with no copying (no licence stated): Shaan Johari's "Animation styles you can build with Claude", notes in `scratch/motion-styles-reference/`.
+   - Fits v0.4.0, "the Motion release".
 00b. **Motion- and Colorist-tab redesign — follow-up to D-432, not started.** After Edit's P2, run the same process per tab: research the real references (Motion: its layer timeline + scene list, reusing P2's clip/handle design; Colorist: DaVinci Resolve's Color page — node/adjustment panel, scopes, wheels), a mockup for owner approval, then phases. Until then those tabs pick up only the shared P1 tokens/type, P4 controls and P5 chrome.
 0. **Timeline UI test + measurement harness, then sweep and fix (D-434)** (owner, 2026-10-31: "the timeline is way buggy, nothing works as it should — set up a harness for measuring and testing, drive it, and fix it").
    - [x] **Phase 1 — the harness** (D-434, 2026-10-31): `debug_pointer` / `debug_key` (trusted native input into the WKWebView), `debug_set_occlusion_throttling`, stable timeline test ids, `packages/ui-harness` with a 49-scenario starter suite (edit tools first: trim, ripple, roll, slip, slide, split — store result, live feedback mid-drag, cursor, GUI-vs-MCP parity, frame budget). How to run: `docs/notes/ui-harness.md`.
