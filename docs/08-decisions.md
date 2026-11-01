@@ -6,6 +6,35 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-438 — Monetization: open-source editor free forever, "Apelles Pro" ($20/mo) for hosted AI, cloud compute and publishing; thin Cloudflare backend; Paddle as merchant of record
+
+**proposed 2026-11-01, awaiting owner approval** · full plan: `docs/notes/monetization-plan.md`
+
+**Context.** The owner asked how to monetize a built-in AI chat (a cheap open model, cloud or local, a $20 signup): pricing, key storage, whether a backend is needed, which models, which payment provider, and what is free vs Pro. Apelles is AGPL (anyone can build it from source), local-first (CLAUDE.md), and already exposes 269 MCP tools plus editing skills: the real product behind a chat.
+
+**Options.**
+- (a) Paywall local features.
+- (b) A one-off licence.
+- (c) Open-core with paid hosted services.
+- (d) A donations / sponsorship-only model.
+
+**Choice: (c).** Everything that runs on the user's Mac stays free. Pro pays for what costs money or saves setup: a hosted model with a metered allowance, credits for premium models, cloud transcription and renders, direct publishing, sync, premium templates.
+
+- **Agent loop:** runs in the app (media never leaves the Mac).
+- **Thin backend:** Cloudflare Workers + D1 for auth, the metered model proxy, entitlements and the billing webhook.
+- **Keys:** our provider keys only in Worker secrets; the user's session and BYOK keys in the macOS Keychain.
+- **Payments:** Paddle as merchant of record (global tax, India payouts).
+- **Default model:** chosen by a bake-off on our own harness among cheap open models (DeepSeek / Kimi / Qwen / GPT-OSS / MiniMax), hosted in the US; Claude for the credits tier.
+
+**Why.**
+- (a) is unenforceable under AGPL and hostile to the open audience.
+- (b) doesn't pay for recurring AI cost.
+- (d) doesn't fund a product with compute costs.
+
+(c) matches what creators already pay for (Descript, Opus Clip, CapCut Pro), keeps the local-first promise, and keeps margin healthy if the default model is cheap and premium models go through credits.
+
+**Open:** the owner's answers to §11 of the plan (price point, launch timing, Paddle verification, BYOK free forever).
+
 ## D-437 — Replace `@xzdarcy/react-timeline-editor` with Apelles' own lane renderer (memoised clips, horizontal culling), no new dependency
 
 **decided 2026-11-01** (the owner delegated it: "don't bring the library decision, make the best decision which is cheap and fast, do a search") · evidence: `docs/notes/timeline-drag-perf.md` (B-347) · implementation: after redesign P3 lands, sequential on `TimelinePane.tsx`
