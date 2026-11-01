@@ -593,3 +593,71 @@ describe('B-129 — adding a Title targets a NEW video track, never an occupied 
     expect(onTop.tracks[0].clips[0].adjustment).toBeTruthy();
   });
 });
+
+describe('B-360 — a drop lands where it was released (or on the playhead), never at frame 0', () => {
+  /** `TimelinePane.tsx`'s own constants, restated like ROW_HEIGHT above. */
+  const START_LEFT_PX = 32;
+  const PX_PER_SEC = 90; // ruler.ts DEFAULT_PX_PER_SEC
+  const xAt = (frame: number) => AREA.left + START_LEFT_PX + (frame / FPS) * PX_PER_SEC;
+  /** Past the last row (2 rows in the fixture): the "new track below" boundary. */
+  const belowTracksY = () => rowY(ROW_HEIGHT * 2 + 24);
+  const startsOf = () =>
+    (useEditorTimelineStore.getState().timeline?.tracks ?? []).map((t) => t.clips.map((c) => [c.id, c.start_frame]));
+  const newClipStart = (): number | undefined => {
+    for (const t of useEditorTimelineStore.getState().timeline?.tracks ?? []) {
+      for (const c of t.clips) if (c.id !== 'v' && c.id !== 'a') return c.start_frame;
+    }
+    return undefined;
+  };
+
+  it('15. a drop BELOW the tracks (a new track) lands at the drop frame, not at 0', async () => {
+    const area = await mountPane();
+    actSync(() => {
+      area.dispatchEvent(dragEvent('drop', { clientX: xAt(120), clientY: belowTracksY(), payload: JSON.stringify(MEDIA) }));
+    });
+    await waitFrames(2);
+    expect(layout()).toHaveLength(3);
+    expect(newClipStart(), JSON.stringify(startsOf())).toBe(120);
+  });
+
+  it('16. a drop ABOVE the tracks (a new top track) lands at the drop frame too', async () => {
+    const area = await mountPane();
+    actSync(() => {
+      area.dispatchEvent(dragEvent('drop', { clientX: xAt(150), clientY: aboveTracksY(), payload: JSON.stringify(MEDIA) }));
+    });
+    await waitFrames(2);
+    expect(newClipStart(), JSON.stringify(startsOf())).toBe(150);
+  });
+
+  it('17. a drop near the playhead snaps onto it (snapping on)', async () => {
+    const area = await mountPane();
+    // Inside the 96-frame fixture (a playhead past the end is clamped to it).
+    actSync(() => useEditorTimelineStore.setState({ playhead: 80 }));
+    actSync(() => {
+      // 4 frames past the playhead: inside the 28 px insertion snap (7 frames at 90 px/s, 24 fps).
+      area.dispatchEvent(dragEvent('drop', { clientX: xAt(84), clientY: belowTracksY(), payload: JSON.stringify(MEDIA) }));
+    });
+    await waitFrames(2);
+    expect(newClipStart()).toBe(80);
+  });
+
+  it('18. a drop far from the playhead stays where it was released', async () => {
+    const area = await mountPane();
+    actSync(() => useEditorTimelineStore.setState({ playhead: 80 }));
+    actSync(() => {
+      area.dispatchEvent(dragEvent('drop', { clientX: xAt(250), clientY: belowTracksY(), payload: JSON.stringify(MEDIA) }));
+    });
+    await waitFrames(2);
+    expect(newClipStart()).toBe(250);
+  });
+
+  it('19. a drop into open space on an EXISTING track lands at the drop frame', async () => {
+    const area = await mountPane();
+    actSync(() => {
+      area.dispatchEvent(dragEvent('drop', { clientX: xAt(200), clientY: rowY(ROW_HEIGHT / 2), payload: JSON.stringify(MEDIA) }));
+    });
+    await waitFrames(2);
+    expect(layout()[0].clips).toHaveLength(2);
+    expect(newClipStart(), JSON.stringify(startsOf())).toBe(200);
+  });
+});

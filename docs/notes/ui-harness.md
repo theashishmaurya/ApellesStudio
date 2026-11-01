@@ -553,3 +553,14 @@ of `docs/notes/timeline-lanes.md` with the run directories above.
 Profiled for real in `docs/notes/timeline-drag-perf.md`: per-gesture × clip-count tables,
 `sample` profiles of the WebContent process by phase, controls (watch, throttling, focus,
 input rate), ranked causes and fix plan F1–F6.
+
+
+## HTML5 drag-and-drop (B-360, 2026-11-01)
+
+- **What fails natively:** a drag from a `draggable` element, such as a Sources-panel tile onto the timeline, is an HTML5 drag-and-drop. macOS starts the drag session behind it only from a real mouse, so `debug_pointer`'s native `drag` never produces a `drop`. This was verified live with the tile on screen: nothing landed.
+- **`action: "html5Drag"`** (`packages/debug/src/input/html5Drag.ts`) runs dragstart, then dragenter/dragover along the path (one frame apart), then drop, then dragend, with one real `DataTransfer`, through the page's own handlers.
+  - It is always untrusted, and the reply says so.
+  - A drop happens only if the final dragover was accepted, as in a browser.
+  - The runner checks `dropped` for it instead of `pointerdown`.
+- **Not covered:** the OS drag session itself (the drag image, dragging in from Finder).
+- **Scenarios:** `drop-media-new-track-at-frame` and `drop-media-snaps-to-playhead`. Their target is `[data-testid="sources-media-tile"][data-chroma-media-name^="harness-video"]`.

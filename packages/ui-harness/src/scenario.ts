@@ -73,7 +73,7 @@ export type TargetRef =
 
 export interface PointerStep {
   pointer: {
-    action: 'move' | 'down' | 'up' | 'click' | 'doubleClick' | 'drag' | 'wheel' | 'pinch';
+    action: 'move' | 'down' | 'up' | 'click' | 'doubleClick' | 'drag' | 'wheel' | 'pinch' | 'html5Drag';
     target: TargetRef;
     to?: TargetRef;
     path?: TargetRef[];

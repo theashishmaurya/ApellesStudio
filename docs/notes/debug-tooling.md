@@ -683,3 +683,5 @@ claim full coverage.
   `debug_pointer`, `debug_perf_entries`, `debug_set_editor_layout` **0** occurrences each in
   `dist/assets/*.js`; with `TAURI_ENV_DEBUG=true`: 8 / 2 / 2. `editor_set_selection` (the
   control) is present in both.
+
+- **2026-11-01 (B-360):** `debug_pointer` has an `html5Drag` action for HTML5 drag-and-drop. It is synthetic by necessity (see `docs/notes/ui-harness.md` › "HTML5 drag-and-drop") and documented identically in both MCP servers; the parity corpus was re-captured.

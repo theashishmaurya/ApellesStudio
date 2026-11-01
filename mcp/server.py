@@ -8203,8 +8203,15 @@ def debug_pointer(
         not just where it ended up.
 
     Args:
-        action: move, down, up, click, doubleClick, drag, wheel or pinch.
-            `down` and `up` may be separate calls; the button stays held between.
+        action: move, down, up, click, doubleClick, drag, wheel, pinch or
+            html5Drag. `down` and `up` may be separate calls; the button stays
+            held between. `html5Drag` is an HTML5 drag-and-drop from `target`
+            to `to` (e.g. a Sources-panel clip onto the timeline): dragstart,
+            dragover along the path and drop, with one real DataTransfer,
+            through the page's own handlers. It is always synthetic, because
+            macOS starts a native drag session only from a real mouse. The
+            reply says whether the drop target accepted it (`dropAccepted`)
+            and whether it dropped.
         target: where it starts (or, for click/wheel/pinch, where it happens).
         to: where a drag ends.
         path: waypoints a drag (or a move) passes through before `to`.

@@ -598,6 +598,8 @@ export function SourcesPanel() {
                 <ContextMenu key={it.id}>
                   <ContextMenuTrigger>
                     <div
+                      data-testid="sources-media-tile"
+                      data-chroma-media-name={it.name}
                       draggable={!selecting}
                       onDragStart={(e) => {
                         e.dataTransfer.effectAllowed = 'copy';

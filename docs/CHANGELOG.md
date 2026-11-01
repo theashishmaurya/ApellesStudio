@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-01** — **B-360 fixed:** a clip dragged in from the media browser below or above the tracks lands where it was dropped (snapping onto the playhead when released near it), not at frame 0. The UI harness gained `debug_pointer`'s `html5Drag` action (a native injected drag never starts macOS's drag session) and two live drop scenarios, both passing.
 - **2026-11-01** — **Session wrap (paused):**
   - **Done:** the Edit tab redesign P1–P5 (D-432) and D-437 S0–S8. The timeline now renders our own culled, memoised lanes and playhead; `@xzdarcy/react-timeline-editor`, interact.js and react-virtualized are removed.
   - **Measured at 300 clips, production build:** drag p95 20–24 ms (was 19–60), release 52–87 ms (was 254–321), playback 26 fps.

@@ -28,6 +28,7 @@ import { useEditorTimelineStore } from '@apelles/editor';
 
 import { dispatchNative, nativeInputAvailable, type NativeReport } from './dispatchNative';
 import { dispatchSynthetic } from './dispatchSynthetic';
+import { runHtml5Drag } from './html5Drag';
 import { isTargetError, resolveTarget, type ResolvedTarget } from './geometry';
 import { startObserver } from './observe';
 import { startFrameSampler, type WatchOptions } from './perf';
@@ -213,6 +214,13 @@ export async function debugPointer(args: unknown): Promise<Reply> {
     const n = optNumber(a[name], name);
     if (isErr(n)) return n;
     nums[name] = n;
+  }
+  // B-360 — an HTML5 drag-and-drop runs through the page's own drag handlers
+  // (see `html5Drag.ts` for why a native drag cannot start one).
+  if (action === 'html5Drag') {
+    const report = await runHtml5Drag(targets.map((t) => ({ x: t.x, y: t.y })), nums.steps);
+    if (isErr(report)) return report;
+    return { action, targets, ...report };
   }
   const plan = buildPointerPlan({
     action,

@@ -4,6 +4,18 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-360 — a clip dragged from the media browser onto a new track always landed at frame 0, not where it was dropped
+
+status: **fixed** (2026-11-01) · severity: high (every drag-in below or above the tracks went to the start of the timeline) · area: `packages/editor/src/TimelinePane.tsx` (`placeDroppedClip`)
+
+- **Seen:** the owner, live: "when I drag and drop, instead of starting from the playhead it always moves to the very first".
+- **Cause:** a drop on a track-insertion boundary (below the last track, above the first or between two) creates a new track and then ran `add_clip` with **no `startFrame`**. That means "append", and an append on an empty track is frame 0. Drops onto an existing track already used the drop position.
+- **Fix:** one `dropFrameAt(e, rect)` for every drop path: the release frame (never below 0), pulled onto the playhead when the release is within the insertion snap distance and snapping is on (FCP's snap to the playhead). The new-track path passes it as the explicit `startFrame`.
+- **Tests:**
+  - DOM: `TimelinePane.drop.dom.test.tsx` cases 15–19 cover a drop below and above the tracks at the drop frame, a drop that snaps to the playhead, a drop far from it, and open space on an existing track.
+  - Live UI harness: `drop-media-new-track-at-frame` and `drop-media-snaps-to-playhead` both pass against the running app.
+- **Harness gap found on the way:** a native injected drag from a `draggable` element never drops. macOS starts the `NSDraggingSession` behind HTML5 drag-and-drop only from a real mouse. So `debug_pointer` gained an `html5Drag` action (`packages/debug/src/input/html5Drag.ts`): dragstart, then dragover along the path, then drop, with one real `DataTransfer`, through the page's own handlers, reported as untrusted. The runner checks `dropped` instead of `pointerdown` for it. Sources tiles carry `data-testid="sources-media-tile"` and `data-chroma-media-name`.
+
 ## B-359 — the app still differs from the approved D-432 mockup in eight places (comparison pass 2026-11-01)
 
 status: open (queued with B-354, after D-437 S10) · severity: minor (polish), except item 6 (medium: the playhead goes off screen) · area: Inspector header and rows, the browser header, the timeline toolbar, track headers, view follow, marker lines

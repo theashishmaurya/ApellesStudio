@@ -25,11 +25,16 @@ import {
   marker,
   playheadGrab,
   playheadLine,
+  selector,
   TIMELINE_TEST_IDS,
   trackHeader,
   trackHeightZone,
 } from '../targets.ts';
 import { clipIs, clipUnchanged, FPS_GUARD, GAPPED, GHOST, LONG, playheadNear, THREE_CLIPS } from './common.ts';
+
+/** The harness's generated picture-only test file in the Sources panel
+ *  (`SourcesPanel.tsx`'s `sources-media-tile`, named after the file). */
+const MEDIA_TILE_VIDEO = '[data-testid="sources-media-tile"][data-chroma-media-name^="harness-video"]';
 
 const headerSel = (track: number) => `[data-testid="${TIMELINE_TEST_IDS.trackHeader}"][data-chroma-track="${track}"]`;
 
@@ -200,6 +205,36 @@ export const TIMELINE_SCENARIOS: Scenario[] = [
       { expect: { live: { selector: GHOST, prop: 'x', minDistinct: 4, label: 'the drag ghost follows the pointer' } } },
       { waitFor: clipIs('b', 'startFrame', 150, 1) },
       { expect: [clipUnchanged('b', 'duration'), clipUnchanged('a', 'startFrame'), clipIs('b', 'track', 0)] },
+    ],
+  },
+  {
+    id: 'drop-media-new-track-at-frame',
+    title: 'A clip dragged from the media browser BELOW the tracks lands on a new track where it was dropped, not at frame 0',
+    area: 'drop',
+    reference: 'FCP / Resolve / Premiere: a browser clip lands where it is released (B-360, owner 2026-11-01)',
+    fixture: THREE_CLIPS,
+    steps: [
+      FPS_GUARD,
+      { capture: 'timeline', as: 'before' },
+      // Row 2 does not exist (THREE_CLIPS has two tracks): its centre is the "new track below" boundary.
+      { pointer: { action: 'html5Drag', target: selector(MEDIA_TILE_VIDEO), to: atFrame(150, 2), steps: 12 } },
+      { waitFor: { path: 'timeline.tracks.length', op: 'eq', value: 3 } },
+      { expect: { path: 'timeline.tracks.2.0.startFrame', op: 'near', value: 150, tolerance: 2 } },
+    ],
+  },
+  {
+    id: 'drop-media-snaps-to-playhead',
+    title: 'A clip dropped from the media browser near the playhead snaps onto it',
+    area: 'drop',
+    reference: 'FCP: a browser drag snaps to the playhead with snapping on (B-360)',
+    fixture: THREE_CLIPS,
+    steps: [
+      FPS_GUARD,
+      { op: 'editor_set_playhead', args: { frame: 200 } },
+      // Onto the empty second track, 4 frames past the playhead: inside the insertion snap.
+      { pointer: { action: 'html5Drag', target: selector(MEDIA_TILE_VIDEO), to: atFrame(204, 1), steps: 12 } },
+      { waitFor: { path: 'timeline.tracks.1.length', op: 'eq', value: 1 } },
+      { expect: { path: 'timeline.tracks.1.0.startFrame', op: 'eq', value: 200 } },
     ],
   },
   {

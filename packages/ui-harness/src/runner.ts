@@ -382,6 +382,17 @@ export class ScenarioRunner {
     const native = reply.native as { windowKey?: boolean; madeKeyForMove?: boolean } | undefined;
     if ('pointer' in step) {
       const action = step.pointer.action;
+      if (action === 'html5Drag') {
+        // B-360 — an HTML5 drag has no pointer events: it was delivered when the
+        // drop target accepted it and the drop ran (`html5Drag.ts`).
+        if (reply.dropped !== true) {
+          record({
+            ok: false,
+            message: `${label}: the HTML5 drag did not drop: source ${String(reply.source)}, drop target ${String(reply.dropTarget)}, accepted ${String(reply.dropAccepted)}, data ${JSON.stringify(reply.dataTypes)}`,
+          });
+        }
+        return;
+      }
       const want = action === 'wheel' ? 'wheel' : action === 'pinch' ? null : action === 'move' ? 'pointermove' : 'pointerdown';
       if (action === 'move' && !(counts.pointermove > 0) && native?.windowKey === false) {
         // H5 — WebKit drops a buttonless move while the window is not key. That

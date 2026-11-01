@@ -1834,6 +1834,18 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
     return Math.round(((contentX - START_LEFT_PX) / pxPerSec) * fps);
   };
 
+  /** B-360 — the frame a Sources-panel / generator drop lands at: where the
+   *  pointer was released (never before 0), pulled onto the playhead when the
+   *  release is within the insertion snap distance and snapping is on — FCP's
+   *  "snaps to the playhead" for a drag from the browser. Every drop path
+   *  (onto an existing track, or onto a brand-new one) goes through this, so a
+   *  drop never silently falls back to frame 0. */
+  const dropFrameAt = (e: DragEvent, rect: DOMRect): number => {
+    const frame = Math.max(0, xToFrame(e, rect));
+    const playhead = useEditorTimelineStore.getState().playhead;
+    return insertSnapFrames > 0 && Math.abs(frame - playhead) <= insertSnapFrames ? playhead : frame;
+  };
+
   /** D-095/D-100 — nearest clip edge (start/end of any clip on `track`, or
    *  0) to `frame`, within `INSERT_SNAP_PX` at the current zoom; if nothing
    *  edge-snaps, falls back to whichever half of the clip CURRENTLY UNDER
@@ -2005,7 +2017,11 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
         applyOp({ kind: 'move_track', from: newTrackIdx, to: boundary });
         setSelection((prev) => prev.map((s) => ({ ...s, track: trackIndexAfterMove(s.track, newTrackIdx, boundary) })));
       }
-      applyOp({ kind: 'add_clip', track: boundary, clip, linkedAudio });
+      // B-360 — the new track is empty, so the clip lands exactly where it was
+      // dropped (an omitted `startFrame` means "append", which on an empty
+      // track is frame 0: every drop below/above the tracks used to land at
+      // the very start of the timeline).
+      applyOp({ kind: 'add_clip', track: boundary, clip, startFrame: rect ? dropFrameAt(e, rect) : undefined, ripple: false, linkedAudio });
       if (generator) selectDroppedGenerator(boundary, clip.id);
       return;
     }
@@ -2025,7 +2041,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
     // back to the pre-D-095 plain append, same as no `rect`/track at all.
     const insertion =
       rect && trackData
-        ? computeInsertion(trackData, xToFrame(e, rect), clip, insertSnapFrames, fps)
+        ? computeInsertion(trackData, dropFrameAt(e, rect), clip, insertSnapFrames, fps)
         : null;
     if (insertion) {
       applyOp({

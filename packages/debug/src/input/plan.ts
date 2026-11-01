@@ -115,8 +115,8 @@ function modifierEvents(mods: Modifiers, phase: 'down' | 'up', delayMs: number):
   });
 }
 
-export type PointerAction = 'move' | 'down' | 'up' | 'click' | 'doubleClick' | 'drag' | 'wheel' | 'pinch';
-export const POINTER_ACTIONS: readonly PointerAction[] = ['move', 'down', 'up', 'click', 'doubleClick', 'drag', 'wheel', 'pinch'];
+export type PointerAction = 'move' | 'down' | 'up' | 'click' | 'doubleClick' | 'drag' | 'wheel' | 'pinch' | 'html5Drag';
+export const POINTER_ACTIONS: readonly PointerAction[] = ['move', 'down', 'up', 'click', 'doubleClick', 'drag', 'wheel', 'pinch', 'html5Drag'];
 
 export interface PointerPlanOptions {
   action: PointerAction;
