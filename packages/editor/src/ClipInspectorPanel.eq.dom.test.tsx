@@ -58,6 +58,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 const { useEditorTimelineStore } = await import('./timelineStore');
+const { openAllInspectorSections } = await import('./testUtils/inspectorSections');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
 import { EQ_BAND_COUNT } from './timeline';
 import type { Clip, Timeline } from './timeline';
@@ -104,6 +105,8 @@ const EQ_GRAPH_WIDTH = 280;
 const EQ_GRAPH_HEIGHT = 92;
 
 beforeEach(() => {
+  // every Inspector section starts collapsed; these suites query inside them
+  openAllInspectorSections(useEditorTimelineStore);
   restoreResizeObserver = installResizeObserverStub();
   restoreOffsetMetrics = stubOffsetMetrics(EQ_GRAPH_WIDTH, EQ_GRAPH_HEIGHT);
   useEditorTimelineStore.setState({

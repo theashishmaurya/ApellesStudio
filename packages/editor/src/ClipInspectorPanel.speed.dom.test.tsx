@@ -43,6 +43,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 const { useEditorTimelineStore } = await import('./timelineStore');
+const { openAllInspectorSections } = await import('./testUtils/inspectorSections');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
 import { endFrame } from './timeline';
 import type { Clip, Timeline } from './timeline';
@@ -92,6 +93,8 @@ function setUp(tl: Timeline, playhead = 0) {
 }
 
 beforeEach(() => {
+  // every Inspector section starts collapsed; these suites query inside them
+  openAllInspectorSections(useEditorTimelineStore);
   restoreResizeObserver = installResizeObserverStub();
   setUp(fixture());
 });

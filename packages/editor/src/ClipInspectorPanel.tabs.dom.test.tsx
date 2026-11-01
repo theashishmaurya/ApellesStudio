@@ -50,6 +50,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 const { useEditorTimelineStore } = await import('./timelineStore');
+const { openAllInspectorSections } = await import('./testUtils/inspectorSections');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
 const { useHistoryStore } = await import('@apelles/history');
 import { DEFAULT_TEXT_FONT, type Clip, type Timeline } from './timeline';
@@ -100,6 +101,8 @@ let restoreResizeObserver: (() => void) | null = null;
 let restoreOffsetMetrics: (() => void) | null = null;
 
 beforeEach(() => {
+  // every Inspector section starts collapsed; these suites query inside them
+  openAllInspectorSections(useEditorTimelineStore);
   restoreResizeObserver = installResizeObserverStub();
   // The EQ response graph needs a real offset size to draw against (jsdom has
   // no layout) — the same stub `ClipInspectorPanel.eq.dom.test.tsx` installs,

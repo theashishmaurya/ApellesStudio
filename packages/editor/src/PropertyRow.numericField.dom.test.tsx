@@ -39,6 +39,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 const { useEditorTimelineStore } = await import('./timelineStore');
+const { openAllInspectorSections } = await import('./testUtils/inspectorSections');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
 import { INSPECTOR_ROW } from '@apelles/ui';
 import { fieldByLabel } from './testUtils/inspectorDom';
@@ -76,6 +77,8 @@ let mounted: MountedComponent | null = null;
 let restoreResizeObserver: (() => void) | null = null;
 
 beforeEach(() => {
+  // every Inspector section starts collapsed; these suites query inside them
+  openAllInspectorSections(useEditorTimelineStore);
   restoreResizeObserver = installResizeObserverStub();
   useEditorTimelineStore.setState({
     timeline: fixture(),

@@ -9,23 +9,15 @@
  *
  * **What it does NOT do.** It does not decide what is inside a section or
  * which sections a clip has — the panels do. A section with no remembered
- * choice shows `defaultOpen`.
+ * choice starts collapsed.
  */
 import type { ReactNode } from 'react';
 import { InspectorSection } from '@apelles/inspector';
 
 import { useEditorTimelineStore } from './timelineStore';
 
-/** Sections that start closed because they are secondary and/or heavy; every
- *  other section starts open. One list, so the defaults are not scattered
- *  across call sites. */
-const CLOSED_BY_DEFAULT: ReadonlySet<string> = new Set(['dynamic-zoom', 'highlights']);
-
-/** Whether a section with this id is open when the user has not chosen. */
-export function sectionDefaultOpen(id: string): boolean {
-  return !CLOSED_BY_DEFAULT.has(id);
-}
-
+/** Every section starts collapsed (owner, 2026-11-01); a remembered choice in
+ *  `timelineStore.inspectorSections` wins. */
 export function EditorSection({
   id,
   label,
@@ -39,7 +31,7 @@ export function EditorSection({
   actions?: ReactNode;
   children: ReactNode;
 }) {
-  const open = useEditorTimelineStore((s) => s.inspectorSections[id]) ?? sectionDefaultOpen(id);
+  const open = useEditorTimelineStore((s) => s.inspectorSections[id]) ?? false;
   const setOpen = useEditorTimelineStore((s) => s.setInspectorSectionOpen);
   return (
     <InspectorSection id={id} label={label} meta={meta} actions={actions} open={open} onOpenChange={(v) => setOpen(id, v)}>
