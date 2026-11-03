@@ -20,6 +20,7 @@ import { useChromaStore } from '../store/useChromaStore';
 import { useAgentStore } from '../store/useAgentStore';
 import { useSessionStore } from '../store/useSessionStore';
 import { closeProjectOp } from './projectOps';
+import { projectSummary } from './projectSummary';
 import { useEditorActions, debouncedSetHistory } from './useEditorActions';
 import { useAiMasking } from './useAiMasking';
 import { diffAdjustments, summarizeActivity } from '../utils/agentActivity';
@@ -42,7 +43,7 @@ import {
   isKeyframeableMaskType,
 } from '../utils/maskKeyframes';
 import { Mask, SubMask, SubMaskMode } from '../components/panel/right/Masks';
-import { isResultOnlyOp } from './bridgeOpClasses';
+import { isResultOnlyOp, wantsGrade } from './bridgeOpClasses';
 import {
   computeScopes,
   computeGap,
@@ -458,8 +459,11 @@ export function useChromaControl() {
         if (!path) return { error: 'pass a project path or name (see list_projects)' };
         const res = await useSessionStore.getState().openProject(path);
         if (!res.ok) return { error: res.error };
-        const st: any = await invoke('chroma_project_current');
-        return { opened: st, shots: (await invoke<any>('chroma_session_list')).shots };
+        const opened: any = await invoke('chroma_project_current');
+        // B-319 — the compact answer by default; `include_grade` restores the
+        // full shot list (and the bridge attaches the rendered frame + grade).
+        if (wantsGrade(a)) return { opened, shots: (await invoke<any>('chroma_session_list')).shots };
+        return { opened, ...(await projectSummary()) };
       },
 
       new_project: async (a) => {
@@ -472,7 +476,8 @@ export function useChromaControl() {
             : [];
         const res = await useSessionStore.getState().newProject(name, media);
         if (!res.ok) return { error: res.error };
-        return { created: await invoke('chroma_project_current') };
+        const created: any = await invoke('chroma_project_current');
+        return wantsGrade(a) ? { created } : { created, ...(await projectSummary()) };
       },
 
       // B-356 — the GUI's "‹ Projects" button as an op (same store action; see
@@ -1576,7 +1581,7 @@ export function useChromaControl() {
         'get_state', 'list_masks', 'inspect_color', 'sample', 'sample_region',
         'export', 'export_progress', 'get_grade', 'save_grade', 'request_human',
         'list_shots', 'list_mask_keyframes',
-        'list_projects', 'set_project_settings',
+        'set_project_settings',
       ]);
       // B-248 — cross-tab ops (D-383's undo/redo). They are not Colorist ops:
       // they do not touch the grade unless the history entry they step happens
@@ -1593,7 +1598,7 @@ export function useChromaControl() {
       // switch restores that shot's own feed — D-033). `settleAndCapture` still
       // runs so the agent gets the new shot's frame back.
       const NAV = new Set(['seek', 'open', 'set_active_shot', 'add_shots', 'open_project', 'new_project']);
-      const shouldLog = !READ_ONLY.has(op) && !NAV.has(op) && !isResultOnlyOp(op);
+      const shouldLog = !READ_ONLY.has(op) && !NAV.has(op) && !isResultOnlyOp(op, args);
 
       try {
         // B-217/D-358 — before anything else: refuse to run while this app's
@@ -1619,7 +1624,7 @@ export function useChromaControl() {
 
         const result = await fn(args || {});
 
-        if (isResultOnlyOp(op)) {
+        if (isResultOnlyOp(op, args)) {
           respond({ ok: !result?.error, error: result?.error ?? null, result });
           return;
         }

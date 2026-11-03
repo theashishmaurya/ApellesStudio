@@ -564,3 +564,5 @@ input rate), ranked causes and fix plan F1–F6.
   - The runner checks `dropped` for it instead of `pointerdown`.
 - **Not covered:** the OS drag session itself (the drag image, dragging in from Finder).
 - **Scenarios:** `drop-media-new-track-at-frame` and `drop-media-snaps-to-playhead`. Their target is `[data-testid="sources-media-tile"][data-chroma-media-name^="harness-video"]`.
+
+**Update 2026-11-03 (B-348):** `ripple-delete-shortcut`, `key-jkl-shuttle`, `key-in-out-marks` and `key-edit-point-navigation` are now built (Shift+Delete, J/K/L, I/O, Up/Down); the scenarios needed no change. Reverse playback does not exist in the player, so J is a backward scrub (`shuttle.ts`). A live run to confirm is pending.

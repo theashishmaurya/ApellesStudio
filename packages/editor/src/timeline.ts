@@ -820,9 +820,10 @@ export function newTextLayer(
  *  left unset: a generated layer has no native rate, and `source_frames_to_
  *  timeline`'s own documented fallback for an absent `source_fps` is a 1:1
  *  ratio — which is exactly right here, so a title's `duration` really is its
- *  timeline footprint. `source_len` mirrors `duration` so a trim can still
- *  extend it back out to its original length, the same ceiling a media clip's
- *  source length gives. */
+ *  timeline footprint. `source_len` mirrors `duration` at creation, but it is
+ *  NOT the ceiling: a generated clip has no media to run out of, so the trim
+ *  clamps give it a synthesized hour in both directions (`sourceCeilingOf`,
+ *  B-338 / B-303) and `fitSyntheticSource` grows the stored value to match. */
 export function newTextClipFields(
   layer: TextLayer,
   durationFrames: number,
@@ -3342,6 +3343,41 @@ function startAfterRipple(startFrame: number, rippled: boolean, threshold: numbe
   return rippled && startFrame >= threshold ? startFrame + delta : startFrame;
 }
 
+/** B-338 / B-303 — whether `c` has no media of its own to run out of: a still
+ *  image (D-292), a title, a caption or an adjustment clip. Its picture is the
+ *  same at every frame (or generated), so a trim in either direction just
+ *  lengthens or shortens it; the only limits are the neighbours (D-054). */
+function hasSyntheticSource(c: Clip): boolean {
+  return isStillSource(c.source_path) || isGeneratedClip(c);
+}
+
+/** The source-frame ceiling a trim bounds against. A still carries a
+ *  synthesized hour-long `source_len` from the start (D-292); a generated clip
+ *  is stamped `source_len == duration`, so it is given the same hour here
+ *  instead (B-338 / B-303), which also covers every project saved before the
+ *  fix. `fitSyntheticSource` keeps the stored `source_len` covering what the
+ *  clip grew to. */
+function sourceCeilingOf(c: Clip, fps: number): number {
+  if (!isGeneratedClip(c)) return Math.max(c.source_len, 0);
+  return Math.max(c.source_len, Math.round(STILL_SOURCE_SECONDS * fps));
+}
+
+/** How many source frames `c`'s head may move EARLIER: its real `source_start`
+ *  for footage; for a clip with a synthetic source, all the extent there is
+ *  (the clip may grow until it fills the synthesized span), but never below
+ *  what `source_start` already allows. */
+function headFramesOf(c: Clip, fps: number): number {
+  return hasSyntheticSource(c) ? Math.max(sourceCeilingOf(c, fps) - c.duration, c.source_start) : c.source_start;
+}
+
+/** After a trim lengthened a GENERATED clip, make its stored `source_len`
+ *  cover `source_start + duration` again (the invariant every clamp and the
+ *  Rust model read). Stills already carry an hour; footage is bounded by its
+ *  media, so neither is touched. */
+function fitSyntheticSource(c: Clip): void {
+  if (isGeneratedClip(c)) c.source_len = Math.max(c.source_len, c.source_start + c.duration);
+}
+
 /** The clamped head-trim delta `trim_start` would really apply — mirrors
  *  `apelles-timeline::clamped_trim_start_delta`, extracted for the same D-129
  *  reason (asking every link-group member for its own clamp before mutating).
@@ -3359,13 +3395,13 @@ function startAfterRipple(startFrame: number, rippled: boolean, threshold: numbe
  *  either field itself. */
 function clampedTrimStartDelta(tr: Track, clipIdx: number, delta: number, fps: number): number {
   const c = tr.clips[clipIdx];
-  const ceiling = Math.max(c.source_len, 0);
+  const ceiling = sourceCeilingOf(c, fps);
   const prevEnd = tr.clips.reduce((max, other, i) => {
     if (i === clipIdx) return max;
     const oe = endFrame(other, fps);
     return oe <= c.start_frame ? Math.max(max, oe) : max;
   }, 0);
-  const lowerBound = sourceFramesToTimeline(c, -c.source_start, fps);
+  const lowerBound = sourceFramesToTimeline(c, -headFramesOf(c, fps), fps);
   const upperBound = sourceFramesToTimeline(c, Math.max(ceiling - 1, 0) - c.source_start, fps);
   const d = clampInt(delta, lowerBound, upperBound);
   return Math.max(d, prevEnd - c.start_frame);
@@ -3388,7 +3424,7 @@ function trimEndBounds(
   fps: number,
 ): { maxDurSource: number; maxDurPosition: number; maxDur: number; nextStart: number | null } {
   const c = tr.clips[clipIdx];
-  const ceiling = Math.max(c.source_len, 0);
+  const ceiling = sourceCeilingOf(c, fps);
   const maxDurSource = Math.max(ceiling - c.source_start, 1);
   let nextStart: number | null = null;
   for (const [i, other] of tr.clips.entries()) {
@@ -3477,7 +3513,8 @@ function headRoom(c: Clip, fps: number): [number, number] {
   // head by `source_start` made every roll that pulls its cut EARLIER refuse
   // ("no media handle"). Its head may grow until the clip is as long as the
   // synthesized extent; `moveClipHead` keeps `source_start` at 0 when it does.
-  const headFrames = isStillSource(c.source_path) ? Math.max(c.source_len - c.duration, c.source_start) : c.source_start;
+  // B-338 / B-303 — a title, caption or adjustment clip is the same: no media.
+  const headFrames = headFramesOf(c, fps);
   return [
     sourceFramesToTimeline(c, -headFrames, fps),
     sourceFramesToTimeline(c, Math.max(c.duration - 1, 0), fps),
@@ -3490,8 +3527,9 @@ function headRoom(c: Clip, fps: number): [number, number] {
  *  an extended head just lengthens the clip; everything else moves its
  *  in-point by exactly `dSource`, as before. */
 function moveClipHead(c: Clip, dSource: number): void {
-  c.source_start = isStillSource(c.source_path) ? Math.max(0, c.source_start + dSource) : c.source_start + dSource;
+  c.source_start = hasSyntheticSource(c) ? Math.max(0, c.source_start + dSource) : c.source_start + dSource;
   c.duration -= dSource;
+  fitSyntheticSource(c);
 }
 
 /** [`headRoom`]'s counterpart for `c`'s TAIL (out-point), same convention:
@@ -3500,7 +3538,7 @@ function moveClipHead(c: Clip, dSource: number): void {
 function tailRoom(c: Clip, fps: number): [number, number] {
   return [
     sourceFramesToTimeline(c, 1 - c.duration, fps),
-    sourceFramesToTimeline(c, Math.max(c.source_len - c.source_start - c.duration, 0), fps),
+    sourceFramesToTimeline(c, Math.max(sourceCeilingOf(c, fps) - c.source_start - c.duration, 0), fps),
   ];
 }
 
@@ -4944,6 +4982,7 @@ function applyRippleTrim(
       moveClipHead(nc, dSource);
     } else {
       nc.duration += dSource;
+      fitSyntheticSource(nc);
     }
   }
   shiftClipsAtOrAfter(next.tracks[track], threshold, shift);
@@ -6863,9 +6902,14 @@ function applyOpCopy(tl: Timeline, op: EditOp): Timeline {
       for (const [ti, ci] of targets) {
         const nc = next.tracks[ti].clips[ci];
         const ncDeltaSource = timelineFramesToSource(nc, d, fps);
-        nc.source_start += ncDeltaSource;
+        // B-338 / B-303 — a clip with no media keeps `source_start` at 0 when
+        // its head is pulled earlier (there is nothing before it to pull in).
+        nc.source_start = hasSyntheticSource(nc)
+          ? Math.max(0, nc.source_start + ncDeltaSource)
+          : nc.source_start + ncDeltaSource;
         nc.start_frame += d;
         nc.duration -= ncDeltaSource;
+        fitSyntheticSource(nc);
       }
       return next;
     }
@@ -6890,7 +6934,11 @@ function applyOpCopy(tl: Timeline, op: EditOp): Timeline {
       const link = linkTargets(tl, op.track, op.clip);
       const next = clone(tl);
       const targets: Array<[number, number]> = link ? link.members : [[op.track, op.clip]];
-      for (const [ti, ci] of targets) next.tracks[ti].clips[ci].duration += applied;
+      for (const [ti, ci] of targets) {
+        const nc = next.tracks[ti].clips[ci];
+        nc.duration += applied;
+        fitSyntheticSource(nc);
+      }
       return next;
     }
     case 'slip': {
@@ -6954,6 +7002,7 @@ function applyOpCopy(tl: Timeline, op: EditOp): Timeline {
       for (const [ti, ci] of leftTargets) {
         const nc = next.tracks[ti].clips[ci];
         nc.duration += timelineFramesToSource(nc, d, fps);
+        fitSyntheticSource(nc);
       }
       for (const [ti, ci] of rightTargets) {
         const nc = next.tracks[ti].clips[ci];
@@ -7024,6 +7073,7 @@ function applyOpCopy(tl: Timeline, op: EditOp): Timeline {
       for (const [ti, ci] of prevTargets ?? []) {
         const nc = next.tracks[ti].clips[ci];
         nc.duration += timelineFramesToSource(nc, d, fps);
+        fitSyntheticSource(nc);
       }
       for (const [ti, ci] of nextTargets ?? []) {
         const nc = next.tracks[ti].clips[ci];

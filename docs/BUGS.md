@@ -269,12 +269,17 @@ status: **fixed 2026-11-01** — `timeline-overrides.css`: `.timeline-editor-cur
 
 ## B-348 — standard NLE timeline affordances the harness found missing (one entry for the group, not a defect list)
 
-status: **open, feature gap: for the roadmap, not a bug fix** · severity: medium (editing speed) · area: `@apelles/keymap` (`packages/keymap/src/shortcuts.ts`), `TimelinePane.tsx`, `TimelineMarkers.tsx`
+status: **built 2026-11-03 (all keys; live harness run pending)** · severity: medium (editing speed) · area: `@apelles/keymap` (`packages/keymap/src/shortcuts.ts`), `TimelinePane.tsx`, `TimelineMarkers.tsx`
 
 - **found:** 2026-10-31, the first live run of the D-434 harness (`docs/notes/ui-harness.md` § "First live run"). Each one FAILs by design until built; absence confirmed by reading the code, not just by the failing scenario.
 - **missing:** a Blade/Razor tool (`razor-blade-tool`: the trim palette is select/ripple/roll/slip/slide only); a two-up trim viewer during roll/slip (`trim-two-up-viewer`, D-432 P2 §5.1 plans it); J/K/L shuttle, I/O in/out marks, ↑/↓ edit-point navigation, Shift+Delete ripple delete, `=`/`-` keyboard zoom, a snapping toggle (`key-jkl-shuttle`, `key-in-out-marks`, `key-edit-point-navigation`, `ripple-delete-shortcut`, `zoom-keyboard`, `move-snapping-toggle`: none of these ids exist in `SHORTCUTS`; D-432 puts snapping on N and skimming on S); dragging a marker flag (`marker-drag-move`: the flag only stops propagation, `TimelineMarkers.tsx:252`, no drag handler).
 - **parity note:** each needs its MCP side in the same pass (CLAUDE.md human + AI rule). Timeline zoom already has a GUI and no MCP tool at all; `editor_set_tool` landed 2026-11-01 (D-434, H12) and the snapping toggle is `editor_set_timeline_view(snapping=…)` (D-432 P3).
 - **progress, 2026-11-01 (D-432 P3):** built — the Blade tool (P2, key C), the **two-up trim viewer** (`TwoUpViewer.tsx`, roll / slip / slide; test id `timeline-two-up-viewer`), **`=` / `-` keyboard zoom** (`edit.zoom_in` / `edit.zoom_out`, Cmd variants as aliases), the **snapping toggle** on **N** (`edit.toggle_snapping`, toolbar magnet; MCP: `editor_set_timeline_view(snapping=…)`, read back as `editor_get_state.timelineView.snapping`), and **marker drag** (snaps while snapping is on, one `set_marker`). Still missing: J/K/L shuttle, I/O marks, ↑/↓ edit-point navigation, Shift+Delete ripple delete (no existing op/surface to map them onto in P3's scope; each needs its own design).
+- **built 2026-11-03 (the last four keys):** all in `@apelles/keymap`'s registry (conflict-checked, listed in the shortcuts window).
+  - **J / K / L shuttle** (`edit.shuttle_back/stop/forward`, `shuttle.ts`): L plays forward at 1x and each further L doubles it (2x, 4x, 8x, the player's max rate); K stops; K held + J/L steps one frame. The player has no reverse playback, so **J scrubs the playhead backward at 1x/2x/4x/8x real time through the ordinary seek path, with no audio** (stops at frame 0, yields if anything else moves the playhead). The opposite key restarts at 1x in its direction. Forward shuttle borrows the viewer's playback rate and gives the user's own rate back on stop. Tests: `shuttle.test.ts` (10).
+  - **I / O / Alt+X** (`edit.mark_in/mark_out/clear_marks`, `marks.ts`): `inPoint` / `outPoint` in `timelineStore` (inclusive range, session state like the playhead, cleared on a project / timeline switch, not undoable), drawn as a tinted band with solid edges on the ruler (`TimelineRange.tsx`). MCP: new `editor_set_marks(in_point, out_point, clear)` (read with no args; both servers; 270 tools), also in `editor_get_state` as `inPoint` / `outPoint`. **Export does not take a range** (`editor_export` renders the whole timeline), so the marks only mark until a range export exists. Tests: `marks.test.ts`, `marksAndRippleKey.e2e.dom.test.tsx`.
+  - **Shift+Delete** (`edit.ripple_delete`, alias Shift+Backspace, `rippleDeleteSelection.ts`): runs the existing `ripple_delete_ranges` op once per selected clip, last first, skipping a clip that went out with a linked partner (the agent's equivalent is `editor_ripple_delete_ranges`). One undo step per clip.
+  - **Up / Down** edit-point navigation (P5) re-verified in code (`editPoints.ts`, `edit.prev_edit/next_edit`); the four harness scenarios (`ripple-delete-shortcut`, `key-jkl-shuttle`, `key-in-out-marks`, `key-edit-point-navigation`) match the built behaviour and needed no change. Not run against a live app in this pass.
 
 ## B-347 — edit-tool drags and zoom gestures miss the frame budget (worst frames 53–90 ms, 12–20 % dropped)
 
@@ -357,11 +362,12 @@ status: **fixed** (2026-10-31) · severity: **minor** · area: `@apelles/editor`
 
 ## B-338 — a generated caption cue cannot be lengthened with `editor_trim_clip`
 
-status: **open** · severity: **minor** · area: caption clips (D-228/D-229) under `checkTrim` (`packages/editor/src/timeline.ts`)
+status: **fixed 2026-11-03** (with B-303) · severity: **minor** · area: caption clips (D-228/D-229) under `checkTrim` (`packages/editor/src/timeline.ts`)
 
 - **found:** 2026-10-30, Nemotron shorts. After `editor_generate_captions_from_transcript(scope="timeline")`, merging a 4-frame cue ("most") into its neighbour needed the neighbour 4 frames longer. `editor_trim_clip(edge="end", delta=4)` refused: "already 33 source frames long and cannot grow: that is all its media has (source_len 33)".
 - **what happens:** a caption has no media, but it is stamped with `source_len == duration`, so the media-bounds clamp treats it like footage that has run out. A title gets an hour of synthesized headroom (D-292's still-image rule); a caption gets none, so its end (or start) can only ever move inward.
 - **expected:** a caption, like a title or a still, can be extended freely in both directions with the ordinary trim tools and the GUI edge drag.
+- **cause confirmed / fix:** `source_len == duration` made the trim clamps (`clampedTrimStartDelta`, `trimEndBounds`, `headRoom`/`tailRoom` for ripple, roll and slide) treat a caption, title or adjustment clip as footage that had run out. They now read `sourceCeilingOf` (a synthesized hour for any generated clip, so projects saved before the fix work too) and `headFramesOf` (all of that extent is head room, `source_start` stays 0), and every growing path calls `fitSyntheticSource` so the stored `source_len` keeps covering `source_start + duration`. Neighbours still stop a plain trim (D-054). Tests: `generatedClipTrim.test.ts` (9).
 
 ## B-337 — `editor_trim_clip`'s docstring has the sign of `delta` backwards for `edge="end"`
 
@@ -604,7 +610,7 @@ status: **fixed** (2026-11-03) · severity: **medium** · area: Motion engine (`
 
 ## B-319 — `new_project` (and `open_project`) still answer with the whole grade document
 
-status: **open** · severity: **minor** · found 2026-10-28 (live check of B-296's fix)
+status: **fixed 2026-11-03** · severity: **minor** · found 2026-10-28 (live check of B-296's fix)
 
 `new_project` returned the full Colorist `adjustments` object (every curve, HSL band and lens
 field, ~10 KB) plus null image/histogram/scopes keys, when the caller only needs
@@ -616,6 +622,8 @@ through the grading reply wrapper instead of the bridge op class B-296 changed. 
   answered `{projects, folder}` wrapped in the full `adjustments` object plus null
   histogram keys (~10 KB of grade the caller never asked for). `new_project` still does it too.
   Same fix applies: list_projects answers `{projects, folder}` only.
+
+- **fix 2026-11-03:** `open_project` / `new_project` are result-only on the Colorist bridge unless `include_grade` is passed (`bridgeOpClasses.isResultOnlyOp(op, args)`, `wantsGrade`), and `list_projects` is result-only always. Default answers: `open_project` `{opened: {name, path}, shotCount, timelines: [{id, name, active}]}`, `new_project` `{created: {name, path}, shotCount, timelines}` (`projectSummary.ts`). `include_grade=true` restores the old shape (`{opened, shots}` / `{created}` plus the rendered frame, grade and histogram). New parameter on both servers (`mcp/server.py`, `colorist.rs`), corpus re-captured, 270 tools unchanged. Tests: `bridgeOpClasses.test.ts`, `projectSummary.test.ts`.
 
 ## B-323 — a new project's Edit timeline is 24 fps and no MCP tool can change it; `set_project_settings(fps=30)` does not reach it
 
@@ -743,7 +751,7 @@ status: **fixed** (2026-10-28, D-421) · severity: **major** · area: Edit track
 
 ## B-303 — title/text clips can't be lengthened (`editor_trim_clip`: 'no earlier material')
 
-status: **open** · severity: **minor** · area: text clip source length
+status: **fixed 2026-11-03** (see B-338: same root cause and fix, head and tail both extend) · severity: **minor** · area: text clip source length
 
 - **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. A text clip's source length equals its first duration, so it can't be extended; workaround: re-create.
 
@@ -805,21 +813,30 @@ status: **fixed** (2026-10-28) · severity: **minor** · area: MCP answer shapes
 
 ## B-295 — title/text clip `position_x/y` are offsets from the centre while image/video use a different convention, undocumented
 
-status: **open** · severity: **minor** · area: `editor_set_clip_transform` docs / `editor_get_capabilities`
+status: **fixed 2026-11-03 (documented; there is one convention, not two)** · severity: **minor** · area: `editor_set_clip_transform` docs / `editor_get_capabilities`
 
 - **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Document (or unify) the convention.
+- **finding:** there is only ONE rule, applied to two differently-sized boxes. Since D-338, `position_x/y` is always the TOP-LEFT corner of the clip's layer box, as a fraction of the canvas. A title's layer is rasterised canvas-sized with the text centred in it (`text.rs` `render_text_layer`, one compositor path for both kinds), so its top-left corner IS the canvas corner and position (0, 0) leaves the text centred; the values then offset the text's centre from the frame's centre. A picture clip smaller than the canvas has its own smaller box, so its (0, 0) is the canvas's top-left corner. Migrating titles to a "centre = position" reading would re-key every stored title and keyframe and fork the one compositor path for no gain, so the convention stays and is documented instead.
+- **fix:** stated in `editor_get_capabilities` `position_and_crop_units` and in `editor_add_text_clip`'s docstring (centre a title on (cx, cy) with position (cx - 0.5, cy - 0.5)), in both servers (`mcp/server.py`, `capabilities.json` + `edit.rs`), corpus re-captured.
 
 ## B-294 — Openverse calls fail often: cold `editor_search_audio` 35-55 s then 504; record endpoint intermittent 500; an `editor_import_audio` timed out at 120 s but finished later (file + credit written, clip not placed)
 
-status: **open** · severity: **minor** · area: `apelles-audio-library` client (D-400, B-275)
+status: **partly fixed 2026-11-03: the client now retries upstream 5xx; the slow cold search and the late-finishing import are upstream/transport behaviour, left open** · severity: **minor** · area: `apelles-audio-library` client (D-400, B-275)
 
 - **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Expected: a timeout that later completes still places the clip or reports how to finish; clearer retry/backoff for the upstream 5xx.
 
+- **investigation 2026-11-03 (code read; no live Openverse calls made):** `apelles-audio-library`'s `get_text` retried only `429`; a `500` / `502` / `503` / `504` was returned to the caller at once. The 120 s `editor_import_audio` case is a three-step sequence (`chroma_audio_download`, pool import, `editor_add_clip`), and the slow step is the download; the bridge deadline (B-314) ending the caller's wait does not stop it, so the file and the credit land. Why the third step did not run in that one case cannot be shown from the code; the 35-55 s cold search is Openverse's own first-byte latency (B-275 measured 34 s), which the 90 s idle timeout already tolerates.
+- **fix:** `get_text` retries a transient upstream failure (`500`/`502`/`503`/`504`) up to twice with a 1 s then 2 s backoff, and starts no new retry once the call has run 60 s (so a slow cold search that 504s cannot push the tool past the 120 s bridge deadline). The final error says the servers are struggling and how many tries were made. Test: `only_openverses_own_server_errors_are_retried` (the status classifier; the retry loop itself needs a live or mock server, not available offline).
+- **left open:** (a) a clip may be left unplaced when the bridge deadline passes mid-import (the import finishes: place it with `editor_list_media` + `editor_add_clip`, no re-download); making the import a polled job like the B-321 Motion ops is the real fix and is not small; (b) the cold-search latency itself.
+
 ## B-293 — a voiceover track's gain was found at 0 mid-edit with no recorded cause
 
-status: **open** · severity: **unknown** · area: Edit track gain
+status: **open (investigated 2026-11-03, no single cause provable; one hole closed)** · severity: **unknown** · area: Edit track gain
 
 - **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Seen once in the Five Levels edit; set back to 1 before export. Needs a repro (check the edit journal / undo history next time).
+
+- **investigation 2026-11-03 (code read, no repro):** only three paths write a track's gain to 0, all through `set_track_gain`: the track header's Mute button (`toggleMute`: gain <= 0 -> default, else 0; one click), `editor_set_track_gain`, and a journal replay of either. Nothing else (ducking, fades, `editor_set_audio_monitor`, transitions) writes `Track.gain`; a duck is applied at mix time and never stored. So the 0 was either a Mute click or an `editor_set_track_gain` call with a stale index: adding a title with no `track` inserts a NEW video track at index 0 and renumbers every track below it, so a caller holding an old index lands on a different track, and the handler answered `ok: true` even for an index past the last track (silent no-op).
+- **fix (the hole that can be closed):** `editor_set_track_gain` now errors on a track index that does not exist, naming the count and that indices shift when a track is added above. The cause of the one observed 0 stays unproven. The undo history already records every gain change by name (`trackGainLabel`: "Mute track N"), so next time the undo history shows which op did it. Test: `marksAndRippleKey.e2e.dom.test.tsx` (B-293).
 
 ## B-292 — one component crash blanked the whole app and every control-bridge op timed out until a full reload
 

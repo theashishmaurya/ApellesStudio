@@ -359,6 +359,8 @@ import {
   MarkerStrip,
   MARKER_STRIP_HEIGHT,
 } from './TimelineMarkers';
+import { TimelineRange } from './TimelineRange';
+import { rippleDeleteClips } from './rippleDeleteSelection';
 import {
   TransitionBadges,
   TransitionsPaletteButton,
@@ -2512,6 +2514,13 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
     if (selection.length > 0) doRemove();
     else if (selectedGap) doRemoveGap();
   });
+  // B-348 — Shift+Delete: Premiere's Ripple Delete. The clip comes out AND the
+  // hole closes (`ripple_delete_ranges`, per clip); plain Delete lifts and
+  // leaves the gap. A selected gap needs no ripple variant (Delete already is one).
+  useShortcut('edit.ripple_delete', () => {
+    if (selection.length === 0) return;
+    if (rippleDeleteClips(selection.map((s) => s.id)) > 0) setSelection([]);
+  });
   useShortcut('edit.tool_select', () => selectTrimTool('select'));
   useShortcut('edit.tool_ripple', () => selectTrimTool('ripple'));
   useShortcut('edit.tool_roll', () => selectTrimTool('roll'));
@@ -4233,6 +4242,12 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
                 )}
               </WithScrollLeft>
             )}
+            {/* B-348 — the In / Out range, on the ruler's tick row. */}
+            <WithScrollLeft store={scroll}>
+              {(scrollLeft) => (
+                <TimelineRange fps={fps} pxPerSec={pxPerSec} scrollLeft={scrollLeft} startLeftPx={START_LEFT_PX} />
+              )}
+            </WithScrollLeft>
             {/* D-432 P3 — the skim line: positioned by the skimming listener
                 above, hidden unless skimming is on and the pointer is here. */}
             <div

@@ -131,6 +131,8 @@ export const TIMELINE_TEST_IDS = {
    *  the viewer's two-up trim overlay (`TwoUpViewer.tsx`, roll / slip / slide
    *  drags only; each half carries `data-chroma-two-up-half`). */
   skimLine: 'timeline-skim-line',
+  /** B-348 — the In / Out range band on the ruler. */
+  markRange: 'timeline-mark-range',
   twoUpViewer: 'timeline-two-up-viewer',
   rulerLabel: 'timeline-ruler-label',
   /** One transition badge on a cut. */

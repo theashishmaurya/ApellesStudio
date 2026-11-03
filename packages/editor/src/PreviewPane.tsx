@@ -171,7 +171,7 @@
  * the right test and why the listener has to be a native non-passive one.
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { CircleNotchIcon } from '@phosphor-icons/react';
 import { Player, useContentBox, type PlayerProps } from '@apelles/player';
@@ -181,6 +181,7 @@ import { useEditorTimelineStore } from './timelineStore';
 // D-432 P3 — skimming's frame request and the two-up trim viewer.
 import { usePreviewPeekStore } from './previewPeek';
 import { TwoUpViewer } from './TwoUpViewer';
+import { createShuttle } from './shuttle';
 import { timelineDuration, timelineFps } from './timeline';
 import { TransformOverlay } from './TransformOverlay';
 import { DynamicZoomOverlay } from './DynamicZoomOverlay';
@@ -924,6 +925,69 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
   };
   useShortcut('edit.prev_edit', () => goToEdit('prev'), { enabled: hasTimeline });
   useShortcut('edit.next_edit', () => goToEdit('next'), { enabled: hasTimeline });
+
+  // B-348 — J / K / L shuttle (`shuttle.ts`) and the I / O marks. The shuttle
+  // controller is built once over the store; `kHeldRef` is true while K is down
+  // (set by K's own handler, cleared by keyup / blur) so J / L step a frame.
+  const shuttle = useMemo(
+    () =>
+      createShuttle({
+        getPlaying: () => useEditorTimelineStore.getState().playing,
+        setPlaying: (p) => useEditorTimelineStore.getState().setPlaying(p),
+        getPlaybackRate: () => useEditorTimelineStore.getState().playbackRate,
+        setPlaybackRate: (r) => useEditorTimelineStore.getState().setPlaybackRate(r),
+        getPlayhead: () => useEditorTimelineStore.getState().playhead,
+        seek: (f) => useEditorTimelineStore.getState().seekPlayhead(f),
+        getFps: () => timelineFps(useEditorTimelineStore.getState().timeline),
+        schedule: (tick) => {
+          const id = requestAnimationFrame(tick);
+          return () => cancelAnimationFrame(id);
+        },
+        now: () => performance.now(),
+      }),
+    [],
+  );
+  const kHeldRef = useRef(false);
+  useEffect(() => {
+    const release = () => {
+      kHeldRef.current = false;
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'KeyK') release();
+    };
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', release);
+    const unsubscribe = useEditorTimelineStore.subscribe((st, prev) => {
+      if (st.playing !== prev.playing) shuttle.playingChanged(st.playing);
+    });
+    return () => {
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', release);
+      unsubscribe();
+      shuttle.dispose();
+    };
+  }, [shuttle]);
+  useShortcut('edit.shuttle_forward', () => shuttle.press('forward', kHeldRef.current), { enabled: hasTimeline });
+  useShortcut('edit.shuttle_back', () => shuttle.press('reverse', kHeldRef.current), { enabled: hasTimeline });
+  useShortcut(
+    'edit.shuttle_stop',
+    () => {
+      kHeldRef.current = true;
+      shuttle.stop();
+    },
+    { enabled: hasTimeline },
+  );
+  useShortcut('edit.mark_in', () => {
+    const st = useEditorTimelineStore.getState();
+    st.setMarks({ inPoint: st.playhead });
+  }, { enabled: hasTimeline });
+  useShortcut('edit.mark_out', () => {
+    const st = useEditorTimelineStore.getState();
+    st.setMarks({ outPoint: st.playhead });
+  }, { enabled: hasTimeline });
+  useShortcut('edit.clear_marks', () => useEditorTimelineStore.getState().setMarks({ inPoint: null, outPoint: null }), {
+    enabled: hasTimeline,
+  });
 
   return (
     // D-126 — the real fullscreen target. `bg-bg-primary` matters here: a

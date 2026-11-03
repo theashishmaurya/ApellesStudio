@@ -358,17 +358,17 @@ describe('the icon path commits exactly what the Alt path commits (D-261)', () =
     // starts answering to the new key, with nothing in `TimelinePane` or
     // `TrimToolbar` changed. This is the regression test for "some call-sites
     // migrated, others still hardcoded".
-    actSync(() => useKeymapStore.getState().setBinding('edit.tool_slip', ['KeyJ']));
+    actSync(() => useKeymapStore.getState().setBinding('edit.tool_slip', ['KeyQ']));
 
     await pressKey('KeyY', 'y');
     expect(toolButton('slip').getAttribute('aria-pressed'), 'the old key must go dead').toBe('false');
 
-    await pressKey('KeyJ', 'j');
+    await pressKey('KeyQ', 'q');
     expect(toolButton('slip').getAttribute('aria-pressed'), 'the new key must select it').toBe('true');
 
     // …and the tooltip/aria label teaches the NEW key, so the UI cannot
     // disagree with what actually fires.
-    expect(toolButton('slip').getAttribute('aria-label')).toBe('Slip tool (J)');
+    expect(toolButton('slip').getAttribute('aria-label')).toBe('Slip tool (Q)');
 
     actSync(() => useKeymapStore.getState().resetBinding('edit.tool_slip'));
     await pressKey('KeyV', 'v');

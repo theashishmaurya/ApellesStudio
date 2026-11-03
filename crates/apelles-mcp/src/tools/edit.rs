@@ -292,6 +292,16 @@ pub struct EditorSetPlayheadArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorSetMarksArgs {
+    #[serde(default)]
+    pub in_point: Option<i64>,
+    #[serde(default)]
+    pub out_point: Option<i64>,
+    #[serde(default)]
+    pub clear: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EditorSetPlayingArgs {
     pub playing: bool,
 }
@@ -2423,6 +2433,38 @@ impl ApellesMcp {
     }
 
     #[tool(
+        name = "editor_set_marks",
+        description = r#"Read or set the Edit timeline's IN and OUT marks: the same marks the I and O keys
+    set at the playhead and Alt+X clears (B-348), drawn as a tinted range on the
+    ruler. Pass any subset; pass nothing to only READ them.
+
+    `in_point` / `out_point`: absolute timeline frames (0-based). The range is
+    INCLUSIVE of both frames, as Premiere, Resolve and Final Cut mark it (out_point
+    is the last frame you want). Either may be alone: an In alone means "from here
+    to the end", an Out alone "from the start to here". Frames are clamped to the
+    timeline. Setting an In after the current Out clears the Out (and an Out before
+    the current In clears the In); to place both at once, pass both. `clear`: true
+    drops both marks first (then applies any `in_point` / `out_point` in the call).
+
+    Session state like the playhead: not part of the document, not undoable, not
+    saved, and cleared when the project or the active timeline changes. **They are
+    marks only: `editor_export` still renders the whole timeline** (a range export
+    is not built). Also reported by `editor_get_state` as `inPoint` / `outPoint`
+    (null when unset). Returns `{inPoint, outPoint}`."#
+    )]
+    pub async fn editor_set_marks(
+        &self,
+        Parameters(p): Parameters<EditorSetMarksArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .put("inPoint", p.in_point)
+            .put("outPoint", p.out_point)
+            .put("clear", p.clear);
+        let env = self.op("editor_set_marks", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
         name = "editor_set_playing",
         description = r#"Start (`True`) or stop (`False`) Edit-tab playback.
 
@@ -3295,7 +3337,7 @@ impl ApellesMcp {
 
     **What else you can do to a title:** its OPACITY and POSITION are
     ordinary clip properties — `editor_set_clip_transform` with
-    `position_x`/`position_y` (fractions of the frame, 0,0 = centred) and
+    `position_x`/`position_y` (fractions of the frame; **a title's (0, 0) is CENTRED**, and the values offset the text's centre from the frame's centre, so to centre it on (cx, cy) pass (cx - 0.5, cy - 0.5); this is the same top-left-corner rule picture clips follow, because a title's layer is the whole canvas with the text centred in it, see `editor_get_capabilities` `position_and_crop_units`) and
     `opacity`, and `editor_set_clip_keyframes` animates either of them, the
     same way it animates a video clip's. `editor_set_clip_fade` fades it in
     and out.

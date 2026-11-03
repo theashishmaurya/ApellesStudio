@@ -115,6 +115,7 @@ import { clampPlaybackRate, DEFAULT_PLAYBACK_RATE } from '@apelles/player';
 import { DEFAULT_CLIP_INSPECTOR_TAB, type ClipInspectorTab } from './clipInspectorTabs';
 import { DEFAULT_EDIT_LIBRARY_MODE, type EditLibraryMode } from './editLibrary';
 import { isJournalEntry, replayJournal, type EditJournalEntry, type EditJournalState } from './editJournal';
+import { applyMarks } from './marks';
 import { fpsToRational, MAX_TIMELINE_FPS } from './timelineRetime';
 import type { ClipScaling } from './clipScaling';
 
@@ -239,6 +240,13 @@ interface EditorTimelineState {
   /** The real backend error behind `status === 'error'`; null otherwise. */
   error: string | null;
   playhead: number;
+  /** B-348 — the timeline's IN mark (I): the first frame of the marked range,
+   *  or null. Session state like `playhead`: not undoable, not saved, cleared
+   *  when the project or the active timeline changes. See `marks.ts`. */
+  inPoint: number | null;
+  /** B-348 — the OUT mark (O): the LAST frame of the marked range (inclusive,
+   *  as Premiere / Resolve / FCP mark it), or null. */
+  outPoint: number | null;
   playing: boolean;
   /** B-326 — bumped by `seekPlayhead` and nothing else. The preview's play
    *  loop and the audio session each free-run against a clock baselined at
@@ -510,6 +518,9 @@ interface EditorTimelineState {
   /** B-339 — open (id) or close (null) a marker's editor popover. */
   setEditingMarkerId: (id: string | null) => void;
   setPlaying: (playing: boolean) => void;
+  /** B-348 — set / clear the in and out marks (`marks.ts`'s rules). `undefined`
+   *  leaves a side as it is, `null` clears it. */
+  setMarks: (marks: { inPoint?: number | null; outPoint?: number | null }) => void;
   /** B-326 — a USER seek (timeline click, MCP): `setPlayhead` plus a re-baseline
    *  of the running transport, so playback continues from `frame` instead of
    *  the loop's own clock overwriting it on the next tick. */
@@ -837,6 +848,8 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   status: 'idle',
   error: null,
   playhead: 0,
+  inPoint: null,
+  outPoint: null,
   playing: false,
   seekEpoch: 0,
   editingMarkerId: null,
@@ -918,6 +931,8 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
       error: null,
       playing: false,
       playhead: 0,
+      inPoint: null,
+      outPoint: null,
       timelines: [],
       selection: [],
       selectedGap: null,
@@ -1053,6 +1068,12 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   },
 
   setPlaying: (playing) => set({ playing }),
+
+  setMarks: (marks) =>
+    set((s) => {
+      const next = applyMarks({ inPoint: s.inPoint, outPoint: s.outPoint }, marks, timelineDuration(s.timeline));
+      return next.inPoint === s.inPoint && next.outPoint === s.outPoint ? s : next;
+    }),
 
   setEditingMarkerId: (id) => set({ editingMarkerId: id }),
 
@@ -1325,7 +1346,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
       const timeline = await invoke<Timeline>('chroma_timeline_create', { name, output, activate });
       if (activate) {
         await Promise.all([get().load(), get().loadList()]);
-        set({ playhead: 0 });
+        set({ playhead: 0, inPoint: null, outPoint: null });
       } else {
         await get().loadList();
       }
@@ -1345,7 +1366,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
     try {
       await invoke('chroma_timeline_set_active', { id });
       await Promise.all([get().load(), get().loadList()]);
-      set({ playhead: 0 });
+      set({ playhead: 0, inPoint: null, outPoint: null });
       return { ok: true };
     } catch (e) {
       return { ok: false, error: String(e) };
@@ -1441,7 +1462,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
       });
       if (activate) {
         await Promise.all([get().load(), get().loadList()]);
-        set({ playhead: 0 });
+        set({ playhead: 0, inPoint: null, outPoint: null });
       } else {
         await get().loadList();
       }
@@ -1465,7 +1486,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
       await invoke('chroma_timeline_delete', { id });
       if (wasActive) {
         await Promise.all([get().load(), get().loadList()]);
-        set({ playhead: 0, selection: [], selectedGap: null, curveEditor: null, dynamicZoom: null });
+        set({ playhead: 0, inPoint: null, outPoint: null, selection: [], selectedGap: null, curveEditor: null, dynamicZoom: null });
       } else {
         await get().loadList();
       }

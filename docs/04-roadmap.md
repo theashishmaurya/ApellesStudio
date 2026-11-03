@@ -270,13 +270,13 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    - **Also before v0.3.0:** ~~B-362~~ (fixed 2026-11-03); ~~B-368~~ (fixed 2026-11-03; Rust probe tests run and pass); ~~B-305~~ (fixed 2026-11-03, linked-audio track choice) and B-299 (verified fixed); ~~B-335~~ (fixed 2026-11-03, per-export job ids). ~~B-336~~ (fixed 2026-11-03, timeline-sourced shorts carry every track).
    - **Added to v0.3.0 (owner 2026-11-03, "what works perfectly with the new UI and all the fixes"):** the major bugs ~~B-336, B-335, B-305~~ (Edit, fixed 2026-11-03) and B-300, B-321, B-309 (Motion), plus the Motion minors B-297/B-316/B-320/B-324/B-322/B-302, then the missing NLE keys B-348 and the Edit minors once D-437 S10 lands.
    - **Also for v0.3.0 (owner 2026-11-03):** B-369, a faster project open (measured per phase) plus a branded Apelles loader with phase and progress.
-   - **Not for v0.3.0:** B-354, B-359's polish items, the missing keys (J/K/L, I/O, Shift+Delete), B-340.
+   - **Not for v0.3.0:** B-354, B-359's polish items, B-340. ~~The missing keys (J/K/L, I/O, Shift+Delete)~~ landed 2026-11-03 (B-348).
    - **Release housekeeping:** version v0.3.0 (v0.4.0 stays the Motion release); release notes from the CHANGELOG; the website's MCP tool count (`website/src/data/mcp.ts` says 255, the real count is 269); the tag-triggered CI release (D-392). The owner gives the go and runs the push.
 00a3. **PAUSED 2026-11-01 (owner: out of subagent credits)**, resume in this order:
    1. ~~Inspector sections collapsed by default~~: **done**, merged 2026-11-01.
    2. ~~D-437 S10: release < 50 ms, zoom, playback at 300 clips~~: **built 2026-11-03** (`docs/notes/timeline-lanes.md` S10); live production check pending.
    3. B-354: toolbar regroup, empty states, Cmd+4, volume popover.
-   4. B-348's missing NLE keys: J/K/L, I/O, Shift+Delete ripple delete.
+   4. ~~B-348's missing NLE keys: J/K/L, I/O, Shift+Delete ripple delete~~: **built 2026-11-03** (`editor_set_marks` added; live harness run pending).
    5. ~~Mockup-vs-app comparison pass~~: done 2026-11-01; its gaps are B-359 (fix with B-354).
    6. B-340: export memory bound.
    7. Then the Motion/Colorist redesign (00b).

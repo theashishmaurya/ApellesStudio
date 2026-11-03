@@ -46,8 +46,8 @@ Never rename an `id`: user remaps are stored against it.
 | Owner | Actions |
 | --- | --- |
 | `@apelles/shell` `Shell.tsx` | `app.tab_*`, `app.undo`, `app.redo` |
-| `@apelles/editor` `PreviewPane.tsx` | `edit.play_pause`, `edit.frame_back`, `edit.frame_forward` |
-| `@apelles/editor` `TimelinePane.tsx` | `edit.split`, `edit.delete_selection`, `edit.add_marker`, `edit.tool_*` |
+| `@apelles/editor` `PreviewPane.tsx` | `edit.play_pause`, `edit.frame_back`, `edit.frame_forward`, `edit.prev_edit`, `edit.next_edit`, `edit.shuttle_*` (J/K/L, B-348), `edit.mark_in`, `edit.mark_out`, `edit.clear_marks` |
+| `@apelles/editor` `TimelinePane.tsx` | `edit.split`, `edit.delete_selection`, `edit.ripple_delete`, `edit.add_marker`, `edit.tool_*` |
 | `app/src/hooks/useKeyboardShortcuts.ts` | the 45 `colorist`-scoped actions |
 
 ## Not covered, deliberately
