@@ -104,7 +104,7 @@ status: open (owner, 2026-11-01; queued with the v0.3.0 checklist) · severity: 
 
 ## B-361 — clicking a caption preset drops a placeholder "Your caption here" clip (and errors when the playhead frame is taken) instead of captioning the video from its transcript
 
-status: open (owner ask 2026-11-01; queued with the v0.3.0 checklist, roadmap 00r) · severity: medium (the first thing a creator tries in the Captions library) · area: `packages/editor/src/captionPresetAction.ts` (`applyCaptionPreset`), the Captions library panel, MCP `editor_add_caption_preset` / preset tool, `CaptionsFromTranscriptButton.tsx`, `captionsFromTranscript.ts`
+status: **fixed** (2026-11-03) · was: open (owner ask 2026-11-01) · severity: medium · area: `captionPresetAction.ts` (`captionWithPreset`), `CaptionLibrary.tsx`, MCP `editor_add_caption_preset`
 
 - **Seen:** the owner, live, with screenshots `scratch/bug-refs/2026-11-01-caption-preset-not-fit.png` and `…-caption-preset-click.png`. Clicking "Highlight" showed *"the preset was applied but the caption did not fit — is that frame occupied?"*. The owner said: "when I click on caption it should automatically do it with Transcribe instead of adding a normal one".
 - **Why the error:** `applyCaptionPreset` styles the subtitle track (step 2, which succeeded), then drops a 3 s sample clip (`DEFAULT_PRESET_CAPTION_TEXT`) at the playhead (step 3). `add_clip` refuses an occupied frame, so a track that already has a caption at the playhead reports a partial failure.
@@ -114,6 +114,15 @@ status: open (owner ask 2026-11-01; queued with the v0.3.0 checklist, roadmap 00
   3. **No transcript yet:** start transcription, show progress, then generate captions in that style when it lands.
   4. **The placeholder sample stays only as an explicit option** (e.g. dragging a preset onto a spot, or a "Preview with sample text" action), never as the click's default.
 - **Tests:** DOM tests for all three cases plus the transcription-pending path; op-layer parity for the MCP tool.
+- **Fixed by:** one `captionWithPreset()` serves the GUI tile click and the MCP tool.
+  - Existing captions are **restyled** (`outcome: "restyled"`).
+  - With no captions but a transcript, captions are **generated** via `captionsForTimeline` → `import_subtitles` in the preset's style (`"generated"`).
+  - With no transcript, transcription **starts** for each source, the panel shows a `role="status"` "Transcribing… captions will appear when it's done" bar with progress and a **Cancel** (the sidecar job has no cancel, but its transcript is cached), and captions are generated when the transcript lands (`"transcribing"`).
+  - A timeline with no speech returns an error that points at the sample mode.
+  - The placeholder is now explicit: a "Preview with sample text" toggle (`caption-sample-toggle`), or MCP `mode: "sample"`. Giving `text` implies sample mode, and the sample now steps past a caption already under the playhead instead of failing with "did not fit".
+  - MCP `editor_add_caption_preset` gains `mode` (`"auto"` default / `"sample"`), with identical docstrings in both servers; the parity corpus is re-captured; the tool count stays 269.
+- **Tests:** `CaptionLibrary.dom.test.tsx` covers generate, restyle (including a caption under the playhead, the original error), transcribe-then-generate, Cancel, a failure shown in words, no speech, the sample toggle, and op-level `captionWithPreset` for the MCP path. `EditLibraryPanel.dom.test.tsx` case 5 now uses the sample toggle. Editor suite 3009/3009, `cargo test -p apelles-mcp` (parity) passes, tsc baseline 3.
+
 
 ## B-360 — a clip dragged from the media browser onto a new track always landed at frame 0, not where it was dropped
 

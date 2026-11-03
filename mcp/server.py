@@ -3201,24 +3201,41 @@ def editor_add_caption_preset(
     start_frame: int | None = None,
     duration: int | None = None,
     place_caption: bool = True,
+    mode: str = "auto",
 ) -> str:
-    """Apply a styled caption preset, creating what it needs (D-243).
+    """Caption the video in a styled caption preset (D-243, B-361).
 
-    The one-call way to get a good-looking caption onto the timeline: it styles
-    a subtitle track with the preset and, by default, drops a caption on it so
-    the look is immediately visible.
+    The same thing a click on a look in the Captions library does. By default
+    (`mode="auto"`) it captions the VIDEO, never a placeholder:
+
+    1. The subtitle track already has captions: they are restyled with the
+       preset (nothing is added, nothing can collide with the playhead).
+    2. No captions, and the timeline's speech has a transcript: captions are
+       generated from it, in the preset's style, on a new subtitle track.
+    3. No transcript yet: the transcription is STARTED and the call answers
+       `outcome: "transcribing"` with how many source files are pending. Call
+       it again when `editor_get_transcript_status` says done, and it
+       generates (2). The Captions panel shows the same wait to the person.
+
+    The result's `outcome` is `restyled`, `generated`, `transcribing`,
+    `styled` or `sample`. A timeline with no speech is refused with a message
+    that points at `mode="sample"`.
 
     - `preset` — an id from `editor_list_caption_presets`. An unknown id is
       refused with the valid ids listed.
-    - `track` — an existing SUBTITLE track to style. Omitted: the first
-      subtitle track is reused, or a new one is created if there is none.
-    - `text` — the caption to place. Omitted, a readable sample line is used,
-      chosen so a per-word animation actually reads as animated.
-    - `start_frame` — where to place it. Omitted: the playhead.
-    - `duration` — TIMELINE frames. Omitted: 3 seconds, which is long enough
-      that an animated preset resolves rather than flickering.
-    - `place_caption` — pass False to restyle a track that already has cues on
-      it without adding another.
+    - `mode` — `"auto"` (above) or `"sample"`: drop a short sample caption to
+      preview the look, with no transcript needed. Giving `text` implies
+      `"sample"`.
+    - `track` — an existing SUBTITLE track. Omitted: the first subtitle track
+      with captions on it, or (for sample / style-only) the first subtitle
+      track, created if there is none.
+    - `text` — the sample caption's words (sample mode). Omitted, a readable
+      sample line is used so a per-word animation actually reads as animated.
+    - `start_frame` — where the sample goes. Omitted: the playhead, moved past
+      any caption already there.
+    - `duration` — TIMELINE frames of the sample. Omitted: 3 seconds.
+    - `place_caption` — pass False to only style the track and add nothing
+      (`outcome: "styled"`).
 
     A preset is nothing but a style: everything it sets stays editable
     afterwards with `editor_set_caption_style`, and the whole thing is one
@@ -3229,7 +3246,7 @@ def editor_add_caption_preset(
     preset's `note` for what differs and why (D-244)."""
     import json
 
-    args: dict = {"preset": preset, "placeCaption": place_caption}
+    args: dict = {"preset": preset, "placeCaption": place_caption, "mode": mode}
     if track is not None:
         args["track"] = track
     if text is not None:

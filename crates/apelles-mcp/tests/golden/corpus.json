@@ -2196,7 +2196,7 @@
     },
     {
       "name": "editor_add_caption_preset",
-      "description": "Apply a styled caption preset, creating what it needs (D-243).\n\n    The one-call way to get a good-looking caption onto the timeline: it styles\n    a subtitle track with the preset and, by default, drops a caption on it so\n    the look is immediately visible.\n\n    - `preset` \u2014 an id from `editor_list_caption_presets`. An unknown id is\n      refused with the valid ids listed.\n    - `track` \u2014 an existing SUBTITLE track to style. Omitted: the first\n      subtitle track is reused, or a new one is created if there is none.\n    - `text` \u2014 the caption to place. Omitted, a readable sample line is used,\n      chosen so a per-word animation actually reads as animated.\n    - `start_frame` \u2014 where to place it. Omitted: the playhead.\n    - `duration` \u2014 TIMELINE frames. Omitted: 3 seconds, which is long enough\n      that an animated preset resolves rather than flickering.\n    - `place_caption` \u2014 pass False to restyle a track that already has cues on\n      it without adding another.\n\n    A preset is nothing but a style: everything it sets stays editable\n    afterwards with `editor_set_caption_style`, and the whole thing is one\n    undo step.\n\n    Presets adapted from HyperFrames' caption catalogue (Apache-2.0,\n    github.com/heygen-com/hyperframes) are reimplemented natively \u2014 see each\n    preset's `note` for what differs and why (D-244).",
+      "description": "Caption the video in a styled caption preset (D-243, B-361).\n\n    The same thing a click on a look in the Captions library does. By default\n    (`mode=\"auto\"`) it captions the VIDEO, never a placeholder:\n\n    1. The subtitle track already has captions: they are restyled with the\n       preset (nothing is added, nothing can collide with the playhead).\n    2. No captions, and the timeline's speech has a transcript: captions are\n       generated from it, in the preset's style, on a new subtitle track.\n    3. No transcript yet: the transcription is STARTED and the call answers\n       `outcome: \"transcribing\"` with how many source files are pending. Call\n       it again when `editor_get_transcript_status` says done, and it\n       generates (2). The Captions panel shows the same wait to the person.\n\n    The result's `outcome` is `restyled`, `generated`, `transcribing`,\n    `styled` or `sample`. A timeline with no speech is refused with a message\n    that points at `mode=\"sample\"`.\n\n    - `preset` \u2014 an id from `editor_list_caption_presets`. An unknown id is\n      refused with the valid ids listed.\n    - `mode` \u2014 `\"auto\"` (above) or `\"sample\"`: drop a short sample caption to\n      preview the look, with no transcript needed. Giving `text` implies\n      `\"sample\"`.\n    - `track` \u2014 an existing SUBTITLE track. Omitted: the first subtitle track\n      with captions on it, or (for sample / style-only) the first subtitle\n      track, created if there is none.\n    - `text` \u2014 the sample caption's words (sample mode). Omitted, a readable\n      sample line is used so a per-word animation actually reads as animated.\n    - `start_frame` \u2014 where the sample goes. Omitted: the playhead, moved past\n      any caption already there.\n    - `duration` \u2014 TIMELINE frames of the sample. Omitted: 3 seconds.\n    - `place_caption` \u2014 pass False to only style the track and add nothing\n      (`outcome: \"styled\"`).\n\n    A preset is nothing but a style: everything it sets stays editable\n    afterwards with `editor_set_caption_style`, and the whole thing is one\n    undo step.\n\n    Presets adapted from HyperFrames' caption catalogue (Apache-2.0,\n    github.com/heygen-com/hyperframes) are reimplemented natively \u2014 see each\n    preset's `note` for what differs and why (D-244).",
       "inputSchema": {
         "properties": {
           "preset": {
@@ -2255,6 +2255,11 @@
             "default": true,
             "title": "Place Caption",
             "type": "boolean"
+          },
+          "mode": {
+            "default": "auto",
+            "title": "Mode",
+            "type": "string"
           }
         },
         "required": [
@@ -17149,7 +17154,8 @@
           "op": "editor_add_caption_preset",
           "args": {
             "preset": "v_editor_add_caption_preset.preset",
-            "placeCaption": true
+            "placeCaption": true,
+            "mode": "auto"
           },
           "timeout_ms": 20000
         }
@@ -17171,7 +17177,8 @@
         "text": "v_editor_add_caption_preset.text",
         "start_frame": 31,
         "duration": 53,
-        "place_caption": false
+        "place_caption": false,
+        "mode": "v_editor_add_caption_preset.mode"
       },
       "requests": [
         {
@@ -17179,6 +17186,7 @@
           "args": {
             "preset": "v_editor_add_caption_preset.preset",
             "placeCaption": false,
+            "mode": "v_editor_add_caption_preset.mode",
             "track": 56,
             "text": "v_editor_add_caption_preset.text",
             "startFrame": 31,
