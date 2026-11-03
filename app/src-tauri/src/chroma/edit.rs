@@ -422,6 +422,40 @@ pub(crate) fn resolve_timeline(persist: bool) -> Result<Timeline, String> {
     apelles_project::timeline::resolve_timeline(&current_project_dir()?, persist)
 }
 
+/// **D-442 — a temporary timeline the AUDIO path plays instead of the
+/// persisted one: the Music edits panel's Preview.**
+///
+/// The panel previews a music edit before it is applied: the frontend computes
+/// the edited document with the same pure reducer the `music_edits` op runs
+/// (`applyMusicEdits`), hands it here, and plays. Only the five functions the
+/// mixer reads its sources from (`resolve_video_position`,
+/// `resolve_audio_track_positions`, `timeline_fps`, `timeline_audio_facts`,
+/// `resolve_track_duck`) consult it, through [`resolve_audio_timeline`]; the
+/// picture, every edit, the save path and the export never see it. Nothing is
+/// written to the project and nothing is undoable, because nothing happened to
+/// the document. The frontend clears it the moment the preview stops (or the
+/// timeline changes), and the play session notices through the edit
+/// fingerprint (B-235) and goes back to the real mix.
+static AUDIO_PREVIEW: std::sync::Mutex<Option<Timeline>> = std::sync::Mutex::new(None);
+
+/// Set (`Some`) or clear (`None`) the audio preview timeline (D-442).
+pub(crate) fn set_audio_preview(timeline: Option<Timeline>) {
+    *AUDIO_PREVIEW.lock().unwrap_or_else(|e| e.into_inner()) = timeline;
+}
+
+/// The timeline the AUDIO path plays: the preview while one is set (D-442),
+/// else the open project's active timeline ([`resolve_timeline`]).
+fn resolve_audio_timeline() -> Result<Timeline, String> {
+    if let Some(preview) = AUDIO_PREVIEW
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+    {
+        return Ok(preview.clone());
+    }
+    resolve_timeline(false)
+}
+
 /// [`resolve_timeline`] plus the project's output spec (D-038) — the pair
 /// [`timeline_frame`] needs, since D-136 made the compositor's canvas the
 /// **composition** rather than the top layer's decoded size.
@@ -593,7 +627,7 @@ pub(super) fn derived_composition_size(
 pub(crate) fn resolve_video_position(
     pos: u64,
 ) -> Result<Option<(usize, Clip, u64, VideoInfo)>, String> {
-    let timeline = resolve_timeline(false)?;
+    let timeline = resolve_audio_timeline()?;
     let Some((track_idx, clip, source_frame)) = timeline.resolve_video_clip_at(pos as i64) else {
         return Ok(None);
     };
@@ -666,7 +700,7 @@ pub(crate) fn resolve_video_position(
 pub(crate) type AudioTrackPosition = (usize, Clip, u64, VideoInfo, f32);
 
 pub(crate) fn resolve_audio_track_positions(pos: u64) -> Result<Vec<AudioTrackPosition>, String> {
-    let timeline = resolve_timeline(false)?;
+    let timeline = resolve_audio_timeline()?;
     let fps = timeline.fps();
     let mut out = Vec::new();
     for (track_index, track) in timeline
@@ -710,7 +744,7 @@ pub(crate) fn resolve_audio_track_positions(pos: u64) -> Result<Vec<AudioTrackPo
 /// (no media probing) re-read of the manifest rather than widening either of
 /// those signatures for a single extra `f64`.
 pub(crate) fn timeline_fps() -> Result<f64, String> {
-    Ok(resolve_timeline(false)?.fps())
+    Ok(resolve_audio_timeline()?.fps())
 }
 
 /// The timeline-wide facts `chroma::audio::resolve_sources_at` reports
@@ -744,7 +778,7 @@ pub(crate) struct TimelineAudioFacts {
 /// probe per clip on that closure's 10 Hz schedule, and overstating it costs
 /// only mixed silence the session's own idle path would have produced anyway.
 pub(crate) fn timeline_audio_facts() -> Result<TimelineAudioFacts, String> {
-    let timeline = resolve_timeline(false)?;
+    let timeline = resolve_audio_timeline()?;
     Ok(TimelineAudioFacts {
         fps: timeline.fps(),
         end_frame: timeline.duration().max(0) as u64,
@@ -776,7 +810,7 @@ pub(crate) fn resolve_track_duck(
     track_index: usize,
     pos: u64,
 ) -> Result<Option<(f32, f32, f32, Vec<(i64, i64)>)>, String> {
-    let timeline = resolve_timeline(false)?;
+    let timeline = resolve_audio_timeline()?;
     let Some(track) = timeline.tracks.get(track_index) else {
         return Ok(None);
     };

@@ -85,7 +85,7 @@ export function MusicEditMenu({ target, children }: { target: MusicEditTarget | 
             data-chroma-music-edit-action="breath"
             onClick={() => breath && setNotice(quickMusicEdit({ kind: 'breath', start: breath.start, end: breath.end }))}
           >
-            <PauseIcon className="size-3.5" /> Stop-time breath before {target?.noun ?? 'this'}
+            <PauseIcon className="size-3.5" /> Breath before {target?.noun ?? 'this'}
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem

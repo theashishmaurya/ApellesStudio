@@ -730,3 +730,24 @@ The owner approved revision 2 ("Looks good the UI you gave :)") and answered:
 - **Deviations from the mockup**: the Master chip is the ProRes master (tag "ProRes") instead
   of an H.264 "as edited" chip; Save as preset sits at the end of More settings; no system
   notification when an export finishes (the pill shows it). Reasons in D-441.
+
+## As built: Music edits (D-442, B-364)
+
+- **Panel** `packages/editor/src/MusicEditsPanel.tsx`: the track line ("On A3 · <music>",
+  Automatic entry kept, its explanation in the trigger's tooltip); the empty state (one
+  sentence, "Music stops at the playhead (I)", the one-second breath); making one (kind pills
+  with the selected kind's sentence, the range row, the fade diagram with draggable dots, the
+  "Song keeps time / Song resumes" segmented control, Preview ▶ · Apply · ⋯ › Save for later);
+  the suggestions list (rows with Preview, Change, Approve, Skip; Approve all, Dismiss, the
+  stale warning, "Apply N approved · one undo"; "Make one yourself" below it).
+- **The range is the timeline's In / Out marks** (B-348): I / O and the fields' playhead
+  targets set it, the ruler draws it, Apply clears it. The music returns AT the Out mark.
+- **Preview** `musicPreview.ts` + `chroma_audio_preview_set` (`chroma::edit::set_audio_preview`):
+  the edited document (the `music_edits` reducer's own result) replaces the audio path's mix
+  while it plays, 2 s before to 2 s after; nothing is committed, saved or undoable.
+- **Kinds** (`musicEdits.ts`): labels Dropout / Breath / Dry open / Dry CTA / Section end,
+  one-line hints in `MUSIC_EDIT_KIND_HINTS`; ids unchanged.
+- **Deviations from the mockup**: the range shows on the ruler, not as a box on the music
+  lane, and suggestions are not hatched on the lane (the lane renderer is being changed by
+  another pass; the ruler band is the same range); the breath button is also under the maker.
+  Reasons in D-442.

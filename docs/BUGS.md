@@ -177,7 +177,7 @@ status: **fixed 2026-11-03 (D-442)** (owner, 2026-11-01: "EQ and audio as well";
 
 ## B-364 — the Music Edits panel is not intuitive: unitless fades in a reversed order, jargon choices, unclear In/Out buttons and actions
 
-status: open (owner, 2026-11-01: "this needs an intuitive redesign as well") · severity: medium (UX) · area: `packages/editor/src/MusicEditsPanel.tsx`
+status: **fixed 2026-11-03 (worktree), D-442** (owner, 2026-11-01: "this needs an intuitive redesign as well") · severity: medium (UX) · area: `packages/editor/src/MusicEditsPanel.tsx`
 
 - **Seen:** the owner's screenshot `scratch/bug-refs/2026-11-01-music-edits-not-intuitive.png`. The left edge is clipped too, the same column overflow as B-362, which suggests B-362's cause is in the browser's tab body and affects every tab.
 - **What reads as broken or confusing:**
@@ -189,6 +189,7 @@ status: open (owner, 2026-11-01: "this needs an intuitive redesign as well") · 
   6. **"Cut now" vs "Add to list"** (apply now vs queue for review) and **"Breath before playhead"**: no explanation of what happens or what the list is.
   7. The empty state is a paragraph of instructions rather than a clear first action.
 - **Direction:** fold it into the same research → mockup → build pass as the Clipper (roadmap 00c, broadened to the browser's tool panels). Look at how Resolve's Fairlight, Premiere's Essential Sound / Remix and Descript handle music ducking, dropouts and remix. Plain language with units, the range shown on the timeline, a preview of the edit before applying, then the list.
+- **Fixed (D-442):** the approved mockup built. The track named ("On A3 · <music>"), kind pills with the selected kind's sentence (Dropout / Breath / Dry open / Dry CTA / Section end), the range as timecodes with the playhead target in each field (the timeline's In / Out marks, drawn on the ruler), the fades in seconds dragged on the diagram's dots, "Song keeps time / Song resumes", Preview (plays the edit before it is applied, without committing anything) · Apply · ⋯ › Save for later; the agent's suggestions as rows with Preview, Change, Approve, Skip and "Apply N approved · one undo"; an empty state with one first action. The range is not drawn on the music lane itself (deviation, D-442).
 
 ## B-363 — the Clipper panel is not intuitive: developer jargon, unlabelled controls, and the whole review flow squeezed into the browser column
 
