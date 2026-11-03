@@ -55,7 +55,18 @@ import {
   resolveSpeedSegments,
   type SpeedPoint,
 } from './speedRamp';
-import type { Clip } from './timeline';
+import { clipSourceFrame } from './clipKeyframes';
+import { endFrame, timelineFps, type Clip } from './timeline';
+import { useEditorTimelineStore } from './timelineStore';
+
+/** The rounded SOURCE frame of `clip` under the timeline frame `playhead`, or
+ *  `null` when the playhead is not over the clip at all (`null` disables "add
+ *  a point here" rather than guessing a position). The same rounded
+ *  `clipSourceFrame` the Inspector's keyframe rows use, so a speed point and a
+ *  keyframe added at the same moment land on the same frame. */
+export function playheadSourceFrameIn(clip: Clip, playhead: number, fps: number): number | null {
+  return playhead >= clip.start_frame && playhead < endFrame(clip, fps) ? Math.round(clipSourceFrame(clip, playhead, fps)) : null;
+}
 
 /** Percent shown per segment. Rounded for display only — the stored speed
  *  keeps its full precision, so a 1/3-speed segment reads "33%" without ever
@@ -117,17 +128,10 @@ function RetimeCurve({ clip }: { clip: Clip }) {
 export function SpeedRampEditor({
   clip,
   trackLocked,
-  playheadSourceFrame,
   onSpeedChange,
 }: {
   clip: Clip;
   trackLocked: boolean;
-  /** The SOURCE frame under the playhead, or `null` when the playhead is not
-   *  over this clip at all. Resolved by `EditorInspectorPanel` through
-   *  `clipSourceFrameAt` — the same function the preview decodes with, so
-   *  "add a speed point here" adds it at the frame actually on screen. `null`
-   *  disables the add button rather than guessing a position. */
-  playheadSourceFrame: number | null;
   /** Replace the clip's whole point list — the op is a whole-array write, for
    *  `set_clip_keyframes`' reasons (see that op's doc). */
   onSpeedChange: (points: SpeedPoint[]) => void;
@@ -139,12 +143,14 @@ export function SpeedRampEditor({
 
   /** Is the playhead somewhere a new point could actually go? A point at (or
    *  before) the clip's in-point would just restate the head segment's speed,
-   *  and one at the very end would cover no frames. */
-  const canAddHere =
-    playheadSourceFrame !== null &&
-    playheadSourceFrame > clip.source_start &&
-    playheadSourceFrame < clipEnd &&
-    !points.some((p) => p.source_frame === playheadSourceFrame);
+   *  and one at the very end would cover no frames. D-437 S10: selected as a
+   *  BOOLEAN straight from the store, so playback re-renders this section only
+   *  when the answer flips (it used to render the whole Inspector per frame to
+   *  hand down the source frame); the add button reads the frame at the click. */
+  const canAddHere = useEditorTimelineStore((s) => {
+    const at = playheadSourceFrameIn(clip, s.playhead, timelineFps(s.timeline));
+    return at !== null && at > clip.source_start && at < clipEnd && !points.some((p) => p.source_frame === at);
+  });
 
   /** Set one segment's speed. A segment whose start already has a point moves
    *  that point's speed; the HEAD segment of an un-pointed clip gets a new
@@ -239,6 +245,8 @@ export function SpeedRampEditor({
           className="h-7 text-[11px]"
           disabled={trackLocked || !canAddHere}
           onClick={() => {
+            const st = useEditorTimelineStore.getState();
+            const playheadSourceFrame = playheadSourceFrameIn(clip, st.playhead, timelineFps(st.timeline));
             if (playheadSourceFrame === null) return;
             // The new point inherits the speed already in force there, so
             // adding one changes nothing until its speed is edited — Resolve's

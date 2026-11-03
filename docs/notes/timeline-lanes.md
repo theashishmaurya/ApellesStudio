@@ -1,6 +1,6 @@
 # Timeline lanes: replacing `@xzdarcy/react-timeline-editor` (D-437 build plan)
 
-Status: **plan, 2026-11-01. Built so far: S0, S1, S2, S3a, S3b, S4, S5, S6, S7 (live paint A/B pending), S8 (live check pending) — `TimelinePane` renders the lanes and our playhead since S4; the library package and its selectors are gone (S5, S6). See each step's "Built" note.** Decision: D-437 (`docs/08-decisions.md`).
+Status: **plan, 2026-11-01. Built so far: S0, S1, S2, S3a, S3b, S4, S5, S6, S7 (live paint A/B pending), S8 (live check pending), S10 (2026-11-03, measured in headless Chromium; live check pending) — `TimelinePane` renders the lanes and our playhead since S4; the library package and its selectors are gone (S5, S6). See each step's "Built" note.** Decision: D-437 (`docs/08-decisions.md`).
 Evidence: `docs/notes/timeline-drag-perf.md` (B-347), the live harness runs under
 `scratch/ui-harness/runs/` (run 4: `2026-10-31T21-00-23-799Z`). Builds on D-432 P2/P3
 (`docs/notes/ui-redesign.md` §6b, §6c) and the harness (`docs/notes/ui-harness.md`).
@@ -922,17 +922,33 @@ is paint)._
 | playback (rAF / paint fps) | — | 28 / 24 | 28 / 24 | **26 / 22** | ≥ 50 / ≥ 24 |
 
 - Correctness: the full 55-scenario suite is 52/55 on the dev app after S8. The 3 failures are the unbuilt features of B-348 (Shift+Delete, J/K/L, I/O). Production `perf-300` is 9/12: `perf-300-move-clip` resolved its target outside the visible area, and both pinch scenarios left `pxPerSec` at 90. The production app opens in a smaller default window, so whether pinch genuinely fails in a production bundle is **unverified**.
-- **Not met yet:** release < 50 ms, the zoom step, and playback at 300 clips. These are the next step.
+- **Not met yet:** release < 50 ms, the zoom step, and playback at 300 clips. These are the next step (S10 below).
 
-### S10 — release, zoom and playback (paused 2026-11-01, not built)
-- **Started then paused** (the owner ran out of subagent credits). Worktree `.claude/worktrees/agent-a22c86466a8ce7faa`, no commits.
-- **Brief:**
-  - profile what a release commit re-renders at 300 clips and fix the leaking memo boundaries;
-  - `ClipFadeOverlay`'s per-clip cost (about 5 ms per zoom step in dev);
-  - CSS-variable zoom, so a zoom step re-renders nothing;
-  - move the per-frame `playhead` subscribers outside the pane (`PreviewPane`, `EditorInspectorPanel`, `ClipHighlightsSection`, `HighlightOverlay`, `ClipCurveEditor`) off React state;
-  - settle the production pinch question and make the harness size the window to a fixed layout before measuring.
-- **Goals:** release < 50 ms worst, React commit ≤ 20 ms, zoom step ≤ 33 ms, playback rAF ≥ 50 fps, all at 300 clips in production.
+### S10 — release, zoom and playback (built 2026-11-03)
+- **Brief (2026-11-01):** profile what a release commit re-renders at 300 clips and fix the leaking memo boundaries; `ClipFadeOverlay`'s per-clip cost; CSS-variable zoom; move the per-frame `playhead` subscribers outside the pane off React state; settle the production pinch question. **Goals:** release < 50 ms worst, React commit ≤ 20 ms, zoom step ≤ 33 ms, playback rAF ≥ 50 fps, at 300 clips in production.
+- **Method (no live app this time).** A production-React build of `app/harness.html` (Vite `build` with the app's own config, `TAURI_ENV_DEBUG=true` so the perf marks are on, as `tauri build --debug` does), served statically on a private port and driven in headless Chromium (Playwright-core, scratch driver). Fixture: 300 clips on 8 tracks (bigFixture's shape), `?mode=edit` (the whole Edit tab: shell, browser, preview with a stubbed frame, Inspector, timeline), 1280×720 (the app's default window), zoomed fully out so all 300 clips are mounted. Measured: the zoom frame (start of the frame that flushes a ctrl-wheel to a task posted from it, i.e. through render, layout and paint), pointerup → painted for a select-and-trim release, the `apelles:edit:commit-*` marks, CDP CPU profiles. Before = main at `a565b5c`, after = this step. The machine was shared with two other agents' builds, so single numbers are noisy; ranges over 3 runs × 5–6 steps.
+- **What a release commit re-rendered (profile, production, 300 clips).** The lanes were already right: `LaneClip`'s memo held, only the trimmed clip re-rendered. About half the release's React time was the **Inspector re-mounting for the newly selected clip** (a select-and-trim selects; the Inspector is keyed per selection): its tabs, sections and Base UI composites, one of which (`CompositeRoot`'s first `onMapChange`) calls `scrollIntoViewIfNeeded`, a layout read that forced the whole dirty page to lay out inside the commit (21.7 ms self time in that one call). Also `EditorTab` selected the whole `timeline` only to test it for `null`, so every edit re-rendered the tab and its resizable panel group.
+- **Fixes.**
+  1. `EditorInspectorPanel` shows a **deferred selection** (`useDeferredValue`): the urgent commit (the timeline's change) paints first, the Inspector's re-mount follows in a background, interruptible render. Resolved by id, so a timeline that changed underneath still finds the clip. Test: `EditorInspectorPanel.deferred.dom.test.tsx` (after a `flushSync` of the selection, the urgent lane only, the panel still shows the old selection; the background render brings the new one).
+  2. `EditorTab` selects `timeline !== null`, not the timeline.
+  3. **Per-frame `playhead` subscribers off React state** (each was a reactive selector rendering its whole component per played frame): `PreviewPane` (the scrub fetch is a store subscription, a frame step reads the store at the click, and the transport's position bar and timecode render in their own `PlayheadPlayer`); `EditorInspectorPanel` (subscribes only while the selected clip has keyframes, whose rows show the value at the playhead; the handlers that write at the playhead read it live; the Speed section's "add a point here" is a boolean selector inside `SpeedRampEditor`, so `ClipInspectorPanel` lost its `playheadSourceFrame` prop); `ClipHighlightsSection` (reads it at the click); `HighlightOverlay` (only while armed); `ClipCurveEditor` (the navigator's neighbours and the playhead's segment are primitive selectors, the playhead line is written by a store subscription); and, found while profiling, `TransformOverlay` (the live playhead only for a keyframed clip; otherwise "is the playhead over this clip", which changes at its edges). Test: `playheadCost.s10.dom.test.tsx` (30 ticks: 0 renders for each, `PlayheadPlayer` 30, a keyframed clip's Inspector / transform box 30 by design; the same file scores 30 per component on the S9 code).
+- **Results (headless Chromium, production React, 300 clips all mounted, 1280×720).**
+
+| | before (main) | after S10 | budget |
+|---|---|---|---|
+| React commit on a select-and-trim release (`commit-rendered`) | 16–25 ms | **6–12 ms** | ≤ 20 |
+| release, pointerup → painted | 26–48 ms | 24–43 ms | < 50 |
+| zoom frame (one ctrl-wheel step) | 25–40 ms | 17–41 ms (noisy; same work) | ≤ 33 |
+| playback rAF, 3 s (stubbed preview) | 60 fps | 60 fps | ≥ 50 |
+| React renders per played frame outside the pane | PreviewPane + Inspector + TransformOverlay (+ highlights / curve lane when open) | `PlayheadPlayer` only (+ a keyframed selection's Inspector / box) | — |
+
+- **Not built, with the reason:**
+  - **CSS-variable zoom.** A production profile of one zoom step at 300 mounted clips: React render + commit ≈ 13 ms (render 5, commit 8, of which ~4 ms is the zoom anchor's `scrollLeft` write forcing layout, a layout the frame needs anyway); the rest of the ~30 ms frame is native style/layout/paint of 300 clips changing width, which a CSS variable does not remove (every slot still changes geometry). The variable would save at most those ~13 ms and either leave the ruler, overlays and filmstrips a frame behind the clips or require converting every content-space surface. The budget is met in Chromium; revisit only if the live WKWebView zoom misses ≤ 33 ms.
+  - **`ClipFadeOverlay`.** ≈ 0.3 ms of a zoom step in production (the ≈ 5 ms S8 saw was the dev bundle's per-component overhead). Nothing to gain.
+  - **A fixed-layout window op for the harness.** It needs a debug-gated Tauri command (a Rust build); not done here (no live app, and the disk was briefly full during this step). The pinch question did not need it (below).
+- **The production pinch question.** Not window size. In headless Chromium, a production bundle at the app's default 1280×720 and at 1800×1100: a CDP pinch (1.5×, then 0.4×) arrives as 34 ctrl-wheel events and zooms 90 → 464 → 4.9 px/s at both sizes, on main and after S10. So the pane handles a production pinch at the default window. The S9 production run's pinch steps measured 20 idle 17 ms frames and no commit: the page received no zoom at all, i.e. the native magnify injection (`debug_input.rs`: a `CGEvent` gesture → `magnifyWithEvent`) did not reach the page as ctrl-wheel in that second-instance perf app (launched with `open -n` beside the dev app). Suspects to check live: the perf app's window not key/frontmost when the gesture was injected, or the window-to-screen point conversion for a window placed differently. Side finding: every ctrl-wheel is one ×1.2 step whatever its `deltaY`, so a 1.5× trackpad pinch zooms ~5× (34 events coalesced to a few frames); worth a proportional factor (`deltaY`-scaled) when pinch is next touched.
+- **Playback at 300 clips, honestly.** The JS side per played frame is now the transport plus the playhead's transform; in headless Chromium the whole React cost of playback is ~0.25 ms per frame and rAF holds 60 fps before and after. The live 26 fps / 22 paint therefore is not React work in the tree. Remaining suspects are outside it: the preview's per-frame `chroma_timeline_frame` IPC + decode, the blob → `<img>` decode, and WKWebView compositing. That needs a live `debug_frame_timing` + `sample` profile on the production build; it is the open half of 00r item 6.
+- **What to verify live (production bundle, `perf-300`):** the release frame and `commitRenderedMs` (expect commit ≤ 20 ms; the Inspector now lands a frame or two after the trim on a new selection, check it reads as instant); playback fps with a clip selected vs. none; `zoom-trackpad-pinch` and `perf-300-zoom-pinch-*` with the perf app frontmost and the dev app quit (`debug_activate_app` first), reading the pointer reply's `magnifyBuilt`; the new `seek-far-playhead-visible` (B-359 item 6).
 - **Operational note (S5 aftermath):** removing a dependency left Vite's dep-optimizer cache (`app/node_modules/.vite`) pointing at the deleted package. On its next re-optimise the dev page failed to reload and went blank. After removing a dependency, clear `app/node_modules/.vite` and `node_modules/.vite` and restart `tauri:dev`.
 
 ## 6. Risks and how each is handled
@@ -957,7 +973,8 @@ is paint)._
 
 - CSS-variable zoom (positions as `calc(var(--px-per-frame) × start)`, so a pinch is one
   style write and React settles afterwards). It is promising for "zoom at 300 visible
-  clips". Revisit only if S9 misses the zoom target.
+  clips". Revisit only if S9 misses the zoom target. S10 measured it out (2026-11-03): at most ~13 ms of
+  React work per step in production, the rest is layout/paint it would not remove.
 - Vertical (per-track) culling (§2.4).
 - One transform per track "downstream group" for ripple (F3's second half). Culling
   already bounds the moved clips to the visible ones; revisit only if S7's ripple numbers

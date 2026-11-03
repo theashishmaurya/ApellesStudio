@@ -33,6 +33,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 import { useEditorTimelineStore } from './timelineStore';
+import { useTimelineViewStore } from './timelineView';
 import { TimelinePane } from './TimelinePane';
 import { TIMELINE_TEST_IDS, TIMELINE_VIEW_ATTRS } from './timelineTestIds';
 import type { Timeline } from './timeline';
@@ -64,6 +65,7 @@ afterEach(() => {
   ui = null;
   for (const r of restores) r();
   actSync(() => useEditorTimelineStore.setState({ timeline: null, openProjectKey: null, status: 'idle' }));
+  useTimelineViewStore.setState({ viewByTimeline: {}, viewTimelineId: null });
 });
 
 describe('the scroll state follows the scroller (B-357)', () => {
@@ -78,11 +80,39 @@ describe('the scroll state follows the scroller (B-357)', () => {
     await waitFrames(1);
     expect(q(TIMELINE_TEST_IDS.scroller)).toBeNull();
 
-    // The next timeline: a new scroller, at 0, which fires no scroll event.
-    open();
+    // The next timeline (another id: B-359 item 6 restores a timeline's OWN
+    // scroll when it comes back): a new scroller, at 0, which fires no scroll
+    // event.
+    actSync(() => useEditorTimelineStore.setState({ timeline: { ...timeline, id: 'scroll-tl-2' } }));
     await waitFrames(2);
     expect(q(TIMELINE_TEST_IDS.scroller)!.scrollLeft).toBe(0);
     expect(viewScrollLeft()).toBe(0);
+  });
+
+  it('B-359 item 6: each timeline gets its own scroll position back, the DOM and the state together', async () => {
+    const scroller = () => q(TIMELINE_TEST_IDS.scroller)!;
+    scroller().scrollLeft = 364;
+    actSync(() => void scroller().dispatchEvent(new Event('scroll', { bubbles: true })));
+
+    actSync(() => useEditorTimelineStore.setState({ timeline: { ...timeline, id: 'scroll-tl-2' } }));
+    await waitFrames(2);
+    expect(scroller().scrollLeft).toBe(0);
+    expect(viewScrollLeft()).toBe(0);
+    scroller().scrollLeft = 120;
+    actSync(() => void scroller().dispatchEvent(new Event('scroll', { bubbles: true })));
+
+    // Back to the first (through a closed state, as a project reopen does).
+    actSync(() => useEditorTimelineStore.setState({ timeline: null }));
+    await waitFrames(1);
+    open();
+    await waitFrames(2);
+    expect(scroller().scrollLeft).toBe(364);
+    expect(viewScrollLeft()).toBe(364);
+
+    actSync(() => useEditorTimelineStore.setState({ timeline: { ...timeline, id: 'scroll-tl-2' } }));
+    await waitFrames(2);
+    expect(scroller().scrollLeft).toBe(120);
+    expect(viewScrollLeft()).toBe(120);
   });
 });
 

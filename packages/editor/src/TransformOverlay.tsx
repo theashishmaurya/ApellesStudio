@@ -158,22 +158,33 @@ import {
   mergeClipKeyframeParams,
   resolveClipBoxTransform,
 } from './clipKeyframes';
-import { clipCoversFrame, timelineFps, type ClipTransformParam } from './timeline';
+import { clipCoversFrame, timelineFps, type ClipTransformParam, type Timeline } from './timeline';
 import { canvasTarget } from './inspectorTarget';
-import { useEditorTimelineStore } from './timelineStore';
+import { useEditorTimelineStore, type Selection } from './timelineStore';
 import { useClipGeometry } from './useClipGeometry';
 import { TransformBox, type TransformDraft, type TransformGestureKind } from './TransformBox';
 import { clipBoxAnchor, clipBoxOrigin, resolvedBoxSize } from './transformGeometry';
 
+/** D-437 S10 — `TransformOverlay`'s playhead selector: the live playhead when
+ *  the selected picture clip is keyframed (its box moves with the animation);
+ *  otherwise its first frame while the playhead is over it and `-1` while not
+ *  (the box is then a function of that alone). Exported for its test. */
+export function transformOverlayPlayhead(s: { timeline: Timeline | null; selection: readonly Selection[]; playhead: number }): number {
+  const target = canvasTarget(s.timeline, s.selection.length === 1 ? s.selection[0] : null);
+  if (!target) return -1;
+  if ((target.clip.chroma_keyframes?.length ?? 0) > 0) return s.playhead;
+  return clipCoversFrame(target.clip, s.playhead, timelineFps(s.timeline)) ? target.clip.start_frame : -1;
+}
+
 export function TransformOverlay({ container }: { container: HTMLElement | null }) {
   const timeline = useEditorTimelineStore((s) => s.timeline);
-  // D-209 — the box is a function of the playhead now (see this module's doc),
-  // so this component re-renders as the playhead moves. That is unavoidable
-  // for a box that has to sit on an animated picture; it is also cheap — the
-  // per-property resolution below reads `clipKeyframes.ts`'s cached per-param
-  // index rather than re-sorting the key list, and it renders at all only when
-  // exactly one clip is selected.
-  const playhead = useEditorTimelineStore((s) => s.playhead);
+  // D-209 — the box is a function of the playhead (see this module's doc) for
+  // an ANIMATED clip, so it re-renders as the playhead moves over one. D-437
+  // S10: only then. For a clip without keyframes the box depends on the
+  // playhead only through "is the playhead over this clip", so the selector
+  // answers a constant frame inside it (or -1) and playback renders this
+  // overlay at the clip's edges, not on every frame.
+  const playhead = useEditorTimelineStore(transformOverlayPlayhead);
   const selection = useEditorTimelineStore((s) => s.selection);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
   // D-234 — while dynamic zoom is armed for this clip, `DynamicZoomOverlay`

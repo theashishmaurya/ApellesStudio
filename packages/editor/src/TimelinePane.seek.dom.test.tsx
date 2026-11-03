@@ -121,12 +121,16 @@ describe('the view follows the playhead during playback (B-326)', () => {
   // D-437 S4 — the lanes' own native scroller (it was the library's grid).
   const scroller = (): HTMLElement | null => editArea.querySelector('[data-testid="timeline-scroller"]');
 
-  it('pages when the playhead leaves the window, only while playing', () => {
+  it('pages when the playhead leaves the window while playing; a paused jump centres it (B-359 item 6)', () => {
     actSync(() => useEditorTimelineStore.setState({ playhead: 640 }));
-    expect(scroller()?.scrollLeft ?? 0).toBe(0); // paused: the view stays put
+    // Paused: B-359 item 6 — a jump outside the view centres it (it used to stay put).
+    const centred = scroller()?.scrollLeft ?? 0;
+    expect(centred).toBeGreaterThan(0);
+    actSync(() => void scroller()?.dispatchEvent(new Event('scroll')));
     actSync(() => useEditorTimelineStore.getState().setPlaying(true));
-    actSync(() => useEditorTimelineStore.setState({ playhead: 650 }));
-    expect(scroller()?.scrollLeft ?? 0).toBeGreaterThan(0);
+    actSync(() => useEditorTimelineStore.setState({ playhead: 1400 }));
+    // Playing: B-326's page, the playhead a lead-in from the left edge.
+    expect(scroller()?.scrollLeft ?? 0).toBeGreaterThan(centred);
   });
 });
 

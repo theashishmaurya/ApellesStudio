@@ -327,7 +327,7 @@ import {
 } from '@phosphor-icons/react';
 import { snapSpan, snapTo } from '@apelles/beats';
 import { beatFramesOf } from './beatGrid';
-import { followScrollLeft } from './playbackFollow';
+import { followScrollLeft, seekFollowScrollLeft } from './playbackFollow';
 import { setBeatGrid, snapCutsToBeats } from './beatOps';
 import { BeatLane } from './TimelineBeats';
 import { useTimelineBeats } from './useTimelineBeats';
@@ -368,7 +368,7 @@ import {
   type TransitionDragData,
   type TransitionPatch,
 } from './TimelineTransitions';
-import { beginScrub, endScrub, updateScrub } from './scrubAudio';
+import { beginScrub, endScrub, isScrubbing, updateScrub } from './scrubAudio';
 // D-437 S4 — Apelles' own lane renderer and playhead (they replaced the library's).
 import { TimelineLanes } from './lanes/TimelineLanes';
 import { Playhead, type PlayheadHandle } from './lanes/Playhead';
@@ -387,7 +387,7 @@ import {
   RULER_HEIGHT_PX,
 } from './ruler';
 // D-434 / H2 — the zoom lives in a store so MCP can set and read it.
-import { clampPxPerSec, useTimelineViewStore } from './timelineView';
+import { clampPxPerSec, perTimelineView, useTimelineViewStore } from './timelineView';
 // B-116 — anchored zoom: keep whatever is under the cursor (wheel) or the
 // playhead (buttons) under it across a zoom step.
 import { buttonZoomAnchorX, frameAtViewportX, scrollLeftForAnchor } from './timelineZoom';
@@ -529,6 +529,9 @@ const RULER_AND_MARGIN_PX = RULER_HEIGHT_PX + MARKER_STRIP_HEIGHT;
 const START_LEFT_PX = 32;
 /** B-326 — scroll events this soon after the follower's own write are its echo. */
 const FOLLOW_ECHO_WINDOW_MS = 100;
+/** B-359 item 6 — a paused jump does not move the view within this long of
+ *  the user's own last scroll of it (a wheel/trackpad pan still in flight). */
+const SEEK_FOLLOW_SCROLL_QUIET_MS = 300;
 
 /** D-233 — the curve lane's default and minimum heights, px.
  *
@@ -740,6 +743,10 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
   const followGeomRef = useRef({ pxPerSec: DEFAULT_PX_PER_SEC, viewportWidth: 0 });
   const followWriteAtRef = useRef(Number.NEGATIVE_INFINITY);
   const userScrolledDuringPlayRef = useRef(false);
+  /** B-359 item 6 — when the user last scrolled the lanes themselves (a scroll
+   *  event that is not the echo of a follower write); the paused-seek follow
+   *  stays out of a pan in flight. */
+  const userScrollAtRef = useRef(Number.NEGATIVE_INFINITY);
   /** B-145 — the scroll offset at the moment the current dnd-kit drag began.
    *  `dragDelta` needs it to turn an on-screen displacement into a
    *  content-space one: if the timeline scrolls mid-drag, the clip has moved
@@ -901,16 +908,29 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
       if (state.playhead === last) return;
       last = state.playhead;
       playheadRef.current?.setFrame(last);
-      if (!state.playing || userScrolledDuringPlayRef.current) return;
       const geom = followGeomRef.current;
-      const next = followScrollLeft({
+      const input = {
         frame: last,
         fps,
         pxPerSec: geom.pxPerSec,
         scrollLeft: scroll.getState().left,
         viewportWidth: geom.viewportWidth,
         startLeftPx: START_LEFT_PX,
-      });
+      };
+      let next: number | null;
+      if (state.playing) {
+        if (userScrolledDuringPlayRef.current) return;
+        next = followScrollLeft(input);
+      } else {
+        // B-359 item 6 — a jump while paused (`editor_set_playhead`, a marker
+        // in the Index panel, ↑/↓ to an edit point, a transcript line) that
+        // lands outside the view centres it. Not while the user drives the
+        // view or the playhead by hand: a scrub (the playhead, the ruler, the
+        // viewer's position bar) moves the playhead under the pointer, and a
+        // jump in the middle of the user's own scroll would fight it.
+        if (isScrubbing() || performance.now() - userScrollAtRef.current < SEEK_FOLLOW_SCROLL_QUIET_MS) return;
+        next = seekFollowScrollLeft(input);
+      }
       if (next === null) return;
       followWriteAtRef.current = performance.now();
       if (scrollerRef.current) scrollerRef.current.scrollLeft = next;
@@ -1080,6 +1100,35 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
     setTimelineScroll(scroll, scroller.scrollLeft, scroller.scrollTop);
     applyScrollSinks(scroll.getState());
   }, [editArea, scroll, applyScrollSinks]);
+
+  // B-359 item 6 — the scroll position is per timeline, like the zoom
+  // (`timelineView.ts` swaps `pxPerSec` on the switch itself). Leaving a
+  // timeline files its scroll offsets under its id (the cleanup runs in the
+  // switch's commit, before the browser has clamped the scroller to the new
+  // content, so the store still holds the outgoing position); arriving
+  // restores the incoming one's, or the start for a timeline not shown yet.
+  // A layout effect, declared after the mount adoption, so on a remount the
+  // remembered position wins over the fresh scroller's 0; the content is
+  // already laid out at the incoming zoom, so the write is not clamped short.
+  const timelineId = timeline?.id ?? null;
+  useLayoutEffect(() => {
+    if (timelineId === null) return;
+    const scroller = scrollerRef.current;
+    const saved = perTimelineView(useTimelineViewStore.getState().viewByTimeline, timelineId);
+    if (scroller) {
+      scroller.scrollLeft = saved.scrollLeft;
+      scroller.scrollTop = saved.scrollTop;
+    }
+    setTimelineScroll(
+      scroll,
+      scroller ? scroller.scrollLeft : saved.scrollLeft,
+      scroller ? scroller.scrollTop : saved.scrollTop,
+    );
+    return () => {
+      const pos = scroll.getState();
+      useTimelineViewStore.getState().rememberTimelineScroll(timelineId, { left: pos.left, top: pos.top });
+    };
+  }, [timelineId, scroll]);
 
 
   // D-128 — keep `viewportWidth` honest across window and panel resizes. The
@@ -2257,12 +2306,10 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
       const st = e.currentTarget.scrollTop;
       // B-326 — a horizontal scroll that is not the echo of the playback
       // follower's own write is the user taking the wheel: stop following.
-      if (
-        useEditorTimelineStore.getState().playing &&
-        sl !== scroll.getState().left &&
-        performance.now() - followWriteAtRef.current > FOLLOW_ECHO_WINDOW_MS
-      ) {
-        userScrolledDuringPlayRef.current = true;
+      // B-359 item 6 — and the paused-seek follow keeps out of it for a moment.
+      if (sl !== scroll.getState().left && performance.now() - followWriteAtRef.current > FOLLOW_ECHO_WINDOW_MS) {
+        userScrollAtRef.current = performance.now();
+        if (useEditorTimelineStore.getState().playing) userScrolledDuringPlayRef.current = true;
       }
       setTimelineScroll(scroll, sl, st);
     },

@@ -157,11 +157,18 @@ export function ClipCurveEditor({
   onClose,
 }: ClipCurveEditorProps) {
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
-  const playhead = useEditorTimelineStore((s) => s.playhead);
+  // D-437 S10 — no reactive `playhead`. What this lane shows of it is derived
+  // and changes rarely (the keyframe navigator's neighbours, the segment the
+  // playhead is in), so those are selected as primitives below and re-render
+  // only when they change; the playhead line itself is written imperatively
+  // (`playheadLineRef`). A played frame renders this lane zero times.
   const setPlayhead = useEditorTimelineStore((s) => s.setPlayhead);
 
   const plotRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<HandleDrag | null>(null);
+  /** D-437 S10 — the playhead line, moved by a store subscription (below),
+   *  never by a render. */
+  const playheadLineRef = useRef<SVGLineElement | null>(null);
   /** The uncommitted curve of the segment being dragged. Overlay-only until
    *  pointer-up, per the module doc's drag/commit convention. */
   const [draft, setDraft] = useState<{ index: number; ease: EaseCurve } | null>(null);
@@ -189,6 +196,21 @@ export function ClipCurveEditor({
   }, []);
 
   const segments = useMemo(() => paramSegments(clip.chroma_keyframes, param), [clip.chroma_keyframes, param]);
+  // The plot (and its playhead line) exists only once there is a curve.
+  const hasPlot = segments.length > 0;
+  useEffect(() => {
+    const place = (frame: number) => {
+      const line = playheadLineRef.current;
+      if (!line) return;
+      const x = String(startLeftPx + (frame / fps) * pxPerSec - scrollLeft);
+      line.setAttribute('x1', x);
+      line.setAttribute('x2', x);
+    };
+    place(useEditorTimelineStore.getState().playhead);
+    return useEditorTimelineStore.subscribe((st, prev) => {
+      if (st.playhead !== prev.playhead) place(st.playhead);
+    });
+  }, [startLeftPx, fps, pxPerSec, scrollLeft, hasPlot]);
   const staticValue = (clip[param] as number | undefined) ?? CLIP_KEYFRAME_DEFAULTS[param];
   const range = useMemo(() => curveValueRange(segments, staticValue), [segments, staticValue]);
 
@@ -227,13 +249,19 @@ export function ClipCurveEditor({
    *  the segment the playhead is inside, so opening the lane while parked
    *  mid-animation puts the handles where you are already looking. */
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
-  const activeIdx = useMemo(() => {
-    if (selectedIdx !== null && selectedIdx < segments.length) return selectedIdx;
-    const at = segments.findIndex(
-      (s) => playhead >= clipTimelineFrame(clip, s.fromFrame, fps) && playhead <= clipTimelineFrame(clip, s.toFrame, fps),
-    );
-    return at >= 0 ? at : segments.length > 0 ? 0 : null;
-  }, [selectedIdx, segments, playhead, clip, fps]);
+  const playheadSegment = useEditorTimelineStore((st) =>
+    segments.findIndex(
+      (s) => st.playhead >= clipTimelineFrame(clip, s.fromFrame, fps) && st.playhead <= clipTimelineFrame(clip, s.toFrame, fps),
+    ),
+  );
+  const activeIdx =
+    selectedIdx !== null && selectedIdx < segments.length
+      ? selectedIdx
+      : playheadSegment >= 0
+        ? playheadSegment
+        : segments.length > 0
+          ? 0
+          : null;
 
   /** Write one segment's curve. `null` clears it back to linear. */
   const commitEase = useCallback(
@@ -341,8 +369,8 @@ export function ClipCurveEditor({
   const activeSeg: ParamSegment | null = activeIdx === null ? null : (segments[activeIdx] ?? null);
   const activeCurve = activeIdx === null ? null : drawnEase(activeIdx);
   const presetOfActive = activeSeg ? easePresetName(activeCurve) : null;
-  const prevFrame = adjacentParamKeyframeFrame(clip.chroma_keyframes, param, playhead, -1);
-  const nextFrame = adjacentParamKeyframeFrame(clip.chroma_keyframes, param, playhead, 1);
+  const prevFrame = useEditorTimelineStore((st) => adjacentParamKeyframeFrame(clip.chroma_keyframes, param, st.playhead, -1));
+  const nextFrame = useEditorTimelineStore((st) => adjacentParamKeyframeFrame(clip.chroma_keyframes, param, st.playhead, 1));
 
   // The clip's own on-timeline span — the lit region. Outside it the lane is
   // dimmed, so the lane visibly belongs to this clip rather than to the
@@ -443,8 +471,8 @@ export function ClipCurveEditor({
 
               {/* The playhead, so the curve reads against where you are. */}
               <line
-                x1={startLeftPx + (playhead / fps) * pxPerSec - scrollLeft}
-                x2={startLeftPx + (playhead / fps) * pxPerSec - scrollLeft}
+                ref={playheadLineRef}
+                data-chroma-curve-playhead=""
                 y1={0}
                 y2="100%"
                 stroke="currentColor"

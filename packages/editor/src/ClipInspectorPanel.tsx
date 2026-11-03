@@ -444,7 +444,6 @@ export function ClipInspectorPanel({
   onTransformChange,
   onFadeChange,
   onSpeedChange,
-  playheadSourceFrame,
   onEqBandChange,
   onEqClear,
   onParamChange,
@@ -494,12 +493,6 @@ export function ClipInspectorPanel({
   /** D-236 — replace this clip's speed ramp. Whole-array, like the op itself;
    *  `SpeedRampEditor` computes the next list. */
   onSpeedChange: (points: SpeedPoint[]) => void;
-  /** D-236 — the SOURCE frame under the playhead, or `null` when the playhead
-   *  is not over this clip. Only the Speed section reads it ("add a speed
-   *  point at the playhead"); resolved by `EditorInspectorPanel` through the
-   *  same `clipSourceFrame` the keyframe rows already use, so a speed point
-   *  and a keyframe added at the same moment land on the same frame. */
-  playheadSourceFrame: number | null;
   /** D-224 — patch ONE band of this clip's EQ. Partial by field, exactly as
    *  `set_clip_eq` itself is: the panel edits one control at a time and must
    *  never restate a frequency it did not touch. */
@@ -938,7 +931,6 @@ export function ClipInspectorPanel({
             <SpeedRampEditor
               clip={clip}
               trackLocked={trackLocked}
-              playheadSourceFrame={playheadSourceFrame}
               onSpeedChange={onSpeedChange}
             />
           )}

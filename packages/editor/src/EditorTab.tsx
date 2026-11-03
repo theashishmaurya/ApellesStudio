@@ -145,7 +145,10 @@ export function EditorTab({ mediaPool }: EditorTabProps) {
   const load = useEditorTimelineStore((s) => s.load);
   const projectOpen = useEditorTimelineStore((s) => s.openProjectKey !== null);
   const status = useEditorTimelineStore((s) => s.status);
-  const timeline = useEditorTimelineStore((s) => s.timeline);
+  // D-437 S10 — whether a timeline is loaded, not the timeline itself: the
+  // whole object changes on every edit, and selecting it re-rendered this tab
+  // (its resizable panel group and every panel's props) on each release.
+  const hasTimeline = useEditorTimelineStore((s) => s.timeline !== null);
   const error = useEditorTimelineStore((s) => s.error);
   // D-219 — the Inspector's open/closed flag lives in the store, so the
   // human's toggle and `debug_set_editor_inspector` drive one piece of state.
@@ -206,7 +209,7 @@ export function EditorTab({ mediaPool }: EditorTabProps) {
     );
   }
 
-  if (!timeline) {
+  if (!hasTimeline) {
     return (
       <div className="h-full w-full flex flex-col items-center justify-center gap-2 bg-bg-primary text-center px-6">
         <p className="text-sm text-text-secondary">Loading timeline…</p>

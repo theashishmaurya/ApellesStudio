@@ -24,10 +24,23 @@
  *     D-432): the viewer previews the frame under the pointer without moving
  *     the playhead (`previewPeek.ts`).
  *
+ * B-359 item 6 — **the zoom and the scroll position are per timeline.** The
+ * store keeps a `viewByTimeline` map keyed by `Timeline.id`, plus which
+ * timeline the live `pxPerSec` belongs to (`viewTimelineId`). Switching
+ * timelines (the switcher, `editor_set_active_timeline`, a project open)
+ * files the outgoing timeline's zoom under its id and restores the incoming
+ * one's, or the default for a timeline this session has not shown yet (a
+ * harness run's timelines no longer leave the owner's timeline zoomed to
+ * 20 %). The scroll offsets in the map are written by the pane on the way
+ * out and read back on the way in (`TimelinePane`'s timeline-id effect); the
+ * live scroll position itself stays in the pane's scroll store (D-437 S8).
+ * The rest of the settings (Clip Appearance, snapping, skimming) are app
+ * preferences, the same on every timeline, as in Final Cut.
+ *
  * What it does NOT do: anchor a zoom (the pane's `zoomBy` captures the frame
  * under the cursor / playhead and restores it after layout — a view gesture,
  * so it stays in the pane; a zoom set through here keeps `scrollLeft` as it
- * is), persist anything, or sit on the undo stack. It is display-only UI state,
+ * is), persist anything across app runs, or sit on the undo stack. It is display-only UI state,
  * like the preview viewport (D-218): never in `project.json`, never undoable.
  * A track's own height is the exception that IS in the document
  * (`Track.height`, so it follows its track on a reorder); this store holds only
@@ -48,6 +61,7 @@ import {
   TRACK_HEIGHT_PRESETS,
 } from './trackHeight';
 import type { TrimTool } from './trimMode';
+import { useEditorTimelineStore } from './timelineStore';
 
 /** `pxPerSec` clamped into the zoom range the ruler's tick ladder is sized for. */
 export function clampPxPerSec(pxPerSec: number): number {
@@ -93,6 +107,21 @@ export const DEFAULT_TIMELINE_VIEW: TimelineViewSettings = {
   skimming: false,
 };
 
+/** B-359 item 6 — what one timeline remembers of its view while another is
+ *  shown: its zoom and where its lanes were scrolled to. */
+export interface PerTimelineView {
+  pxPerSec: number;
+  scrollLeft: number;
+  scrollTop: number;
+}
+
+/** A timeline this session has not shown yet starts here. */
+export const DEFAULT_PER_TIMELINE_VIEW: PerTimelineView = {
+  pxPerSec: DEFAULT_TIMELINE_VIEW.pxPerSec,
+  scrollLeft: 0,
+  scrollTop: 0,
+};
+
 /** The tool a fresh session / the harness's per-scenario reset starts on. */
 export const DEFAULT_TRIM_TOOL: TrimTool = 'select';
 
@@ -107,8 +136,28 @@ interface TimelineViewState extends TimelineViewSettings {
   setTrimTool: (tool: TrimTool) => void;
   /** Any subset of the settings; numbers are clamped on the way in. */
   setView: (patch: Partial<TimelineViewSettings>) => void;
-  /** Back to `DEFAULT_TIMELINE_VIEW` (the harness's per-scenario reset). */
+  /** Back to `DEFAULT_TIMELINE_VIEW` (the test suites' per-test reset), and
+   *  every timeline's remembered zoom and scroll forgotten. */
   resetView: () => void;
+  /** B-359 item 6 — the timeline the live `pxPerSec` belongs to (`null`: none open). */
+  viewTimelineId: string | null;
+  /** B-359 item 6 — every other timeline's remembered view, by `Timeline.id`. */
+  viewByTimeline: Readonly<Record<string, PerTimelineView>>;
+  /** Show `id`'s view: file the current zoom under the outgoing timeline and
+   *  load `id`'s (or the default). A no-op when `id` is already the one shown.
+   *  `scroll` is the outgoing timeline's scroll offsets, when the caller has
+   *  them (the pane does; a switch with the pane unmounted keeps the old ones). */
+  showTimelineView: (id: string | null, scroll?: { left: number; top: number }) => void;
+  /** Remember `id`'s scroll offsets (the pane, as it leaves a timeline). */
+  rememberTimelineScroll: (id: string, scroll: { left: number; top: number }) => void;
+}
+
+/** `id`'s remembered view, or the default for a timeline not shown yet. */
+export function perTimelineView(
+  byTimeline: Readonly<Record<string, PerTimelineView>>,
+  id: string | null,
+): PerTimelineView {
+  return (id !== null ? byTimeline[id] : undefined) ?? DEFAULT_PER_TIMELINE_VIEW;
 }
 
 /** `editor_get_state.timelineView` / `editor_set_timeline_view`'s report: the
@@ -205,6 +254,8 @@ function snakeName(key: string): string {
 
 export const useTimelineViewStore = create<TimelineViewState>((set) => ({
   ...DEFAULT_TIMELINE_VIEW,
+  viewTimelineId: null,
+  viewByTimeline: {},
   setPxPerSec: (pxPerSec) => set({ pxPerSec: clampPxPerSec(pxPerSec) }),
   trimTool: DEFAULT_TRIM_TOOL,
   setTrimTool: (trimTool) => set({ trimTool }),
@@ -215,5 +266,40 @@ export const useTimelineViewStore = create<TimelineViewState>((set) => ({
       ...(patch.clipHeight !== undefined ? { clipHeight: clampTrackHeight(patch.clipHeight) } : {}),
       ...(patch.bandRatio !== undefined ? { bandRatio: clampBandRatio(patch.bandRatio) } : {}),
     }),
-  resetView: () => set({ ...DEFAULT_TIMELINE_VIEW, trimTool: DEFAULT_TRIM_TOOL }),
+  // Also forgets every timeline's remembered view (B-359 item 6): a reset view
+  // is the default on every timeline, not only the one showing.
+  resetView: () => set({ ...DEFAULT_TIMELINE_VIEW, trimTool: DEFAULT_TRIM_TOOL, viewByTimeline: {} }),
+  showTimelineView: (id, scroll) =>
+    set((s) => {
+      if (id === s.viewTimelineId) return s;
+      const byTimeline = { ...s.viewByTimeline };
+      if (s.viewTimelineId !== null) {
+        const old = perTimelineView(byTimeline, s.viewTimelineId);
+        byTimeline[s.viewTimelineId] = {
+          pxPerSec: s.pxPerSec,
+          scrollLeft: scroll?.left ?? old.scrollLeft,
+          scrollTop: scroll?.top ?? old.scrollTop,
+        };
+      }
+      return { viewTimelineId: id, viewByTimeline: byTimeline, pxPerSec: perTimelineView(byTimeline, id).pxPerSec };
+    }),
+  rememberTimelineScroll: (id, scroll) =>
+    set((s) => {
+      const old = perTimelineView(s.viewByTimeline, id);
+      if (old.scrollLeft === scroll.left && old.scrollTop === scroll.top) return s;
+      return { viewByTimeline: { ...s.viewByTimeline, [id]: { ...old, scrollLeft: scroll.left, scrollTop: scroll.top } } };
+    }),
 }));
+
+// B-359 item 6 — the live zoom follows the open timeline: whichever path
+// switches it (the switcher, `editor_set_active_timeline`, a project open,
+// creating a timeline), the view store files the old zoom and loads the new
+// one here, with or without the pane mounted, so `editor_get_state.timelineView`
+// always describes the timeline it sits beside. Idempotent, so a second
+// subscription after a dev-mode module re-evaluation is harmless.
+useTimelineViewStore.getState().showTimelineView(useEditorTimelineStore.getState().timeline?.id ?? null);
+useEditorTimelineStore.subscribe((s, prev) => {
+  if (s.timeline === prev.timeline) return;
+  const id = s.timeline?.id ?? null;
+  if (id !== useTimelineViewStore.getState().viewTimelineId) useTimelineViewStore.getState().showTimelineView(id);
+});

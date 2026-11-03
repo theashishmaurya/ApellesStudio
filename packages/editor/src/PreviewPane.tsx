@@ -174,7 +174,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { CircleNotchIcon } from '@phosphor-icons/react';
-import { Player, useContentBox } from '@apelles/player';
+import { Player, useContentBox, type PlayerProps } from '@apelles/player';
 import { useShortcut } from '@apelles/keymap';
 
 import { useEditorTimelineStore } from './timelineStore';
@@ -253,9 +253,23 @@ export interface PreviewPaneProps {
   headerEnd?: ReactNode;
 }
 
+/** D-437 S10 — `Player` fed the live playhead: the position bar and the
+ *  timecode are the only parts of the viewer that change on every played
+ *  frame, so they are the only part that renders for one. Everything else is
+ *  handed down from `PreviewPane` unchanged (the picture surface keeps its
+ *  identity, so React skips it). */
+function PlayheadPlayer(props: Omit<PlayerProps, 'frame'>) {
+  const frame = useEditorTimelineStore((s) => s.playhead);
+  return <Player {...props} frame={frame} />;
+}
+
 export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
   const timeline = useEditorTimelineStore((s) => s.timeline);
-  const playhead = useEditorTimelineStore((s) => s.playhead);
+  // D-437 S10 — no reactive `playhead` here: this pane rendered on every
+  // played frame for three readers, now each off React state — the scrub fetch
+  // is a store subscription (below), a frame step reads the store at the
+  // click, and the transport's position bar and timecode render in their own
+  // `PlayheadPlayer`. A played frame renders this pane zero times.
   const playing = useEditorTimelineStore((s) => s.playing);
   // B-088 — the scrub effect's refetch trigger. NOT `timeline`: see that
   // effect's own comment, and `savedVersion`'s doc in `timelineStore.ts`.
@@ -618,17 +632,26 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
 
   useEffect(() => {
     if (playing || !hasTimeline) return;
-    // D-290 — the frame on screen IS this frame, and nothing has invalidated
-    // it: there is no picture to go and get. This is the ordinary case on
-    // PAUSE — the play loop has just decoded and painted the frame the
-    // playhead is now parked on, and re-fetching it cost a whole extra round
-    // trip (25 ms on the owner's project) to produce a byte-identical picture.
-    // Worse, it asked the decode pipe for a frame it had already streamed
-    // past, and a backward target is the one thing D-125 documents as
-    // expensive: an ffmpeg respawn plus a keyframe seek, on every pause.
-    if (shownFrame.current === playhead) return;
-    fetchFrame(playhead, PREVIEW_LONG_EDGE);
-  }, [playhead, playing, hasTimeline, savedVersion, fetchFrame]);
+    const show = (playhead: number) => {
+      // D-290 — the frame on screen IS this frame, and nothing has invalidated
+      // it: there is no picture to go and get. This is the ordinary case on
+      // PAUSE — the play loop has just decoded and painted the frame the
+      // playhead is now parked on, and re-fetching it cost a whole extra round
+      // trip (25 ms on the owner's project) to produce a byte-identical picture.
+      // Worse, it asked the decode pipe for a frame it had already streamed
+      // past, and a backward target is the one thing D-125 documents as
+      // expensive: an ffmpeg respawn plus a keyframe seek, on every pause.
+      if (shownFrame.current === playhead) return;
+      fetchFrame(playhead, PREVIEW_LONG_EDGE);
+    };
+    show(useEditorTimelineStore.getState().playhead);
+    // D-437 S10 — later seeks while paused arrive through the store, not a
+    // render (the play loop owns the picture once `playing` flips, and this
+    // effect re-runs then).
+    return useEditorTimelineStore.subscribe((st, prev) => {
+      if (st.playhead !== prev.playhead && !st.playing) show(st.playhead);
+    });
+  }, [playing, hasTimeline, savedVersion, fetchFrame]);
 
   // D-432 P3 — skimming (S): the timeline asks for the frame under its pointer
   // through `previewPeek.ts`, and this subscribes OUTSIDE React, so a skim
@@ -867,7 +890,7 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
 
   const step = (d: number) => {
     if (playing) setPlaying(false);
-    setPlayhead(playhead + d);
+    setPlayhead(useEditorTimelineStore.getState().playhead + d);
   };
 
   // D-273 — the Edit tab's transport shortcuts. Space/←/→ were bound to
@@ -916,7 +939,7 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
           happens in. It arms itself off a media drag and renders nothing
           otherwise, so it costs an unmounted component the rest of the time. */}
       <EditOverlay />
-      <Player
+      <PlayheadPlayer
         title={timeline?.name || 'Untitled timeline'}
         formatLabel={viewerFormatLabel(compSize, fps)}
         headerStart={headerStart}
@@ -1023,7 +1046,6 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
             <div className="text-sm text-text-secondary">no frame</div>
           )
         }
-        frame={playhead}
         total={lastFrame}
         fps={fps}
         playing={playing}

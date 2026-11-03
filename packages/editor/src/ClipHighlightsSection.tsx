@@ -48,7 +48,9 @@ const numInput = 'h-7 w-14 text-xs';
 export function ClipHighlightsSection() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const selection = useEditorTimelineStore((s) => s.selection);
-  const playhead = useEditorTimelineStore((s) => s.playhead);
+  // D-437 S10 — no reactive `playhead`: only "Add at playhead" needs it, and it
+  // reads the store at the click. A selector here re-rendered this section on
+  // every displayed frame of playback.
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
   const armedClipId = useHighlightEditStore((s) => s.armedClipId);
   const selected = useHighlightEditStore((s) => s.selected);
@@ -76,7 +78,7 @@ export function ClipHighlightsSection() {
 
   const addAtPlayhead = () => {
     const rate = clip.source_fps && clip.source_fps > 0 ? clip.source_fps : fps;
-    const at = Math.round(clipSourceFrame(clip, playhead, fps));
+    const at = Math.round(clipSourceFrame(clip, useEditorTimelineStore.getState().playhead, fps));
     write([
       ...highlights,
       { box: NEW_HIGHLIGHT_BOX, at, dur: Math.round(DEFAULT_HIGHLIGHT_SWEEP_SECONDS * rate) },
