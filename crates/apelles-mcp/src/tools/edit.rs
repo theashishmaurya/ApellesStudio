@@ -405,6 +405,15 @@ pub enum HeightSpec {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+// `track` is required AND nullable (null clears the target), as
+// `EditorRenameTrackArgs::name` is.
+#[schemars(extend("required" = ["track"]))]
+pub struct EditorSetTargetTrackArgs {
+    /// REQUIRED, and nullable: null clears the target.
+    pub track: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 // `name` is required AND nullable, as `EditorMoveMediaArgs::folder` is (see there).
 #[schemars(extend("required" = ["track", "name"]))]
 pub struct EditorRenameTrackArgs {
@@ -3194,7 +3203,8 @@ impl ApellesMcp {
     is dragged onto the preview, so a human and you produce identical results.
 
     `edit_type` is one of, and every one of them acts at `at_frame` (the
-    playhead by default) on `track` (the first video track by default):
+    playhead by default) on `track` (by default the target track, D-440, when
+    its kind fits the source, else the first video track):
 
     - `insert` — pushes everything at/after the playhead down to make room,
       splitting whatever clip the playhead is inside. The only type that
@@ -4418,6 +4428,33 @@ impl ApellesMcp {
     }
 
     #[tool(
+        name = "editor_set_target_track",
+        description = r#"Make a track the timeline's TARGET track, or clear it with null — the
+    track header's ID pill (D-440; Premiere's track targeting, Resolve's
+    destination track). The target's pill is drawn in the accent colour.
+
+    An edit that names no track lands on the target when its kind fits the
+    source (picture on a video target, an audio-only file on an audio target):
+    `editor_edit_in` without `track`, and a drop on the viewer's edit overlay.
+    Otherwise those keep their old default (the first video track / the
+    selected clip's track). `editor_add_clip` without `track` is unchanged: it
+    still makes a NEW track (B-273). At most one track is the target; setting
+    one clears the other. Stored with the track, so it follows a reorder and is
+    kept when the project reopens; `editor_list_tracks` marks it `target:
+    true`. One undo step.
+
+    Returns {ok, target (the track index, or null), badge, name}."#
+    )]
+    pub async fn editor_set_target_track(
+        &self,
+        Parameters(p): Parameters<EditorSetTargetTrackArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("track", p.track);
+        let env = self.op("editor_set_target_track", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
         name = "editor_rename_track",
         description = r#"Rename a track — the track header's double-click rename (D-432 P3). The
     name is what the header and `editor_list_tracks` show ("Music", "VO"); the
@@ -4478,7 +4515,8 @@ impl ApellesMcp {
     gain, muted (gain is 0),
     hidden, locked, syncLocked, duckFrom (the track whose clips duck this one,
     or null) and, when ducked, duckDb / duckAttackMs / duckReleaseMs, beatGrid
-    (only on the track whose beats are shown), clipCount, sourceCount, sources
+    (only on the track whose beats are shown), target (true only on the
+    target track, `editor_set_target_track`), clipCount, sourceCount, sources
     (the distinct source file NAMES on the track, at most 12), firstFrame and
     endFrame (the track's extent in TIMELINE frames; null when empty)}]}.
 

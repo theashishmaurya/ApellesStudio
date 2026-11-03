@@ -185,6 +185,38 @@ describe('track headers (§4.8)', () => {
     expect(useHistoryStore.getState().undoStack).toHaveLength(1);
   });
 
+  it('the ID pill targets the track (accent), one undo step; again clears it; a press never starts a reorder (D-440)', async () => {
+    const pill = () => header(1).querySelector<HTMLElement>(`[data-testid="${ID.trackBadge}"]`)!;
+    expect(pill().tagName).toBe('BUTTON');
+    expect(pill().getAttribute('aria-pressed')).toBe('false');
+    expect(pill().className).toMatch(/\bbg-bg-secondary\b/);
+    // A press-and-drag that starts on the pill is not the header's reorder drag.
+    firePointerEvent(pill(), 'pointerdown', { x: 10, y: 80 });
+    await nextFrame();
+    firePointerEvent(window, 'pointermove', { x: 10, y: 20 });
+    await nextFrame();
+    firePointerEvent(window, 'pointerup', { x: 10, y: 20 });
+    await nextFrame();
+    expect(tl().tracks.map((t) => t.kind)).toEqual(['video', 'audio']);
+    expect(useHistoryStore.getState().undoStack).toHaveLength(0);
+    click(pill());
+    await nextFrame();
+    expect(tl().tracks.map((t) => !!t.target)).toEqual([false, true]);
+    expect(pill().getAttribute('aria-pressed')).toBe('true');
+    expect(pill().hasAttribute('data-chroma-target')).toBe(true);
+    expect(pill().className).toMatch(/\bbg-accent\b/);
+    expect(pill().className).toMatch(/\btext-button-text\b/);
+    expect(useHistoryStore.getState().undoStack).toHaveLength(1);
+    // Targeting V1 moves it; clicking the target again clears it.
+    const v1 = header(0).querySelector<HTMLElement>(`[data-testid="${ID.trackBadge}"]`)!;
+    click(v1);
+    await nextFrame();
+    expect(tl().tracks.map((t) => !!t.target)).toEqual([true, false]);
+    click(header(0).querySelector<HTMLElement>(`[data-testid="${ID.trackBadge}"]`)!);
+    await nextFrame();
+    expect(tl().tracks.some((t) => t.target)).toBe(false);
+  });
+
   it('delete lives in the track menu', async () => {
     click(header(1).querySelector<HTMLElement>(`[data-testid="${ID.trackMenu}"]`)!);
     await waitFrames(2);

@@ -3787,6 +3787,8 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
                     onRemove={() => doRemoveTrack(i)}
                     beatGrid={track.beat_grid != null}
                     onToggleBeats={() => (track.beat_grid != null ? setBeatGrid(null, null) : setBeatGrid(i, {}))}
+                    target={!!track.target}
+                    onToggleTarget={() => applyOp({ kind: 'set_target_track', track: track.target ? null : i })}
                     onRename={(name) => applyOp({ kind: 'set_track_name', track: i, name })}
                     onSetHeight={(height) => applyOp({ kind: 'set_track_height', track: i, height })}
                     onHeightDragStart={startTrackHeightDrag}

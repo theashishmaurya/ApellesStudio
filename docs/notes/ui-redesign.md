@@ -1054,6 +1054,24 @@ leftovers, closed against the approved mockup (owner: "loved the design",
   Nothing reaches the lanes, as in the mockup and Final Cut's timeline.
   Snapping to beats is unchanged. Pinned by `TimelineBeats.dom.test.tsx`.
 
+**Track headers: names and the target track (B-359 item 5, D-440).**
+- Names were already real (P3: `Track.name`, the double-click rename,
+  `editor_rename_track`); the comparison's "Video 1 / Audio 1" was that
+  project's data. Nothing to build there.
+- The target track: a flag on the track (`Track.target`, at most one), set by
+  clicking the `V1` / `A1` pill (a button, `aria-pressed`, accent with
+  `text-button-text` when set; a second click clears it; its press never
+  starts the reorder drag) and by `editor_set_target_track {track | null}`.
+  One `set_target_track` op, one undo step. It follows its track on a reorder
+  and leaves with a removed track.
+- It steers the edits that name no track when its kind fits the source
+  (`destinationTrack`): the viewer's edit overlay drop and `editor_edit_in`
+  without `track`. `editor_add_clip` without `track` still makes a new track
+  (B-273), deliberately; see D-440.
+- Deviation: the mockup's own track names ("Interview", "Dialogue") are its
+  sample data; the app shows the user's names when set and "Video 1" style
+  labels otherwise, as before.
+
 ## 7. Human + AI parity
 
 Every new GUI capability gets its MCP surface in the same phase (standing rule):

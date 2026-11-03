@@ -132,6 +132,7 @@
     "editor_set_track_hidden",
     "editor_set_track_locked",
     "editor_set_track_sync_locked",
+    "editor_set_target_track",
     "editor_rename_track",
     "editor_set_track_height",
     "editor_list_tracks",

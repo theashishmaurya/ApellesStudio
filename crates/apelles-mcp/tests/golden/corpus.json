@@ -4041,7 +4041,7 @@
     },
     {
       "name": "editor_edit_in",
-      "description": "Edit a media-pool source into the timeline using one of the SEVEN real\n    edit types, rather than just placing it at a position (`editor_add_clip`).\n    This is the same operation the app's own edit overlay performs when a clip\n    is dragged onto the preview, so a human and you produce identical results.\n\n    `edit_type` is one of, and every one of them acts at `at_frame` (the\n    playhead by default) on `track` (the first video track by default):\n\n    - `insert` \u2014 pushes everything at/after the playhead down to make room,\n      splitting whatever clip the playhead is inside. The only type that\n      lengthens the timeline by exactly the source's own length.\n    - `overwrite` \u2014 writes over whatever is there for the new clip's length.\n      Clips it lands inside are trimmed or split; clips it swallows whole are\n      removed. Nothing's position changes: the timeline stays the same length.\n    - `replace` \u2014 swaps the clip UNDER THE PLAYHEAD for this source, kept to\n      that clip's exact start and exact length (the source is re-cut, not\n      retimed). Refused if the source is too short to cover the slot \u2014 use\n      `fit_to_fill` for that. Note this is NOT `editor_swap_clip_media`, which\n      keeps the existing clip and only changes which file it points at,\n      preserving its transform/keyframes/grade; `replace` is a new edit.\n    - `fit_to_fill` \u2014 the same slot as `replace`, but the source keeps its full\n      marked length and gets a flat speed ramp calculated to fill the slot\n      exactly (see `editor_set_clip_speed`). Refused if that speed would fall\n      outside 0.05x\u201320x.\n    - `place_on_top` \u2014 puts the clip on the next video track ABOVE the\n      destination that has room at the playhead, creating a new topmost video\n      track if none has any. For titles, graphics, picture-in-picture. Nothing\n      on the track below is disturbed. **The response's `track` is where it\n      really landed, which may be a track that did not exist before, and every\n      other track's index will have shifted down by one when that happens \u2014\n      re-read `editor_get_state` before addressing tracks by index again.**\n    - `append` \u2014 after the last edit on the destination track, ignoring the\n      playhead entirely.\n    - `ripple_overwrite` \u2014 replaces the clip under the playhead even at a\n      different length: a longer source pushes everything after it down, a\n      shorter one pulls everything in, so no gap is ever left.\n\n    Identify the source with `media_id` or `source_path` (import it first with\n    `editor_import_media`), optionally trimmed to `[source_start,\n    source_start+duration)` of its own frames exactly as `editor_add_clip`\n    takes them.\n\n    Every one of the seven is ONE undo entry, named for the edit type. A\n    refused edit returns a real `error` sentence saying why and changes\n    nothing \u2014 it is never a silent no-op. `insert` and `ripple_overwrite` are\n    additionally refused when a sync-locked track has a clip straddling the\n    frame they would ripple from (docs/BUGS.md B-033).",
+      "description": "Edit a media-pool source into the timeline using one of the SEVEN real\n    edit types, rather than just placing it at a position (`editor_add_clip`).\n    This is the same operation the app's own edit overlay performs when a clip\n    is dragged onto the preview, so a human and you produce identical results.\n\n    `edit_type` is one of, and every one of them acts at `at_frame` (the\n    playhead by default) on `track` (by default the target track, D-440, when\n    its kind fits the source, else the first video track):\n\n    - `insert` \u2014 pushes everything at/after the playhead down to make room,\n      splitting whatever clip the playhead is inside. The only type that\n      lengthens the timeline by exactly the source's own length.\n    - `overwrite` \u2014 writes over whatever is there for the new clip's length.\n      Clips it lands inside are trimmed or split; clips it swallows whole are\n      removed. Nothing's position changes: the timeline stays the same length.\n    - `replace` \u2014 swaps the clip UNDER THE PLAYHEAD for this source, kept to\n      that clip's exact start and exact length (the source is re-cut, not\n      retimed). Refused if the source is too short to cover the slot \u2014 use\n      `fit_to_fill` for that. Note this is NOT `editor_swap_clip_media`, which\n      keeps the existing clip and only changes which file it points at,\n      preserving its transform/keyframes/grade; `replace` is a new edit.\n    - `fit_to_fill` \u2014 the same slot as `replace`, but the source keeps its full\n      marked length and gets a flat speed ramp calculated to fill the slot\n      exactly (see `editor_set_clip_speed`). Refused if that speed would fall\n      outside 0.05x\u201320x.\n    - `place_on_top` \u2014 puts the clip on the next video track ABOVE the\n      destination that has room at the playhead, creating a new topmost video\n      track if none has any. For titles, graphics, picture-in-picture. Nothing\n      on the track below is disturbed. **The response's `track` is where it\n      really landed, which may be a track that did not exist before, and every\n      other track's index will have shifted down by one when that happens \u2014\n      re-read `editor_get_state` before addressing tracks by index again.**\n    - `append` \u2014 after the last edit on the destination track, ignoring the\n      playhead entirely.\n    - `ripple_overwrite` \u2014 replaces the clip under the playhead even at a\n      different length: a longer source pushes everything after it down, a\n      shorter one pulls everything in, so no gap is ever left.\n\n    Identify the source with `media_id` or `source_path` (import it first with\n    `editor_import_media`), optionally trimmed to `[source_start,\n    source_start+duration)` of its own frames exactly as `editor_add_clip`\n    takes them.\n\n    Every one of the seven is ONE undo entry, named for the edit type. A\n    refused edit returns a real `error` sentence saying why and changes\n    nothing \u2014 it is never a silent no-op. `insert` and `ripple_overwrite` are\n    additionally refused when a sync-locked track has a clip straddling the\n    frame they would ripple from (docs/BUGS.md B-033).",
       "inputSchema": {
         "properties": {
           "edit_type": {
@@ -5447,7 +5447,7 @@
     },
     {
       "name": "editor_list_tracks",
-      "description": "The active timeline's tracks, compactly and WITHOUT their clips (B-318)\n    \u2014 read this first to find which track holds the voice-over, the music, the\n    captions, instead of pulling every clip through `get_timeline`.\n\n    Returns {ok, timelineId, durationFrames, trackCount, tracks: [{index,\n    kind: \"video\"|\"audio\"|\"subtitle\", name (\"Video 1\", \"Audio 2\", ...: numbered\n    per kind, the label the track header shows, or the name given with\n    `editor_rename_track`), badge (the header's ID pill: V1, A1, C1), renamed,\n    height (px; only when the track has its own, `editor_set_track_height`),\n    gain, muted (gain is 0),\n    hidden, locked, syncLocked, duckFrom (the track whose clips duck this one,\n    or null) and, when ducked, duckDb / duckAttackMs / duckReleaseMs, beatGrid\n    (only on the track whose beats are shown), clipCount, sourceCount, sources\n    (the distinct source file NAMES on the track, at most 12), firstFrame and\n    endFrame (the track's extent in TIMELINE frames; null when empty)}]}.\n\n    `index` is what every track-addressed tool takes. Then slice the clips with\n    `get_timeline(track=..., start_frame=..., end_frame=..., fields=[...])`.\n    The same facts are in the GUI's track headers. Read-only.",
+      "description": "The active timeline's tracks, compactly and WITHOUT their clips (B-318)\n    \u2014 read this first to find which track holds the voice-over, the music, the\n    captions, instead of pulling every clip through `get_timeline`.\n\n    Returns {ok, timelineId, durationFrames, trackCount, tracks: [{index,\n    kind: \"video\"|\"audio\"|\"subtitle\", name (\"Video 1\", \"Audio 2\", ...: numbered\n    per kind, the label the track header shows, or the name given with\n    `editor_rename_track`), badge (the header's ID pill: V1, A1, C1), renamed,\n    height (px; only when the track has its own, `editor_set_track_height`),\n    gain, muted (gain is 0),\n    hidden, locked, syncLocked, duckFrom (the track whose clips duck this one,\n    or null) and, when ducked, duckDb / duckAttackMs / duckReleaseMs, beatGrid\n    (only on the track whose beats are shown), target (true only on the\n    target track, `editor_set_target_track`), clipCount, sourceCount, sources\n    (the distinct source file NAMES on the track, at most 12), firstFrame and\n    endFrame (the track's extent in TIMELINE frames; null when empty)}]}.\n\n    `index` is what every track-addressed tool takes. Then slice the clips with\n    `get_timeline(track=..., start_frame=..., end_frame=..., fields=[...])`.\n    The same facts are in the GUI's track headers. Read-only.",
       "inputSchema": {
         "properties": {},
         "type": "object",
@@ -8010,6 +8010,30 @@
           }
         },
         "title": "editor_set_selectionArguments"
+      }
+    },
+    {
+      "name": "editor_set_target_track",
+      "description": "Make a track the timeline's TARGET track, or clear it with null \u2014 the\n    track header's ID pill (D-440; Premiere's track targeting, Resolve's\n    destination track). The target's pill is drawn in the accent colour.\n\n    An edit that names no track lands on the target when its kind fits the\n    source (picture on a video target, an audio-only file on an audio target):\n    `editor_edit_in` without `track`, and a drop on the viewer's edit overlay.\n    Otherwise those keep their old default (the first video track / the\n    selected clip's track). `editor_add_clip` without `track` is unchanged: it\n    still makes a NEW track (B-273). At most one track is the target; setting\n    one clears the other. Stored with the track, so it follows a reorder and is\n    kept when the project reopens; `editor_list_tracks` marks it `target:\n    true`. One undo step.\n\n    Returns {ok, target (the track index, or null), badge, name}.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Track"
+          }
+        },
+        "required": [
+          "track"
+        ],
+        "type": "object",
+        "title": "editor_set_target_trackArguments"
       }
     },
     {
@@ -21727,6 +21751,29 @@
               "track": 81,
               "frame": 30
             }
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_set_target_track",
+      "case": "minimal",
+      "arguments": {
+        "track": 37
+      },
+      "requests": [
+        {
+          "op": "editor_set_target_track",
+          "args": {
+            "track": 37
           },
           "timeout_ms": 20000
         }

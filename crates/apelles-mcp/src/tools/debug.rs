@@ -9,8 +9,8 @@
 //!  Internal debug tooling must be compiled OUT of a production build through a real
 //!  compile-time gate — never a runtime flag, never "just don't call it in prod."
 //!  That is the same gate `control.rs`'s `native_op` uses on its own side (B-100 /
-//!  D-219), and it is why a release build of this server publishes 252 tools where a
-//!  debug build publishes 270: the EIGHTEEN gated tools here are the whole difference,
+//!  D-219), and it is why a release build of this server publishes 253 tools where a
+//!  debug build publishes 271: the EIGHTEEN gated tools here are the whole difference,
 //!  counted off the `name = "debug_…"` attributes in this module (D-434 added
 //!  `debug_pointer`, `debug_key` and `debug_set_occlusion_throttling`, and the timeline-perf pass added
 //!  `debug_perf_entries`, and D-437 S0b `debug_set_webkit_layer_debug`; the figures

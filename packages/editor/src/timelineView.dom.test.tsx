@@ -38,6 +38,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 }));
 
 import { useHistoryStore } from '@apelles/history';
+import { useMediaPoolStore } from '@apelles/bridge';
 
 import { useEditorTimelineStore } from './timelineStore';
 import { useEditorControl } from './useEditorControl';
@@ -183,6 +184,51 @@ describe('editor_rename_track / editor_set_track_height (D-432 P3)', () => {
     expect(useEditorTimelineStore.getState().timeline?.tracks[0].height).toBeUndefined();
     expect((await callOp('editor_set_track_height', { track: 0 })).result.error).toMatch(/height/);
     expect((await callOp('editor_set_track_height', { track: 0, height: 'tall' })).result.error).toMatch(/S \/ M \/ L \/ XL/);
+  });
+});
+
+describe('editor_set_target_track (D-440)', () => {
+  it('targets a track through the SAME op the header pill applies, one undo step; null clears; list_tracks marks it', async () => {
+    const res = await callOp('editor_set_target_track', { track: 0 });
+    expect(res.result).toMatchObject({ ok: true, target: 0, badge: 'V1', name: 'Video 1' });
+    expect(useEditorTimelineStore.getState().timeline?.tracks[0].target).toBe(true);
+    expect(useHistoryStore.getState().undoStack).toHaveLength(1);
+    const list = await callOp('editor_list_tracks', {});
+    expect(list.result.tracks[0]).toMatchObject({ target: true });
+    const cleared = await callOp('editor_set_target_track', { track: null });
+    expect(cleared.result).toMatchObject({ ok: true, target: null });
+    expect(useEditorTimelineStore.getState().timeline?.tracks[0].target).toBeUndefined();
+    expect((await callOp('editor_set_target_track', { track: 5 })).result.error).toMatch(/track/);
+  });
+
+  it('editor_edit_in without a track lands on the target when it fits the source', async () => {
+    const two: Timeline = {
+      ...timeline,
+      tracks: [
+        { kind: 'video', clips: [] },
+        { kind: 'video', clips: [] },
+      ],
+    };
+    actSync(() => useEditorTimelineStore.setState({ timeline: two }));
+    useMediaPoolStore.setState({
+      items: [
+        {
+          id: 'm1',
+          sourcePath: '/m1.mp4',
+          name: 'm1.mp4',
+          added: '2026-11-03T00:00:00Z',
+          offline: false,
+          video: { width: 1920, height: 1080, fps: FPS, frameCount: 48, durationSecs: 2, hasAudio: false },
+        },
+      ],
+    });
+    await callOp('editor_set_target_track', { track: 1 });
+    const res = await callOp('editor_edit_in', { mediaId: 'm1', editType: 'overwrite' });
+    expect(res.ok, res.error ?? '').toBe(true);
+    const tracks = useEditorTimelineStore.getState().timeline?.tracks ?? [];
+    expect(tracks[1].clips).toHaveLength(1);
+    expect(tracks[0].clips).toHaveLength(0);
+    useMediaPoolStore.setState({ items: [] });
   });
 });
 
