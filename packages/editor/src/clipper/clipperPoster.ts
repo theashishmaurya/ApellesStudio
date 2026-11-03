@@ -1,5 +1,5 @@
 /**
- * `@apelles/editor` — a short's poster frame (D-443, B-363).
+ * `@apelles/editor` — a short's poster frame (D-445, B-363).
  *
  * **What it is.** {@link useShortPoster}: the frame a short opens on (its
  * opening line when it has a hook, else its first kept range), read once from

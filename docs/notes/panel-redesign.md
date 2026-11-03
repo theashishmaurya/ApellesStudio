@@ -1,13 +1,10 @@
 # Panel redesigns: Clipper, Music edits, Inspector Audio + EQ, Inspector Video sections, Export
 
 **Status: approved by the owner (2026-11-03, "Looks good the UI you gave :)", revision 2).
-Built so far: the Inspector Audio + EQ (§3, B-365, D-442) and the Inspector Video sections
-(§4, B-366, D-443): see "As built" at the end. Clipper, Music edits and Export are built
-separately.** Original status:
-mockups ready for owner approval (2026-11-03). This is the
-**Status: revision 2 approved by the owner (2026-11-03). Built: Export (D-441). Clipper and
-Music edits are being built in the same pass; the Inspector Audio + EQ and Video sections are
-a later wave. See "Owner decisions" and the "As built" sections at the end.** This was the
+All five built: the Inspector Audio + EQ (§3, B-365, D-442), the Inspector Video sections
+(§4, B-366, D-443), Export (§5, B-367, D-441), Music edits (§2, B-364, D-444) and the Clipper
+(§1, B-363, D-445). See "Owner decisions" and the "As built" sections at the end.** Original
+status: mockups ready for owner approval (2026-11-03). This is the
 research → mockup step of the D-432 flow for the five panels the owner called unintuitive
 on 2026-11-01: B-363 (Clipper), B-364 (Music edits), B-365 (Inspector Audio + EQ), B-366
 (Inspector Video sections) and B-367 (Export). Roadmap 00r (v0.3.0) item (b): "panel research
@@ -734,7 +731,7 @@ The owner approved revision 2 ("Looks good the UI you gave :)") and answered:
   of an H.264 "as edited" chip; Save as preset sits at the end of More settings; no system
   notification when an export finishes (the pill shows it). Reasons in D-441.
 
-## As built: Music edits (D-442, B-364)
+## As built: Music edits (D-444, B-364)
 
 - **Panel** `packages/editor/src/MusicEditsPanel.tsx`: the track line ("On A3 · <music>",
   Automatic entry kept, its explanation in the trigger's tooltip); the empty state (one
@@ -753,9 +750,9 @@ The owner approved revision 2 ("Looks good the UI you gave :)") and answered:
 - **Deviations from the mockup**: the range shows on the ruler, not as a box on the music
   lane, and suggestions are not hatched on the lane (the lane renderer is being changed by
   another pass; the ruler band is the same range); the breath button is also under the maker.
-  Reasons in D-442.
+  Reasons in D-444.
 
-## As built: Clipper (D-443, B-363)
+## As built: Clipper (D-445, B-363)
 
 - **List** `packages/editor/src/clipper/ClipperPanel.tsx` (the Shorts tab): the set picker
   ("Shorts from <source> · <date>") with ＋, the state line, one card per short (9:16 poster
@@ -775,7 +772,7 @@ The owner approved revision 2 ("Looks good the UI you gave :)") and answered:
   `editor_set_clip_proposal` / `editor_auto_clip` / `editor_build_clips(ids)`.
 - **Deviations from the mockup**: the player is the short's opening frame until it is made
   (there is no timeline to play before the build; Show in source plays it on the long
-  timeline); "Suggest as a short" not built. Reasons in D-443.
+  timeline); "Suggest as a short" not built. Reasons in D-445.
 
 ## Screenshots of the build (2026-11-03)
 

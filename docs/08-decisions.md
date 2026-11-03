@@ -38197,7 +38197,7 @@ the reason (the surface's shape is what step 4's numbers decide).
 - **Not built.** Publishing (roadmap 00d). Cancelling the loudness pass's own short ffmpeg mid-run (it has no handle; the cancel lands when it returns, seconds later). Reordering the queue.
 - **Verified.** Rust: `export_job` (cancel kills attached children, a late child is killed at once, an early cancel refuses the run, the guard unregisters, partial output and scratch files are removed, the folder is created, the default name never overwrites), `export_status` (a cancel stops the loop, kills the encoder and reads `cancelled`), `ffmpeg_run` (a real long encode cancelled mid-run stops promptly and leaves no file; a short encode finishes; a bad flag reports ffmpeg's reason), `edit_render` (segments take the output's container), `apelles-media::loudness` (`.mov` keeps PCM, scratch paths). TS: the preset table, `withPreset`, the saved-preset store and its persistence, the default path, the codec tail per format on both renderers, the size estimate, queue cancel (queued and running) and retry, `editor_export(preset)` with the default path, `editor_cancel_export`; a DOM test of the sheet (chips → summary, shape warning, ProRes → `.mov`, Save / delete preset, Export queues and closes, the pill's Cancel calls the backend and the job settles `cancelled`). Parity corpus re-captured (275 tools, both servers agree).
 
-## D-442 — the Music edits panel redesign, with a Preview that plays the edit before it is applied
+## D-444 — the Music edits panel redesign, with a Preview that plays the edit before it is applied
 
 **decided (2026-11-03)** · fixes B-364 · owner-approved mockup (`scratch/panel-redesign-mockup.html`, "Music edits", revision 2; `docs/notes/panel-redesign.md` §2) · extends D-408 (music edits by story beat), B-348 (In / Out marks)
 
@@ -38211,7 +38211,7 @@ the reason (the surface's shape is what step 4's numbers decide).
 - **Deviations from the mockup.** The range is drawn on the ruler (the timeline's marked range, B-348's band) rather than as a box on the music lane, and suggested ranges are not hatched on the lane: drawing on the lane means positioning over a track row inside `TimelinePane`'s lane renderer, which another pass is changing; the ruler band shows the same range, and clicking a row's timecodes moves the playhead to it. The breath button also stays under the maker (the mockup showed it only in the empty state) so it is reachable once something is marked.
 - **Verified.** Rust: the audio path mixes the preview timeline while it is set and the project's own once cleared (`audio::tests`). TS DOM: suggestions render with words, reasons and problems; Approve / Apply is one undo step; the empty state's breath; making one from the marks (start from the playhead, Out from the playhead, kind pill and sentence, re-entry, Apply cuts and clears the marks); the fade-out dot drags and takes arrow keys; Preview sends the edited document, plays from the pre-roll, leaves the timeline and the history untouched, and clears the override when playback stops.
 
-## D-443 — the Clipper redesign: a list of shorts in the browser, the review in the viewer area
+## D-445 — the Clipper redesign: a list of shorts in the browser, the review in the viewer area
 
 **decided (2026-11-03)** · fixes B-363 · owner-approved mockup (`scratch/panel-redesign-mockup.html`, "Clipper"; `docs/notes/panel-redesign.md` §1) · extends D-411 (the Automatic Clipper)
 

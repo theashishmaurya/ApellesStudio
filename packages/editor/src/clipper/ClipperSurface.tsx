@@ -1,6 +1,6 @@
 /**
  * `@apelles/editor` — the Clipper's surface in the viewer area: New shorts, the
- * reading / waiting states, and the review of one short (D-443, B-363).
+ * reading / waiting states, and the review of one short (D-445, B-363).
  *
  * **What it is.** The approved mockup's right-hand half
  * (`scratch/panel-redesign-mockup.html`, "Clipper"): the owner decided the

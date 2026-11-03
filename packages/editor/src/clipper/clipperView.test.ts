@@ -1,4 +1,4 @@
-// @apelles/editor — the Clipper review's words (D-443): the run's name and
+// @apelles/editor — the Clipper review's words (D-445): the run's name and
 // state line, the clean-cut chip and the check as sentences with what to try,
 // the transcript view (in / out / opening line), the trimmed pauses and the
 // count line. The gate's verdicts are fixtures; this only words them.
@@ -73,7 +73,7 @@ const run: ClipRun = {
   ],
 };
 
-describe('clipperView (D-443)', () => {
+describe('clipperView (D-445)', () => {
   it('names the run and its settings in words', () => {
     expect(runTitle(run)).toBe('Shorts from Voiceover v2');
     expect(runSettingsLine(run)).toBe('30 s and 60 s · Vertical 9:16');

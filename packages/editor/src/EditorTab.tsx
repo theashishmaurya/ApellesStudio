@@ -166,7 +166,7 @@ export function EditorTab({ mediaPool, browserActions }: EditorTabProps) {
   const hasTracks = useEditorTimelineStore((s) => (s.timeline?.tracks.length ?? 0) > 0);
   // D-432 P5 — the browser's flag and the persisted split sizes.
   const browserOpen = useEditLayoutStore((s) => s.browserOpen);
-  // D-443 — the Clipper's surface takes the viewer area only while the
+  // D-445 — the Clipper's surface takes the viewer area only while the
   // browser shows the Shorts tab.
   const shortsTab = useEditorTimelineStore((s) => s.libraryMode === 'clipper');
   const clipperSurfaceOpen = useClipperStore((s) => s.surface !== 'closed');
@@ -299,7 +299,7 @@ export function EditorTab({ mediaPool, browserActions }: EditorTabProps) {
                   }
                 />
               </PanelErrorBoundary>
-              {/* D-443 — the Clipper's review lives in the viewer area while the
+              {/* D-445 — the Clipper's review lives in the viewer area while the
                   Shorts tab is showing (owner decision): laid over the viewer,
                   which stays mounted underneath and comes back on close. */}
               {clipperSurface && browserOpen && (

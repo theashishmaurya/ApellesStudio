@@ -1,5 +1,5 @@
 /**
- * `@apelles/editor` — the Clipper review's actions and its keys (D-443, B-363).
+ * `@apelles/editor` — the Clipper review's actions and its keys (D-445, B-363).
  *
  * **What it is.** The few things a person does while reviewing shorts, shared by
  * the list in the browser and the review surface in the viewer area:

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * D-408 / D-442 — the Music edits panel in a real DOM: an agent's suggestions
+ * D-408 / D-444 — the Music edits panel in a real DOM: an agent's suggestions
  * render as reviewable rows, Approve / Skip drive the shared store, a row that
  * cannot land shows why and cannot be approved, Apply cuts the approved ones as
  * one undo step; with nothing marked the empty state's breath cuts a second
@@ -152,7 +152,7 @@ describe('MusicEditsPanel (D-408)', () => {
   });
 });
 
-describe('making one (D-442)', () => {
+describe('making one (D-444)', () => {
   beforeEach(async () => {
     installPointerCaptureStub();
     previewCalls.length = 0;

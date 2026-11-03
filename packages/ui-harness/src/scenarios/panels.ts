@@ -1,5 +1,5 @@
 /**
- * The v0.3.0 panel redesigns (D-441 Export, D-442 Music edits, D-443 Clipper;
+ * The v0.3.0 panel redesigns (D-441 Export, D-444 Music edits, D-445 Clipper;
  * `docs/notes/panel-redesign.md` "As built"), driven on the live app:
  * - Export: a preset chip selects (and is the summary's source), and a preset an
  *   agent saves through `editor_save_export_preset` appears in the open sheet at
@@ -58,7 +58,7 @@ export const PANEL_SCENARIOS: Scenario[] = [
     id: 'music-fade-dot-drag',
     title: 'Music edits takes its range from the In / Out marks, and dragging the fade-out dot lengthens the fade',
     area: 'music-edits',
-    reference: 'Resolve Fairlight fade handles; the approved Music edits mockup, revision 2 ("fades are dragged on the diagram\'s dots", D-442)',
+    reference: 'Resolve Fairlight fade handles; the approved Music edits mockup, revision 2 ("fades are dragged on the diagram\'s dots", D-444)',
     fixture: THREE_CLIPS,
     steps: [
       { op: 'debug_set_library_mode', args: { mode: 'music' } },
@@ -86,7 +86,7 @@ export const PANEL_SCENARIOS: Scenario[] = [
     id: 'clipper-surface-open-close',
     title: 'New shorts opens its form in the viewer area; Esc gives the viewer back',
     area: 'clipper',
-    reference: 'Opus Clip / Descript review surfaces; owner decision 2026-11-03: the Clipper review lives in the viewer area (D-443)',
+    reference: 'Opus Clip / Descript review surfaces; owner decision 2026-11-03: the Clipper review lives in the viewer area (D-445)',
     fixture: THREE_CLIPS,
     steps: [
       { op: 'debug_set_library_mode', args: { mode: 'clipper' } },

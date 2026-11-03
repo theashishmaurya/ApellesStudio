@@ -467,7 +467,7 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64, rate: f64) -> Result<(), St
     )
 }
 
-/// **D-442 — the Music edits panel's Preview: play the edit before it is
+/// **D-444 — the Music edits panel's Preview: play the edit before it is
 /// applied.** `Some(timeline)` makes the audio path mix that document (the
 /// frontend's `applyMusicEdits` result) instead of the persisted one;
 /// `None` goes back to the real timeline. Audio only, never persisted, never
@@ -1769,7 +1769,7 @@ mod tests {
         timeline
     }
 
-    /// **D-442 — the Music edits Preview: the audio path plays the preview
+    /// **D-444 — the Music edits Preview: the audio path plays the preview
     /// timeline while one is set, and the project's own the moment it is
     /// cleared.** The project's timeline has the tone; the preview is the same
     /// timeline with the tone cut out (what a music dropout over it would

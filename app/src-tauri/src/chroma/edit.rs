@@ -422,7 +422,7 @@ pub(crate) fn resolve_timeline(persist: bool) -> Result<Timeline, String> {
     apelles_project::timeline::resolve_timeline(&current_project_dir()?, persist)
 }
 
-/// **D-442 — a temporary timeline the AUDIO path plays instead of the
+/// **D-444 — a temporary timeline the AUDIO path plays instead of the
 /// persisted one: the Music edits panel's Preview.**
 ///
 /// The panel previews a music edit before it is applied: the frontend computes
@@ -438,12 +438,12 @@ pub(crate) fn resolve_timeline(persist: bool) -> Result<Timeline, String> {
 /// fingerprint (B-235) and goes back to the real mix.
 static AUDIO_PREVIEW: std::sync::Mutex<Option<Timeline>> = std::sync::Mutex::new(None);
 
-/// Set (`Some`) or clear (`None`) the audio preview timeline (D-442).
+/// Set (`Some`) or clear (`None`) the audio preview timeline (D-444).
 pub(crate) fn set_audio_preview(timeline: Option<Timeline>) {
     *AUDIO_PREVIEW.lock().unwrap_or_else(|e| e.into_inner()) = timeline;
 }
 
-/// The timeline the AUDIO path plays: the preview while one is set (D-442),
+/// The timeline the AUDIO path plays: the preview while one is set (D-444),
 /// else the open project's active timeline ([`resolve_timeline`]).
 fn resolve_audio_timeline() -> Result<Timeline, String> {
     if let Some(preview) = AUDIO_PREVIEW

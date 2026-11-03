@@ -44,7 +44,7 @@ export const MUSIC_EDIT_KINDS = ['dropout', 'breath', 'dry_open', 'dry_cta', 'se
 
 export type MusicEditKind = (typeof MUSIC_EDIT_KINDS)[number];
 
-/** The panel's and the answers' names for each kind (D-442: the owner's
+/** The panel's and the answers' names for each kind (D-444: the owner's
  *  short names, which fit a pill). The stored kind ids are unchanged. */
 export const MUSIC_EDIT_KIND_LABELS: Record<MusicEditKind, string> = {
   dropout: 'Dropout',
@@ -54,7 +54,7 @@ export const MUSIC_EDIT_KIND_LABELS: Record<MusicEditKind, string> = {
   section_out: 'Section end',
 };
 
-/** D-442 — what each kind is for, in one line: the selected pill's sentence
+/** D-444 — what each kind is for, in one line: the selected pill's sentence
  *  and every pill's tooltip in the Music edits panel. */
 export const MUSIC_EDIT_KIND_HINTS: Record<MusicEditKind, string> = {
   dropout: 'The music fades out and comes back after a moment.',

@@ -2379,7 +2379,7 @@ pub fn run() {
             chroma::filmstrip::chroma_clip_thumbnails,
             chroma::ocr::chroma_ocr_media,
             chroma::audio::chroma_audio_play,
-            // D-442 — the Music edits panel's non-committing Preview.
+            // D-444 — the Music edits panel's non-committing Preview.
             chroma::audio::chroma_audio_preview_set,
             chroma::audio::chroma_audio_stop,
             chroma::audio::chroma_audio_set_volume,

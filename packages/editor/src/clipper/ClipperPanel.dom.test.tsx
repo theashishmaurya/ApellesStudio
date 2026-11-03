@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * D-411 / D-443 — the redesigned Clipper in a real DOM (B-363): the list in the
+ * D-411 / D-445 — the redesigned Clipper in a real DOM (B-363): the list in the
  * browser and the surface in the viewer area, mounted side by side the way
  * `EditorTab` lays them out. With no run: New shorts opens the setup form in
  * the viewer area (length chips, frame shapes, More options). A run with no
@@ -134,7 +134,7 @@ afterEach(() => {
   act(() => useClipperStore.getState().clear());
 });
 
-describe('the Clipper (D-443)', () => {
+describe('the Clipper (D-445)', () => {
   it('with no run, New shorts opens the setup form in the viewer area', async () => {
     mounted = mount(React.createElement(Both), { strictMode: false });
     await settle();

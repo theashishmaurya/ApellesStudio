@@ -1,7 +1,7 @@
 /**
  * `@apelles/editor` — the Clipper's list in the browser's Shorts tab: shorts
  * from a long source, analysed here, picked by the person's AI agent, reviewed
- * and made here (D-411 Phases 1-2; redesigned by D-443, B-363).
+ * and made here (D-411 Phases 1-2; redesigned by D-445, B-363).
  *
  * **What it is.** The `clipper` `EditLibraryMode`, built from the owner-approved
  * mockup (`scratch/panel-redesign-mockup.html`, "Clipper"). The review itself

@@ -1,6 +1,6 @@
 /**
  * `@apelles/editor` — the Music edits panel's Preview: hear a music edit before
- * it is applied (D-442, B-364; owner decision 2026-11-03).
+ * it is applied (D-444, B-364; owner decision 2026-11-03).
  *
  * **What it is.** {@link previewMusicEdit} computes the edited timeline with the
  * same pure reducer the `music_edits` op runs (`applyMusicEdits`), hands it to

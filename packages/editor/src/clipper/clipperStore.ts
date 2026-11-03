@@ -38,12 +38,12 @@ export interface RunAnalysis {
   wire: AnalyzeWire;
   provisional: boolean;
   at: number;
-  /** D-443 — each analysed source's file path, by the index a resolved range
+  /** D-445 — each analysed source's file path, by the index a resolved range
    *  names (`ResolvedRange.source`): where a short's poster frame is read. */
   sourcePaths: string[];
 }
 
-/** D-443 — what the Clipper's surface in the viewer area shows: nothing (the
+/** D-445 — what the Clipper's surface in the viewer area shows: nothing (the
  *  viewer), the New shorts form, or the active run (its reading / waiting state,
  *  or the review of the selected short). */
 export type ClipperSurface = 'closed' | 'setup' | 'run';
@@ -60,7 +60,7 @@ interface ClipperState {
   loadErrors: Array<{ file: string; error: string }>;
   activeRunId: string | null;
   analyses: Record<string, RunAnalysis>;
-  /** D-443 — the viewer-area surface, and the short under review. UI state:
+  /** D-445 — the viewer-area surface, and the short under review. UI state:
    *  never persisted, dropped with the project. */
   surface: ClipperSurface;
   selectedProposalId: string | null;
@@ -69,7 +69,7 @@ interface ClipperState {
   closeSurface(): void;
   /** Review one short of the active run (opens the run surface). */
   selectProposal(id: string | null): void;
-  /** D-443 — the last outcome worth saying (an error, a build result), shown
+  /** D-445 — the last outcome worth saying (an error, a build result), shown
    *  by the list and the surface alike; `null` once dismissed. */
   notice: ClipperNotice | null;
   setNotice(n: ClipperNotice | null): void;

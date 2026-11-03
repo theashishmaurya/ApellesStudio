@@ -1,6 +1,6 @@
 /**
  * `@apelles/editor` — the Music edits library panel: silence the music for a
- * moment, made here or reviewed here (D-408; redesigned by D-442, B-364).
+ * moment, made here or reviewed here (D-408; redesigned by D-444, B-364).
  *
  * **What it is.** The `music` `EditLibraryMode`, built from the owner-approved
  * mockup (`scratch/panel-redesign-mockup.html`, "Music edits", revision 2 —

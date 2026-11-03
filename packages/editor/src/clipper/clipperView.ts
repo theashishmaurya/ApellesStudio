@@ -1,6 +1,6 @@
 /**
  * `@apelles/editor` — the Clipper review's words, worked out from the run's
- * data (D-443, B-363). Pure: no store, no React.
+ * data (D-445, B-363). Pure: no store, no React.
  *
  * **What it is.** Everything the redesigned Clipper says about a run and its
  * shorts in plain words, so the list, the review surface and their tests read
