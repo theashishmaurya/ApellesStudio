@@ -4,6 +4,16 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-373 — a paused jump on a newly opened timeline did not scroll to the playhead when the previous timeline had just been scrolled by hand (B-359 item 6 follow-up)
+
+status: **fixed 2026-11-03 (worktree)** · severity: medium (the playhead off screen; failed the v0.3.0 harness run) · area: `packages/editor/src/TimelinePane.tsx` (the paused-seek follow's quiet window, the per-timeline scroll restore)
+
+- **found:** 2026-11-03, harness run `--filter scroll-horizontal-wheel --filter seek-far-playhead-visible`: the seek scenario failed every time (`view.scrollLeft = 0 — expected gt 1000`, playhead at x 9529) and passed when run alone.
+- **proven cause (live, against the dev app, harness-only diagnostics):** the paused-seek follow skips a jump within `SEEK_FOLLOW_SCROLL_QUIET_MS` (300 ms) of the user's own last scroll (`userScrollAtRef`), and that mark lived on the pane, which outlives a timeline switch (it renders nothing while no timeline is open). With op-level timestamps: the wheel op returned at t=0, the timeline was deleted, the next fixture built (the edit area remounted at `scrollLeft` 0) and the seek arrived at t=188 ms, so the old timeline's wheel pan gated the new timeline's jump, and a skipped follow is never retried. A 200 ms or 500 ms wait anywhere before the seek made it pass; a programmatic scroll in the previous scenario (`seek-far-playhead-visible` itself, which marks no user scroll) did not make it fail. Not momentum, not stale follow geometry, not a clamped write: `scrollLeft` stayed 0 and the zoom was in place (360 px/s) before the seek.
+- **user path:** a pan of one timeline followed within 300 ms by opening another and jumping on it (a marker in the Index panel, ↑/↓, `editor_set_playhead`): fast for a hand, routine for an agent or a script.
+- **fix:** the per-timeline scroll restore (the layout effect that places the incoming timeline's view) clears `userScrollAtRef`: the incoming view is placed by the app, not by the user. A pan of the same timeline still holds a jump back as before.
+- **test:** `TimelinePane.seekFollow.dom.test.tsx` "B-373: another timeline's scroll does not hold back a jump on this one" (user scroll → no timeline → a new timeline → zoom 4x → a far paused jump centres the playhead; fails without the fix).
+
 ## B-369 — opening a project is slow, and the wait shows only a generic spinner ("Opening…"); there's no branded, informative loader
 
 status: open (owner, 2026-11-03: "this loading and loading timeline etc. takes a lot of time, we need an Apelles logo branded loader") · severity: medium (first impression on every launch) · area: the project launcher card's open state, the Edit tab's timeline load, `useSessionStore.openProject`, media reprobe and thumbnail/waveform warm-up
@@ -190,7 +200,7 @@ status: **fixed** (2026-11-01) · severity: high (every drag-in below or above t
 
 ## B-359 — the app still differs from the approved D-432 mockup in eight places (comparison pass 2026-11-01)
 
-status: open (queued with B-354, after D-437 S10); **item 6 fixed 2026-11-03** (below) · severity: minor (polish), except item 6 (medium: the playhead goes off screen) · area: Inspector header and rows, the browser header, the timeline toolbar, track headers, view follow, marker lines
+status: open (queued with B-354, after D-437 S10); **item 6 fixed 2026-11-03** (below; follow-up B-373: the quiet window no longer carries across a timeline switch) · severity: minor (polish), except item 6 (medium: the playhead goes off screen) · area: Inspector header and rows, the browser header, the timeline toolbar, track headers, view follow, marker lines
 
 - The full list, with screenshots: `docs/notes/ui-redesign.md` › "Mockup vs app comparison (2026-11-01)".
 - In short:

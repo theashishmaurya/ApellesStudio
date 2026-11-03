@@ -152,6 +152,24 @@ describe('B-359 item 6 — a paused jump outside the view centres it', () => {
     expect(scroller().scrollLeft).toBe(300);
   });
 
+  it("B-373: another timeline's scroll does not hold back a jump on this one", async () => {
+    // The harness's back-to-back run (scroll-horizontal-wheel → seek-far-playhead-visible):
+    // a wheel pan on one timeline, that timeline deleted (no timeline open: the
+    // pane renders nothing), a new one opened and zoomed 4x, then a far jump,
+    // all inside the quiet window that keeps a jump out of the user's own pan.
+    userScroll(300);
+    actSync(() => useEditorTimelineStore.setState({ timeline: null }));
+    await waitFrames(1);
+    actSync(() => useEditorTimelineStore.setState({ timeline: fixture('tl-new') }));
+    await waitFrames(1);
+    actSync(() => useTimelineViewStore.getState().setPxPerSec(DEFAULT_PX_PER_SEC * 4));
+    await waitFrames(1);
+    expect(scroller().scrollLeft).toBe(0);
+    seek(26 * FPS);
+    expect(scroller().scrollLeft).toBe(Math.round(xAt(26) - VIEWPORT / 2));
+    expect(playheadVisible()).toBe(true);
+  });
+
   it('does not follow during a scrub (the playhead dragged by hand)', () => {
     actSync(() => beginScrub(0));
     seek(300 * FPS);
