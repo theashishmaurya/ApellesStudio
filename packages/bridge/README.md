@@ -6,6 +6,8 @@ zustand stores + the control-bridge hook `useChromaControl` (D-020, currently
 
 Consumed by every tab package.
 
+**The one seam (D-447).** Every frontend call into Rust belongs here as a typed binding. `src/tauriBoundary.test.ts` fails when a file outside this package imports `@tauri-apps/*` and isn't on `src/tauriImportAllowlist.json` (the legacy files, which only shrink). Roadmap 00i swaps the transport for HTTP/WebSocket once the list is empty.
+
 **Status:** mostly still a D-039 stub — its first real content is the D-044/
 D-045/D-046 media-pool store, now consumed by a real panel (D-046's
 `SourcesPanel`, `app/src/components/chroma/SourcesPanel.tsx`):

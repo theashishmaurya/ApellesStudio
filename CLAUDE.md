@@ -30,6 +30,7 @@ session with `docs/00-vision.md`, `docs/02-scope.md`, `docs/04-roadmap.md`,
   bare `@ts-ignore`. Rust: no `unwrap()`/`expect()` on anything that can fail at runtime —
   `Result` + `?`. `tsc` introduces **zero** new errors; `cargo fmt` + `cargo clippy`
   clean on new code.
+- **The backend is reached only through `@apelles/bridge`** (owner, 2026-11-03, D-447: "make sure all the new code follows the standard so later refactors are easy"). New frontend code never imports `@tauri-apps/*` itself; it adds or uses a typed binding in `packages/bridge`, so the transport can later become HTTP/WebSocket (roadmap 00i) without touching the UI. `packages/bridge/src/tauriBoundary.test.ts` enforces it: a new direct import fails the suite, and the legacy allowlist only shrinks. When you touch an allowlisted file, moving its calls into bridge is a welcome fix. Keep new edit logic as plain functions over the store's data (no hidden component state), so it can move into a headless engine later (00f / 00i).
 - **No dead code** left "just in case." `app/` (the vendored RapidRAW fork) is owned
   code now, not a tracked-upstream drop (D-281, 2026-09-10, owner: "it's fine if we
   change things in rapidraw, as we now gonna own it") — a redundant or unreachable
