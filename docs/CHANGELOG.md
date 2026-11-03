@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-03** — v0.3.0 scope widened (owner): the rest of the approved mockup (B-359, B-354), the panel redesigns B-363–B-367 (mockup approval first), B-340, pinch zoom at 300 clips, B-293.
 - **2026-11-03** — **B-373 fixed** (B-359 item 6 follow-up): a paused jump on a newly opened timeline was skipped when the previous timeline had been scrolled by hand under 300 ms earlier (the user-scroll quiet window outlived the timeline switch; proven with harness op timestamps: 188 ms). Opening a timeline now clears it; DOM test added.
 - **2026-11-03** — **B-369 logged** (owner): project open is slow and shows only a generic spinner. Measure the open per phase, then cut the long poles, plus a branded Apelles loader with phase and progress. Added to v0.3.0.
 - **2026-11-03** — **B-294 partly fixed, B-293 investigated:** the Openverse client retries `500`/`502`/`503`/`504` twice with backoff (60 s budget) and says how many tries it made; the late-finishing import and cold-search latency stay open (written up). `editor_set_track_gain` errors on a nonexistent track instead of answering ok; a track whose gain is found at 0 is either the Mute button or a stale index (undo history names the op).
