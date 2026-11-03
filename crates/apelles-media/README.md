@@ -33,6 +33,9 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
     single-frame `ffmpeg` decode (`decode_frame`), thumbnail/filmstrip
     extraction (`extract_thumb`, `extract_thumb_chunk`)
     and the packet-level keyframe scan (`probe_keyframe_interval`, D-128).
+  - `probe` — the memory → disk probe cache (`probe_cached`, keyed by path +
+    mtime + size) and `probe_cached_many`, the same for many paths on up to 8
+    scoped threads with a progress callback (B-369: a project open's media step).
   - `still` — **still images as timeline sources (D-292)**: `video`'s
     counterpart for a source that has one frame and no clock. The extension
     gate (`is_image_file`, mirrored on the TS side), a header-only dimension

@@ -32,8 +32,10 @@ use tauri::Emitter;
 
 use crate::app_state::AppState;
 
+use super::open_progress::{OpenPhase, OpenProgress};
 use super::state::{self, ProjectRef};
 use super::{load, video};
+use apelles_media::probe::probe_cached_many;
 
 /// The whole project model, re-exported at its historical path (D-141 §1's
 /// shim rule) so no call site outside this slice had to change. Deleted in
@@ -55,7 +57,7 @@ pub struct ProjectShotDto {
     pub offline: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectOpenDto {
     pub project_path: String,
@@ -69,6 +71,35 @@ pub struct ProjectOpenDto {
     pub active_shot: usize,
     /// per-project output spec (D-038); all fields optional, absent = clip-derived
     pub settings: ProjectSettings,
+    /// The active shot's decoded frame facts when this open installed it for the
+    /// Colorist canvas (`ColoristFrame::Install`), so the frontend applies it
+    /// without decoding the same frame a second time (B-369); `None` when the
+    /// open deferred that decode (D-439) or no clip is online.
+    pub loaded: Option<crate::image_loader::LoadImageResult>,
+}
+
+/// What an open does about the Colorist canvas's frame (B-369 / D-439).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColoristFrame {
+    /// Decode and install the active shot's frame now (the Colorist actions:
+    /// relink, add / remove a shot, and an open made with the Colorist tab on screen).
+    Install,
+    /// Leave the decode to the first Colorist use (`useSessionStore.
+    /// ensureColoristFrame`): the active shot is still chosen and registered,
+    /// only the pixels wait. A project open from the launcher lands on Edit,
+    /// and this decode (a full-resolution VideoToolbox pipe) sat on the open's
+    /// critical path and competed with the Edit preview's first frame.
+    Defer,
+}
+
+impl ColoristFrame {
+    pub fn from_defer_flag(defer: Option<bool>) -> Self {
+        if defer.unwrap_or(false) {
+            ColoristFrame::Defer
+        } else {
+            ColoristFrame::Install
+        }
+    }
 }
 
 /// D-070: `manifest.shots` (legacy `ProjectShot`) is no longer where
@@ -87,6 +118,8 @@ async fn open_manifest(
     project_dir: PathBuf,
     manifest: ProjectManifest,
     state: &tauri::State<'_, AppState>,
+    progress: &OpenProgress,
+    colorist_frame: ColoristFrame,
 ) -> Result<ProjectOpenDto, String> {
     // start from a clean session — a project open replaces whatever was loaded
     state::set_current_video(None);
@@ -116,6 +149,35 @@ async fn open_manifest(
     let mut any_online = false;
     let mut dtos: Vec<ProjectShotDto> = Vec::with_capacity(clips.len());
 
+    // B-369 — every online source is probed up front, in parallel and once per
+    // file (two clips of one file share a probe), with the count streamed to the
+    // loader. The probe is cached by path + mtime + size (`apelles_media::probe`),
+    // so a reopen costs a `stat` per file; a cold cache (first open, changed
+    // files) used to pay one ~0.75 s `ffprobe` per file here, one after another.
+    // The shots are then registered in clip order from those answers, so the
+    // session's order is the timeline's, exactly as before.
+    let online_sources: Vec<PathBuf> = {
+        let mut seen = std::collections::HashSet::new();
+        clips
+            .iter()
+            .filter(|c| !c.source_path.is_empty() && seen.insert(c.source_path.as_str()))
+            .filter(|c| media_item_is_online(&c.source_path))
+            .map(|c| PathBuf::from(&c.source_path))
+            .collect()
+    };
+    let total = online_sources.len();
+    progress.phase(OpenPhase::Media, total);
+    let probed: std::collections::HashMap<PathBuf, Result<video::VideoInfo, String>> =
+        tokio::task::block_in_place(|| {
+            probe_cached_many(&online_sources, |done| {
+                progress.step(OpenPhase::Media, done, total)
+            })
+        })
+        .into_iter()
+        .zip(online_sources.iter().cloned())
+        .map(|(result, path)| (path, result))
+        .collect();
+
     for clip in &clips {
         let source_path = clip.source_path.clone();
         let name = if clip.name.trim().is_empty() {
@@ -123,18 +185,21 @@ async fn open_manifest(
         } else {
             clip.name.clone()
         };
-        let online = !source_path.is_empty() && media_item_is_online(&source_path);
+        let src = PathBuf::from(&source_path);
+        let online = probed.contains_key(&src);
         let frame = clip.source_start.max(0) as u64;
 
-        if online {
-            let src = PathBuf::from(&source_path);
+        if let Some(result) = probed.get(&src) {
             // D-129 — probe-and-register, not decode. See
             // `load::register_video_shot` for why this loop never needed the
             // pixels it used to pay ~1.9s per 4K clip for.
             // D-306: registered as THIS clip, not just as its source file, so
             // two clips of one file are two independently gradeable shots.
-            match load::register_video_shot(&src, frame, Some(&clip.id)) {
-                Ok(()) => any_online = true,
+            match result {
+                Ok(info) => {
+                    load::register_probed_video_shot(&src, info.clone(), frame, Some(&clip.id));
+                    any_online = true;
+                }
                 Err(e) => {
                     log::warn!("[chroma::project] clip {source_path} failed to load: {e}");
                     dtos.push(ProjectShotDto {
@@ -159,6 +224,7 @@ async fn open_manifest(
     }
 
     // put the active clip in front on the canvas (if it's online)
+    let mut loaded = None;
     if any_online {
         let want = clips
             .get(active_shot)
@@ -181,9 +247,15 @@ async fn open_manifest(
             .and_then(|w| state::resolve_session_index(&session_shots, &w))
             .unwrap_or(0);
         state::session_set_active(active_online)?;
-        let frame = state::current_video().map(|c| c.frame).unwrap_or(0);
-        let _ = super::commands::seek_and_install(frame, None, state).await;
+        if colorist_frame == ColoristFrame::Install {
+            progress.phase(OpenPhase::Preview, 0);
+            let frame = state::current_video().map(|c| c.frame).unwrap_or(0);
+            loaded = super::commands::seek_and_install(frame, None, state)
+                .await
+                .ok();
+        }
     }
+    progress.time("save");
 
     // persist the resolved active clip id so it's stable on the next open,
     // independent of the (now-frozen) legacy `active_shot` fallback.
@@ -195,6 +267,7 @@ async fn open_manifest(
         path: project_dir.clone(),
         name: manifest.name.clone(),
     }));
+    progress.finish(&manifest.name);
 
     Ok(ProjectOpenDto {
         project_path: project_dir.to_string_lossy().to_string(),
@@ -204,6 +277,7 @@ async fn open_manifest(
         shots: dtos,
         active_shot,
         settings: manifest.settings.clone(),
+        loaded,
     })
 }
 
@@ -356,6 +430,7 @@ pub async fn chroma_project_resync_clips(
         shots: dtos,
         active_shot,
         settings: manifest.settings.clone(),
+        loaded: None,
     })
 }
 
@@ -486,23 +561,51 @@ pub fn chroma_project_delete(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+///
+/// B-369 — `open_id` tags the `chroma://project-open-progress` events this
+/// open sends (absent = none); `defer_colorist_frame` leaves the Colorist
+/// canvas's decode to its first use (D-439, [`ColoristFrame::Defer`]).
 pub async fn chroma_project_open(
     path: String,
+    open_id: Option<u64>,
+    defer_colorist_frame: Option<bool>,
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<ProjectOpenDto, String> {
+    let progress = OpenProgress::new(app, open_id);
+    progress.phase(OpenPhase::Reading, 0);
     let dir = PathBuf::from(&path);
     let manifest = load_manifest(&dir)?;
-    open_manifest(dir, manifest, &state).await
+    open_manifest(
+        dir,
+        manifest,
+        &state,
+        &progress,
+        ColoristFrame::from_defer_flag(defer_colorist_frame),
+    )
+    .await
 }
 
 #[tauri::command]
 pub async fn chroma_project_new(
     name: String,
     media_paths: Vec<String>,
+    open_id: Option<u64>,
+    defer_colorist_frame: Option<bool>,
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<ProjectOpenDto, String> {
+    let progress = OpenProgress::new(app, open_id);
+    progress.phase(OpenPhase::Reading, 0);
     let (dir, manifest) = new_project_in(&projects_dir(), &name, &media_paths)?;
-    open_manifest(dir, manifest, &state).await
+    open_manifest(
+        dir,
+        manifest,
+        &state,
+        &progress,
+        ColoristFrame::from_defer_flag(defer_colorist_frame),
+    )
+    .await
 }
 
 /// D-070: no longer takes a `shots` list — `apelles_timeline::Clip`s are the
@@ -684,7 +787,14 @@ pub async fn chroma_project_relink(
 
     manifest.modified = now_rfc3339();
     save_manifest(&dir, &manifest)?;
-    open_manifest(dir, manifest, &state).await
+    open_manifest(
+        dir,
+        manifest,
+        &state,
+        &OpenProgress::silent(),
+        ColoristFrame::Install,
+    )
+    .await
 }
 
 /// Merge a partial output spec (D-038) into the loaded (or given) project's
@@ -1067,7 +1177,14 @@ pub async fn chroma_project_add_shot(
     append_media_clip(&mut manifest, idx, &media_id)?;
     manifest.modified = now_rfc3339();
     save_manifest(&dir, &manifest)?;
-    open_manifest(dir, manifest, &state).await
+    open_manifest(
+        dir,
+        manifest,
+        &state,
+        &OpenProgress::silent(),
+        ColoristFrame::Install,
+    )
+    .await
 }
 
 /// D-070 — the ShotStrip "+" button's project-backed path: probe/pool each
@@ -1095,7 +1212,14 @@ pub async fn chroma_project_add_shot_paths(
     }
     manifest.modified = now_rfc3339();
     save_manifest(&dir, &manifest)?;
-    open_manifest(dir, manifest, &state).await
+    open_manifest(
+        dir,
+        manifest,
+        &state,
+        &OpenProgress::silent(),
+        ColoristFrame::Install,
+    )
+    .await
 }
 
 /// D-070 — remove one clip (by id) from the active timeline; the ShotStrip
@@ -1114,7 +1238,14 @@ pub async fn chroma_project_remove_clip(
     remove_clip_by_id(&mut manifest, idx, &clip_id)?;
     manifest.modified = now_rfc3339();
     save_manifest(&dir, &manifest)?;
-    open_manifest(dir, manifest, &state).await
+    open_manifest(
+        dir,
+        manifest,
+        &state,
+        &OpenProgress::silent(),
+        ColoristFrame::Install,
+    )
+    .await
 }
 
 // --------------------------------------------------------------------------- //

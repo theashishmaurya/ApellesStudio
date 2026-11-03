@@ -17,7 +17,7 @@ use crate::image_loader::LoadImageResult;
 use crate::image_processing::ImageMetadata;
 
 use super::state::{CurrentVideo, set_current_video};
-use super::video::{self, FramePos};
+use super::video::{self, FramePos, VideoInfo};
 
 /// Decode `frame` of the video at `source_path` and make it the loaded image.
 /// `virtual_path` is the path string the frontend passed (kept for round-tripping).
@@ -89,13 +89,25 @@ pub fn register_video_shot(
     clip_id: Option<&str>,
 ) -> Result<(), String> {
     let info = super::edit::probe_cached(source_path)?;
+    register_probed_video_shot(source_path, info, frame, clip_id);
+    Ok(())
+}
+
+/// [`register_video_shot`] for a source whose probe the caller already holds —
+/// `open_manifest` probes every clip's source in parallel first (B-369) and
+/// registers the shots afterwards, in clip order, from those answers.
+pub fn register_probed_video_shot(
+    source_path: &Path,
+    info: VideoInfo,
+    frame: u64,
+    clip_id: Option<&str>,
+) {
     set_current_video(Some(CurrentVideo {
         path: source_path.to_path_buf(),
         info,
         frame,
         clip_id: clip_id.map(str::to_string),
     }));
-    Ok(())
 }
 
 /// Make an already-decoded video frame the loaded image + point `CurrentVideo` at
