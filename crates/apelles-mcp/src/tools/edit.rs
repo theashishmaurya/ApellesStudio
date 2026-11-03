@@ -2200,7 +2200,13 @@ impl ApellesMcp {
     timeline every other `editor_*` tool acts on — and `timelineCount`. A
     project can hold several timelines (a long-form and its shorts);
     `editor_list_timelines` lists them and `editor_set_active_timeline`
-    switches."#
+    switches.
+
+    Also reports `openProgress` (B-369) while a project is opening — `{phase,
+    label, done, total, step, steps}`, the same phase the app's loader shows
+    (`reading` → `media` n/N → `preview` → `grades` → `timeline` →
+    `previews`); null once the workspace is up — and `switchingTimeline`, the
+    name of the timeline a switch is loading, else null."#
     )]
     pub async fn editor_get_state(&self) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new();

@@ -2,7 +2,7 @@
 // histogram or rendered frame attached).
 import { describe, expect, it } from 'vitest';
 
-import { isResultOnlyOp, wantsGrade } from './bridgeOpClasses';
+import { isResultOnlyOp, needsColoristFrameAfter, needsColoristFrameBefore, wantsGrade } from './bridgeOpClasses';
 
 describe('isResultOnlyOp', () => {
   it('covers close_project, which leaves the project and has no frame to return (B-356)', () => {
@@ -39,5 +39,25 @@ describe('isResultOnlyOp', () => {
     for (const op of ['get_state', 'set_primary', 'inspect_color', 'set_project_settings']) {
       expect(isResultOnlyOp(op)).toBe(false);
     }
+  });
+});
+
+describe('the deferred Colorist frame (D-439, B-369)', () => {
+  it('grading, sampling and reading ops decode the frame first', () => {
+    for (const op of ['get_state', 'set_primary', 'inspect_color', 'sample', 'get_grade', 'add_mask', 'export']) {
+      expect(needsColoristFrameBefore(op), op).toBe(true);
+    }
+  });
+
+  it('project, shot-picking and history ops do not', () => {
+    for (const op of ['list_projects', 'open_project', 'new_project', 'close_project', 'save_project', 'set_active_shot', 'undo']) {
+      expect(needsColoristFrameBefore(op), op).toBe(false);
+    }
+  });
+
+  it('a project switch asked for its grade decodes the NEW project once it has switched', () => {
+    expect(needsColoristFrameAfter('open_project', { include_grade: true })).toBe(true);
+    expect(needsColoristFrameAfter('open_project')).toBe(false);
+    expect(needsColoristFrameAfter('get_state', { include_grade: true })).toBe(false);
   });
 });

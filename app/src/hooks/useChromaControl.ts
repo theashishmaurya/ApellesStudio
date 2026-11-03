@@ -43,7 +43,7 @@ import {
   isKeyframeableMaskType,
 } from '../utils/maskKeyframes';
 import { Mask, SubMask, SubMaskMode } from '../components/panel/right/Masks';
-import { isResultOnlyOp, wantsGrade } from './bridgeOpClasses';
+import { isResultOnlyOp, needsColoristFrameAfter, needsColoristFrameBefore, wantsGrade } from './bridgeOpClasses';
 import {
   computeScopes,
   computeGap,
@@ -1622,7 +1622,22 @@ export function useChromaControl() {
             }
           : null;
 
+        // D-439 (B-369) — a project open leaves the Colorist frame undecoded
+        // unless Colorist is on screen; an op that reads or grades it decodes it
+        // here first, so an agent never sees the difference.
+        if (needsColoristFrameBefore(op)) {
+          const ensured = await useSessionStore.getState().ensureColoristFrame();
+          if (!ensured.ok) {
+            respond({ ok: false, error: `could not load the Colorist frame: ${ensured.error}` });
+            return;
+          }
+        }
+
         const result = await fn(args || {});
+
+        if (!result?.error && needsColoristFrameAfter(op, args)) {
+          await useSessionStore.getState().ensureColoristFrame();
+        }
 
         if (isResultOnlyOp(op, args)) {
           respond({ ok: !result?.error, error: result?.error ?? null, result });

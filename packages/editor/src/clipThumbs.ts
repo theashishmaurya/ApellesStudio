@@ -24,6 +24,8 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 
+import { trackLoadRequest } from './loadPerf';
+
 /** One decoded poster frame, as `chroma_clip_thumbnails` returns it. `secs` is
  *  in the SOURCE file's own time base, not the timeline's. */
 export interface ClipThumb {
@@ -65,12 +67,15 @@ export function getThumbs(sourcePath: string, w: ThumbWindow): Promise<ClipThumb
   let p = thumbCache.get(key);
   if (!p) {
     if (thumbCache.size > MAX_CACHE) thumbCache.clear();
-    p = invoke<{ frame: number; secs: number; dataUrl: string }[]>('chroma_clip_thumbnails', {
-      sourcePath,
-      startSecs: w.startSecs,
-      durationSecs: w.durationSecs,
-      stepSecs: w.stepSecs,
-    })
+    p = trackLoadRequest(
+      'filmstrip',
+      invoke<{ frame: number; secs: number; dataUrl: string }[]>('chroma_clip_thumbnails', {
+        sourcePath,
+        startSecs: w.startSecs,
+        durationSecs: w.durationSecs,
+        stepSecs: w.stepSecs,
+      }),
+    )
       .then((rows) => rows.map((r) => ({ frame: r.frame, secs: r.secs, dataUrl: r.dataUrl })))
       .catch((err) => {
         // Real failure, not silently dropped — a clip with genuinely no

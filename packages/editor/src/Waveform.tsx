@@ -34,6 +34,7 @@ import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
 import { isClipVisible } from './clipVisibility';
+import { trackLoadRequest } from './loadPerf';
 import { MAX_WAVEFORM_CANVAS_PX, waveformSpan } from './waveformWindow';
 
 /** One amplitude bucket: `[min, max]`, both in `-1..1`. Mirrors the `(f32, f32)`
@@ -69,12 +70,15 @@ export function getPeaks(
   let p = peakCache.get(key);
   if (!p) {
     if (peakCache.size > MAX_CACHE) peakCache.clear();
-    p = invoke<Peak[]>('chroma_audio_waveform', {
-      sourcePath,
-      startSecs,
-      durationSecs,
-      buckets,
-    }).catch(() => []);
+    p = trackLoadRequest(
+      'peaks',
+      invoke<Peak[]>('chroma_audio_waveform', {
+        sourcePath,
+        startSecs,
+        durationSecs,
+        buckets,
+      }),
+    ).catch(() => []);
     peakCache.set(key, p);
   }
   return p;

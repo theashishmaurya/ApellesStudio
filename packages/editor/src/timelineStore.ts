@@ -116,10 +116,23 @@ import { DEFAULT_CLIP_INSPECTOR_TAB, type ClipInspectorTab } from './clipInspect
 import { DEFAULT_EDIT_LIBRARY_MODE, type EditLibraryMode } from './editLibrary';
 import { isJournalEntry, replayJournal, type EditJournalEntry, type EditJournalState } from './editJournal';
 import { applyMarks } from './marks';
+import { loadPerfBegin, loadPerfHydrated } from './loadPerf';
 import { fpsToRational, MAX_TIMELINE_FPS } from './timelineRetime';
 import type { ClipScaling } from './clipScaling';
 
 const SAVE_DEBOUNCE_MS = 400;
+
+/** B-369 — a project open's progress as `editor_get_state` reports it: the
+ *  phase id, the words the loader shows, and the count within the phase when
+ *  one is known (`total` 0 = no count). */
+export interface OpenProgressReport {
+  phase: string;
+  label: string;
+  done: number;
+  total: number;
+  step: number;
+  steps: number;
+}
 
 /** B-034/D-112 — a `chroma_timeline_get` that never settles must not be able
  *  to strand the Edit tab. Tauri's IPC drops a pending invoke's callback if
@@ -494,6 +507,15 @@ interface EditorTimelineState {
    *  process). `0` when there was nothing to replay. The composition root tells
    *  the user when it is non-zero. */
   recoveredEdits: number;
+  /** B-369 — where a project open stands while one is under way (the branded
+   *  loader's phase), or null. Told by the composition root, never derived here:
+   *  the open is the app's (`app/src/store/useOpenProgressStore.ts`); this store
+   *  only holds it so `editor_get_state` can report it to an agent. */
+  openProgress: OpenProgressReport | null;
+  setOpenProgress: (report: OpenProgressReport | null) => void;
+  /** B-369 — the name of the timeline `setActiveTimeline` is switching to while
+   *  the switch is under way (the Edit tab's branded loader), else null. */
+  switchingTimeline: string | null;
 
   /** The one signal that starts and stops this store's work: the key of the
    *  project that is open now, or `null` for none. Idempotent *per key* — the
@@ -845,6 +867,8 @@ function unflushedError(error: string | null): string {
 export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('edit.timeline', (set, get) => ({
   timeline: null,
   openProjectKey: null,
+  openProgress: null,
+  switchingTimeline: null,
   status: 'idle',
   error: null,
   playhead: 0,
@@ -888,6 +912,8 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   libraryMode: DEFAULT_EDIT_LIBRARY_MODE,
   savedVersion: 0,
   recoveredEdits: 0,
+
+  setOpenProgress: (report) => set({ openProgress: report }),
 
   setOpenProject: (key) => {
     if (get().openProjectKey === key) return;
@@ -1001,6 +1027,8 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
     // itself fail; `status` only moves to 'loading' when there's nothing good
     // on screen to preserve.
     if (get().status !== 'ready') set({ status: 'loading' });
+    // B-369 — debug-only `apelles:load:*` measures run from here.
+    loadPerfBegin();
     try {
       const timeline = await invokeWithTimeout<Timeline>('chroma_timeline_get', LOAD_TIMEOUT_MS);
       if (token !== loadToken) return; // superseded — a newer load owns the state
@@ -1052,6 +1080,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
         savedVersion: recovered > 0 ? s.savedVersion : s.savedVersion + 1,
         ...(firstLoad ? { recoveredEdits: recovered } : {}),
       }));
+      loadPerfHydrated();
       // B-274/D-402 — persist the replayed edits now, which also records their
       // sequence and compacts the journal.
       if (recovered > 0) void get()._flushSave();
@@ -1363,12 +1392,16 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
     // commands are order-dependent, not independent.
     const flushed = await get().flushPendingSave();
     if (!flushed) return { ok: false, error: unflushedError(get().error) };
+    // B-369 — the branded loader over the Edit tab while the switch runs.
+    const name = get().timelines.find((t) => t.id === id)?.name ?? 'timeline';
+    set({ switchingTimeline: name });
     try {
       await invoke('chroma_timeline_set_active', { id });
       await Promise.all([get().load(), get().loadList()]);
-      set({ playhead: 0, inPoint: null, outPoint: null });
+      set({ playhead: 0, inPoint: null, outPoint: null, switchingTimeline: null });
       return { ok: true };
     } catch (e) {
+      set({ switchingTimeline: null });
       return { ok: false, error: String(e) };
     }
   },

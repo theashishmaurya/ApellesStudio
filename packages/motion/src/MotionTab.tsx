@@ -130,6 +130,7 @@ import { AssetResolverProvider } from '@apelles/motion-engine/src/lib/assets';
 import type { MotionEditLinks } from './motionOps';
 import { PanelGroup, ResizablePanel, ResizableHandle } from './resizable';
 import { PanelErrorBoundary } from '@apelles/ui';
+import { BrandedLoader } from '@apelles/ui/branded-loader';
 
 /** the two views the left sidebar pane switches between (D-151) */
 type SidebarTab = 'layers' | 'catalog';
@@ -407,9 +408,10 @@ export function MotionTab({
   }
 
   if (m.loadState === 'loading') {
+    // B-369 — the branded loader (the subpath, not the barrel: D-253).
     return (
-      <div className="h-full w-full flex items-center justify-center bg-bg-primary text-text-secondary text-sm">
-        Loading…
+      <div className="h-full w-full bg-bg-primary">
+        <BrandedLoader variant="inline" label="Loading Motion scenes…" />
       </div>
     );
   }

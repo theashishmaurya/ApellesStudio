@@ -1,18 +1,8 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { toast } from 'react-toastify';
 import { Shell, useActiveTab, useShellStore } from '@apelles/shell';
-import {
-  EditorExportDialog,
-  EditorTab,
-  useEditLayoutStore,
-  useEditorTimelineStore,
-} from '@apelles/editor';
-import {
-  MotionTab,
-  clipReadsItem,
-  useMotionProjectStore,
-  type SceneRenderResult,
-} from '@apelles/motion';
+import { EditorExportDialog, EditorTab, useEditLayoutStore, useEditorTimelineStore } from '@apelles/editor';
+import { MotionTab, clipReadsItem, useMotionProjectStore, type SceneRenderResult } from '@apelles/motion';
 import { pageStart, takeWebviewTermination, trackEvent, useMediaPoolStore, watchPageUnload } from '@apelles/bridge';
 import { useKeymapStore } from '@apelles/keymap';
 import { setProjectIdentityAlertSink } from '@apelles/store';
@@ -26,6 +16,9 @@ import { useMotionEditLinks } from './hooks/useMotionEditLinks';
 import { useProjectScopedHistory } from './hooks/useProjectScopedHistory';
 import AgentActivityDock from './components/chroma/AgentActivityDock';
 import ProjectLauncher from './components/chroma/ProjectLauncher';
+import ProjectOpenOverlay from './components/chroma/ProjectOpenOverlay';
+import { openProgressView, type OpenProgressState } from './store/openProgress';
+import { useOpenProgressStore } from './store/useOpenProgressStore';
 import { SourcesPanel } from './components/chroma/SourcesPanel';
 import { selectProjectKey, useSessionStore } from './store/useSessionStore';
 import { useSettingsStore } from './store/useSettingsStore';
@@ -209,7 +202,13 @@ export function Root() {
   // trade-off against re-syncing on every single timeline edit.
   useEffect(() => {
     if (projectOpen && activeTab === 'colorist') {
-      void useSessionStore.getState().resyncClips();
+      // D-439 (B-369) — the open left the Colorist frame for its first use;
+      // this is it. Then the D-071 resync, which leaves an unchanged active
+      // clip alone.
+      void useSessionStore
+        .getState()
+        .ensureColoristFrame()
+        .then(() => useSessionStore.getState().resyncClips());
     }
   }, [projectOpen, activeTab]);
 
@@ -269,10 +268,7 @@ export function Root() {
     // rule `computeEditLinks` counts the badge with and `refresh_media`
     // selects clips with, and three copies of it is how they would drift.
     const linked =
-      store.timeline?.tracks.reduce(
-        (n, t) => n + t.clips.filter((c) => clipReadsItem(c, item)).length,
-        0,
-      ) ?? 0;
+      store.timeline?.tracks.reduce((n, t) => n + t.clips.filter((c) => clipReadsItem(c, item)).length, 0) ?? 0;
     if (linked === 0) {
       toast.success('Rendered — added to Sources');
       return;
@@ -481,61 +477,91 @@ export function Root() {
   // (and the whole Shell) on every Edit change.
   const motionEditLinks = useMotionEditLinks(motionProjectPath);
 
+  // B-369 — the live open's phase, handed to the Edit tab's store so
+  // `editor_get_state` reports it to an agent (the same app → tabs bridge as
+  // `setOpenProject` above). A raw subscription: the view object is new on
+  // every change, and nothing here renders it.
+  useEffect(() => {
+    const push = (s: OpenProgressState) => {
+      const view = openProgressView(s);
+      useEditorTimelineStore
+        .getState()
+        .setOpenProgress(
+          view
+            ? {
+                phase: view.phase,
+                label: view.label,
+                done: view.done,
+                total: view.total,
+                step: view.step,
+                steps: view.steps,
+              }
+            : null,
+        );
+    };
+    push(useOpenProgressStore.getState());
+    return useOpenProgressStore.subscribe(push);
+  }, []);
+
   return (
-    <Shell
-      projectOpen={projectOpen}
-      launcher={<ProjectLauncher />}
-      sourcesPanel={<SourcesPanel />}
-      // D-273 — i18next's `t`, so the Keyboard Shortcuts window renders the
-      // fork's already-translated Colorist rows in the user's language.
-      // Injected rather than imported: neither `@apelles/shell` nor
-      // `@apelles/keymap` may depend on i18next, same app → shell direction as
-      // `launcher` and `sourcesPanel` above.
-      translate={translate}
-      // D-251/D-297 — Export lives in the shell's chrome bar, beside the tab
-      // switcher, and is reachable from EVERY tab now: D-297 retired
-      // Colorist's own `ExportDialog` (which after D-294 exported a different
-      // picture than Colorist's own preview) in favour of this one. Injected
-      // here rather than imported by `Shell`, same app → shell direction as
-      // `launcher` and `sourcesPanel` above.
-      headerAction={<EditorExportDialog />}
-      // D-298/B-341 — the agent activity feed + `request_human` banner, a
-      // chrome-bar button with an unread badge and a popover (owner,
-      // 2026-10-31; it was a fixed bottom-left dock that covered the Edit
-      // timeline). Shell-level because an agent's work spans all three tabs;
-      // injected like `headerAction` — `Shell` never imports it.
-      activityAction={<AgentActivityDock />}
-      // D-416 — the Brand kit panel: one kit for all three tabs.
-      brandAction={<BrandKitButton />}
-      onCloseProject={() => {
-        void useSessionStore.getState().closeProject();
-      }}
-      projectName={projectName ?? undefined}
-      tabs={[
-        {
-          id: 'edit',
-          label: 'Edit',
-          // D-432 P5 — the Edit tab lays out its own browser (the Final Cut
-          // arrangement: the timeline runs full width beneath it), so it is
-          // handed the shared media pool to show on the browser's Sources tab
-          // and the shell draws no docked column for it.
-          element: <EditorTab mediaPool={<SourcesPanel />} />,
-          ownsLibraryColumn: true,
-        },
-        // D-391 — a build can leave Motion out (`buildFeatures.ts`); the v0.2.0
-        // beta did. Since D-417 the release ships it, with its render runtime
-        // downloaded on demand.
-        ...(MOTION_TAB_ENABLED
-          ? [
-              {
-                id: 'motion' as const,
-                label: 'Motion',
-                element: <MotionTab onRendered={onMotionRendered} editLinks={motionEditLinks} />,
-              },
-            ]
-          : []),
-        { id: 'colorist', label: 'Colorist', element: <App /> },
-      ]}
-    />
+    <>
+      <Shell
+        projectOpen={projectOpen}
+        launcher={<ProjectLauncher />}
+        sourcesPanel={<SourcesPanel />}
+        // D-273 — i18next's `t`, so the Keyboard Shortcuts window renders the
+        // fork's already-translated Colorist rows in the user's language.
+        // Injected rather than imported: neither `@apelles/shell` nor
+        // `@apelles/keymap` may depend on i18next, same app → shell direction as
+        // `launcher` and `sourcesPanel` above.
+        translate={translate}
+        // D-251/D-297 — Export lives in the shell's chrome bar, beside the tab
+        // switcher, and is reachable from EVERY tab now: D-297 retired
+        // Colorist's own `ExportDialog` (which after D-294 exported a different
+        // picture than Colorist's own preview) in favour of this one. Injected
+        // here rather than imported by `Shell`, same app → shell direction as
+        // `launcher` and `sourcesPanel` above.
+        headerAction={<EditorExportDialog />}
+        // D-298/B-341 — the agent activity feed + `request_human` banner, a
+        // chrome-bar button with an unread badge and a popover (owner,
+        // 2026-10-31; it was a fixed bottom-left dock that covered the Edit
+        // timeline). Shell-level because an agent's work spans all three tabs;
+        // injected like `headerAction` — `Shell` never imports it.
+        activityAction={<AgentActivityDock />}
+        // D-416 — the Brand kit panel: one kit for all three tabs.
+        brandAction={<BrandKitButton />}
+        onCloseProject={() => {
+          void useSessionStore.getState().closeProject();
+        }}
+        projectName={projectName ?? undefined}
+        tabs={[
+          {
+            id: 'edit',
+            label: 'Edit',
+            // D-432 P5 — the Edit tab lays out its own browser (the Final Cut
+            // arrangement: the timeline runs full width beneath it), so it is
+            // handed the shared media pool to show on the browser's Sources tab
+            // and the shell draws no docked column for it.
+            element: <EditorTab mediaPool={<SourcesPanel />} />,
+            ownsLibraryColumn: true,
+          },
+          // D-391 — a build can leave Motion out (`buildFeatures.ts`); the v0.2.0
+          // beta did. Since D-417 the release ships it, with its render runtime
+          // downloaded on demand.
+          ...(MOTION_TAB_ENABLED
+            ? [
+                {
+                  id: 'motion' as const,
+                  label: 'Motion',
+                  element: <MotionTab onRendered={onMotionRendered} editLinks={motionEditLinks} />,
+                },
+              ]
+            : []),
+          { id: 'colorist', label: 'Colorist', element: <App /> },
+        ]}
+      />
+      {/* B-369 — the branded loader over the workspace while a project opens. */}
+      <ProjectOpenOverlay />
+    </>
   );
 }
