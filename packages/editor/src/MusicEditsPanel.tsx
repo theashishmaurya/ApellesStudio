@@ -116,6 +116,12 @@ export function MusicEditsPanel() {
   const [notice, setNotice] = useState<{ ok: boolean; message: string } | null>(null);
 
   const tracks = useMemo(() => audioTracks(timeline), [timeline]);
+  // Both pickers truncate a long label with an ellipsis and keep the full text
+  // as the tooltip (B-362).
+  const bedLabel =
+    defaults.track === null
+      ? 'Auto — the track with music there'
+      : (tracks.find((t) => t.index === defaults.track)?.label ?? `Track ${defaults.track}`);
   const sets = useMemo(
     () =>
       Object.values(proposals)
@@ -138,12 +144,8 @@ export function MusicEditsPanel() {
             value={defaults.track === null ? AUTO_TRACK : String(defaults.track)}
             onValueChange={(v) => setDefaults({ track: v === AUTO_TRACK || v === null ? null : Number(v) })}
           >
-            <SelectTrigger data-chroma-music-edits-bed className="h-7 flex-1 text-[11px]">
-              <SelectValue>
-                {defaults.track === null
-                  ? 'Auto — the track with music there'
-                  : (tracks.find((t) => t.index === defaults.track)?.label ?? `Track ${defaults.track}`)}
-              </SelectValue>
+            <SelectTrigger data-chroma-music-edits-bed className="h-7 flex-1 text-[11px]" title={bedLabel}>
+              <SelectValue>{bedLabel}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={AUTO_TRACK}>Auto — the track with music there</SelectItem>
@@ -188,7 +190,7 @@ export function MusicEditsPanel() {
         <div className="flex items-center gap-2">
           <Label className="w-14 shrink-0 text-[11px] text-text-secondary">Re-entry</Label>
           <Select value={defaults.mode} onValueChange={(v) => v && setDefaults({ mode: v as MusicEditMode })}>
-            <SelectTrigger data-chroma-music-edits-mode className="h-7 flex-1 text-[11px]">
+            <SelectTrigger data-chroma-music-edits-mode className="h-7 flex-1 text-[11px]" title={MODE_LABELS[defaults.mode]}>
               <SelectValue>{MODE_LABELS[defaults.mode]}</SelectValue>
             </SelectTrigger>
             <SelectContent>

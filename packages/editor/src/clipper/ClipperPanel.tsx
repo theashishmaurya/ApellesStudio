@@ -111,6 +111,9 @@ export function ClipperPanel() {
 
   const run = activeRunId ? runs[activeRunId] : undefined;
   const ordered = useMemo(() => Object.values(runs).sort((a, b) => b.created_at.localeCompare(a.created_at)), [runs]);
+  // The picker's label can be long (a file name plus a timestamp): the trigger
+  // truncates it with an ellipsis and the full text is its tooltip (B-362).
+  const runLabel = run ? `${run.source.name} · ${new Date(run.created_at).toLocaleString()}` : 'New run';
 
   if (!openProjectKey) {
     return <p className="p-3 text-[11px] leading-snug text-text-secondary">Open a project to cut shorts from it.</p>;
@@ -121,8 +124,8 @@ export function ClipperPanel() {
       <div className="flex shrink-0 items-center gap-2 border-b border-border-color p-2">
         <Label className="w-10 shrink-0 text-[11px] text-text-secondary">Run</Label>
         <Select value={run ? run.id : NEW_RUN} onValueChange={(v) => useClipperStore.getState().setActiveRun(!v || v === NEW_RUN ? null : v)}>
-          <SelectTrigger data-chroma-clipper-run className="h-7 flex-1 text-[11px]">
-            <SelectValue>{run ? `${run.source.name} · ${new Date(run.created_at).toLocaleString()}` : 'New run'}</SelectValue>
+          <SelectTrigger data-chroma-clipper-run className="h-7 flex-1 text-[11px]" title={runLabel}>
+            <SelectValue>{runLabel}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={NEW_RUN}>New run</SelectItem>
@@ -175,6 +178,8 @@ function Setup({ onNotice }: { onNotice: (n: Notice) => void }) {
   const [focus, setFocus] = useState('');
   const [busy, setBusy] = useState(false);
   const chosen = source || sources[0]?.key || '';
+  const captionsLabel = captions === 'brand' ? 'Brand kit (or Pill Karaoke)' : captions === 'none' ? 'None' : (CAPTION_PRESETS.find((p) => p.id === captions)?.label ?? captions);
+  const sourceLabel = sources.find((s) => s.key === chosen)?.label ?? 'Import a video first';
 
   const analyse = async () => {
     if (!chosen) return;
@@ -200,8 +205,8 @@ function Setup({ onNotice }: { onNotice: (n: Notice) => void }) {
       <div className="flex items-center gap-2">
         <Label className="w-16 shrink-0 text-[11px] text-text-secondary">Source</Label>
         <Select value={chosen} onValueChange={(v) => v && setSource(v)}>
-          <SelectTrigger data-chroma-clipper-source className="h-7 flex-1 text-[11px]">
-            <SelectValue>{sources.find((s) => s.key === chosen)?.label ?? 'Import a video first'}</SelectValue>
+          <SelectTrigger data-chroma-clipper-source className="h-7 flex-1 text-[11px]" title={sourceLabel}>
+            <SelectValue>{sourceLabel}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             {sources.map((s) => (
@@ -214,7 +219,7 @@ function Setup({ onNotice }: { onNotice: (n: Notice) => void }) {
       </div>
       <div className="flex items-center gap-2">
         <Label className="w-16 shrink-0 text-[11px] text-text-secondary">Lengths</Label>
-        <div className="flex flex-1 gap-1" role="group" aria-label="Target lengths">
+        <div className="flex min-w-0 flex-1 flex-wrap gap-1" role="group" aria-label="Target lengths">
           {ALLOWED_DURATIONS.map((d) => {
             const on = durations.includes(d);
             return (
@@ -259,8 +264,8 @@ function Setup({ onNotice }: { onNotice: (n: Notice) => void }) {
       <div className="flex items-center gap-2">
         <Label className="w-16 shrink-0 text-[11px] text-text-secondary">Captions</Label>
         <Select value={captions} onValueChange={(v) => v && setCaptions(v)}>
-          <SelectTrigger className="h-7 flex-1 text-[11px]" aria-label="Captions">
-            <SelectValue>{captions === 'brand' ? 'Brand kit (or Pill Karaoke)' : captions === 'none' ? 'None' : (CAPTION_PRESETS.find((p) => p.id === captions)?.label ?? captions)}</SelectValue>
+          <SelectTrigger className="h-7 flex-1 text-[11px]" aria-label="Captions" title={captionsLabel}>
+            <SelectValue>{captionsLabel}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="brand">Brand kit (or Pill Karaoke)</SelectItem>

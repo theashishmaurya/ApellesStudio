@@ -6,7 +6,7 @@ Issues once public.
 ```
 ## B-368 — placing a Motion render on the timeline adds a linked audio clip, though the render has no sound (it carries a silent AAC track)
 
-status: open (owner, 2026-11-01; queued with the v0.3.0 checklist) · severity: medium (every Motion card adds a junk audio clip, clutters the audio tracks, and its silent "audio" can trigger ducking or loudness logic) · area: `packages/motion-engine/scripts/render.mts` (`renderMedia` options), the media probe's `hasAudio` (D-129), `linkedClipsFromDraggedMedia`
+status: fixed (2026-11-03; the Rust probe tests are written but were not run, see Fixed) · severity: medium (every Motion card adds a junk audio clip, clutters the audio tracks, and its silent "audio" can trigger ducking or loudness logic) · area: `packages/motion-engine/scripts/render.mts` (`renderMedia` options), the media probe's `hasAudio` (D-129), `linkedClipsFromDraggedMedia`
 
 - **Seen:** the owner's screenshot `scratch/bug-refs/2026-11-01-motion-clip-gets-audio.png`. "M five-jobs" placed on V2 also produced a green "M five-jobs" audio clip on an audio track, with no waveform.
 - **Measured:** `motion/renders/five-jobs.mp4` has streams `h264` + **`aac`**. The audio is silent: `volumedetect` gives a mean of **−91.0 dB** over 860,160 samples. The probe therefore reports `hasAudio: true`, and D-129 builds a linked audio half for it.
@@ -14,6 +14,11 @@ status: open (owner, 2026-11-01; queued with the v0.3.0 checklist) · severity: 
   1. **Render:** a Motion scene with no soundtrack or audio layer renders **without an audio stream** (Remotion's `muted` / no enforced audio track in `renderMedia`). A scene with a soundtrack keeps its audio.
   2. **Import / probe:** a source whose audio stream is digital silence (below about −80 dB mean and peak) is treated as `hasAudio: false`, so already-rendered files and any other silent-track media (screen recordings and so on) stop getting junk audio halves. Cache the result with the probe facts.
 - **Tests:** a render without audio has no audio stream; a render with a soundtrack keeps it; the probe classifies a silent-AAC fixture as no audio; a drop of a silent-track file creates no linked audio clip.
+- **Fixed:**
+  1. `packages/motion-engine/scripts/render.mts` passes `muted: !manifestRendersAudio(inputProps)` to `renderMedia`. `scripts/renderAudio.mts` holds the rule: only a manifest `soundtrack` with `render: true` (D-413) is a sound source; nothing else in the engine plays audio. Tests in `scripts/render.test.ts`: muted with no soundtrack or `render: false`, audio kept with `render: true`, and the runner passes it as `muted`.
+  2. `crates/apelles-media/src/video.rs` `probe()` runs `audio_is_digital_silence` (ffmpeg `volumedetect` over the whole first audio stream) after the stream probe; mean and max both under -80 dBFS give `has_audio: false` with a zero sample rate and channel count. Sources longer than 600 s, an unknown duration, or any ffmpeg failure keep the audio (the safe side). A pure-audio file is exempt (a silent `.wav` is still a valid audio source). The result rides in `VideoInfo`, so it is cached with the other probe facts; the disk cache namespace is now `probe-v3` so old `has_audio: true` answers are not served. Tests: a generated silent-AAC mp4 probes as no audio, a tone mp4 keeps it, and the `volumedetect` report parser. The placement half is the existing `linkedClipsFromDraggedMedia` test (`hasAudio: false` builds no audio half, no link group); `chroma_media_list` and the MCP add-clip path read the same probe.
+  3. Measured: `anullsrc` through AAC gives `mean_volume: -91.0 dB`, `max_volume: -91.0 dB` (the same figure as the owner's `five-jobs.mp4`).
+- **Caveat:** the machine's disk filled during this fix, so `cargo test -p apelles-media` could not be built or run; the Rust change is `rustfmt`-clean and the ffmpeg behaviour was checked by hand. Run `cargo test -p apelles-media --lib video::` and `cargo clippy -p apelles-media` before release.
 
 ## B-367 — the Export dialog needs a redesign: a raw form with per-clip "fit / Freeze" rows, no presets, and no direct publishing
 
@@ -96,11 +101,23 @@ status: open (owner, 2026-11-01: "clipper UI is not intuitive at all") · severi
 
 ## B-362 — the Clipper panel scrolls horizontally inside the media browser; its content is wider than the column
 
-status: open (owner, 2026-11-01; queued with the v0.3.0 checklist) · severity: minor (layout) · area: `packages/editor/src/clipper/ClipperPanel.tsx`, `packages/editor/src/EditBrowser.tsx` (the browser's tab body)
+status: **fixed** (2026-11-03) · was: open (owner, 2026-11-01) · severity: minor (layout) · area: `@apelles/ui` `select.tsx`, `ClipperPanel.tsx`, `MusicEditsPanel.tsx`, `EditBrowser.tsx`
 
 - **Seen:** the owner's screenshot `scratch/bug-refs/2026-11-01-clipper-horizontal-scroll.png`. A horizontal scrollbar sits at the bottom of the Clipper tab, its left edge is cut off ("…PER", "…ine Voiceover v2"), and the timeline picker reads "Voiceover v2 · 30/10/2026, 10:09:38 AM".
 - **Likely cause (not yet confirmed):** a child forces the column wider than the browser. The run picker trigger's long label won't shrink, or the proposal rows / "Build" row are flex items without `min-w-0`, inside an `EditBrowser` tab body that has no `overflow-x` rule. D-432 P5 moved the Clipper from its own rail panel into the browser tabs, so a width the old panel tolerated now overflows.
 - **Fix:** truncate the picker label with an ellipsis and a full-text tooltip; `min-w-0` on the flex rows so text wraps; and make the browser's tab body `overflow-x: hidden` only after the real overflow is fixed, not as a mask. Add a DOM test that the panel's `scrollWidth` does not exceed its `clientWidth` at the default browser width (280 px) and at its minimum (220 px).
+- **Root cause** (measured in headless Chromium via `harness.html?mode=library` at 280 and 220 px across all 8 tabs): the shared `SelectTrigger` was `w-fit whitespace-nowrap` with no `min-w-0`, and its value was a `flex line-clamp-1` that cannot ellipsize. Any `flex-1` Select with a long label (Clipper Source / Run / Captions, Music Edits Bed / Re-entry) forced its row wider than the column.
+  - Before: **Music** overflowed 19 px at 280 and 79 px at 220; the **Clipper** setup grew a horizontal scrollbar (43 / 103 px), and its 90s length button overflowed 21 px at 220.
+  - Titles, Effects, Subtitles, Recut and Index had no overflow; the Sources tile names were already truncated.
+- **Fix:**
+  - `SelectTrigger` gets `min-w-0`, and its value gets `min-w-0 truncate` (every `SelectValue` in the repo is text-only).
+  - The Clipper length buttons wrap.
+  - The Clipper Run / Source / Captions and Music Bed / Re-entry triggers carry a `title` tooltip with the full label.
+  - `EditBrowser`'s tab body is `overflow-x-hidden` as a guard, added after the real fixes.
+  - Re-measured: no tab overflows at 280 or 220 px with the default seed.
+  - **Not re-measured:** a Clipper run with long proposal text, Music proposals, Recut results.
+- **Test:** `packages/ui/src/select.overflow.dom.test.tsx` pins the guards. jsdom has no layout, so the measurement itself stays a headless-Chromium check. ui 13/13, editor 2998/2998, tsc editor 3 / app 65.
+
 
 ## B-361 — clicking a caption preset drops a placeholder "Your caption here" clip (and errors when the playhead frame is taken) instead of captioning the video from its transcript
 

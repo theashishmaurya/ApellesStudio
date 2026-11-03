@@ -44,6 +44,8 @@ import {
   type Codec,
 } from "@remotion/renderer";
 
+import { manifestRendersAudio } from "./renderAudio.mts";
+
 /** `Config.setChromiumOpenGlRenderer("angle")` in `remotion.config.ts`. */
 const CHROMIUM_OPTIONS: ChromiumOptions = { gl: "angle" };
 /** `Config.setVideoImageFormat("jpeg")`: the frame format a video is encoded from. */
@@ -182,6 +184,8 @@ try {
       scale,
       concurrency,
       overwrite: true,
+      // B-368 — no sound source, no audio stream (not a silent one).
+      muted: !manifestRendersAudio(inputProps),
     });
   }
   process.stdout.write(`${JSON.stringify({ ok: true, mode, output })}\n`);
