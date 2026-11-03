@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-03** — **B-297 closed, B-308 deferred:** the silent linked audio was B-368, a measured 1.5 s scene renders exactly 45 frames at 30 fps (no render-length bug), and a layer's \`dur\` is its reveal length by design (the Inspector now says "Reveal length (s)"). B-308 (time-varying z-order) is a v0.4.0 Motion feature in the roadmap.
+- **2026-11-03** — **B-302 fixed:** an Edit title character the face lacks (Georgia has no \`→\`) is drawn from a fallback face, not a box.
 - **2026-11-03** — **B-302 fixed:** an Edit title in a face without the glyph (Georgia has no `→`) draws it from a fallback face instead of a `.notdef` box.
 - **2026-11-03** — **B-322 fixed:** `motion_set_layer_field(key="props")` on a custom layer no longer warns "not a known field"; the written props are checked against the embedded definition and issues come back in the reply.
 - **2026-11-03** — **B-316 fixed:** `refresh_media` (a Motion scene re-rendered) now updates clips on locked tracks too, so a shorter re-render clamps every placed clip and its trim ceiling.

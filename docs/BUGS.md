@@ -768,9 +768,12 @@ status: **fixed** (2026-10-28) · severity: **major** · area: media probe (`edi
 
 ## B-297 — Motion scene renders come out one frame short; a layer's `dur` does not hide the layer; rendered scenes bring a silent linked-audio clip onto the timeline
 
-status: **open** · severity: **minor** · area: `apelles-motion` render length, engine layer lifetime, Edit placement of Motion renders
+status: **closed** (2026-11-03: the third symptom fixed by B-368, the second is by design and now labelled, the first did not reproduce) · severity: **minor** · area: `apelles-motion` render length, engine layer lifetime, Edit placement of Motion renders
 
 - **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Workarounds in the Five Levels edit: pad scenes by 0.05 s, opacity keyframes instead of `dur`, remove the silent audio partners.
+- **linked silent audio clip:** fixed as B-368 (no audio stream without a soundtrack; a digital-silence stream is not audio).
+- **one frame short:** not reproduced. A real render through `scripts/render.mts` of the second scene of a 30 fps, 1 s + 1.5 s manifest (`--frames=30-74`) gave exactly 45 frames / 1.500000 s by `ffprobe -count_frames`, and the window the app computes (`renderLoop.ts`: `start + sceneDurationFrames - 1`, inclusive) is right. Where a scene lands a frame short on the Edit timeline is the timeline's rate conversion (`sourceFramesToTimeline` rounds), most visibly while a new project's timeline was 24 fps with no way to set it (B-323, fixed): a 30 fps render on a 24 fps timeline shortens by up to half a frame per cut. If it still happens at matching rates, re-open with the scene's `dur`, fps and the clip's `duration` / `source_len`.
+- **a layer's `dur` does not hide the layer:** by design, not a defect. `dur` on a layer is the length of that layer's own reveal / animation (Text's fade-up, a shape's draw-on), and the layer holds its final state afterwards; making it a lifetime would hide every existing layer after its reveal. The Inspector field was labelled "Duration (s)", which invites the misreading, and is now "Reveal length (s)" (`propCatalog.ts`). To end a layer early use an `transform.keys` opacity key or an `active` schedule; a first-class lifetime / time-varying order belongs with B-308 (`docs/04-roadmap.md`).
 
 ## B-296 — `get_timeline`, `motion_get_state` and `save_project` answers can reach ~675K characters (save_project returns the whole grade + histogram)
 

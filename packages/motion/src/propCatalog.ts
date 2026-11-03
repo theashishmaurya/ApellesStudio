@@ -90,7 +90,9 @@ export interface FieldSpec {
  *  shapes `Active` (`schema.ts`) allows. */
 const timingFields: FieldSpec[] = [
   { key: 'at', label: 'Start (s)', kind: 'number', group: 'timing' },
-  { key: 'dur', label: 'Duration (s)', kind: 'number', group: 'timing' },
+  // B-297 - `dur` is how long the layer's own reveal/animation takes, NOT how
+  // long the layer stays on screen; it holds its final state afterwards.
+  { key: 'dur', label: 'Reveal length (s)', kind: 'number', group: 'timing' },
   { key: 'active', label: 'Active (index or schedule)', kind: 'json', group: 'timing' },
   // D-405 — `anim` property tracks, any layer: absolute values over time for a
   // numeric or colour prop (one level into an object prop: "mask.w").
