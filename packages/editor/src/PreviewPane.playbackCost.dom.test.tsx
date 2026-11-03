@@ -240,18 +240,24 @@ describe('a displayed preview frame (D-290 / B-146)', () => {
     const { container } = await mountHarness();
     const img = previewImg(container);
 
+    // Count the frames that were really put on the <img> by watching its `src`
+    // writes, not by sampling it once per animation frame: a sampler misses
+    // frames when the machine is loaded (painted comes out low while commits do
+    // not), which made this ratio depend on speed. Every write is observed.
     const seen = new Set<string>();
     const src = () => img.getAttribute('src') ?? '';
     seen.add(src());
+    const observer = new MutationObserver(() => seen.add(src()));
+    observer.observe(img, { attributes: true, attributeFilter: ['src'] });
 
     commits.count = 0;
     actSync(() => useEditorTimelineStore.getState().setPlaying(true));
-    for (let i = 0; i < 40; i += 1) {
-      await waitFrames(1);
-      seen.add(src());
-    }
+    for (let i = 0; i < 40; i += 1) await waitFrames(1);
     actSync(() => useEditorTimelineStore.getState().setPlaying(false));
     await waitFrames(2);
+    // `takeRecords` flushes any write the observer has not delivered yet.
+    observer.takeRecords().forEach(() => seen.add(src()));
+    observer.disconnect();
 
     const painted = seen.size - 1; // the frame already showing before Play
     expect(painted).toBeGreaterThan(2); // the loop really did run
