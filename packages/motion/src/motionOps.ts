@@ -154,6 +154,7 @@ import {
   CAM2D_KEY_FIELDS,
   CAM3D_KEY_FIELDS,
   fieldsForPrimitive,
+  isCustomLayerKey,
   LAYER_TRANSFORM_FIELDS,
   LAYER_TRANSFORM_KEY_FIELDS,
   positionFields,
@@ -2433,15 +2434,29 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       const found = selectedLayer(manifest, resolved);
       if (found) {
         const fields = fieldsForPrimitive(found.use);
-        if (fields && !fields.some((f) => f.key === key)) {
-          warning = `"${key}" is not a known field for use="${found.use}" (see motion_list_primitives) — set anyway`;
+        if (fields && !fields.some((f) => f.key === key) && !isCustomLayerKey(found.use, key)) {
+          warning =
+            found.use === 'custom' && key.startsWith('props.')
+              ? `set the whole "props" object on a custom layer, not "${key}" (a dotted key would be written literally)`
+              : `"${key}" is not a known field for use="${found.use}" (see motion_list_primitives) — set anyway`;
         }
       }
 
       const next = setLayerField(manifest, resolved, key, value);
       if (next === manifest) return { error: 'no change — selection did not resolve to an editable layer' };
       cur.commit(next, `Set ${key}`);
-      return { selection: resolved, key, value: value ?? null, warning };
+      // B-322 — a custom layer's `props` are declared by the definition embedded
+      // in the manifest, which the field list cannot know: check what was written
+      // against it (the same manifest-level pass `motion_validate` runs) and report
+      // what is wrong with THIS layer, without blocking the write.
+      const target = resolved.target;
+      const issues =
+        found?.use === 'custom' && key === 'props' && target.kind === 'layer'
+          ? validateManifest(next).issues.filter((i) =>
+              i.path.startsWith(`scenes[${resolved.sceneIndex}].layers[${target.index}]`),
+            )
+          : [];
+      return { selection: resolved, key, value: value ?? null, warning, ...(issues.length > 0 ? { issues } : {}) };
     },
 
     /**

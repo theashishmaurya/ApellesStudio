@@ -502,7 +502,7 @@ Still real:
 
 ## B-322 — `motion_set_layer_field(key="props")` on a custom-component layer warns "not a known field"
 
-status: **open** · severity: **minor** · area: Motion MCP (D-409) · found 2026-10-28 (building "The Domino" reel)
+status: **fixed** (2026-11-03) · severity: **minor** · area: Motion MCP (D-409) · found 2026-10-28 (building "The Domino" reel)
 
 `props` is the one correct key for a custom layer's declared props (D-409), and the write
 works, but the reply carries `"props" is not a known field for use="custom" ... set anyway`.
@@ -510,6 +510,8 @@ An agent reading the warning would assume the write did nothing. Expected: `prop
 `props.<id>`) recognised for `use: "custom"` and checked against the embedded definition, like
 `motion_insert_layers` already does. Workaround used: ignore the warning, confirm with
 `motion_validate` (clean).
+- **fix:** `isCustomLayerKey` (`propCatalog.ts`) makes `props` and `component` known keys of `use: "custom"` for `motion_set_layer_field`. After a `props` write the reply carries `issues` for that layer from the same manifest-level pass `motion_validate` runs (the embedded definition's constraints), without blocking the write. A dotted `props.<id>` is warned about specifically (it would be stored as a literal key): set the whole `props` object.
+- **tests:** `customOps.e2e.test.ts` "B-322" (valid props: no warning or issues; `count: 9999` -> an issue at `...props.count`; dotted key warning; unknown key still warns).
 
 ## B-321 — a slow `motion_check_component` / `motion_preview_frame` finishes on disk but its reply never reaches the MCP caller
 

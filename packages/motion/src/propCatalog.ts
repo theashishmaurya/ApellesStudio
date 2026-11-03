@@ -359,6 +359,14 @@ export function fieldsForPrimitive(use: string): FieldSpec[] | undefined {
   return [...timingFields, ...own];
 }
 
+/** B-322 — the layer keys of a `custom` layer that `fieldsForPrimitive` cannot
+ *  list: `props` (the component's declared props, D-409) and `component` (the
+ *  pinned reference). The props' own ids come from the definition embedded in the
+ *  manifest, so they are checked there, not against this list. */
+export function isCustomLayerKey(use: string, key: string): boolean {
+  return use === 'custom' && (key === 'props' || key === 'component');
+}
+
 /** scene-level fields (selection target `{kind:'scene'}`).
  *
  *  **`id` is here as of B-242/D-371**, reversing this list's original "NOT

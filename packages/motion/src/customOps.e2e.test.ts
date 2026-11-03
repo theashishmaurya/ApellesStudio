@@ -287,6 +287,34 @@ describe('D-409 — write → check → certify → use as data', TYPECHECK, () 
 
   // D-413: the built-ins that use the roughjs and d3 allowlist entries. Authored
   // the same real way; only their proof plans are pinned.
+  it('B-322 — motion_set_layer_field(key="props") on a custom layer is known and checked against the embedded definition', async () => {
+    const h = harness();
+    const { source, spec } = example('particle-logo-burst');
+    await h.run('motion_write_component', { ...spec, source });
+    await h.run('motion_check_component', { id: 'particle-logo-burst' });
+    await h.run('motion_certify_component', { id: 'particle-logo-burst' });
+    await h.run('motion_add_layer', { scene_index: 0, use: 'custom:particle-logo-burst' });
+    const index = (h.current().scenes[0].layers ?? []).findIndex((l) => l.use === 'custom');
+    const at = { scene_index: 0, target: { kind: 'layer', index } };
+
+    const ok = await h.run('motion_set_layer_field', { ...at, key: 'props', value: { text: 'ACME', seed: 7 } });
+    expect(ok.warning).toBeUndefined();
+    expect(ok.issues).toBeUndefined();
+
+    // A value outside the declared constraint is reported (and still written, like every soft field check).
+    const bad = await h.run('motion_set_layer_field', { ...at, key: 'props', value: { count: 9999 } });
+    expect(bad.warning).toBeUndefined();
+    expect(bad.issues).toEqual([expect.objectContaining({ path: `scenes[0].layers[${index}].props.count`, code: 'custom', message: expect.stringContaining('<= 400') })]);
+
+    // A dotted key is not a field: say what to do instead of writing it literally unnoticed.
+    const dotted = await h.run('motion_set_layer_field', { ...at, key: 'props.text', value: 'x' });
+    expect(dotted.warning).toMatch(/whole "props" object/);
+
+    // An unknown key still warns as before.
+    const unknown = await h.run('motion_set_layer_field', { ...at, key: 'nonsense', value: 1 });
+    expect(unknown.warning).toMatch(/not a known field/);
+  });
+
   it('authors sketch-callout (roughjs) and stat-bars (d3), certifies them and pins their proof plans', async () => {
     const h = harness();
     for (const id of ['sketch-callout', 'stat-bars']) {
