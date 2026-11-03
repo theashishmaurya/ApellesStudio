@@ -487,7 +487,7 @@ fn prepare_frame<'a>(
 /// The returned frame is at the **transformed** size, which a crop or a 90°
 /// step makes different from the source clip's — [`export_video`] measures it
 /// and spawns the encoder from it (D-135).
-fn grade_frame(
+pub(crate) fn grade_frame(
     ctx: &crate::image_processing::GpuContext,
     caches: &OwnedRenderCaches,
     frame: DynamicImage,

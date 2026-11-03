@@ -114,12 +114,12 @@ fn load_fixture() -> BenchFixture {
     serde_json::from_str(&raw).expect("export-bench.json is not valid JSON")
 }
 
-fn env_or(name: &str, default: &str) -> String {
+pub(super) fn env_or(name: &str, default: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| default.to_string())
 }
 
 /// Free bytes on the volume holding `dir` (`statvfs`).
-fn free_bytes(dir: &Path) -> u64 {
+pub(super) fn free_bytes(dir: &Path) -> u64 {
     let Ok(c) = std::ffi::CString::new(dir.to_string_lossy().as_bytes()) else {
         return 0;
     };
@@ -132,7 +132,7 @@ fn free_bytes(dir: &Path) -> u64 {
     u64::from(st.f_bavail).saturating_mul(st.f_frsize)
 }
 
-fn require_disk(dir: &Path) {
+pub(super) fn require_disk(dir: &Path) {
     let min_gb: u64 = env_or("APELLES_BENCH_MIN_FREE_GB", "15")
         .parse()
         .unwrap_or(15);
@@ -383,7 +383,7 @@ fn sampled<T>(f: impl FnOnce() -> T) -> (T, Probe, Duration, f64) {
 
 /// Video and audio stream durations, seconds (A/V sync: they should agree to
 /// within a frame).
-fn stream_durations(path: &Path) -> (f64, f64) {
+pub(super) fn stream_durations(path: &Path) -> (f64, f64) {
     let read = |sel: &str| -> f64 {
         ffmpeg_locate::ffprobe()
             .ok()

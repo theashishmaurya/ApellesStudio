@@ -1705,6 +1705,13 @@ mod tests {
 #[path = "export_bench.rs"]
 mod export_bench;
 
+/// B-380 — the real-project parity check: the filter path against the
+/// compositor path on a copy of one of the owner's projects (the oracle for
+/// making the compositor the only export renderer).
+#[cfg(test)]
+#[path = "export_parity_real.rs"]
+mod export_parity_real;
+
 #[cfg(test)]
 mod parity_tests {
     use super::*;
