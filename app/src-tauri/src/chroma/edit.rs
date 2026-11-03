@@ -2703,7 +2703,8 @@ fn plate_transform(alpha: f64) -> ClipTransform {
 /// Decode every layer (already visible + non-empty-source, see the caller)
 /// and alpha-composite them onto one canvas. Paint order: `layers` arrives
 /// in `resolve_visible_video_layers_at`'s index-ascending order (index 0 =
-/// highest priority); this function decodes in that order but PAINTS in
+/// highest priority); this function decodes them (concurrently since B-369,
+/// results kept in that order) but PAINTS in
 /// reverse (lowest priority first, at the back; highest priority last, on
 /// top) — matches `resolve_visible_video_layers_at`'s own documented paint
 /// contract.
@@ -2773,8 +2774,8 @@ fn composite_video_frame(
     // anisotropic squash on every layer.
     let render_scale = canvas_w as f64 / comp_w as f64;
 
-    let mut decoded: Vec<Step> = Vec::with_capacity(layers.len());
-    for layer in layers {
+    // B-369 — one layer's step, so the layers can be produced concurrently.
+    let step_for = |layer: &VisibleLayer<'_>| -> Result<Option<Step>, String> {
         // D-226 — a generated full-frame plate: a dip-to-colour transition's
         // colour, at the canvas's own size, with the transition's own alpha as
         // its opacity. Structurally the same "generated layer" case D-211's text
@@ -2783,7 +2784,7 @@ fn composite_video_frame(
         // only its own way of producing a buffer.
         if let LayerSource::Color { rgb } = layer.source {
             let (r, g, b) = rgb;
-            decoded.push(Step::Paint {
+            return Ok(Some(Step::Paint {
                 img: std::sync::Arc::new(image::ImageBuffer::from_pixel(
                     canvas_w,
                     canvas_h,
@@ -2791,8 +2792,7 @@ fn composite_video_frame(
                 )),
                 transform: plate_transform(layer.alpha),
                 natural: (canvas_w as f64, canvas_h as f64),
-            });
-            continue;
+            }));
         }
         let LayerSource::Clip {
             clip,
@@ -2814,10 +2814,7 @@ fn composite_video_frame(
         // freshly-added, untouched adjustment clip costs the preview exactly
         // one skipped branch per frame and not a full-canvas pass.
         if clip.is_adjustment() {
-            if let Some(ops) = clip.adjustment_ops() {
-                decoded.push(Step::Adjust(ops));
-            }
-            continue;
+            return Ok(clip.adjustment_ops().map(Step::Adjust));
         }
         // D-211 — a text clip's layer is GENERATED, not decoded: rasterise it
         // at the canvas's own size (so `natural` is the canvas and no resize
@@ -2827,7 +2824,7 @@ fn composite_video_frame(
         // "exactly like" honest by zeroing the fields the export path cannot
         // reproduce; see its own doc.
         if let Some(text_layer) = &clip.text {
-            decoded.push(Step::Paint {
+            return Ok(Some(Step::Paint {
                 img: text::render_text_layer(text_layer, canvas_w, canvas_h)?,
                 // No `scaled_to_render` (D-344): a text clip's radius is pinned
                 // to zero by `resolve_text_clip_transform`, and zero is
@@ -2838,8 +2835,7 @@ fn composite_video_frame(
                     layer.alpha,
                 ),
                 natural: (canvas_w as f64, canvas_h as f64),
-            });
-            continue;
+            }));
         }
         let source_size = clip_source_size(&clip.source_path)?;
         // One decode pipe per track (D-125/B-040) — sharing a single global
@@ -2908,7 +2904,7 @@ fn composite_video_frame(
             ),
             canvas_px,
         );
-        decoded.push(Step::Paint {
+        Ok(Some(Step::Paint {
             img: rgba,
             // D-344 — `corner_radius` is the one geometry field authored in
             // OUTPUT pixels rather than as a ratio, so it is the one that has
@@ -2926,8 +2922,58 @@ fn composite_video_frame(
                 layer.alpha,
             ),
             natural,
+        }))
+    };
+
+    // B-369 — decode the layers CONCURRENTLY, one scoped thread per layer.
+    //
+    // Measured live (2026-11-03, the 300-clip harness fixture: five stacked
+    // full-frame video layers at frame 0): the preview round trip was ~25 ms,
+    // against ~14 ms for the same timeline shape with two video layers — about
+    // 3.7 ms per extra layer, because each layer's decode (a pipe read from its
+    // own `ffmpeg`, the RGBA conversion, the grade) ran one after another. Each
+    // layer already owns its own decode pipe (`pipe_slot`, D-125/D-226) and the
+    // pipe pool is safe to use from several threads at once (D-360: a pipe is
+    // checked OUT for its read, the pool lock is not held across it), so the
+    // layers have nothing to wait on each other for. Scoped threads rather than
+    // rayon: a pipe read BLOCKS on a child process, and blocking rayon's shared
+    // pool would stall the row-parallel passes (`to_rgba8_parallel`, the grade)
+    // that run inside these very decodes.
+    //
+    // Order and pixels are unchanged: results come back in `layers` order and
+    // the paint walk below is the same, so the frame is byte-identical to the
+    // sequential decode (determinism holds). A single layer stays on this
+    // thread — no spawn for the common one-clip frame.
+    let decoded: Vec<Step> = if layers.len() < 2 {
+        let mut steps = Vec::with_capacity(layers.len());
+        for layer in layers {
+            if let Some(step) = step_for(layer)? {
+                steps.push(step);
+            }
+        }
+        steps
+    } else {
+        let results: Vec<Result<Option<Step>, String>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = layers
+                .iter()
+                .map(|layer| scope.spawn(|| step_for(layer)))
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| {
+                    h.join()
+                        .unwrap_or_else(|_| Err("a layer decode thread panicked".to_string()))
+                })
+                .collect()
         });
-    }
+        let mut steps = Vec::with_capacity(results.len());
+        for r in results {
+            if let Some(step) = r? {
+                steps.push(step);
+            }
+        }
+        steps
+    };
 
     let mut canvas: image::RgbaImage =
         image::ImageBuffer::from_pixel(canvas_w, canvas_h, image::Rgba([0, 0, 0, 255]));

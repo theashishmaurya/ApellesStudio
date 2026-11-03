@@ -1,6 +1,6 @@
 # Timeline lanes: replacing `@xzdarcy/react-timeline-editor` (D-437 build plan)
 
-Status: **plan, 2026-11-01. Built so far: S0, S1, S2, S3a, S3b, S4, S5, S6, S7 (live paint A/B pending), S8 (live check pending), S10 (2026-11-03, measured in headless Chromium; live check pending) — `TimelinePane` renders the lanes and our playhead since S4; the library package and its selectors are gone (S5, S6). See each step's "Built" note.** Decision: D-437 (`docs/08-decisions.md`).
+Status: **plan, 2026-11-01. Built so far: S0, S1, S2, S3a, S3b, S4, S5, S6, S7 (live paint A/B pending), S8 (live check pending), S10 (2026-11-03, measured in headless Chromium; live check pending), live playback/release profile (2026-11-03, see "Live playback/release profile" after S10) — `TimelinePane` renders the lanes and our playhead since S4; the library package and its selectors are gone (S5, S6). See each step's "Built" note.** Decision: D-437 (`docs/08-decisions.md`).
 Evidence: `docs/notes/timeline-drag-perf.md` (B-347), the live harness runs under
 `scratch/ui-harness/runs/` (run 4: `2026-10-31T21-00-23-799Z`). Builds on D-432 P2/P3
 (`docs/notes/ui-redesign.md` §6b, §6c) and the harness (`docs/notes/ui-harness.md`).
@@ -950,6 +950,31 @@ is paint)._
 - **Playback at 300 clips, honestly.** The JS side per played frame is now the transport plus the playhead's transform; in headless Chromium the whole React cost of playback is ~0.25 ms per frame and rAF holds 60 fps before and after. The live 26 fps / 22 paint therefore is not React work in the tree. Remaining suspects are outside it: the preview's per-frame `chroma_timeline_frame` IPC + decode, the blob → `<img>` decode, and WKWebView compositing. That needs a live `debug_frame_timing` + `sample` profile on the production build; it is the open half of 00r item 6.
 - **What to verify live (production bundle, `perf-300`):** the release frame and `commitRenderedMs` (expect commit ≤ 20 ms; the Inspector now lands a frame or two after the trim on a new selection, check it reads as instant); playback fps with a clip selected vs. none; `zoom-trackpad-pinch` and `perf-300-zoom-pinch-*` with the perf app frontmost and the dev app quit (`debug_activate_app` first), reading the pointer reply's `magnifyBuilt`; the new `seek-far-playhead-visible` (B-359 item 6).
 - **Operational note (S5 aftermath):** removing a dependency left Vite's dep-optimizer cache (`app/node_modules/.vite`) pointing at the deleted package. On its next re-optimise the dev page failed to reload and went blank. After removing a dependency, clear `app/node_modules/.vite` and `node_modules/.vite` and restart `tauri:dev`.
+
+### Live playback/release profile (2026-11-03)
+
+**Setup.** The owner's dev app (`npm run tauri:dev`, dev React bundle, Rust dev profile at opt-level 2/3), driven over the control bridge from scratch drivers that reuse the harness's own `openScratchProject` / `buildFixture` / `ScenarioRunner` (so the fixture is exactly `bigFixtureSpec`), with the fixture left open between measurements. Playback: `debug_frame_timing` (reset, play 3 s from frame 0, read with `windowMs: 3000`). React work: the dev bundle's **React Performance Tracks** write one `performance.measure` per component render, readable over `debug_perf_entries {prefix: ""}` — a live per-component profiler with no extra instrumentation (the app had accumulated 570 675 such entries since launch; cleared first).
+
+**Playback (B-369).** The harness's `raf` is the play loop's pass rate, not the browser's frame rate: each pass awaited `chroma_timeline_frame` inside the rAF callback before asking for the next frame.
+
+| timeline (30 fps) | visible video layers at frame 0 | fetch median / p95 | loop ("raf") | paint |
+|---|---|---|---|---|
+| 300 clips, 8 tracks (`BIG_300`) | 5 | 25–26 / 31–35 ms | 29–31 fps | 29–30 fps |
+| same, a clip selected | 5 | 25 / 29–32 ms | 30 fps | 29–30 fps |
+| same, timeline collapsed to 180 px | 5 | 25 / 30 ms | 31 fps | 30 fps |
+| 300 clips, 4 tracks | 2 | 14 / 17–30 ms | 52–58 fps | 29–30 fps |
+| 4 clips, 4 tracks | 2 | 13–15 / 14–21 ms | 51–60 fps | 30 fps |
+
+- The cost is **stacked video layers**, not clips: ~3.7 ms per extra layer, because `composite_video_frame` decoded them one after another. The 300-clip fixture puts a full-frame clip on all 5 video tracks at frame 0.
+- A 25 ms round trip plus the wait for the next vsync made a 33 ms cycle: exactly 30 fps, and any jitter cost a whole vsync (the harness run's 21 paint fps is that).
+- Selection, the timeline's visibility and React are not it: during 3 s of playback React rendered `Player` once per frame (~1.1 ms each, dev) and nothing else of note.
+- **Fixed:** the loop's clock (rAF: due frame + playhead) and decoder (one request in flight, re-issued the moment it returns) are decoupled in `PreviewPane`; the compositor decodes layers on scoped threads, results in layer order. Expected live: fetch ≈ 14–16 ms at 5 layers, loop ≥ 50, paint ≈ 30 (the timeline rate).
+
+**Release (B-347, B-370).** `perf-300-trim-select` A/B, 3 runs each (dev): clip **unselected** before the press (the Inspector re-mounts through S10's deferred selection) release frame 60 / 74 / 85 ms, `commit-rendered` 22–30, `commit-frame` 57–67; clip **pre-selected** (no Inspector change at all) 72 / 93 / 79 ms, `commit-rendered` 24–35, `commit-frame` 61–74. **S10's deferred Inspector does not make the release worse**: its mount lands after the first frame (React `Mount` entries at +66 / +74 ms, after `commit-frame` +61), and removing it entirely does not help. What the release commit did render, in both cases: `Shell` and its resizable panel groups (≈ 21 ms of ≈ 30), because `Root` selected `timeline.tracks` for the Motion edit links (**B-370**, fixed with `useMotionEditLinks`). Then ≈ 20–25 ms of main-thread work with no React entries before the next frame's rAF (+31 → +56 ms), then ≈ 5 ms to paint. That gap is the next thing to attribute (candidates: store subscribers on commit, the preview's refetch after an edit, the gesture's `will-change` teardown, GC); it needs a JS profile (Safari Web Inspector on the dev app), not more marks.
+
+**`track-header-quiet` (B-371).** Harness, not app: passes alone and after `track-height-drag` with Apelles frontmost; the failing full run ended with another app in front, where the delivered move applies no `:hover`. Fixed in the runner (H18: re-activate and replay once, else SKIP).
+
+**Live re-check after merge (dev app, Apelles frontmost):** `npm run harness --workspace @apelles/ui-harness -- --filter perf-300-playback` (expect raf ≥ 50, paint ≥ 29; `debug_frame_timing` fetch median ≈ 14–16 ms), `--filter perf-300-trim-select` (expect `commit-rendered` ≈ 10 ms lower than today's 22–35 and no `Shell` in the release's React entries), `--filter track-header-quiet` (PASS, or SKIP with the H18 reason if the front is taken), and the full suite for regressions.
 
 ## 6. Risks and how each is handled
 

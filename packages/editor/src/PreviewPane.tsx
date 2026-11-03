@@ -8,7 +8,10 @@
  * dropping frames to stay real-time (same pattern as the Colorist tab's
  * `ColoristTransport.tsx`). This frame-fetch + play-loop logic is tab-owned and
  * stays here — only the rendered transport JSX (the hand-rolled button row)
- * moved to `<Player>`, which is purely presentational.
+ * moved to `<Player>`, which is purely presentational. Since B-369 the loop's
+ * clock (rAF: playhead) and its decoder (one `chroma_timeline_frame` in flight,
+ * re-issued as soon as it returns) no longer wait on each other — see the play
+ * effect.
  *
  * **What sets the preview's frame rate (D-290, B-146).** Not the decoder.
  * Profiled live against the owner's own project (24 fps, 4K HEVC): one pass of
@@ -688,6 +691,9 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
     // full ffmpeg respawn + keyframe seek at the exact moment playback starts
     // (D-125).
     let lastRequested = startFrame;
+    // B-369 — the frame the clock last moved the playhead to (`tick`), so the
+    // store is written once per timeline frame, not once per animation frame.
+    let shownPlayhead = startFrame;
     // A scrub fetch may still be in flight from just before Play was pressed.
     // `chroma_timeline_frame` runs off the main thread now (D-125), so the two
     // really can overlap — they share `inFlight` so they can't interleave
@@ -696,87 +702,127 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
     pending.current = null;
     let stopped = false;
 
-    const tick = async () => {
+    // B-369 — the loop is two halves that no longer wait on each other:
+    //
+    //   * `tick`, once per animation frame: the clock. It works out the
+    //     timeline frame wall-clock time says is due, moves the playhead there,
+    //     and asks for that frame if the decoder is free. It never awaits the
+    //     IPC, so it runs every frame the browser draws.
+    //   * `request`, at most one in flight: the decoder. When its round trip
+    //     comes back it shows the frame and, if the clock has moved on in the
+    //     meantime, asks for the next due frame AT ONCE instead of waiting for
+    //     the next animation frame.
+    //
+    // Measured live (2026-11-03, 300 clips, 5 stacked video layers): the round
+    // trip was ~25 ms, and the old loop `await`ed it inside the rAF callback
+    // and only then asked for the next animation frame. Every frame therefore
+    // cost the round trip PLUS the wait for the next vsync — 25 ms became a
+    // 33 ms cycle (exactly 30 fps, so the "play loop" read 25-30 fps and any
+    // jitter dropped a whole vsync: the harness's 21 paint fps). Decoupled, the
+    // decoder runs back to back at its own throughput (1 / round trip) and the
+    // clock keeps the playhead real-time — the same frame-dropping contract as
+    // before, minus the vsync quantisation.
+    const dueFrame = () => startFrame + Math.floor(((performance.now() - startTime) / 1000) * fps * playbackRate);
+
+    const request = (want: number) => {
+      inFlight.current = true;
+      lastRequested = want;
+      // D-290 — the `fetch` span: Tauri IPC + all of Rust. Everything below
+      // the webview, measured on its own so the rest of the frame's cost can
+      // be got at by subtraction rather than by guessing (module doc).
+      const fetchStart = performance.now();
+      invoke<ArrayBuffer>('chroma_timeline_frame', {
+        pos: want,
+        maxLongEdge: PREVIEW_LONG_EDGE,
+        // D-324 — this loop, and only this loop, is continuous forward
+        // playback, so the backend can work out the next cut boundary and
+        // have a decode pipe already seeked and waiting when the playhead
+        // reaches it. On a heavily recut timeline that is the difference
+        // between ~31 ms and ~307 ms at every cut. The scrub path in
+        // `fetchFrame` deliberately does NOT pass this: its next position
+        // is wherever the pointer goes, so a prediction from the current
+        // one is worthless and would spawn an `ffmpeg` per dragged frame.
+        playing: true,
+      }).then(
+        (bytes) => {
+          if (import.meta.env.APELLES_DEBUG_TOOLS === 'true') recordPreviewSpan('fetch', performance.now() - fetchStart);
+          showFrame(bytes, want);
+          settle();
+        },
+        () => {
+          /* keep going — a heavy clip can drop frames */
+          settle();
+        },
+      );
+    };
+
+    // The former tail of the awaited fetch, unchanged in meaning (D-201: a
+    // plain tail, not a `finally`).
+    const settle = () => {
+      inFlight.current = false;
+      // Drain exactly like `fetchFrame` does. Pausing mid-fetch makes the
+      // scrub effect run while this request is still in flight, so it parks
+      // its frame in `pending` — without this it would never be fetched and
+      // the preview would sit on the last frame playback happened to render
+      // rather than the paused one. (`pending` can only be non-null once
+      // `playing` is already false: the scrub effect early-returns while
+      // playing, and play start clears it.)
+      const queued = pending.current;
+      pending.current = null;
+      // D-290 — but never re-fetch the frame that is already on screen.
+      // Pausing parks the paused playhead here, and that is USUALLY the very
+      // frame this pass just decoded and painted, so the old unconditional
+      // drain spent one more full decode round trip (measured: 25 ms on the
+      // owner's project, ~3.5 ms of it Rust) producing a picture identical
+      // to the one already showing — on every single pause. Worse, it did it
+      // by asking the decode pipe for a frame it had *already passed*, which
+      // is the one thing D-125 documents as expensive: a backward target
+      // forces an ffmpeg respawn plus a keyframe seek. A genuine pause
+      // somewhere else (the user clicked the position bar mid-fetch) still
+      // differs from `lastRequested` and is still fetched.
+      if (queued !== null && queued !== lastRequested) {
+        fetchFrame(queued, PREVIEW_LONG_EDGE);
+        return;
+      }
+      // B-369 — the decoder is free again: if the clock has already moved
+      // past the frame just shown, start the next one now rather than on the
+      // next animation frame. The playhead itself stays the clock's (`tick`).
+      if (stopped) return;
+      const want = dueFrame();
+      if (want < duration && want > lastRequested) request(want);
+    };
+
+    const tick = () => {
       if (stopped) return;
       // D-219 — the other half of the frame-timing readout: how often the rAF
       // loop got to run at all. A stalled `raf` channel next to a healthy
       // `paint` one is the signature of a THROTTLED (backgrounded) window,
       // which is precisely the blocker that stopped D-217 measuring this from
       // outside. Same `import.meta.env.APELLES_DEBUG_TOOLS` compile-time gate as `showFrame`.
+      // Since B-369 this is also an honest "is the main thread free" cadence:
+      // the callback no longer waits on the IPC.
       if (import.meta.env.APELLES_DEBUG_TOOLS === 'true') recordPreviewTiming('raf');
-      // D-290 — the `tick` span starts here and is closed just before the next
-      // `requestAnimationFrame` below, so it covers one whole pass of this
-      // loop and nothing else. Same compile-time gate as every other line in
-      // this file that touches `previewTiming`.
+      // D-290 — the `tick` span: one pass of this callback. Since B-369 it is
+      // the loop's own synchronous JavaScript (the clock, the store write, the
+      // request kick-off) and no longer contains the `fetch` round trip.
       const tickStart = performance.now();
-      const elapsed = (performance.now() - startTime) / 1000;
-      // D-280 — the playback rate is exactly one multiplication, here. The
-      // loop is already wall-clock-driven and already frame-drops to stay
+      // D-280 — the playback rate is exactly one multiplication, in
+      // `dueFrame`. The loop is wall-clock-driven and frame-drops to stay
       // real-time, so asking it for `rate` times as many timeline frames per
       // real second is the whole of the video half of the feature: at 4x it
       // simply requests every fourth frame (or as many as decode can keep up
       // with), which is what a preview shuttle IS.
-      const want = startFrame + Math.floor(elapsed * fps * playbackRate);
+      const want = dueFrame();
       if (want >= duration) {
         setPlayhead(lastFrame);
         setPlaying(false);
         return;
       }
-      if (!inFlight.current && want !== lastRequested) {
-        inFlight.current = true;
-        lastRequested = want;
+      if (want !== shownPlayhead) {
+        shownPlayhead = want;
         setPlayhead(want);
-        // D-290 — the `fetch` span: Tauri IPC + all of Rust. Everything below
-        // the webview, measured on its own so the rest of the frame's cost can
-        // be got at by subtraction rather than by guessing (module doc).
-        const fetchStart = performance.now();
-        try {
-          const bytes = await invoke<ArrayBuffer>('chroma_timeline_frame', {
-            pos: want,
-            maxLongEdge: PREVIEW_LONG_EDGE,
-            // D-324 — this loop, and only this loop, is continuous forward
-            // playback, so the backend can work out the next cut boundary and
-            // have a decode pipe already seeked and waiting when the playhead
-            // reaches it. On a heavily recut timeline that is the difference
-            // between ~31 ms and ~307 ms at every cut. The scrub path in
-            // `fetchFrame` deliberately does NOT pass this: its next position
-            // is wherever the pointer goes, so a prediction from the current
-            // one is worthless and would spawn an `ffmpeg` per dragged frame.
-            playing: true,
-          });
-          if (import.meta.env.APELLES_DEBUG_TOOLS === 'true') recordPreviewSpan('fetch', performance.now() - fetchStart);
-          showFrame(bytes, want);
-        } catch {
-          /* keep going — a heavy clip can drop frames */
-        }
-        // D-201 — the former `finally` body, inline: see `fetchFrame`'s own
-        // note above for why this is a plain tail rather than a `finally`
-        // clause, and why it is exactly equivalent here.
-        inFlight.current = false;
-        // Drain exactly like `fetchFrame` does. Pausing mid-fetch makes the
-        // scrub effect run while this request is still in flight, so it parks
-        // its frame in `pending` — without this it would never be fetched and
-        // the preview would sit on the last frame playback happened to render
-        // rather than the paused one. (`pending` can only be non-null once
-        // `playing` is already false: the scrub effect early-returns while
-        // playing, and play start clears it.)
-        const queued = pending.current;
-        pending.current = null;
-        // D-290 — but never re-fetch the frame that is already on screen.
-        // Pausing parks the paused playhead here, and that is USUALLY the very
-        // frame this pass just decoded and painted, so the old unconditional
-        // drain spent one more full decode round trip (measured: 25 ms on the
-        // owner's project, ~3.5 ms of it Rust) producing a picture identical
-        // to the one already showing — on every single pause. Worse, it did it
-        // by asking the decode pipe for a frame it had *already passed*, which
-        // is the one thing D-125 documents as expensive: a backward target
-        // forces an ffmpeg respawn plus a keyframe seek. A genuine pause
-        // somewhere else (the user clicked the position bar mid-fetch) still
-        // differs from `lastRequested` and is still fetched.
-        if (queued !== null && queued !== lastRequested) {
-          fetchFrame(queued, PREVIEW_LONG_EDGE);
-        }
       }
+      if (!inFlight.current && want !== lastRequested) request(want);
       if (import.meta.env.APELLES_DEBUG_TOOLS === 'true') recordPreviewSpan('tick', performance.now() - tickStart);
       rafRef.current = requestAnimationFrame(tick);
     };
