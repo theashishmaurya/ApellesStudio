@@ -638,9 +638,12 @@ status: **fixed** (2026-10-29) · severity: **minor** · area: Edit Index panel 
 
 ## B-316 — placed Motion clips keep their old `sourceLen` after the scene is re-rendered shorter
 
-status: **open** · severity: **minor** · area: Edit ↔ Motion render placement
+status: **fixed** (2026-11-03) · severity: **minor** · area: Edit ↔ Motion render placement
 
 - **found:** 2026-10-28 by the agent doing the Five Levels pacing pass in the live app. The app then allows trimming past the end of the new render.
+- **cause (found by reading the path, not reproduced live):** the re-render already reaches the Edit timeline (`Root.tsx` `onMotionRendered` -> `refresh_media` -> `reclampToSource`), but the reducer skipped every locked track. The Five Levels pass had locked tracks (the B-315 workaround for sync lock), so their Motion clips kept the old `source_len`/duration and the app let the trim run past the new file's end.
+- **fix:** `refresh_media` no longer skips locked tracks: a lock guards edits, the length of the file a clip reads is a fact. Matched clips take the new `source_len`/`source_fps` and are clamped (duration shrunk, never grown) as before; a same-length re-render is still a no-op.
+- **tests:** `timelineRefreshMedia.test.ts` (a locked track is refreshed; a locked clip is clamped to a shorter render and stays locked).
 
 ## B-315 — no MCP tool to toggle a track's sync-lock (GUI only)
 

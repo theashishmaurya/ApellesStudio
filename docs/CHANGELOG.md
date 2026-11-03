@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-03** — **B-316 fixed:** `refresh_media` (a Motion scene re-rendered) now updates clips on locked tracks too, so a shorter re-render clamps every placed clip and its trim ceiling.
 - **2026-11-03** — **B-324 fixed:** the `counter` primitive takes `pad` (minimum integer digits, zero-filled), so a timer reads `0:09.00`; it is in the Inspector too.
 - **2026-11-03** — **B-320 fixed:** a text reveal whose `dur` rounds to 0 frames no longer crashes the render; `inAt`/`outAt` treat a zero-length range as a step.
 - **2026-11-03** — **B-309 fixed:** `motion_validate` reports `text_overflow` per text layer that sticks out of its container shape (or the canvas), measuring on loaded fonts in the app and estimating otherwise (`engine/textFit.ts`); advisory, no authoring tool refuses on it.
