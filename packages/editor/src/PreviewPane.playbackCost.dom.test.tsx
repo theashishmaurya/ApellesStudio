@@ -56,11 +56,25 @@ const NATURAL_FULL_FRAME = { naturalWidth: 1, naturalHeight: 1 };
  *  boundary the redundant-fetch assertions are made at. */
 const framesAsked = vi.hoisted(() => ({ pos: [] as number[] }));
 
+/** B-370 — while `hold` is set, every `chroma_timeline_frame` stays pending
+ *  until a test calls `release()`, so the play loop's clock can be observed
+ *  running on while the decoder's round trip is still out. */
+const gate = vi.hoisted(() => ({
+  hold: false,
+  waiting: [] as (() => void)[],
+  release(): void {
+    const w = gate.waiting;
+    gate.waiting = [];
+    for (const r of w) r();
+  },
+}));
+
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
     chroma_timeline_frame: (args: Record<string, unknown> | undefined) => {
       framesAsked.pos.push(Number(args?.pos));
-      return STUB_FRAME;
+      if (!gate.hold) return STUB_FRAME;
+      return new Promise<ArrayBuffer>((resolve) => gate.waiting.push(() => resolve(STUB_FRAME)));
     },
     chroma_timeline_composition_size: () => ({
       compWidth: CANVAS_W,
@@ -180,6 +194,8 @@ beforeEach(() => {
   restorePointerCapture = installPointerCaptureStub();
   objectUrls = installObjectUrlStub();
   framesAsked.pos = [];
+  gate.hold = false;
+  gate.waiting = [];
   commits.count = 0;
   resetPreviewTiming();
 });
@@ -324,8 +340,8 @@ describe('the preview surface during playback (D-290 / B-146)', () => {
   });
 });
 
-describe('the play loop reports where its time went (D-290)', () => {
-  it('records a fetch span and a whole-tick span, with fetch inside tick', async () => {
+describe('the play loop reports where its time went (D-290, B-370)', () => {
+  it('records a fetch span and a tick span; since B-370 the tick no longer contains the fetch', async () => {
     await mountHarness();
 
     actSync(() => useEditorTimelineStore.getState().setPlaying(true));
@@ -338,14 +354,71 @@ describe('the play loop reports where its time went (D-290)', () => {
     expect(report.tick.samples).toBeGreaterThan(0);
     expect(report.fetch.medianMs).not.toBeNull();
     expect(report.tick.medianMs).not.toBeNull();
-
-    // The whole point of the two spans is that they SUBTRACT: `fetch` is the
-    // IPC round trip and `tick` is the pass that contains it, so a tick can
-    // never be shorter than the fetch inside it. If that inverts, the readout
-    // is measuring the wrong things and no conclusion drawn from it is safe.
-    expect(report.tick.maxMs!).toBeGreaterThanOrEqual(report.fetch.minMs!);
+    // B-370: one tick per animation frame, whether or not a frame was asked
+    // for in it, so the tick channel holds at least as many samples as the
+    // fetch channel (the pre-B-370 loop recorded a tick only after its fetch).
+    expect(report.tick.samples).toBeGreaterThanOrEqual(report.fetch.samples);
     // Costs, not moments: a duration channel reports no cadence.
     expect(report.fetch).not.toHaveProperty('fps');
     expect(report.tick).not.toHaveProperty('hitches');
+  });
+});
+
+describe('the play loop clock does not wait on the decoder (B-370)', () => {
+  it('keeps ticking and moving the playhead while a frame round trip is still out', async () => {
+    await mountHarness();
+    gate.hold = true;
+    const asked = framesAsked.pos.length;
+
+    actSync(() => useEditorTimelineStore.getState().setPlaying(true));
+    // Wait until the first request is out (and held).
+    for (let i = 0; i < 30 && framesAsked.pos.length === asked; i += 1) await waitFrames(1);
+    expect(framesAsked.pos.length - asked).toBe(1);
+    const ticksAtRequest = previewTimingReport().raf.samples;
+    const playheadAtRequest = useEditorTimelineStore.getState().playhead;
+
+    // Let real time pass across many animation frames with the round trip
+    // still out: at 25 fps, ~200 ms is ~5 timeline frames.
+    await new Promise((r) => setTimeout(r, 200));
+    await waitFrames(3);
+
+    // Still exactly one request in flight (never two: the decode pipes are shared)...
+    expect(framesAsked.pos.length - asked).toBe(1);
+    // ...yet the rAF callback kept running (the pre-B-370 loop sat inside its
+    // `await` and recorded no further tick) and the playhead followed the clock.
+    expect(previewTimingReport().raf.samples - ticksAtRequest).toBeGreaterThan(2);
+    expect(useEditorTimelineStore.getState().playhead).toBeGreaterThan(playheadAtRequest);
+
+    actSync(() => useEditorTimelineStore.getState().setPlaying(false));
+    gate.hold = false;
+    await act(async () => gate.release());
+    await waitFrames(2);
+  });
+
+  it('asks for the next due frame as soon as a round trip returns, not on the next animation frame', async () => {
+    await mountHarness();
+    gate.hold = true;
+    actSync(() => useEditorTimelineStore.getState().setPlaying(true));
+    await waitFrames(2);
+    await new Promise((r) => setTimeout(r, 120));
+    const asked = framesAsked.pos.length;
+    const firstAsked = framesAsked.pos[asked - 1];
+
+    // Release the held frame and let ONLY microtasks run — no animation frame.
+    await act(async () => {
+      gate.release();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The decoder re-issued straight away, for a frame later than the one it
+    // had out (time moved on while it was held).
+    expect(framesAsked.pos.length).toBe(asked + 1);
+    expect(framesAsked.pos[asked]).toBeGreaterThan(firstAsked);
+
+    actSync(() => useEditorTimelineStore.getState().setPlaying(false));
+    gate.hold = false;
+    await act(async () => gate.release());
+    await waitFrames(2);
   });
 });

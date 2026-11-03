@@ -72,6 +72,32 @@ export interface EditLinkTrack {
 }
 
 /**
+ * B-371 — do two link sets say the same thing? Field-by-field, so a caller can
+ * keep the previous object when an Edit change (a trim, a move of an unrelated
+ * clip) leaves every scene's links as they were, and nothing downstream of the
+ * links re-renders. `computeEditLinks` returns a fresh object on every call, so
+ * identity alone would call every edit a change.
+ */
+export function sameEditLinks(a: MotionEditLinks, b: MotionEditLinks): boolean {
+  if (a === b) return true;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  for (const k of keys) {
+    const x = a[k];
+    const y = b[k];
+    if (!y) return false;
+    if (x.mediaId !== y.mediaId || x.sourcePath !== y.sourcePath || x.refreshedByRender !== y.refreshedByRender) return false;
+    if (x.clips.length !== y.clips.length) return false;
+    for (let i = 0; i < x.clips.length; i += 1) {
+      const p = x.clips[i];
+      const q = y.clips[i];
+      if (p.track !== q.track || p.clip !== q.clip || p.clipId !== q.clipId || p.name !== q.name) return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Every rendered scene's Edit-tab footprint: its pool item, and every clip on
  * `tracks` reading it. Keyed by scene id.
  *
