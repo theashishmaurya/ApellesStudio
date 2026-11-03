@@ -850,7 +850,7 @@ is paint)._
   bucket = 0/0/0; a vertical scroll writes `translateY(-Npx)` on the header column with 0 pane renders;
   the transition badge keeps its content `left` across a scroll (same node); a marker flag and the
   ruler labels move with the scroll (strip re-render); a pinch frame of 3 ctrl-wheels = 0 pane renders
-  until the frame, then 1, at `pxPerSec × 1.2³`; playback follow pages the scroller and its echo
+  until the frame, then 1, at the product of the three events' factors (B-375: each is `exp(-deltaY × 0.01)`, not a fixed 1.2); playback follow pages the scroller and its echo
   renders no pane. `TimelinePane.marquee.dom.test.tsx` test 10: a drag pressed on a real lane row
   inside the scroller, after a 45 px scroll, selects the 3 clips it crosses.
   **The zoom-step finding (live: pinch frames 122–318 ms, later 181–247 ms; one wheel step 47 ms).**

@@ -209,9 +209,11 @@ const CONCAT_LIST_TOKEN: &str = "{{APELLES_CONCAT_LIST}}";
 /// How many contiguous segments to split a render of `frames` into on THIS
 /// machine (D-360; the core bound corrected by B-234/D-369).
 ///
-/// Bounded four ways, in order: by the work available
+/// Bounded four ways: by the work available
 /// ([`MIN_SEGMENT_FRAMES`]), by the cores available **divided by how many
-/// processes each segment actually spawns**, and by [`MAX_SEGMENTS`]. A short
+/// processes each segment actually spawns**, by available memory over the
+/// estimated per-segment footprint at the output size (B-340), and by
+/// [`MAX_SEGMENTS`]. A short
 /// export comes back as 1 and takes the single-stream path unchanged.
 ///
 /// **B-234 — why `procs_per_segment` and not just `cores`.** [`MAX_SEGMENTS`]'s
@@ -238,16 +240,81 @@ const CONCAT_LIST_TOKEN: &str = "{{APELLES_CONCAT_LIST}}";
 /// evidence is one process per core, and [`MAX_SEGMENTS`]'s own closing line
 /// about the unmeasured 4K case ("every unknown there points the same way:
 /// fewer, not more") points here too.
-fn plan_segment_count(frames: u64, procs_per_segment: usize) -> usize {
+fn plan_segment_count(frames: u64, procs_per_segment: usize, width: u32, height: u32) -> usize {
     let cores = std::thread::available_parallelism()
         .map(std::num::NonZeroUsize::get)
         .unwrap_or(1);
+    segment_count_for(
+        frames,
+        procs_per_segment,
+        cores,
+        available_memory_bytes(),
+        width,
+        height,
+    )
+}
+
+/// Resident bytes per output pixel for one `decode_pipe` ffmpeg. B-230 measured
+/// ~385 MB per 4K (3840x2160 = 8.29 Mpx) decoder after its cap: 385 MB / 8.29 Mpx.
+const DECODER_BYTES_PER_PIXEL: u64 = 48;
+/// Resident bytes per output pixel for the segment's encoder (frame
+/// reordering, look-ahead and rate-control buffers). An estimate, not a
+/// measurement: the segmented 4K case is still unmeasured (B-340), so this errs
+/// high, in the direction the constants above say unknowns point.
+const ENCODER_BYTES_PER_PIXEL: u64 = 64;
+/// The [`WRITE_AHEAD`] raw RGBA frames queued to the encoder: 4 bytes a pixel each.
+const WRITE_AHEAD_BYTES_PER_PIXEL: u64 = 4 * WRITE_AHEAD as u64;
+/// Fixed per-segment overhead (process images, GPU context share, stacks).
+const SEGMENT_FIXED_BYTES: u64 = 100 * 1024 * 1024;
+/// Share of the memory available right now that an export may plan to use. The
+/// rest is headroom for the app, the OS and other work, so a 16 GB Mac is not
+/// pushed into compression or swap (B-340).
+const MEMORY_BUDGET_PERCENT: u64 = 50;
+
+/// Estimated resident bytes of ONE segment at `width`x`height` with
+/// `procs_per_segment` processes (one encoder + a decoder per visible video
+/// track). The codec is not an input: the compiled argv is opaque to this side
+/// (D-350), and the encoder constant is sized for the heaviest case.
+fn segment_memory_bytes(procs_per_segment: usize, width: u32, height: u32) -> u64 {
+    let pixels = u64::from(width) * u64::from(height);
+    let decoders = procs_per_segment.saturating_sub(1) as u64;
+    SEGMENT_FIXED_BYTES
+        + pixels
+            * (decoders * DECODER_BYTES_PER_PIXEL
+                + ENCODER_BYTES_PER_PIXEL
+                + WRITE_AHEAD_BYTES_PER_PIXEL)
+}
+
+/// Memory available to start new work right now, in bytes (`sysinfo`, already
+/// a dependency of this crate). 0 when the platform cannot report it, which
+/// plans a single segment: the conservative answer.
+fn available_memory_bytes() -> u64 {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    sys.available_memory()
+}
+
+/// The pure form of [`plan_segment_count`]: every machine input is a parameter
+/// so the memory bound (B-340) is unit-testable.
+fn segment_count_for(
+    frames: u64,
+    procs_per_segment: usize,
+    cores: usize,
+    available_bytes: u64,
+    width: u32,
+    height: u32,
+) -> usize {
     let by_work = (frames / MIN_SEGMENT_FRAMES) as usize;
     // `max(1)` on both: a caller reporting zero tracks (an audio-only or empty
     // timeline) must not divide by zero, and a machine the core count divides
     // away to nothing still renders — as one segment.
     let by_cores = (cores / procs_per_segment.max(1)).max(1);
-    by_work.min(by_cores).clamp(1, MAX_SEGMENTS)
+    let budget = available_bytes / 100 * MEMORY_BUDGET_PERCENT;
+    let per_segment = segment_memory_bytes(procs_per_segment, width, height).max(1);
+    let by_memory = usize::try_from(budget / per_segment)
+        .unwrap_or(usize::MAX)
+        .max(1);
+    by_work.min(by_cores).min(by_memory).clamp(1, MAX_SEGMENTS)
 }
 
 /// How many processes one segment of this timeline spawns: one encoder plus
@@ -482,7 +549,12 @@ pub fn render_timeline(
     // D-373 — and it is cut on this timeline's own estimated WORK curve, not on
     // the frame count, so the lanes finish together; see [`segment_ranges`].
     let segments = match &req.segments {
-        Some(_) => plan_segment_count(req.frames, procs_per_segment(timeline)),
+        Some(_) => plan_segment_count(
+            req.frames,
+            procs_per_segment(timeline),
+            req.width,
+            req.height,
+        ),
         None => 1,
     };
     // No segment may be empty: it would spawn an encoder, write nothing, and
@@ -1254,11 +1326,11 @@ mod tests {
     /// single-stream path, whatever the machine's core count.
     #[test]
     fn a_short_render_is_not_split() {
-        assert_eq!(plan_segment_count(0, 2), 1);
-        assert_eq!(plan_segment_count(MIN_SEGMENT_FRAMES - 1, 2), 1);
-        assert_eq!(plan_segment_count(MIN_SEGMENT_FRAMES, 2), 1);
+        assert_eq!(plan_segment_count(0, 2, 1920, 1080), 1);
+        assert_eq!(plan_segment_count(MIN_SEGMENT_FRAMES - 1, 2, 1920, 1080), 1);
+        assert_eq!(plan_segment_count(MIN_SEGMENT_FRAMES, 2, 1920, 1080), 1);
         // And a long one is bounded by MAX_SEGMENTS however many cores exist.
-        assert!(plan_segment_count(u32::MAX as u64, 1) <= MAX_SEGMENTS);
+        assert!(plan_segment_count(u32::MAX as u64, 1, 1920, 1080) <= MAX_SEGMENTS);
     }
 
     /// B-234/D-369 — the core bound counts PROCESSES, not segments. A segment
@@ -1275,7 +1347,7 @@ mod tests {
 
         let mut prev = usize::MAX;
         for procs in 1..=8usize {
-            let got = plan_segment_count(long, procs);
+            let got = plan_segment_count(long, procs, 1920, 1080);
             assert!(
                 got <= prev,
                 "more processes per segment must never INCREASE the lane \
@@ -1293,15 +1365,63 @@ mod tests {
         }
     }
 
+    /// B-340 — the segment count is bounded by memory too. 4K with two visible
+    /// video tracks (3 procs) on 16 GB free gets fewer lanes than cores allow;
+    /// 1080p scales with RAM up to the cap; and every case still renders.
+    #[test]
+    fn the_segment_count_is_bounded_by_available_memory() {
+        const GB: u64 = 1024 * 1024 * 1024;
+        let long = u32::MAX as u64;
+        let many_cores = 64;
+        let count =
+            |procs, gb: u64, w, h| segment_count_for(long, procs, many_cores, gb * GB, w, h);
+
+        // 4K, one video track (2 procs) and two (3 procs), on 16 GB free.
+        let k4_two = count(2, 16, 3840, 2160);
+        let k4_three = count(3, 16, 3840, 2160);
+        assert!(
+            k4_three < MAX_SEGMENTS,
+            "4K with two video tracks on 16 GB must not reach the cap: {k4_three}"
+        );
+        assert!(
+            count(3, 8, 3840, 2160) < k4_three,
+            "half the RAM must mean fewer lanes"
+        );
+        assert!(k4_three <= k4_two, "more tracks never means more lanes");
+        assert!(k4_three >= 1);
+        // Planned footprint stays inside the budget whenever more than one lane runs.
+        for (procs, n) in [(2usize, k4_two), (3, k4_three)] {
+            if n > 1 {
+                assert!(
+                    n as u64 * segment_memory_bytes(procs, 3840, 2160) <= 16 * GB / 2,
+                    "{n} lanes x {procs} procs overshoot half of 16 GB"
+                );
+            }
+        }
+        // 1080p grows monotonically with RAM and hits the cap on a big machine.
+        let (g8, g16, g64) = (
+            count(2, 8, 1920, 1080),
+            count(2, 16, 1920, 1080),
+            count(2, 64, 1920, 1080),
+        );
+        assert!(g8 <= g16 && g16 <= g64, "{g8} {g16} {g64}");
+        assert_eq!(g64, MAX_SEGMENTS);
+        assert!(g8 >= 1);
+        // 4K never gets more lanes than 1080p on the same RAM.
+        assert!(count(3, 8, 3840, 2160) <= count(3, 8, 1920, 1080));
+        // No reported memory (or none free) still renders as one segment.
+        assert_eq!(count(3, 0, 3840, 2160), 1);
+    }
+
     /// A timeline with no visible video track still renders — the divisor is
     /// never zero, and the encoder itself is the `+ 1`.
     #[test]
     fn a_zero_track_timeline_still_plans_at_least_one_segment() {
         assert_eq!(
-            plan_segment_count(u32::MAX as u64, 0),
-            1.max(plan_segment_count(u32::MAX as u64, 0))
+            plan_segment_count(u32::MAX as u64, 0, 1920, 1080),
+            1.max(plan_segment_count(u32::MAX as u64, 0, 1920, 1080))
         );
-        assert!(plan_segment_count(u32::MAX as u64, 0) >= 1);
+        assert!(plan_segment_count(u32::MAX as u64, 0, 1920, 1080) >= 1);
     }
 
     /// B-234/D-369 — hidden video tracks open no decode pipe, so they must not

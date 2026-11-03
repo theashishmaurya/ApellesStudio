@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { applyOp, type Clip, type EditOp, type Timeline } from './timeline';
-import { isJournalEntry, replayJournal, type EditJournalEntry } from './editJournal';
+import { UNATTRIBUTED_ORIGIN, isJournalEntry, journalOrigin, replayJournal, type EditJournalEntry } from './editJournal';
 
 const clip = (id: string, start: number): Clip => ({
   id,
@@ -140,9 +140,16 @@ const PROJECT = '/projects/demo.chroma';
 
 /** Drain the promise chains a fake-backend round trip is made of. Timers are
  *  faked (the debounce must never fire on its own: that is the incident), so
- *  this flushes microtasks only, never waits on a clock. */
+ *  this never waits on a clock. It yields to the macrotask queue
+ *  (`setImmediate`, which is NOT faked) as well as the microtask queue: a
+ *  dynamic `import()` inside the store resolves through real I/O, which a
+ *  fixed number of microtask ticks does not wait for, so on a loaded machine
+ *  the chain had not finished when the test read the result. */
 async function settle(): Promise<void> {
-  for (let i = 0; i < 50; i++) await Promise.resolve();
+  for (let i = 0; i < 5; i++) {
+    for (let j = 0; j < 50; j++) await Promise.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
 }
 
 /** A fresh page: fresh module state, the project opened, its first load done. */
@@ -150,16 +157,23 @@ async function openPage() {
   vi.resetModules();
   const { useEditorTimelineStore } = await import('./timelineStore');
   useEditorTimelineStore.getState().setOpenProject(PROJECT);
-  await settle();
+  // Wait for the STATE, not for a count of ticks: yield until the first load is
+  // done (bounded, so a load that never finishes fails the assertion below).
+  for (let i = 0; i < 2000 && useEditorTimelineStore.getState().status !== 'ready'; i += 1) {
+    await settle();
+  }
   expect(useEditorTimelineStore.getState().status).toBe('ready');
   return useEditorTimelineStore;
 }
 
 // Each simulated page re-evaluates the store's whole module graph
-// (`vi.resetModules`), which under a full parallel run can take seconds, hence
-// the longer per-test budget. The test itself never waits on a clock.
-describe('a reload inside the save debounce (B-274)', { timeout: 60_000 }, () => {
-  beforeEach(() => {
+// (`vi.resetModules`), which is CPU-bound: seconds alone, a minute or more when
+// other test files are compiling at the same time. The test itself never waits
+// on a clock, so it gets no wall-clock budget (`timeout: 0`) instead of a guess
+// that a loaded machine can overrun. A hang is still caught, because every wait
+// inside is a bounded count of state checks (`openPage`), not a duration.
+describe('a reload inside the save debounce (B-274)', { timeout: 0 }, () => {
+beforeEach(() => {
     disk.timeline = base();
     disk.savedSeq = null;
     disk.journal = [];
@@ -241,5 +255,19 @@ describe('a reload inside the save debounce (B-274)', { timeout: 60_000 }, () =>
     const page2 = await openPage();
     expect(page2.getState().timeline).toEqual(base());
     expect(page2.getState().recoveredEdits).toBe(2);
+  });
+});
+
+describe('journalOrigin (B-293)', () => {
+  const zero = { kind: 'set_track_gain', track: 0, gain: 0 } as const;
+  it('records the named origin on a gain-0 write', () => {
+    expect(journalOrigin(zero, 'mute-button')).toBe('mute-button');
+    expect(journalOrigin(zero, 'mcp:editor_set_track_gain')).toBe('mcp:editor_set_track_gain');
+  });
+  it('flags a gain-0 write nobody named as unattributed', () => {
+    expect(journalOrigin(zero, undefined)).toBe(UNATTRIBUTED_ORIGIN);
+  });
+  it('adds nothing to an ordinary gain write', () => {
+    expect(journalOrigin({ kind: 'set_track_gain', track: 0, gain: 0.5 }, undefined)).toBeUndefined();
   });
 });

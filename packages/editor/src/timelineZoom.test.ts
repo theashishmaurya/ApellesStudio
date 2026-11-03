@@ -8,9 +8,16 @@
  * that could pass by coincidence.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { buttonZoomAnchorX, frameAtViewportX, scrollLeftForAnchor } from './timelineZoom';
+import {
+  PINCH_MAX_DELTA_PX,
+  buttonZoomAnchorX,
+  createZoomCoalescer,
+  frameAtViewportX,
+  pinchZoomFactor,
+  scrollLeftForAnchor,
+} from './timelineZoom';
 import { MIN_PX_PER_SEC, MAX_PX_PER_SEC, DEFAULT_PX_PER_SEC } from './ruler';
 
 const FPS = 24;
@@ -109,5 +116,93 @@ describe('buttonZoomAnchorX — the anchor a +/- press has no cursor for', () =>
     // scrollLeft chosen so the playhead lands exactly at x = 0.
     const scrollLeft = START_LEFT + (240 / FPS) * 90;
     expect(buttonZoomAnchorX(240, FPS, 90, scrollLeft, START_LEFT, VIEWPORT)).toBe(0);
+  });
+});
+
+describe('pinchZoomFactor (B-375)', () => {
+  it('is proportional: a bigger delta zooms more, the sign picks the direction', () => {
+    expect(pinchZoomFactor(0)).toBe(1);
+    expect(pinchZoomFactor(-2)).toBeGreaterThan(1);
+    expect(pinchZoomFactor(2)).toBeLessThan(1);
+    expect(pinchZoomFactor(-10)).toBeGreaterThan(pinchZoomFactor(-2));
+    expect(pinchZoomFactor(10)).toBeLessThan(pinchZoomFactor(2));
+  });
+  it('is exponential: N small events equal one event of the summed delta, and in then out cancels', () => {
+    const many = Array.from({ length: 10 }, () => pinchZoomFactor(-2)).reduce((a, b) => a * b, 1);
+    expect(many).toBeCloseTo(pinchZoomFactor(-20), 9);
+    expect(pinchZoomFactor(-7) * pinchZoomFactor(7)).toBeCloseTo(1, 12);
+  });
+  it('clamps a single event so a mouse-wheel notch is a step, not a jump', () => {
+    expect(pinchZoomFactor(-120)).toBe(pinchZoomFactor(-PINCH_MAX_DELTA_PX));
+    expect(pinchZoomFactor(1e6)).toBe(pinchZoomFactor(PINCH_MAX_DELTA_PX));
+  });
+  it('reads line and page delta modes in scaled units', () => {
+    expect(pinchZoomFactor(-1, 1)).toBeCloseTo(pinchZoomFactor(-16), 12);
+    expect(pinchZoomFactor(-1, 2)).toBe(pinchZoomFactor(-PINCH_MAX_DELTA_PX));
+  });
+});
+
+describe('createZoomCoalescer (B-375, D-437 S8)', () => {
+  function fakeRaf() {
+    const queue: Array<() => void> = [];
+    return {
+      raf: (cb: () => void) => queue.push(cb),
+      caf: vi.fn(),
+      frame: () => queue.splice(0).forEach((cb) => cb()),
+      pending: () => queue.length,
+    };
+  }
+  it('N events in a frame make ONE flush with the product of the factors and the last anchor', () => {
+    const f = fakeRaf();
+    const flush = vi.fn();
+    const z = createZoomCoalescer(flush, f.raf, f.caf);
+    for (let i = 0; i < 6; i++) z.push(pinchZoomFactor(-3), 100 + i);
+    expect(flush).not.toHaveBeenCalled();
+    expect(f.pending()).toBe(1);
+    f.frame();
+    expect(flush).toHaveBeenCalledTimes(1);
+    expect(flush.mock.calls[0][0]).toBeCloseTo(pinchZoomFactor(-18), 9);
+    expect(flush.mock.calls[0][1]).toBe(105);
+    // The next frame starts fresh.
+    z.push(pinchZoomFactor(3), 7);
+    f.frame();
+    expect(flush).toHaveBeenCalledTimes(2);
+    expect(flush.mock.calls[1][1]).toBe(7);
+  });
+  it('does not flush when the frame\'s events cancel out', () => {
+    const f = fakeRaf();
+    const flush = vi.fn();
+    const z = createZoomCoalescer(flush, f.raf, f.caf);
+    z.push(pinchZoomFactor(-5), 1);
+    z.push(pinchZoomFactor(5), 1);
+    f.frame();
+    expect(flush).not.toHaveBeenCalled();
+  });
+  it('the anchor survives the batch: the frame under the last pointer x holds still', () => {
+    const f = fakeRaf();
+    let pxPerSec = 100;
+    let scroll = 400;
+    const flush = vi.fn((factor: number, x: number) => {
+      const frame = frameAtViewportX(x, 30, pxPerSec, scroll, 0);
+      pxPerSec *= factor;
+      scroll = scrollLeftForAnchor(frame, x, 30, pxPerSec, 0);
+      expect(frameAtViewportX(x, 30, pxPerSec, scroll, 0)).toBeCloseTo(frame, 6);
+    });
+    const z = createZoomCoalescer(flush, f.raf, f.caf);
+    z.push(pinchZoomFactor(-4), 200);
+    z.push(pinchZoomFactor(-4), 260);
+    f.frame();
+    expect(flush).toHaveBeenCalledTimes(1);
+  });
+  it('cancel drops the pending batch', () => {
+    const f = fakeRaf();
+    const flush = vi.fn();
+    const z = createZoomCoalescer(flush, f.raf, f.caf);
+    z.push(2, 1);
+    z.cancel();
+    expect(f.caf).toHaveBeenCalled();
+    z.push(1.5, 1);
+    f.frame();
+    expect(flush.mock.calls.at(-1)?.[0]).toBe(1.5);
   });
 });

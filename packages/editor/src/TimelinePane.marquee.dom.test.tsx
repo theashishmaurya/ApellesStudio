@@ -73,6 +73,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 // so import order in source doesn't actually matter here, but keeping the
 // mock textually first documents the real requirement).
 import { useEditorTimelineStore } from './timelineStore';
+import { pinchZoomFactor } from './timelineZoom';
 import { TimelinePane } from './TimelinePane';
 import type { Timeline } from './timeline';
 import { MARQUEE_MIN_DRAG_PX } from './marquee';
@@ -380,10 +381,10 @@ describe('marquee-select — real DOM, real PointerEvents (D-137 via D-142 harne
   });
 
   it('9. a ctrl-wheel zoom mid-drag is read live, not from a stale closure — the band rescales with the content it encloses', async () => {
-    // `TimelinePane.tsx`'s own `ZOOM_STEP` (1.2) — each ctrl-wheel tick
-    // multiplies `pxPerSec` by this. Four ticks ≈ 1.2^4 ≈ 2.07x, a change
+    // `pinchZoomFactor(-100)` (B-375) — each ctrl-wheel tick
+    // multiplies `pxPerSec` by this. Four ticks ≈ 1.35^4 ≈ 3.3x, a change
     // large enough to be unambiguous against jsdom's own pixel rounding.
-    const ZOOM_STEP = 1.2;
+    const ZOOM_STEP = pinchZoomFactor(-100); // B-375: proportional, clamped per event
     const ticks = 4;
 
     // Capture the marquee's rendered pixel band BEFORE and AFTER a real

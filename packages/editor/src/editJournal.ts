@@ -35,8 +35,20 @@ import { applyOp as applyOpPure, type EditOp, type Timeline } from './timeline';
  *  scopes the entry to the timeline it was made on, so an entry is never
  *  replayed onto a different one after a switch. */
 export type EditJournalEntry =
-  | { seq: number; timelineId: string; kind: 'op'; op: EditOp }
+  | { seq: number; timelineId: string; kind: 'op'; op: EditOp; origin?: string }
   | { seq: number; timelineId: string; kind: 'snapshot'; timeline: Timeline };
+
+/** B-293 — who asked for a write that silences a track. A track's gain was once
+ *  found at 0 mid-edit with no recorded cause, so every `set_track_gain` to
+ *  exactly 0 is journalled with its origin: the Mute button (`'mute-button'`),
+ *  the MCP tool (`'mcp:editor_set_track_gain'`) or, when a caller named
+ *  nothing, `'unattributed'`. Any other op carries an origin only when its
+ *  caller named one. */
+export const UNATTRIBUTED_ORIGIN = 'unattributed';
+export function journalOrigin(op: EditOp, origin: string | undefined): string | undefined {
+  if (op.kind === 'set_track_gain' && op.gain === 0) return origin ?? UNATTRIBUTED_ORIGIN;
+  return origin;
+}
 
 /** What `chroma_edit_journal_read` answers: the sequence the persisted
  *  manifest records as included (`null` for a project never saved with one),

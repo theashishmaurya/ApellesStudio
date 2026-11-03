@@ -203,6 +203,24 @@ const ACTIVATION_NUDGE_PX = 8;
  *  dnd-kit listens on the owning document (this pane's own marquee/fade
  *  listeners are the ones on `window`), per the D-235 file's own probe, so the
  *  moves go there. */
+/** The ghost's box once it has stopped changing: read it every frame until two
+ *  consecutive frames agree (and it exists). dnd-kit commits the overlay's
+ *  position a variable number of frames after the pointer moves, so a fixed
+ *  one-frame wait was a wall-clock bet that lost on a loaded machine; waiting
+ *  for the geometry to settle depends on the state, not the speed. Bounded so
+ *  a ghost that never settles fails the assertion instead of hanging. */
+async function settledGhostBox(): Promise<{ left: number; width: number } | null> {
+  const MAX_FRAMES = 120;
+  let prev = ghostBox();
+  for (let i = 0; i < MAX_FRAMES; i += 1) {
+    await nextFrame();
+    const cur = ghostBox();
+    if (cur !== null && prev !== null && cur.left === prev.left && cur.width === prev.width) return cur;
+    prev = cur;
+  }
+  return prev;
+}
+
 async function dragAndSample(
   el: HTMLElement,
   fromX: number,
@@ -217,8 +235,7 @@ async function dragAndSample(
   const samples: Array<{ x: number; ghost: { left: number; width: number } | null }> = [];
   for (const x of path) {
     firePointerEvent(document, 'pointermove', { x, y }, opts);
-    await nextFrame();
-    samples.push({ x, ghost: ghostBox() });
+    samples.push({ x, ghost: await settledGhostBox() });
   }
   firePointerEvent(document, 'pointerup', { x: path[path.length - 1] ?? fromX, y }, opts);
   await nextFrame();

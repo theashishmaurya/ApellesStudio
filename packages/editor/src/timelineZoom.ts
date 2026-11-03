@@ -103,3 +103,62 @@ export function buttonZoomAnchorX(
   if (playheadX >= 0 && playheadX <= viewportWidth) return playheadX;
   return viewportWidth / 2;
 }
+
+/**
+ * Pinch / ctrl-wheel zoom, proportional to the gesture (B-375).
+ *
+ * The handler used to apply a fixed 1.2x per wheel event whatever its
+ * `deltaY`, so a slow pinch and a fast one zoomed the same amount per event
+ * and a trackpad's many small events overshot. The factor is now exponential
+ * in the delta, `exp(-deltaY * PINCH_ZOOM_K)`: deltas add up as exponents, so
+ * N small events zoom exactly as much as one event of their summed delta, and
+ * zooming in then out by the same delta returns to the same zoom.
+ */
+export const PINCH_ZOOM_K = 0.01;
+/** One event never zooms by more than `exp(0.3)` (about 1.35x), so a mouse
+ *  wheel notch (deltaY of 100 or more) is a step, not a jump. */
+export const PINCH_MAX_DELTA_PX = 30;
+/** `deltaY` of a `DOM_DELTA_LINE` event is in lines; this is one line in px. */
+export const PINCH_LINE_PX = 16;
+
+/** The zoom factor one ctrl-wheel event applies. `deltaMode` is the DOM's
+ *  (0 pixel, 1 line, 2 page); a page is treated as 100 lines' worth, clamped. */
+export function pinchZoomFactor(deltaY: number, deltaMode = 0): number {
+  const px = deltaMode === 1 ? deltaY * PINCH_LINE_PX : deltaMode === 2 ? deltaY * 100 : deltaY;
+  const clamped = Math.max(-PINCH_MAX_DELTA_PX, Math.min(PINCH_MAX_DELTA_PX, px));
+  return Math.exp(-clamped * PINCH_ZOOM_K);
+}
+
+/**
+ * Coalesces zoom events to one flush per animation frame (D-437 S8): the
+ * factors multiply, the latest pointer x is the anchor. `flush` receives the
+ * accumulated factor and anchor, and is not called when they cancel to ~1.
+ * `raf`/`caf` are injectable so the batching is testable without a browser.
+ */
+export function createZoomCoalescer(
+  flush: (factor: number, anchorClientX: number) => void,
+  raf: (cb: () => void) => number = (cb) => requestAnimationFrame(cb),
+  caf: (id: number) => void = (id) => cancelAnimationFrame(id),
+) {
+  let factor = 1;
+  let clientX = 0;
+  let handle = 0;
+  const run = () => {
+    handle = 0;
+    const f = factor;
+    factor = 1;
+    if (Math.abs(f - 1) > 1e-9) flush(f, clientX);
+  };
+  return {
+    push(eventFactor: number, anchorClientX: number) {
+      factor *= eventFactor;
+      clientX = anchorClientX;
+      if (handle === 0) handle = raf(run);
+    },
+    cancel() {
+      if (handle !== 0) caf(handle);
+      handle = 0;
+      factor = 1;
+    },
+  };
+}
