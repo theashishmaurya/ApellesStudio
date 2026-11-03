@@ -49,7 +49,7 @@
  *                                   (browser / Inspector width, timeline
  *                                   height) and whether the browser shows;
  *                                   reported as `editor.layout`.
- *   `debug_set_inspector_tab`     — that Inspector's Video/Audio tab (D-246).
+ *   `debug_set_inspector_tab`     — that Inspector's Video/Audio/Speed/Info tab (D-246, v0.3.0).
  *   `debug_set_popover_open`      — any registered Edit-tab popover/dialog by
  *                                   id (D-252, `@apelles/editor`'s
  *                                   `panelRegistry.ts`) — the canvas-size

@@ -63,9 +63,12 @@ const TEXT_CLIP_ID = 'title-1';
 /** Every section the pre-D-246 Inspector rendered for an ordinary media clip,
  *  by its own heading. The point of the list is completeness: the union of the
  *  two tabs has to be exactly this, or the reorganisation dropped something. */
+// v0.3.0 (B-359 item 1) — Speed moved to its own tab; Info is a read-only
+// page with no sections.
 const ALL_SECTIONS = ['Transform', 'Compositing', 'Crop', 'Dynamic zoom', 'Highlights', 'Speed', 'Fade', 'Keyframes', 'Audio', 'EQ'];
-const VIDEO_SECTIONS = ['Transform', 'Compositing', 'Crop', 'Dynamic zoom', 'Highlights', 'Speed', 'Fade', 'Keyframes'];
+const VIDEO_SECTIONS = ['Transform', 'Compositing', 'Crop', 'Dynamic zoom', 'Highlights', 'Fade', 'Keyframes'];
 const AUDIO_SECTIONS = ['Audio', 'EQ'];
+const SPEED_SECTIONS = ['Speed'];
 
 function fixture(): Timeline {
   const clip: Clip = {
@@ -176,7 +179,7 @@ function currentClip(): Clip {
 describe('the clip Inspector’s Video / Audio tabs (D-246)', () => {
   it('opens on Video, showing the picture sections and none of the sound ones', async () => {
     await render();
-    expect(tabLabels()).toEqual(['Video', 'Audio']);
+    expect(tabLabels()).toEqual(['Video', 'Audio', 'Speed', 'Info']);
     expect(tab('Video').getAttribute('aria-selected')).toBe('true');
     expect(tab('Audio').getAttribute('aria-selected')).toBe('false');
     expect(sections()).toEqual(VIDEO_SECTIONS);
@@ -197,12 +200,16 @@ describe('the clip Inspector’s Video / Audio tabs (D-246)', () => {
     const video = sections();
     await clickTab('Audio');
     const audio = sections();
+    await clickTab('Speed');
+    const speed = sections();
+    expect(speed).toEqual(SPEED_SECTIONS);
 
     // Nothing lost…
-    expect([...video, ...audio].sort()).toEqual([...ALL_SECTIONS].sort());
-    // …and nothing duplicated across the two, which would be two controls
+    expect([...video, ...audio, ...speed].sort()).toEqual([...ALL_SECTIONS].sort());
+    // …and nothing duplicated across the tabs, which would be two controls
     // editing one value from two places.
-    expect(video.filter((s) => audio.includes(s))).toEqual([]);
+    expect(video.filter((s) => audio.includes(s) || speed.includes(s))).toEqual([]);
+    expect(audio.filter((s) => speed.includes(s))).toEqual([]);
   });
 
   it('the tab is one piece of state: the human’s click writes what the debug op reads', async () => {
@@ -291,13 +298,13 @@ describe('the clip Inspector’s Video / Audio tabs (D-246)', () => {
     await render();
     await clickTab('Audio');
 
-    // A title has no audio at all, so no Audio tab — and with one tab left,
-    // no tab bar: exactly the panel a title had before tabs existed.
+    // A title has no audio at all, so no Audio tab (and no footage to retime,
+    // so no Speed tab): Video and Info (v0.3.0).
     actSync(() => {
       useEditorTimelineStore.setState({ selection: [{ track: 0, id: TEXT_CLIP_ID }] });
     });
     await waitFrames(2);
-    expect(tabLabels()).toEqual([]);
+    expect(tabLabels()).toEqual(['Video', 'Info']);
     expect(sections()).toContain('Transform');
     // The fallback is a display resolution, not a write: the user's choice is
     // still there…

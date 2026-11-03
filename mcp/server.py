@@ -7916,15 +7916,17 @@ def debug_set_editor_layout(
 
 @mcp.tool()
 def debug_set_inspector_tab(tab: str) -> str:
-    """Switch the Edit tab's clip Inspector between its "video" and "audio"
-    tabs (D-246) — the same state the tab bar's own button drives.
+    """Switch the Edit tab's clip Inspector between its "video", "audio",
+    "speed" and "info" tabs (D-246; four since v0.3.0) — the same state the
+    tab bar's own button drives.
 
-    The Inspector splits a clip's properties in two: Video holds Transform,
-    Crop, Dynamic Zoom, Speed, Fade and the whole-clip Keyframes actions;
-    Audio holds Volume/Pan and the four-band EQ. Only one is on screen at a
-    time, so a `debug_screenshot` or a `debug_dom_tree` of the Inspector shows
-    one of them — set the tab first when you are looking for a control on the
-    other.
+    The Inspector splits a clip's properties: Video holds Transform,
+    Compositing, Crop, Dynamic Zoom, Highlights, Fade and the whole-clip
+    Keyframes actions; Audio holds Volume/Pan and the four-band EQ; Speed
+    holds the retime; Info is a read-only page of the clip's media facts and
+    its in / out. Only one is on screen at a time, so a `debug_screenshot` or
+    a `debug_dom_tree` of the Inspector shows one of them — set the tab first
+    when you are looking for a control on another.
 
     You do NOT need this to EDIT anything: every control on both tabs already
     has its own MCP tool (`editor_set_clip_transform`, `set_clip_audio` /
@@ -7932,9 +7934,9 @@ def debug_set_inspector_tab(tab: str) -> str:
     is showing. This is for looking at the app, which is what the `debug_*`
     family is for.
 
-    The choice is sticky and per session: a clip with no audio at all (a
-    generated title) shows its Video tab regardless, without forgetting the
-    choice. An unknown name is refused with the accepted list rather than
+    The choice is sticky and per session: a clip without the chosen tab (a
+    generated title has no Audio or Speed) shows its Video tab regardless,
+    without forgetting the choice. An unknown name is refused with the accepted list rather than
     silently ignored.
 
     Returns {ok, inspectorTab}."""

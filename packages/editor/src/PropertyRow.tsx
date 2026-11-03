@@ -45,8 +45,16 @@
  * into one undo step. B-113 / D-253's concerns (digits fitting, no native
  * spinner) are the scrubber's own now; `numericField.ts` keeps their history.
  *
- * Pure presentation, like the panel it came from: no store access (the
- * scrub's undo bracket lives in `InspectorNumber`), no
+ * **v0.3.0 (B-359 item 2): inline sliders and paired rows.** A row given a
+ * `slider` span renders `InspectorSliderField` (a slider beside the field,
+ * one undo step per drag), as the approved mockup draws Scale, Rotation and
+ * Opacity. `PairedPropertyRow` puts two properties on one row (Position X /
+ * Y) behind ONE keyframe slot, Final Cut's single Position parameter: the
+ * diamond animates or stops both, ‹ › walk the union of their keys, ↺
+ * resets both, each multi-op action one undo step.
+ *
+ * Pure presentation, like the panel it came from: no store access beyond the
+ * undo bracket (`InspectorNumber`, and the paired row's two-op actions), no
  * `Clip` knowledge, nothing beyond the props below.
  */
 import {
@@ -58,7 +66,8 @@ import {
 } from '@phosphor-icons/react';
 import { InspectorRow } from '@apelles/ui';
 
-import { InspectorNumber } from './InspectorNumber';
+import { beginHistoryGroup, endHistoryGroup } from './timelineStore';
+import { InspectorNumber, InspectorSliderField } from './InspectorNumber';
 
 /** One keyframe-slot button: 16 px, so ‹ ◇ › ∿ ↺ fit the 80 px slot. */
 const SLOT_BUTTON =
@@ -123,6 +132,119 @@ export function staticPropertyState(value: number): PropertyState {
  *  genuinely cannot be animated — three permanently-disabled buttons would
  *  advertise an affordance that does not exist. `onReset` stays required
  *  either way: every property here has a rest value. */
+/** The ‹ ◇ › ∿ ↺ slot, shared by the single and the paired row. */
+function KeyframeSlot({
+  label,
+  animated,
+  keyedHere,
+  hasPrev,
+  hasNext,
+  disabled,
+  onToggle,
+  onNav,
+  onReset,
+  onOpenCurve,
+  curveOpen,
+}: {
+  label: string;
+  animated: boolean;
+  keyedHere: boolean;
+  hasPrev: boolean;
+  hasNext: boolean;
+  disabled: boolean;
+  /** Omitted (with `onNav`) for a property that cannot be animated. */
+  onToggle?: () => void;
+  onNav?: (dir: -1 | 1) => void;
+  onReset: () => void;
+  onOpenCurve?: () => void;
+  curveOpen: boolean;
+}) {
+  // Both together or neither — a row with nav arrows but no diamond (or the
+  // reverse) is not a state any caller wants.
+  const keyframeable = !!onToggle && !!onNav;
+  return (
+    <>
+      {keyframeable && (
+        <>
+          <button
+            type="button"
+            className={`${SLOT_BUTTON} ${animated ? '' : 'invisible'}`}
+            disabled={disabled || !hasPrev}
+            onClick={() => onNav?.(-1)}
+            title={`Go to the previous ${label} keyframe`}
+            aria-label={`Previous ${label} keyframe`}
+          >
+            <CaretLeftIcon size={11} />
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            // Keyed at the playhead reads in the selection colour; animated but
+            // between keys is the same hue dimmed; static is hidden until the
+            // row is hovered or focused. That is the whole reason ‹ › mean
+            // anything — the row says whether the playhead sits on a key.
+            className={`${SLOT_BUTTON} ${animated ? (keyedHere ? 'text-selection' : 'text-selection/60') : ON_ROW_ACTIVE}`}
+            onClick={() => onToggle?.()}
+            title={
+              animated
+                ? `Stop animating ${label} (removes its keyframes, holds its current value)` +
+                  (keyedHere ? ' — keyframed at the playhead' : ' — no keyframe at the playhead')
+                : `Animate ${label} (keyframes it at the playhead)`
+            }
+            aria-label={`Toggle ${label} keyframes`}
+            aria-pressed={animated}
+          >
+            {/* D-300 — solid = Phosphor's `fill` weight. */}
+            <DiamondIcon size={11} weight={animated ? 'fill' : 'regular'} />
+          </button>
+          <button
+            type="button"
+            className={`${SLOT_BUTTON} ${animated ? '' : 'invisible'}`}
+            disabled={disabled || !hasNext}
+            onClick={() => onNav?.(1)}
+            title={`Go to the next ${label} keyframe`}
+            aria-label={`Next ${label} keyframe`}
+          >
+            <CaretRightIcon size={11} />
+          </button>
+        </>
+      )}
+      {/* D-233 — only on an ANIMATED property: an ease curve is the shape
+          BETWEEN two keyframes, so a static property has nothing to shape. */}
+      {onOpenCurve && animated && (
+        <button
+          type="button"
+          disabled={disabled}
+          className={`${SLOT_BUTTON} ${curveOpen ? 'text-accent-text' : ''}`}
+          onClick={onOpenCurve}
+          title={curveOpen ? `Close ${label}'s ease curve` : `Edit ${label}'s ease curves on the timeline`}
+          aria-label={`Edit ${label} ease curve`}
+          aria-pressed={curveOpen}
+        >
+          <BezierCurveIcon size={11} />
+        </button>
+      )}
+      <button
+        type="button"
+        disabled={disabled}
+        className={`${SLOT_BUTTON} ${ON_ROW_ACTIVE}`}
+        onClick={onReset}
+        title={`Reset ${label} to its default`}
+        aria-label={`Reset ${label}`}
+      >
+        <ArrowCounterClockwiseIcon size={11} />
+      </button>
+    </>
+  );
+}
+
+/** A property's natural range, for the inline slider (the field keeps its own
+ *  `min` / `max`). */
+export interface SliderSpan {
+  min: number;
+  max: number;
+}
+
 export function PropertyRow<TParam extends string>({
   label,
   param,
@@ -131,6 +253,7 @@ export function PropertyRow<TParam extends string>({
   min,
   max,
   unit,
+  slider,
   disabled,
   onChange,
   onKeyframeToggle,
@@ -147,6 +270,8 @@ export function PropertyRow<TParam extends string>({
   max?: number;
   /** Suffix shown after the value (`°`, `px`). */
   unit?: string;
+  /** v0.3.0 — draw an inline slider over this span beside the field. */
+  slider?: SliderSpan;
   disabled: boolean;
   onChange: (value: number) => void;
   onKeyframeToggle?: (param: TParam) => void;
@@ -163,103 +288,170 @@ export function PropertyRow<TParam extends string>({
    *  having to look at the timeline to find out. */
   curveOpen?: boolean;
 }) {
-  // Both together or neither — a row with nav arrows but no diamond (or the
-  // reverse) is not a state any caller wants.
   const keyframeable = !!onKeyframeToggle && !!onKeyframeNav;
+  const slot = (
+    <KeyframeSlot
+      label={label}
+      animated={state.animated}
+      keyedHere={state.keyedHere}
+      hasPrev={state.prevFrame !== null}
+      hasNext={state.nextFrame !== null}
+      disabled={disabled}
+      onToggle={keyframeable ? () => onKeyframeToggle?.(param) : undefined}
+      onNav={keyframeable ? (dir) => onKeyframeNav?.(param, dir) : undefined}
+      onReset={() => onReset(param)}
+      onOpenCurve={onOpenCurve ? () => onOpenCurve(param) : undefined}
+      curveOpen={curveOpen}
+    />
+  );
+
+  const fieldProps = {
+    'aria-label': label,
+    value: state.value,
+    step,
+    min,
+    max,
+    unit,
+    disabled,
+    // The field rounds what it SHOWS; the exact stored value is one
+    // hover (or one click into the field) away.
+    title: `${label}: ${state.value}`,
+    onChange,
+  };
+
+  return (
+    <InspectorRow label={label} disabled={disabled} slot={slot}>
+      {slider ? (
+        <InspectorSliderField
+          {...fieldProps}
+          sliderMin={slider.min}
+          sliderMax={slider.max}
+          onReset={() => onReset(param)}
+        />
+      ) : (
+        <InspectorNumber {...fieldProps} className="min-w-0 flex-1" />
+      )}
+    </InspectorRow>
+  );
+}
+
+/** Run several ops as one undo step (the paired row's two-property actions). */
+function asOneStep(run: () => void): void {
+  beginHistoryGroup();
+  try {
+    run();
+  } finally {
+    endHistoryGroup();
+  }
+}
+
+/** The nearer of two optional frames in one direction. */
+function nearer(a: number | null, b: number | null, dir: -1 | 1): number | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return dir < 0 ? Math.max(a, b) : Math.min(a, b);
+}
+
+/** Two properties on one row behind one keyframe slot (v0.3.0, B-359 item 2):
+ *  Position as `X [..] Y [..]`, the mockup's and Final Cut's single Position
+ *  parameter. Each value keeps its own field, scrub and op; the slot treats
+ *  the pair as one property:
+ *  - ◇ on a static pair animates both; on a pair where either is animated it
+ *    stops every animated one (so the two never end up half-keyed by the
+ *    diamond itself);
+ *  - ‹ › go to the nearest key of either;
+ *  - ↺ resets both;
+ *  - the curve button opens the first animated one's curve.
+ *  Two-op actions run inside one history group: one undo step. */
+export function PairedPropertyRow<TParam extends string>({
+  label,
+  params,
+  prefixes,
+  states,
+  step,
+  min,
+  max,
+  unit,
+  disabled,
+  onChange,
+  onKeyframeToggle,
+  onKeyframeNav,
+  onReset,
+  onOpenCurve,
+  openCurveParam = null,
+}: {
+  label: string;
+  params: readonly [TParam, TParam];
+  /** The inline prefixes, `['X', 'Y']`. */
+  prefixes: readonly [string, string];
+  states: readonly [PropertyState, PropertyState];
+  step: number;
+  min?: number;
+  max?: number;
+  unit?: string;
+  disabled: boolean;
+  onChange: (param: TParam, value: number) => void;
+  /** Receives BOTH params at once, so the caller writes them as one keyframe
+   *  array (two writes from one render's keyframes would drop the first). */
+  onKeyframeToggle?: (params: readonly TParam[]) => void;
+  onKeyframeNav?: (param: TParam, dir: -1 | 1) => void;
+  /** Both params at once, for the same reason. */
+  onReset: (params: readonly TParam[]) => void;
+  onOpenCurve?: (param: TParam) => void;
+  openCurveParam?: TParam | null;
+}) {
+  const [a, b] = states;
+  const animated = a.animated || b.animated;
+  const keyedHere = (a.animated && a.keyedHere) || (b.animated && b.keyedHere);
+  const keyframeable = !!onKeyframeToggle && !!onKeyframeNav;
+  const firstAnimated = a.animated ? params[0] : b.animated ? params[1] : null;
+
+  // Animated pair → the caller stops each animated one; static pair → it
+  // animates both. A static write can ride along, hence the one step.
+  const toggle = () => asOneStep(() => onKeyframeToggle?.(params));
+
+  const nav = (dir: -1 | 1) => {
+    const target = dir < 0 ? nearer(a.prevFrame, b.prevFrame, -1) : nearer(a.nextFrame, b.nextFrame, 1);
+    if (target === null) return;
+    // Hand the move to whichever param owns that key.
+    const own = (dir < 0 ? a.prevFrame : a.nextFrame) === target ? params[0] : params[1];
+    onKeyframeNav?.(own, dir);
+  };
 
   const slot = (
-    <>
-      {keyframeable && (
-        <>
-          <button
-            type="button"
-            className={`${SLOT_BUTTON} ${state.animated ? '' : 'invisible'}`}
-            disabled={disabled || state.prevFrame === null}
-            onClick={() => onKeyframeNav?.(param, -1)}
-            title={`Go to the previous ${label} keyframe`}
-            aria-label={`Previous ${label} keyframe`}
-          >
-            <CaretLeftIcon size={11} />
-          </button>
-          <button
-            type="button"
-            disabled={disabled}
-            // Keyed at the playhead reads in the selection colour; animated but
-            // between keys is the same hue dimmed; static is hidden until the
-            // row is hovered or focused. That is the whole reason ‹ › mean
-            // anything — the row says whether the playhead sits on a key.
-            className={`${SLOT_BUTTON} ${
-              state.animated ? (state.keyedHere ? 'text-selection' : 'text-selection/60') : ON_ROW_ACTIVE
-            }`}
-            onClick={() => onKeyframeToggle?.(param)}
-            title={
-              state.animated
-                ? `Stop animating ${label} (removes its keyframes, holds its current value)` +
-                  (state.keyedHere ? ' — keyframed at the playhead' : ' — no keyframe at the playhead')
-                : `Animate ${label} (keyframes it at the playhead)`
-            }
-            aria-label={`Toggle ${label} keyframes`}
-            aria-pressed={state.animated}
-          >
-            {/* D-300 — solid = Phosphor's `fill` weight. */}
-            <DiamondIcon size={11} weight={state.animated ? 'fill' : 'regular'} />
-          </button>
-          <button
-            type="button"
-            className={`${SLOT_BUTTON} ${state.animated ? '' : 'invisible'}`}
-            disabled={disabled || state.nextFrame === null}
-            onClick={() => onKeyframeNav?.(param, 1)}
-            title={`Go to the next ${label} keyframe`}
-            aria-label={`Next ${label} keyframe`}
-          >
-            <CaretRightIcon size={11} />
-          </button>
-        </>
-      )}
-      {/* D-233 — only on an ANIMATED property: an ease curve is the shape
-          BETWEEN two keyframes, so a static property has nothing to shape. */}
-      {onOpenCurve && state.animated && (
-        <button
-          type="button"
-          disabled={disabled}
-          className={`${SLOT_BUTTON} ${curveOpen ? 'text-accent-text' : ''}`}
-          onClick={() => onOpenCurve(param)}
-          title={curveOpen ? `Close ${label}'s ease curve` : `Edit ${label}'s ease curves on the timeline`}
-          aria-label={`Edit ${label} ease curve`}
-          aria-pressed={curveOpen}
-        >
-          <BezierCurveIcon size={11} />
-        </button>
-      )}
-      <button
-        type="button"
-        disabled={disabled}
-        className={`${SLOT_BUTTON} ${ON_ROW_ACTIVE}`}
-        onClick={() => onReset(param)}
-        title={`Reset ${label} to its default`}
-        aria-label={`Reset ${label}`}
-      >
-        <ArrowCounterClockwiseIcon size={11} />
-      </button>
-    </>
+    <KeyframeSlot
+      label={label}
+      animated={animated}
+      keyedHere={keyedHere}
+      hasPrev={a.prevFrame !== null || b.prevFrame !== null}
+      hasNext={a.nextFrame !== null || b.nextFrame !== null}
+      disabled={disabled}
+      onToggle={keyframeable ? toggle : undefined}
+      onNav={keyframeable ? nav : undefined}
+      onReset={() => asOneStep(() => onReset(params))}
+      onOpenCurve={onOpenCurve && firstAnimated ? () => onOpenCurve(firstAnimated) : undefined}
+      curveOpen={openCurveParam !== null && params.includes(openCurveParam)}
+    />
   );
 
   return (
     <InspectorRow label={label} disabled={disabled} slot={slot}>
-      <InspectorNumber
-        aria-label={label}
-        className="min-w-0 flex-1"
-        value={state.value}
-        step={step}
-        min={min}
-        max={max}
-        unit={unit}
-        disabled={disabled}
-        // The field rounds what it SHOWS; the exact stored value is one
-        // hover (or one click into the field) away.
-        title={`${label}: ${state.value}`}
-        onChange={onChange}
-      />
+      {params.map((p, i) => (
+        <InspectorNumber
+          key={p}
+          aria-label={`${label} ${prefixes[i]}`}
+          prefix={prefixes[i]}
+          className="min-w-0 flex-1"
+          value={states[i].value}
+          step={step}
+          min={min}
+          max={max}
+          unit={unit}
+          disabled={disabled}
+          title={`${label} ${prefixes[i]}: ${states[i].value}`}
+          onChange={(v) => onChange(p, v)}
+        />
+      ))}
     </InspectorRow>
   );
 }

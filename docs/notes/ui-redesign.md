@@ -946,6 +946,54 @@ minimum at 1280×800 in the real window, the harness scenarios after the
 layout change (the edit area is wider, so H11's outside-the-visible-area
 misses should drop), and the scrub bar's feel on a trackpad.
 
+## 6e. v0.3.0 gap closure as built (2026-11-03)
+
+The eight gaps the 2026-11-01 comparison found (B-359) and B-354's P5
+leftovers, closed against the approved mockup (owner: "loved the design",
+"yes please" to pulling them into v0.3.0). One subsection per piece.
+
+**Inspector header and tabs (B-359 item 1).**
+- The 44 px header carries the clip's duration on the timeline on the right
+  (`data-chroma-inspector-duration`, `HH:MM:SS:FF` in mono `text-secondary`,
+  from `endFrame - start_frame` at the timeline's rate). The panel now gets the
+  timeline fps as a prop, which is what P4 lacked.
+- Four icon tabs, as the mockup: Video `FilmStrip`, Audio `SpeakerHigh`, Speed
+  `Gauge`, Info `Info` (`CLIP_INSPECTOR_TABS`). Speed holds D-236's retime
+  section, moved out of the Video tab; it is offered where that section ever
+  rendered (not a title, not an adjustment clip). Info (`ClipInfoPanel.tsx`)
+  is read-only: Media (name, format, resolution, frame rate, length, audio,
+  folder, path), Source (in / out) and Timeline (start / end / duration), all
+  from the clip and the media pool's existing probe; a title / caption /
+  adjustment clip shows its kind and its timeline facts. A title now has a tab
+  bar (Video, Info) where it had none.
+- `debug_set_inspector_tab` accepts the four names (both servers' descriptions
+  updated, corpus re-captured).
+- Deviation: no codec row. The pool's probe (`MediaVideoInfo`) records no
+  codec, and a codec guessed from the extension would be a guess shown as a
+  fact; the container format (the extension) is shown as "Format" instead.
+
+**Inspector rows (B-359 item 2).**
+- `@apelles/ui` `InlineSlider` / `SliderField` (`slider-field.tsx`): Base UI
+  slider drawn to §4.10 (3 px track, no fill, 12 px `text-primary` thumb),
+  double-click resets, beside a 56 px `NumberScrubber` on the same value. The
+  slider's span (`sliderMin`/`sliderMax`) is separate from the field's bounds,
+  so a typed value past it is kept and pins the thumb.
+- One gesture, one undo: a slider drag or one key press on the thumb calls the
+  field's `onScrubStart` / `onScrubEnd` once (changes coalesced per frame, the
+  last flushed first). `InspectorSliderField` brackets them with the store's
+  history group, exactly as `InspectorNumber` does for a scrub.
+- Scale (0-4), Rotation (-180..180 deg) and Opacity (0-1) rows carry the
+  slider (`PropertyRow`'s new `slider` prop). Corner radius, crop and audio
+  rows keep the bare field, as the mockup draws them.
+- Position X / Y are one paired row (`PairedPropertyRow`: `X [..] Y [..]`,
+  Final Cut's single Position parameter) behind one keyframe slot: the diamond
+  animates both or stops every animated half, ‹ › go to the nearest key of
+  either, ↺ resets both. The two halves are written as ONE keyframe array
+  (`toggleParamKeyframes` / `resetParam` take a list of params), inside one
+  history group: one undo step.
+- Deviation: values stay in their stored units (Scale 1.12, Opacity 0.85)
+  where the mockup shows percentages; display units are B-366's pass.
+
 ## 7. Human + AI parity
 
 Every new GUI capability gets its MCP surface in the same phase (standing rule):

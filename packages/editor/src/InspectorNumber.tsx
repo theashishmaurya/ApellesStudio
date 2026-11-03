@@ -12,11 +12,19 @@
  * Every Inspector number (`PropertyRow`, Width / Height, Fade, the project
  * settings form) uses this rather than the bare scrubber, so a field cannot
  * forget the bracket.
+ *
+ * `InspectorSliderField` is the same wiring for `@apelles/ui`'s `SliderField`
+ * (v0.3.0, B-359 item 2): a slider drag and a field scrub both fold into one
+ * undo step.
  */
-import { NumberScrubber, type NumberScrubberProps } from '@apelles/ui';
+import { NumberScrubber, SliderField, type NumberScrubberProps, type SliderFieldProps } from '@apelles/ui';
 
 import { beginHistoryGroup, endHistoryGroup } from './timelineStore';
 
 export function InspectorNumber(props: Omit<NumberScrubberProps, 'onScrubStart' | 'onScrubEnd'>) {
   return <NumberScrubber {...props} onScrubStart={beginHistoryGroup} onScrubEnd={endHistoryGroup} />;
+}
+
+export function InspectorSliderField(props: Omit<SliderFieldProps, 'onScrubStart' | 'onScrubEnd'>) {
+  return <SliderField {...props} onScrubStart={beginHistoryGroup} onScrubEnd={endHistoryGroup} />;
 }

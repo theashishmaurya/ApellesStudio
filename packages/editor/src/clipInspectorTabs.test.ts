@@ -43,20 +43,24 @@ function textClip(): Clip {
 }
 
 describe('which tabs a clip has (D-246)', () => {
-  it('a media clip has both — it has a picture and it has sound', () => {
-    expect(clipInspectorTabs(mediaClip())).toEqual(['video', 'audio']);
+  it('a media clip has all four — picture, sound, a retime and its facts (v0.3.0)', () => {
+    expect(clipInspectorTabs(mediaClip())).toEqual(['video', 'audio', 'speed', 'info']);
   });
 
-  it('a title has only Video: a generated title carries no audio stream at all', () => {
+  it('a title has Video and Info: no audio stream, and no footage to retime', () => {
     // The same predicate the Audio and EQ sections used to carry individually
     // (`!clip.text`), stated once here so the tab and the sections it holds
     // can never disagree about whether a clip has audio.
-    expect(clipInspectorTabs(textClip())).toEqual(['video']);
+    expect(clipInspectorTabs(textClip())).toEqual(['video', 'info']);
   });
 
-  it('an adjustment clip keeps both, matching what its sections still render', () => {
+  it('an adjustment clip keeps Video and Audio, matching what its sections still render, but has no Speed', () => {
     const adjustment = { ...mediaClip(), adjustment: { exposure: 0.2 } } as unknown as Clip;
-    expect(clipInspectorTabs(adjustment)).toEqual(['video', 'audio']);
+    expect(clipInspectorTabs(adjustment)).toEqual(['video', 'audio', 'info']);
+  });
+
+  it('a linked picture whose audio half is gone has no Audio tab (B-334)', () => {
+    expect(clipInspectorTabs(mediaClip(), null)).toEqual(['video', 'speed', 'info']);
   });
 
   it('every tab has a label — a tab that renders its own id would be a bug', () => {

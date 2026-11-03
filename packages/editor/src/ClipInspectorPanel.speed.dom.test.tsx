@@ -89,6 +89,8 @@ function setUp(tl: Timeline, playhead = 0) {
     playing: false,
     selection: [{ track: 0, id: CLIP_ID }],
     selectedGap: null,
+    // v0.3.0 (B-359 item 1) — the retime lives on its own Speed tab.
+    inspectorTab: 'speed',
   });
 }
 

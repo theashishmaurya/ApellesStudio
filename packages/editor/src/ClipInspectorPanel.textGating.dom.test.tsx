@@ -108,7 +108,10 @@ afterEach(() => {
 
 function labelExists(label: string): boolean {
   const spans = [...(mounted?.container.querySelectorAll('span') ?? [])];
-  return spans.some((s) => s.textContent === label);
+  if (spans.some((s) => s.textContent === label)) return true;
+  // v0.3.0 — Position X / Y are the two halves of the paired "Position" row,
+  // named by their fields.
+  return !!mounted?.container.querySelector(`[data-slot="number-scrubber"] input[aria-label="${label}"]`);
 }
 
 async function render() {
@@ -166,11 +169,12 @@ describe("a text clip's Inspector hides rows that do nothing for it", () => {
       expect(labelExists(label)).toBe(false);
     }
     // D-246 — and there is no Audio TAB to go looking for them on either: the
-    // gate is stated once now, in `clipInspectorTabs`, and with only one tab
-    // left the bar itself is not drawn — a title's Inspector is exactly the
-    // single scrolling column it was before tabs existed.
+    // gate is stated once, in `clipInspectorTabs`. v0.3.0 — a title has Video
+    // and Info (its kind and timeline place), and no Speed: nothing to retime.
     expect(tabExists('Audio')).toBe(false);
-    expect(tabExists('Video')).toBe(false);
+    expect(tabExists('Speed')).toBe(false);
+    expect(tabExists('Video')).toBe(true);
+    expect(tabExists('Info')).toBe(true);
   });
 
   it('switching selection from a text clip back to a video clip brings the hidden rows back', async () => {
