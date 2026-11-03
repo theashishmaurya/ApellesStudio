@@ -4,6 +4,30 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-376 — the move drag at 300 clips still spikes to 49–66 ms on some runs (before release)
+
+status: open (logged 2026-11-03 at the owner's request, "log them, we will get them back"; after v0.3.0) · severity: low–medium (performance) · baseline: `docs/perf/README.md`
+
+- the `perf-300-move-clip` move phase: moveMaxMs 49–66 ms on some runs against the 50 ms frame budget; the release itself is fixed (B-374). Suspects (unverified): dnd-kit's own renders during the drag, and the lane re-order. Profile with `debug_perf_entries {traceReleaseMs}` widened to the drag.
+
+## B-377 — every Edit change re-renders the whole TimelinePane (toolbar, all track headers, lanes)
+
+status: open (logged 2026-11-03 at the owner's request, "log them, we will get them back"; after v0.3.0) · severity: low–medium (performance) · baseline: `docs/perf/README.md`
+
+- 4–16 ms of React work per edit at 300 clips (D-437 S11 measurement), because the pane subscribes to the whole timeline. Fix: move the timeline subscription down to the lanes and headers that use it, so the toolbar and unchanged tracks don't render. Within budget today, but it is the next large win.
+
+## B-378 — the first preview frame after an app launch takes 1–2 s
+
+status: open (logged 2026-11-03 at the owner's request, "log them, we will get them back"; after v0.3.0) · severity: low–medium (performance) · baseline: `docs/perf/README.md`
+
+- ffmpeg/VideoToolbox decoder start-up, about 350–800 ms per new pipe (B-369 measurement). Options: pre-warm a decoder for the active timeline's first visible source while the project opens; keep pipes warm across timeline switches.
+
+## B-379 — the Inspector re-mounts for the newly selected clip a frame or two after a release (10–20 ms)
+
+status: open (logged 2026-11-03 at the owner's request, "log them, we will get them back"; after v0.3.0) · severity: low–medium (performance) · baseline: `docs/perf/README.md`
+
+- measured in D-437 S11: the deferred Inspector mount (S10) lands after the first frame and costs 10–20 ms, including a forced layout from a Base UI component's `scrollIntoViewIfNeeded`. Fix: keep the Inspector mounted and swap its data, and avoid the forced scroll.
+
 ## B-373 — a paused jump on a newly opened timeline did not scroll to the playhead when the previous timeline had just been scrolled by hand (B-359 item 6 follow-up)
 
 status: **fixed 2026-11-03 (worktree)** · severity: medium (the playhead off screen; failed the v0.3.0 harness run) · area: `packages/editor/src/TimelinePane.tsx` (the paused-seek follow's quiet window, the per-timeline scroll restore)

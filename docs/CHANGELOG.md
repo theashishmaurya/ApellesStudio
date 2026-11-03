@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-03** — **Performance floor recorded** (`docs/perf/README.md`, raw harness reports alongside): the v0.3.0 numbers at 300 clips become regression floors. Remaining gaps logged as B-376 to B-379.
 - **2026-11-03** — **Flaky timing tests made deterministic:** `editJournal.test.ts` B-274 (no wall-clock budget; waits on store state, yields to real I/O), `TimelinePane.dragGhost` case 5 (waits for the ghost geometry to settle instead of one frame), `PreviewPane.playbackCost` (counts every `src` write with a MutationObserver instead of sampling per frame). **Track-command Rust test** brought up to the D-421 contract (an emptied track stays); the code was right, the test stale.
 - **2026-11-03** — **B-293 diagnostic:** a track-gain write of exactly 0 is journalled with its origin (`mute-button` / `mcp:editor_set_track_gain` / `unattributed`, the last also warns); `editor_set_track_gain` reports which track it hit. Cause still unproven; stays open.
 - **2026-11-03** — **B-340 fixed:** the segmented export's lane count is also bounded by available memory (50% of free RAM over an estimated per-segment footprint at the output size; 4K on a 16 GB Mac no longer takes six lanes). **B-375 fixed:** pinch / ctrl-wheel zoom is proportional to the gesture (`exp(-deltaY x 0.01)`, clamped per event), anchored at the pointer, one store write per animation frame.
