@@ -41,7 +41,7 @@ budgets, test ids, known limits: **`docs/notes/ui-harness.md`**.
 | `src/visibility.ts` | keeps targets inside the visible edit area (H11) |
 | `src/activation.ts` | brings the app to the front for a run and hands it back (H15) |
 | `src/scenario.ts` | the scenario / step types |
-| `src/scenarios/` | the starter suite: `editTools.ts` (trim, ripple, roll, slip, slide, split, blade, two-up) `perf300.ts` (the opt-in 300-clip baseline, `--filter perf-300`) and `timeline.ts` (seek, selection, moves, linked A/V, delete/undo, zoom, scroll, header column, markers, keyboard transport, playback) |
+| `src/scenarios/` | the starter suite: `editTools.ts` (trim, ripple, roll, slip, slide, split, blade, two-up) `perf300.ts` (the opt-in 300-clip baseline, `--filter perf-300`), `timeline.ts` (seek, selection, moves, linked A/V, delete/undo, zoom, scroll, header column, markers, keyboard transport, playback), `redesign.ts` (the v0.3.0 gap closure) and `panels.ts` (the v0.3.0 panel redesigns: Export preset chips + an MCP-saved preset in the open sheet, Music edits fade-dot drag on the marked range, the Clipper surface in the viewer area — D-441 / D-442 / D-443) |
 
 ## Boundary
 
