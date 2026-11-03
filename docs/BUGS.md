@@ -557,7 +557,7 @@ status: **fixed** (2026-10-28, **D-425**) · severity: **major** · area: clip s
 
 ## B-324 — the `counter` primitive cannot zero-pad, so a timer cannot read `0:09.00`
 
-status: **open** · severity: **minor** · area: Motion primitives (`Counter.tsx`) · found 2026-10-28
+status: **fixed** (2026-11-03) · severity: **minor** · area: Motion primitives (`Counter.tsx`) · found 2026-10-28
 
 `counter` formats `decimals` and an optional thousands separator but has no minimum-integer-digits
 option, so a running timer shows `0:9.00`, not `0:09.00`. Expected: a `pad` (minimum integer
@@ -565,6 +565,8 @@ digits) field, formatted in `formatCount` with the same locale-independent arith
 Workaround used in "The Domino": the static `prefix` `"0:0"` for the scenes under ten seconds,
 and in the scene that crosses ten seconds two counters (`0:0` + 9→10, `0:` + 10→12) switched
 by opacity keys at the crossing.
+- **fix:** `counter` gains `pad` (schema `primitiveProps.ts`, `Counter.tsx` `formatCount(value, decimals, thousands, pad)`, Inspector field in `propCatalog.ts`; the MCP tools take it through the layer props like every field). The whole part is zero-filled before the thousands grouping, locale-free like the rest. Capped at 12 digits. A timer is prefix `"0:"`, `pad: 2`, `decimals: 2`.
+- **tests:** `engine/brand.test.ts` "zero-pads the integer part with `pad`" (09.00, 10.50, a longer number untouched, grouping, negative, default unchanged, the cap).
 
 ## B-320 — a `text` layer whose `dur` rounds to 0 frames passes `motion_validate` but crashes the render
 

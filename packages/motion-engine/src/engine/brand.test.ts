@@ -136,6 +136,16 @@ describe("counter formatting is locale-free (D-405)", () => {
     expect(formatCount(-1500, 0, true)).toBe("-1,500");
   });
 
+  it("zero-pads the integer part with `pad` (B-324): a timer reads 0:09.00", () => {
+    expect(formatCount(9, 2, false, 2)).toBe("09.00");
+    expect(formatCount(10.5, 2, false, 2)).toBe("10.50");
+    expect(formatCount(125, 0, false, 2)).toBe("125");
+    expect(formatCount(7, 0, true, 4)).toBe("0,007");
+    expect(formatCount(-3, 0, false, 2)).toBe("-03");
+    expect(formatCount(5, 0, false)).toBe("5");
+    expect(formatCount(5, 0, false, 99)).toBe("000000000005");
+  });
+
   it("a whole brand scene loads", () => {
     expect(manifestSchema.safeParse(doc([{ use: "counter", to: 5 }])).success).toBe(true);
   });

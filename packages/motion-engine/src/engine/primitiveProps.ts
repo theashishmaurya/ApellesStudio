@@ -288,6 +288,8 @@ export const PRIMITIVE_PROPS = {
     to: z.number(),
     decimals: num(),
     thousands: bool(),
+    /** minimum integer digits, zero-filled: `pad: 2` shows `09` (B-324) */
+    pad: num(),
     prefix: str(),
     suffix: str(),
     ease: easeCurve.optional(),

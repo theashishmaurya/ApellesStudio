@@ -196,6 +196,7 @@ const PRIMITIVE_FIELDS: Record<string, FieldSpec[]> = {
     { key: 'to', label: 'To', kind: 'number', group: 'content' },
     { key: 'decimals', label: 'Decimals', kind: 'number', group: 'content' },
     { key: 'thousands', label: 'Thousands separator', kind: 'boolean', group: 'content' },
+    { key: 'pad', label: 'Min. integer digits (zero-pad)', kind: 'number', group: 'content' },
     { key: 'prefix', label: 'Prefix', kind: 'string', group: 'content' },
     { key: 'suffix', label: 'Suffix', kind: 'string', group: 'content' },
     { key: 'ease', label: 'Count ease', kind: 'ease', group: 'timing' },
