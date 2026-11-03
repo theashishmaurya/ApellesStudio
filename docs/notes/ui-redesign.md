@@ -1044,6 +1044,16 @@ leftovers, closed against the approved mockup (owner: "loved the design",
   Link / Unlink) and audio scrubbing's waveform toggle lives in the viewer
   header; Skimming takes that slot.
 
+**Lines through the lanes (B-359 item 7).**
+- The faint vertical lines the comparison saw were not markers (markers draw
+  only in the ruler's marker strip, and always did): they were the beat grid's
+  downbeats (D-413), which drew a 20 % accent line down through every track.
+  At 128 BPM that is a line every ~1.9 s, which is what the screenshot shows.
+- `BeatLane` now draws everything inside the ruler and marker band: the
+  downbeat's full-band tick and bar number, and the beats' short ticks.
+  Nothing reaches the lanes, as in the mockup and Final Cut's timeline.
+  Snapping to beats is unchanged. Pinned by `TimelineBeats.dom.test.tsx`.
+
 ## 7. Human + AI parity
 
 Every new GUI capability gets its MCP surface in the same phase (standing rule):
