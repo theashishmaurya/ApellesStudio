@@ -48,7 +48,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ save: () => Promise.resolve(null) 
 import { useEditorTimelineStore } from './timelineStore';
 import { useExportQueueStore } from './exportQueueStore';
 import { useExportPresetStore } from './exportPresets';
-import { EditorExportDialog } from './EditorExportDialog';
+import { EditorExportDialog, EXPORT_SHEET_INSET_PX, exportSheetBox } from './EditorExportDialog';
 import { useMediaPoolStore } from '@apelles/bridge';
 import type { Timeline } from './timeline';
 
@@ -108,6 +108,18 @@ const openSheet = async () => {
 };
 
 describe('the Export sheet (D-441)', () => {
+  it('keeps a real inset from every window edge and sizes to its content (owner: "over lapping")', async () => {
+    expect(EXPORT_SHEET_INSET_PX).toBeGreaterThanOrEqual(24);
+    const box = exportSheetBox();
+    expect(box.width).toBe(`min(880px, calc(100vw - ${2 * EXPORT_SHEET_INSET_PX}px))`);
+    expect(box.maxHeight).toBe(`min(760px, calc(100vh - ${2 * EXPORT_SHEET_INSET_PX}px))`);
+    await openSheet();
+    const dialog = document.querySelector<HTMLElement>('[data-chroma-export-dialog]');
+    // A max height, never a fixed one: short content makes a short sheet.
+    expect(dialog?.className).not.toMatch(/(^|\s)h-\[/);
+    expect(dialog?.className).toContain('grid-rows-[minmax(0,1fr)]');
+  });
+
   it('opens on the shape’s preset with a pre-filled name and folder, and a chip rewrites the summary', async () => {
     await openSheet();
     expect($('[data-chroma-export-sheet]')).not.toBeNull();

@@ -210,7 +210,7 @@ function SetupForm() {
         </div>
         <Row label="From">
           <Select value={chosen} onValueChange={(v) => v && setSource(v)}>
-            <SelectTrigger data-chroma-clipper-source className="h-7 w-full text-sm" aria-label="From" title={picked?.label}>
+            <SelectTrigger data-chroma-clipper-source className="data-[size=default]:h-7 w-full text-sm" aria-label="From" title={picked?.label}>
               <SelectValue>
                 {picked ? (
                   <span className="truncate">
@@ -242,7 +242,7 @@ function SetupForm() {
                   aria-pressed={on}
                   data-chroma-clipper-duration={d}
                   onClick={() => setDurations((cur) => (on ? (cur.length > 1 ? cur.filter((x) => x !== d) : cur) : [...cur, d].sort((a, b) => a - b)))}
-                  className={`h-7 rounded-full px-3 text-xs outline outline-1 ${on ? 'bg-card-active text-text-primary outline-accent' : 'bg-bg-secondary text-text-secondary outline-transparent hover:text-text-primary'}`}
+                  className={`h-7 rounded-full px-3 text-xs ring-1 ring-inset ${on ? 'bg-card-active text-text-primary ring-accent' : 'bg-bg-secondary text-text-secondary ring-transparent hover:text-text-primary'}`}
                 >
                   {d} s
                 </button>
@@ -277,7 +277,7 @@ function SetupForm() {
                   aria-checked={on}
                   data-chroma-clipper-aspect={a}
                   onClick={() => setAspect(a)}
-                  className={`flex h-9 items-center gap-2 rounded-md px-2.5 text-xs outline outline-1 ${on ? 'bg-card-active text-text-primary outline-accent' : 'bg-bg-secondary text-text-secondary outline-transparent hover:text-text-primary'}`}
+                  className={`flex h-9 items-center gap-2 rounded-md px-2.5 text-xs ring-1 ring-inset ${on ? 'bg-card-active text-text-primary ring-accent' : 'bg-bg-secondary text-text-secondary ring-transparent hover:text-text-primary'}`}
                 >
                   <span className={`rounded-[2px] border-[1.5px] ${on ? 'border-accent-text' : 'border-text-tertiary'}`} style={{ width: w, height: h }} />
                   {ASPECT_LABEL[a]}
@@ -288,7 +288,7 @@ function SetupForm() {
         </Row>
         <Row label="Captions">
           <Select value={captions} onValueChange={(v) => v && setCaptions(v)}>
-            <SelectTrigger className="h-7 w-full text-sm" aria-label="Captions" title={captionsLabel}>
+            <SelectTrigger className="data-[size=default]:h-7 w-full text-sm" aria-label="Captions" title={captionsLabel}>
               <SelectValue>{captionsLabel}</SelectValue>
             </SelectTrigger>
             <SelectContent>

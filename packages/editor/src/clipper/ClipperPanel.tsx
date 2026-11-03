@@ -182,7 +182,7 @@ function RunHeader({ run, runs }: { run: ClipRun; runs: ClipRun[] }) {
     <div className="flex shrink-0 flex-col gap-1.5 border-b border-border-color px-3 py-2">
       <div className="flex items-center gap-1.5">
         <Select value={run.id} onValueChange={(v) => v && useClipperStore.getState().openSurface('run', v)}>
-          <SelectTrigger data-chroma-clipper-run className="h-7 min-w-0 flex-1 text-xs" title={label}>
+          <SelectTrigger data-chroma-clipper-run className="data-[size=default]:h-7 min-w-0 flex-1 text-xs" title={label}>
             <SelectValue>
               <span className="truncate">
                 <span className="font-medium">{runTitle(run)}</span>
@@ -334,8 +334,8 @@ function ShortCard({ run, p, analysis, selected }: { run: ClipRun; p: ClipPropos
             useClipperStore.getState().selectProposal(p.id);
           }
         }}
-        className={`grid cursor-pointer grid-cols-[40px_minmax(0,1fr)] gap-2.5 rounded-md p-1.5 outline outline-1 ${
-          selected ? 'bg-card-active outline-accent' : 'outline-transparent hover:bg-bg-secondary'
+        className={`grid cursor-pointer grid-cols-[40px_minmax(0,1fr)] gap-2.5 rounded-md p-1.5 ring-1 ring-inset ${
+          selected ? 'bg-card-active ring-accent' : 'ring-transparent hover:bg-bg-secondary'
         } ${p.status === 'rejected' ? 'opacity-55' : ''}`}
       >
         <span className={`relative block w-10 ${portrait} overflow-hidden rounded-sm bg-bg-primary`}>

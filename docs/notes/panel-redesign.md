@@ -727,6 +727,9 @@ The owner approved revision 2 ("Looks good the UI you gave :)") and answered:
   files in the output's container, PCM kept by the loudness pass in a `.mov`.
 - **MCP**: `editor_export` `preset` / `format` / optional `out_path`;
   `editor_cancel_export`, `editor_list_export_presets`, `editor_save_export_preset`.
+- **Size** (owner follow-up, "over lapping"): `min(880 px, window − 64 px)` wide, at most
+  `min(760 px, window − 64 px)` tall, a 32 px inset from every edge (`EXPORT_SHEET_INSET_PX`),
+  height from its content, body scrolling inside; selected chips use an inset ring.
 - **Deviations from the mockup**: the Master chip is the ProRes master (tag "ProRes") instead
   of an H.264 "as edited" chip; Save as preset sits at the end of More settings; no system
   notification when an export finishes (the pill shows it). Reasons in D-441.

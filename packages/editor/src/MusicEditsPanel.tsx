@@ -175,7 +175,7 @@ export function MusicEditsPanel() {
             data-chroma-music-edits-bed
             aria-label="Music track"
             title="The music track these edits cut. Click to pick another."
-            className="h-6 w-full justify-start gap-1.5 border-0 bg-transparent px-0 text-xs text-text-tertiary shadow-none hover:text-text-secondary"
+            className="data-[size=default]:h-6 w-full justify-start gap-1.5 border-0 bg-transparent px-0 text-xs text-text-tertiary shadow-none hover:text-text-secondary"
           >
             <MusicNoteIcon className="size-3.5 shrink-0" />
             <span className="truncate">
@@ -322,8 +322,8 @@ function MakeOne({ fps, onNotice, onDone }: { fps: number; onNotice: (n: Notice)
                       aria-checked={on}
                       data-chroma-music-edits-kind={k}
                       onClick={() => setKind(k)}
-                      className={`inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-xs outline outline-1 ${
-                        on ? 'bg-card-active text-text-primary outline-accent' : 'bg-bg-secondary text-text-secondary outline-transparent hover:text-text-primary'
+                      className={`inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-xs ring-1 ring-inset ${
+                        on ? 'bg-card-active text-text-primary ring-accent' : 'bg-bg-secondary text-text-secondary ring-transparent hover:text-text-primary'
                       }`}
                     >
                       <Icon className={`size-3.5 ${on ? 'text-accent-text' : 'text-text-tertiary'}`} />

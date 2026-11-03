@@ -114,6 +114,27 @@ import {
   type ExportPresetIcon,
 } from './exportPresets';
 
+/** The sheet's widest size, px (the approved mockup's 880). */
+export const EXPORT_SHEET_MAX_WIDTH_PX = 880;
+/** The tallest it grows to, px; shorter content makes it shorter. */
+export const EXPORT_SHEET_MAX_HEIGHT_PX = 760;
+/** The margin it always keeps from every window edge, px, so the app never
+ *  shows through a sliver beside it and it never runs under the window's edge
+ *  (owner, 2026-11-03: "over lapping"). */
+export const EXPORT_SHEET_INSET_PX = 32;
+
+/** The sheet's size against the window: at most the mockup's width and a
+ *  maximum height, always {@link EXPORT_SHEET_INSET_PX} inside every edge; its
+ *  height otherwise follows its content (the body scrolls inside it). The
+ *  dialog primitive centres it. */
+export function exportSheetBox(): { width: string; maxHeight: string } {
+  const inset = 2 * EXPORT_SHEET_INSET_PX;
+  return {
+    width: `min(${EXPORT_SHEET_MAX_WIDTH_PX}px, calc(100vw - ${inset}px))`,
+    maxHeight: `min(${EXPORT_SHEET_MAX_HEIGHT_PX}px, calc(100vh - ${inset}px))`,
+  };
+}
+
 const FALLBACK_WIDTH = 1920;
 const FALLBACK_HEIGHT = 1080;
 /** Frame rates offered besides the timeline's own. */
@@ -427,7 +448,9 @@ export function EditorExportDialog() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
           showCloseButton={false}
-          className="grid h-[min(640px,calc(100vh-6rem))] w-[880px] max-w-[calc(100%-2rem)] grid-cols-[200px_minmax(0,1fr)] gap-0 overflow-hidden bg-surface-raised p-0 sm:max-w-[880px]"
+          data-chroma-export-dialog
+          style={exportSheetBox()}
+          className="grid max-w-none grid-cols-[200px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden bg-surface-raised p-0 sm:max-w-none"
         >
           {open && <ExportSheet onClose={() => setOpen(false)} />}
         </DialogContent>
@@ -682,7 +705,7 @@ function ExportSheet({ onClose }: { onClose: () => void }) {
         <div className="flex items-center gap-2.5 px-5 pt-4 pb-2.5">
           <DialogTitle className="text-lg font-semibold text-text-primary">Export</DialogTitle>
           <Select value={timelineId ?? timeline?.id ?? ''} onValueChange={(v) => typeof v === 'string' && v && void chooseTimeline(v)}>
-            <SelectTrigger className="h-7 w-[260px] text-sm" data-chroma-field="export-timeline" aria-label="Timeline">
+            <SelectTrigger className="data-[size=default]:h-7 w-[260px] text-sm" data-chroma-field="export-timeline" aria-label="Timeline">
               <SelectValue>
                 <span className="truncate">
                   {targetName}
@@ -729,8 +752,8 @@ function ExportSheet({ onClose }: { onClose: () => void }) {
                             choosePreset(p);
                           }
                         }}
-                        className={`group relative flex h-10 cursor-pointer items-center gap-2 rounded-md bg-bg-secondary px-3 text-left outline outline-1 hover:bg-card-active ${
-                          on ? 'outline-accent' : 'outline-transparent'
+                        className={`group relative flex h-10 cursor-pointer items-center gap-2 rounded-md bg-bg-secondary px-3 text-left ring-1 ring-inset hover:bg-card-active ${
+                          on ? 'ring-accent' : 'ring-transparent'
                         }`}
                       >
                         <Icon className={`size-4 shrink-0 ${on ? 'text-accent-text' : 'text-text-secondary'}`} />
@@ -853,7 +876,7 @@ function ExportSheet({ onClose }: { onClose: () => void }) {
                 </Field>
                 <Field label="Frame rate">
                   <Select value={values.fps === null ? 'timeline' : String(values.fps)} onValueChange={(v) => edit({ fps: v === 'timeline' || v === null ? null : Number(v) })}>
-                    <SelectTrigger className="h-7 w-full text-sm" aria-label="Frame rate">
+                    <SelectTrigger className="data-[size=default]:h-7 w-full text-sm" aria-label="Frame rate">
                       <SelectValue>{values.fps === null ? `${fmtFps(fps)} fps (same as the timeline)` : `${fmtFps(values.fps)} fps`}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
@@ -869,7 +892,7 @@ function ExportSheet({ onClose }: { onClose: () => void }) {
                 <Field label="Loudness">
                   <div className="flex items-center gap-1.5">
                     <Select value={values.loudness} onValueChange={(v) => v && edit({ loudness: v as LoudnessChoice })}>
-                      <SelectTrigger className="h-7 min-w-0 flex-1 text-sm" aria-label="Loudness">
+                      <SelectTrigger className="data-[size=default]:h-7 min-w-0 flex-1 text-sm" aria-label="Loudness">
                         <SelectValue>{LOUDNESS_CHOICE_LABELS[values.loudness]}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
@@ -898,7 +921,7 @@ function ExportSheet({ onClose }: { onClose: () => void }) {
                 </Field>
                 <Field label="Format" full>
                   <Select value={values.format} onValueChange={(v) => v && edit({ format: v as ExportFormat })}>
-                    <SelectTrigger className="h-7 w-full text-sm" aria-label="Format" data-chroma-export-format>
+                    <SelectTrigger className="data-[size=default]:h-7 w-full text-sm" aria-label="Format" data-chroma-export-format>
                       <SelectValue>{values.format === 'h264' ? 'H.264 MP4, high quality' : 'ProRes 422 HQ master (.mov)'}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
@@ -944,7 +967,7 @@ function ExportSheet({ onClose }: { onClose: () => void }) {
                                     value={fitOverrides[clip.id] ?? 'fit'}
                                     onValueChange={(v) => setFitOverrides((s) => ({ ...s, [clip.id]: v as 'fit' | 'stretch' }))}
                                   >
-                                    <SelectTrigger className="h-6 w-full text-xs" aria-label={`Framing of ${clip.name}`}>
+                                    <SelectTrigger className="data-[size=default]:h-6 w-full text-xs" aria-label={`Framing of ${clip.name}`}>
                                       <SelectValue>{(fitOverrides[clip.id] ?? 'fit') === 'fit' ? 'Keep its framing' : 'Stretch to fill'}</SelectValue>
                                     </SelectTrigger>
                                     <SelectContent>

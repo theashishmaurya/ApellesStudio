@@ -35,6 +35,13 @@ export const PANEL_SCENARIOS: Scenario[] = [
       { op: 'debug_set_popover_open', args: { id: 'export-dialog', open: true } },
       { wait: 400 },
       { reachable: { selector: '[data-chroma-export-sheet]', reason: 'the Export sheet opens from the top bar' } },
+      { capture: 'dom', selector: '[data-chroma-export-dialog]', as: 'dialog' },
+      {
+        expect: [
+          { path: 'dialog.rect.x', op: 'gte', value: 32, label: 'the sheet keeps its inset from the left edge (B-367 "over lapping")' },
+          { path: 'dialog.rect.y', op: 'gte', value: 32, label: 'and from the top' },
+        ],
+      },
       { pointer: { action: 'click', target: selector(VERTICAL_CHIP) }, measure: true, label: 'pick Shorts · Reels · TikTok' },
       { capture: 'dom', selector: VERTICAL_CHIP, as: 'vertical' },
       { expect: { path: 'vertical.attrs.aria-checked', op: 'eq', value: 'true', label: 'the chip is selected' } },
