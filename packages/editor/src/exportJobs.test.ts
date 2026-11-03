@@ -32,7 +32,9 @@ const invokeMock = vi.hoisted(() =>
         return { luts: {}, warnings: [] };
       case 'chroma_timeline_composition_size':
         return { compWidth: 1920, compHeight: 1080, naturalWidth: 1, naturalHeight: 1 };
-      case 'chroma_run_ffmpeg':
+      case 'chroma_unused_export_path':
+        return '/Users/me/Movies/Five Levels/Long-form.mov';
+      case 'chroma_run_editor_export':
         // Held open until the test releases it, so "a job is running" is a fact.
         return await new Promise((resolve) => gate.pending.push(resolve));
       default:
@@ -41,8 +43,9 @@ const invokeMock = vi.hoisted(() =>
   }),
 );
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+vi.mock('@tauri-apps/api/path', () => ({ videoDir: () => Promise.resolve('/Users/me/Movies') }));
 
-const { runQueuedEditorExport, exportJobStatus } = await import('./exportJobs');
+const { runQueuedEditorExport, exportJobStatus, cancelExportJob } = await import('./exportJobs');
 const { useEditorTimelineStore } = await import('./timelineStore');
 const { useExportQueueStore } = await import('./exportQueueStore');
 const { useMediaPoolStore } = await import('@apelles/bridge');
@@ -119,5 +122,38 @@ describe('editor_export jobs (B-335)', () => {
     const bad = await runQueuedEditorExport({ outPath: '/tmp/half.mp4', width: 1280 });
     expect('error' in bad ? bad.error : '').toMatch(/both width and height, or neither/);
     expect(useExportQueueStore.getState().jobs).toHaveLength(0);
+  });
+});
+
+// D-441 — `preset`, the default `outPath` and `editor_cancel_export`.
+describe('editor_export preset, default output and cancel (D-441)', () => {
+  it('a preset fills the job, and an omitted outPath becomes ~/Movies/<project>/<timeline>.<ext>', async () => {
+    useEditorTimelineStore.setState({ openProjectKey: '/Users/me/Projects/Five Levels.apelles' });
+    const done = runQueuedEditorExport({ preset: 'master', jobId: 'job-master' });
+    await vi.waitFor(() => expect(gate.pending).toHaveLength(1));
+    expect(invokeMock).toHaveBeenCalledWith('chroma_unused_export_path', {
+      dir: '/Users/me/Movies/Five Levels',
+      stem: 'Long-form',
+      ext: 'mov',
+    });
+    const job = useExportQueueStore.getState().jobs[0];
+    expect(job).toMatchObject({ id: 'job-master', outPath: '/Users/me/Movies/Five Levels/Long-form.mov', format: 'prores_hq', preset: 'Master' });
+    expect(job.args.join(' ')).toContain('prores_ks');
+    finish(true);
+    expect(await done).toMatchObject({ jobId: 'job-master', ok: true });
+  });
+
+  it('cancels a queued job by id, and refuses an unknown id in words', async () => {
+    const first = runQueuedEditorExport({ outPath: '/tmp/a.mp4', jobId: 'job-a' });
+    await vi.waitFor(() => expect(gate.pending).toHaveLength(1));
+    const second = runQueuedEditorExport({ outPath: '/tmp/b.mp4', jobId: 'job-b' });
+    await vi.waitFor(() => expect(useExportQueueStore.getState().jobs).toHaveLength(2));
+    expect(await cancelExportJob({ job_id: 'job-b' })).toMatchObject({ ok: true, jobId: 'job-b', wasRunning: false });
+    expect(await second).toMatchObject({ jobId: 'job-b', ok: false, cancelled: true });
+    expect(exportJobStatus({ job_id: 'job-b' })).toMatchObject({ state: 'cancelled' });
+    expect(await cancelExportJob({ job_id: 'nope' })).toEqual({ error: expect.stringContaining('no export job') });
+    expect(await cancelExportJob({})).toEqual({ error: expect.stringContaining('job_id is required') });
+    finish(true);
+    await first;
   });
 });

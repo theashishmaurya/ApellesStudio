@@ -176,13 +176,13 @@ describe('Shell chrome-bar headerAction slot (D-251, shell-level since D-297)', 
       const editBody = container.querySelector('[data-testid="edit-body"]');
       expect(editBody?.contains(trigger)).toBe(false);
 
-      expect(container.textContent).not.toContain('Export timeline');
+      expect(document.querySelector('[data-chroma-export-sheet]')).toBeNull();
       act(() => {
         trigger!.click();
       });
-      // The SAME EditorExportDialog's own dialog title — proof this is the
+      // The SAME EditorExportDialog's own sheet (D-441) — proof this is the
       // real component, not a stand-in that merely looks the part.
-      expect(document.body.textContent).toContain('Export timeline');
+      expect(document.querySelector('[data-chroma-export-sheet]')).not.toBeNull();
     } finally {
       unmount();
     }

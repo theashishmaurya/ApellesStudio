@@ -129,7 +129,7 @@ status: fixed (2026-11-03; the Rust probe tests are written but were not run, se
 
 ## B-367 — the Export dialog needs a redesign: a raw form with per-clip "fit / Freeze" rows, no presets, and no direct publishing
 
-status: open (owner, 2026-11-01) · severity: medium (UX; the last step of every edit) · area: the Edit tab's Export dialog (`ExportDialog` / `timelinePipeExport.ts` UI), the export queue
+status: **fixed 2026-11-03 (worktree), D-441** (owner, 2026-11-01) · severity: medium (UX; the last step of every edit) · area: the Edit tab's Export dialog (`ExportDialog` / `timelinePipeExport.ts` UI), the export queue
 
 - **Seen:** the owner's screenshot `scratch/bug-refs/2026-11-01-export-dialog.png`. It shows Timeline, Output file + Choose…, Width × Height, FPS, Audio loudness "Off (as mixed)", then a long **"Per-clip export options"** list (each clip with a `fit` dropdown and a **Freeze** toggle), a note about audio, and Close / **Add to queue**.
 - **The owner:** "this needs a redesign as well … and no other export freeze and all, so think of that".
@@ -140,6 +140,8 @@ status: open (owner, 2026-11-01) · severity: medium (UX; the last step of every
   4. **The output file must be picked before anything happens.** Default to a sensible name and folder (`~/Movies/<project>/<timeline>.mp4`), changeable.
   5. **Exporting must never freeze the app.** It already queues ("Add to queue"); keep it fully in the background, with progress in the top bar, editing allowed meanwhile, a notification when done, and "Reveal in Finder" / "Post…" actions. Covered with B-340's memory bound.
 - **Direction:** the same research → mockup → build pass (roadmap 00c). References: FCP's Share destinations, Resolve's Deliver page quick exports, Premiere's Quick Export, CapCut's export sheet. Direct publishing is its own backlog item (roadmap 00d).
+- **Fixed (D-441):** the approved mockup built. A sheet with destinations (publishing drawn dimmed, "Publish · soon"), preset chips that set size, frame rate, loudness and format together (YouTube 1080p / 4K, Shorts, Square, a **ProRes 422 HQ master**, Podcast, plus the person's own saved presets), a pre-filled `~/Movies/<project>/<timeline>.mp4` that never overwrites, a one-line summary with the file size, and the rest under More settings; the per-clip rows are "Stretch to fill" / "Hold last frame" under "Clip exceptions". Export closes the sheet and runs in the background with progress in the top bar, where each job has a real **Cancel** (kills the ffmpeg / segment encoders, removes the partial file), Show in Finder and Try again. MCP: `editor_export` `preset` / `format` / optional `out_path`, `editor_cancel_export`, `editor_list_export_presets`, `editor_save_export_preset`. A system notification on finish was not built (the pill shows the result).
+- **Follow-up (owner, 2026-11-03, "over lapping", `scratch/bug-refs/2026-11-03-export-dialog-overlapping.png`):** the first test bundle's sheet ran edge to edge (a sliver of the app on the left, timeline labels under its bottom edge), the selected chip's ring was clipped by the scrolling grid, and a fixed height left a large empty area. Fixed: the sheet is `min(880 px, window − 2 × 32 px)` wide and at most `min(760 px, window − 2 × 32 px)` tall (`EXPORT_SHEET_INSET_PX`, `exportSheetBox()`), centred, sized to its content with the body scrolling inside; chips (and the Music edits / Clipper pills and cards) draw an inset ring, which a scroll container cannot clip. Checked by the sheet's DOM test and the `export-preset-chips` harness scenario (the dialog's rect keeps the inset); screenshots at the default window and at 1280 × 800 in `scratch/ui-compare/panels-v030/`.
 
 ## B-366 — the contents of every Inspector Video-tab section need the same intuitive pass (Transform, Compositing, Crop, Dynamic zoom, Highlights, Speed, Fade, Keyframes)
 
@@ -176,7 +178,7 @@ status: **fixed 2026-11-03 (D-442)** (owner, 2026-11-01: "EQ and audio as well";
 
 ## B-364 — the Music Edits panel is not intuitive: unitless fades in a reversed order, jargon choices, unclear In/Out buttons and actions
 
-status: open (owner, 2026-11-01: "this needs an intuitive redesign as well") · severity: medium (UX) · area: `packages/editor/src/MusicEditsPanel.tsx`
+status: **fixed 2026-11-03 (worktree), D-444** (owner, 2026-11-01: "this needs an intuitive redesign as well") · severity: medium (UX) · area: `packages/editor/src/MusicEditsPanel.tsx`
 
 - **Seen:** the owner's screenshot `scratch/bug-refs/2026-11-01-music-edits-not-intuitive.png`. The left edge is clipped too, the same column overflow as B-362, which suggests B-362's cause is in the browser's tab body and affects every tab.
 - **What reads as broken or confusing:**
@@ -188,10 +190,11 @@ status: open (owner, 2026-11-01: "this needs an intuitive redesign as well") · 
   6. **"Cut now" vs "Add to list"** (apply now vs queue for review) and **"Breath before playhead"**: no explanation of what happens or what the list is.
   7. The empty state is a paragraph of instructions rather than a clear first action.
 - **Direction:** fold it into the same research → mockup → build pass as the Clipper (roadmap 00c, broadened to the browser's tool panels). Look at how Resolve's Fairlight, Premiere's Essential Sound / Remix and Descript handle music ducking, dropouts and remix. Plain language with units, the range shown on the timeline, a preview of the edit before applying, then the list.
+- **Fixed (D-444):** the approved mockup built. The track named ("On A3 · <music>"), kind pills with the selected kind's sentence (Dropout / Breath / Dry open / Dry CTA / Section end), the range as timecodes with the playhead target in each field (the timeline's In / Out marks, drawn on the ruler), the fades in seconds dragged on the diagram's dots, "Song keeps time / Song resumes", Preview (plays the edit before it is applied, without committing anything) · Apply · ⋯ › Save for later; the agent's suggestions as rows with Preview, Change, Approve, Skip and "Apply N approved · one undo"; an empty state with one first action. The range is not drawn on the music lane itself (deviation, D-444).
 
 ## B-363 — the Clipper panel is not intuitive: developer jargon, unlabelled controls, and the whole review flow squeezed into the browser column
 
-status: open (owner, 2026-11-01: "clipper UI is not intuitive at all") · severity: medium (UX; the Clipper is a headline feature) · area: `packages/editor/src/clipper/ClipperPanel.tsx` and its sections; the D-432 redesign language
+status: **fixed 2026-11-03 (worktree), D-445** (owner, 2026-11-01: "clipper UI is not intuitive at all") · severity: medium (UX; the Clipper is a headline feature) · area: `packages/editor/src/clipper/ClipperPanel.tsx` and its sections; the D-432 redesign language
 
 - **Seen:** the owner's screenshots `scratch/bug-refs/2026-11-01-clipper-not-intuitive.png` and `…-clipper-horizontal-scroll.png` (the latter is B-362).
 - **What reads as broken or confusing (from the screenshot):**
@@ -206,6 +209,7 @@ status: open (owner, 2026-11-01: "clipper UI is not intuitive at all") · severi
   - A Clipper review surface sized for the job (likely the viewer area or its own view, not the browser column): a card per short with a 9:16 thumbnail or preview, the hook line and payoff line, length, a virality/fit reason in plain words, and Approve / Reject / Trim.
   - Plain language throughout; the pipeline state behind an "Details" disclosure.
   - Then a mockup for owner approval before building, as D-432 did. Human + AI parity is unchanged: the same proposal store and the same `editor_*` clip tools.
+- **Fixed (D-445):** the approved mockup built. The Shorts tab lists one card per short (9:16 poster, length, title, opening line, clean-cut chip, status) under "Shorts from <source> · <date>" and a one-line state, with "Make N shorts" (the approved ones) or why it is disabled; selecting a short fills the viewer area with the review (opening frame and line, rename, length against the target, where it comes from, "Opens with" / "Why your agent picked it", the check in words with what to try, the transcript with what is in and out, Start / End Earlier · Later, Skip (X) / Approve (A), ↑ / ↓); New shorts and the reading / waiting states are in the same area; pipeline numbers and candidates moved behind "Details" and "Other moments". The player is the opening frame until a short is made (deviation, D-445).
 - **Queue:** after v0.3.0 (not a release blocker), as its own redesign item next to the Motion/Colorist follow-up (00b).
 
 ## B-362 — the Clipper panel scrolls horizontally inside the media browser; its content is wider than the column

@@ -57,6 +57,8 @@ use std::time::{Duration, Instant};
 use apelles_media::loudness::LoudnessReport;
 use shared_child::SharedChild;
 
+use super::export_job::CancelHandle;
+
 /// **How long a segment may write no frame at all before the export is
 /// declared hung, its encoder killed, and a real error reported.**
 ///
@@ -113,6 +115,10 @@ pub enum ExportState {
     /// worker writing nothing at all. **The output file is incomplete and not
     /// finalised** — this is B-231 facet 2, reported instead of silent.
     Stalled,
+    /// D-441 — the last render was cancelled by the person (the Export panel's
+    /// Cancel) or an agent (`editor_cancel_export`). Its encoders were killed
+    /// and the partial output removed.
+    Cancelled,
 }
 
 /// One segment's row in the status.
@@ -221,6 +227,11 @@ pub struct ExportJob {
     stalled: Mutex<Option<String>>,
     /// `None` while running; `Some` once the render has returned, either way.
     finished: Mutex<Option<Result<(), String>>>,
+    /// D-441 — the export's cancel registration, once bound. A cancel kills
+    /// every encoder attached here too, and [`Self::should_stop`] reads it.
+    cancel: Mutex<Option<Arc<CancelHandle>>>,
+    /// D-441 — set by [`Self::finish_cancelled`].
+    cancelled: AtomicBool,
 }
 
 impl ExportJob {
@@ -240,9 +251,41 @@ impl ExportJob {
         }
     }
 
+    /// D-441 — bind the export's cancel registration: from here on a cancel
+    /// kills every encoder this job holds and stops the per-frame loop.
+    pub fn bind_cancel(&self, handle: Arc<CancelHandle>) {
+        *self.cancel.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
+    }
+
+    /// Should the per-frame loop stop? A sibling failed, the watchdog fired, or
+    /// (D-441) the export was cancelled.
+    pub fn should_stop(&self) -> bool {
+        self.abort.load(Ordering::Relaxed)
+            || self
+                .cancel
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+                .is_some_and(|c| c.is_cancelled())
+    }
+
+    /// D-441 — a child that is not a segment encoder (the concat step), held
+    /// only so a cancel can kill it.
+    pub fn attach_aux(&self, child: &Arc<SharedChild>) {
+        if let Some(c) = self
+            .cancel
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            c.attach(child);
+        }
+    }
+
     /// Hand the watchdog this segment's encoder, so a wedged write can be
     /// unblocked by killing it.
     pub fn attach_encoder(&self, segment: usize, child: Arc<SharedChild>) {
+        self.attach_aux(&child);
         if let Some(s) = self.segments.get(segment) {
             *s.encoder.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
         }
@@ -294,6 +337,12 @@ impl ExportJob {
     /// `done` / `failed` / `stalled` and the watchdog thread exits.
     pub fn finish(&self, result: Result<(), String>) {
         *self.finished.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
+    }
+
+    /// D-441 — the render was cancelled. The slot answers `cancelled`.
+    pub fn finish_cancelled(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+        self.finish(Err(super::export_job::CANCELLED_MESSAGE.to_string()));
     }
 
     fn is_finished(&self) -> bool {
@@ -354,6 +403,8 @@ pub fn begin(
         abort: AtomicBool::new(false),
         stalled: Mutex::new(None),
         finished: Mutex::new(None),
+        cancel: Mutex::new(None),
+        cancelled: AtomicBool::new(false),
     });
     *slot = Some(job.clone());
     drop(slot);
@@ -528,6 +579,9 @@ pub fn snapshot() -> ExportStatus {
         // unwound yet: the verdict is the watchdog's, and the downstream
         // broken-pipe error it causes describes the symptom, not the cause.
         (_, Some(reason)) => (ExportState::Stalled, Some(reason.clone())),
+        (Some(Err(e)), None) if job.cancelled.load(Ordering::Relaxed) => {
+            (ExportState::Cancelled, Some(e.clone()))
+        }
         (Some(Ok(())), None) => (ExportState::Done, None),
         (Some(Err(e)), None) => (ExportState::Failed, Some(e.clone())),
         (None, None) => (ExportState::Running, None),
@@ -568,6 +622,10 @@ pub fn snapshot() -> ExportStatus {
         ExportState::Stalled => {
             "the export HUNG and was killed by the stall watchdog. The output file is incomplete \
              and unplayable; re-run the export."
+                .to_string()
+        }
+        ExportState::Cancelled => {
+            "the export was cancelled; its encoders were stopped and the partial file removed."
                 .to_string()
         }
         ExportState::Idle => String::new(),
@@ -724,6 +782,38 @@ mod tests {
         // The stall verdict survives the unwind: the broken-pipe error the kill
         // causes is the symptom, and this is the cause.
         assert_eq!(snapshot().state, ExportState::Stalled);
+    }
+
+    /// D-441 — a cancel kills the job's encoders through its bound
+    /// registration, stops the per-frame loop, and the slot reads `cancelled`
+    /// (not `failed`) once the render has settled.
+    #[test]
+    fn a_cancelled_render_stops_its_loop_kills_its_encoder_and_reads_cancelled() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset();
+        let job = begin(100, &[0..50, 50..100], None, STALL_TIMEOUT).expect("begin");
+        let guard = super::super::export_job::register(Some("status-cancel")).expect("register");
+        job.bind_cancel(guard.handle().clone());
+        let mut cmd = std::process::Command::new("sleep");
+        cmd.arg("30");
+        let encoder = Arc::new(SharedChild::spawn(&mut cmd).expect("spawn"));
+        job.attach_encoder(0, encoder.clone());
+        assert!(!job.should_stop());
+
+        super::super::export_job::cancel("status-cancel");
+        assert!(job.should_stop(), "the per-frame loop must stop");
+        assert!(
+            encoder
+                .wait_timeout(Duration::from_secs(5))
+                .expect("wait")
+                .is_some(),
+            "the encoder must be killed"
+        );
+        assert_eq!(snapshot().state, ExportState::Running, "not settled yet");
+        job.finish_cancelled();
+        let s = snapshot();
+        assert_eq!(s.state, ExportState::Cancelled);
+        assert!(s.note.contains("cancelled"));
     }
 
     /// A segment that finishes is no longer watched — otherwise every

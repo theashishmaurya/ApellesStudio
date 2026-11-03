@@ -1,5 +1,15 @@
 # notes/export-dialog-queue.md — the Edit tab's Export button/dialog/queue (D-198)
 
+> **D-441 (2026-11-03) redesigned the dialog into the Export sheet** (presets, the ProRes
+> master, saved presets, progress and Cancel in the top bar) — `docs/notes/panel-redesign.md`
+> "As built: Export". The one-implementation rule and the sequential queue below are
+> unchanged. What changed underneath: the filter path runs through
+> `chroma_run_editor_export` (cancellable, with the D-401 loudness pass inside the run;
+> `chroma_run_ffmpeg` / `chroma_normalize_loudness` are gone), every job's id is its cancel
+> token (`chroma_cancel_editor_export`, `chroma::export_job`), and jobs can be `cancelled`
+> and tried again. The "no cancel" and "no progress" gaps below are closed (progress by
+> D-362, cancel by D-441); the text is kept as the record of D-198's first pass.
+
 See `docs/08-decisions.md` D-198 for the full context/options/verification writeup.
 This note is the worked-out shape, for anyone extending `EditorExportDialog.tsx`/
 `exportQueueStore.ts` later.

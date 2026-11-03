@@ -211,6 +211,45 @@ pub struct EditLayoutSettings {
     pub timeline_height: Option<f64>,
 }
 
+/// D-441 — one export preset the person saved from the Export panel (or an
+/// agent through `editor_save_export_preset`). The frontend's
+/// `exportPresets.ts` owns the meaning and validates every value it reads
+/// back; this only round-trips them, the way [`EditLayoutSettings`] does.
+/// `width`/`height`/`fps` `None` = the timeline's own.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportPresetSettings {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub width: Option<u32>,
+    #[serde(default)]
+    pub height: Option<u32>,
+    #[serde(default)]
+    pub fps: Option<f64>,
+    /// `off` | `youtube` | `broadcast` | `podcast` | `custom`.
+    #[serde(default)]
+    pub loudness: Option<String>,
+    #[serde(default)]
+    pub loudness_lufs: Option<f64>,
+    #[serde(default)]
+    pub true_peak_dbtp: Option<f64>,
+    /// `h264` | `prores_hq`.
+    #[serde(default)]
+    pub format: Option<String>,
+}
+
+/// D-441 — the Export panel's saved presets and the last preset used per
+/// timeline shape (`landscape` / `portrait` / `square` → preset id).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportSettings {
+    #[serde(default)]
+    pub presets: Vec<ExportPresetSettings>,
+    #[serde(default)]
+    pub last_preset: HashMap<String, String>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CopyPasteSettings {
@@ -502,6 +541,12 @@ pub struct AppSettings {
     /// the keymap's remaps (D-273). `None` until the user first resizes.
     #[serde(default)]
     pub edit_layout: Option<EditLayoutSettings>,
+    /// D-441 — the Export panel's saved presets and last-used preset per
+    /// timeline shape, written by `@apelles/editor`'s `exportPresets.ts`
+    /// through the composition root, like `edit_layout`. `None` until the
+    /// first export or saved preset.
+    #[serde(default)]
+    pub export: Option<ExportSettings>,
     #[serde(default)]
     pub thumbnail_worker_threads: Option<u32>,
     #[serde(default)]
@@ -617,6 +662,7 @@ impl Default for AppSettings {
             zoom_speed_multiplier: Some(1.0),
             keybinds: HashMap::new(),
             edit_layout: None,
+            export: None,
             #[cfg(target_os = "android")]
             thumbnail_worker_threads: Some(2),
             #[cfg(not(target_os = "android"))]

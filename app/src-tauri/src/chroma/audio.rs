@@ -467,6 +467,17 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64, rate: f64) -> Result<(), St
     )
 }
 
+/// **D-444 — the Music edits panel's Preview: play the edit before it is
+/// applied.** `Some(timeline)` makes the audio path mix that document (the
+/// frontend's `applyMusicEdits` result) instead of the persisted one;
+/// `None` goes back to the real timeline. Audio only, never persisted, never
+/// undoable — see `edit::set_audio_preview`. A session already playing picks
+/// the change up through the edit fingerprint (B-235).
+#[tauri::command]
+pub fn chroma_audio_preview_set(timeline: Option<apelles_timeline::Timeline>) {
+    super::edit::set_audio_preview(timeline);
+}
+
 /// D-280 — the slowest preview playback rate the transport will accept.
 /// Below this the WSOLA stage is repeating each segment four times or more and
 /// the artefacts stop being worth the review speed; it is also well past
@@ -1673,16 +1684,22 @@ mod tests {
         assert_audio_track_clip_resolves(false);
     }
 
-    /// The body of the two tests above: one 3 s tone on an audio track, with or
-    /// without an empty video track beside it, resolved at frame 0.
-    fn assert_audio_track_clip_resolves(with_empty_video_track: bool) {
-        let _guard = session_test_guard();
-        let tmp = tempfile::tempdir().expect("tempdir");
+    /// 90 frames at 30 fps: the tone project's one clip, exactly its 3.0 s.
+    const CLIP_FRAMES: i64 = 90;
+
+    /// Open a throwaway project whose timeline holds one 3 s tone on an audio
+    /// track (with or without an empty video track beside it) and return that
+    /// timeline. The caller closes it with `state::set_project(None)`.
+    fn open_tone_project(
+        dir: &std::path::Path,
+        with_empty_video_track: bool,
+    ) -> apelles_timeline::Timeline {
+        let tmp_path = dir;
         // A real audio-only source — no video stream at all, exactly B-041's
         // reported shape.
-        let tone_path = synth_test_tone(tmp.path(), 440, 3.0, 48_000);
+        let tone_path = synth_test_tone(tmp_path, 440, 3.0, 48_000);
 
-        let project_dir = tmp.path().join("AudioOnlyTest.chroma");
+        let project_dir = tmp_path.join("AudioOnlyTest.chroma");
         std::fs::create_dir_all(&project_dir).expect("mkdir project dir");
 
         // A 30fps timeline — deliberately NOT 24fps, the one rate that would
@@ -1693,7 +1710,6 @@ mod tests {
         // 90 timeline frames at 30fps is exactly the tone's real 3.0s length
         // — chosen so a wrong-fps computation is visibly wrong (3.75s against
         // the nominal-24 rate) rather than off by an unreadable rounding hair.
-        const CLIP_FRAMES: i64 = 90;
 
         let mut tracks = Vec::new();
         if with_empty_video_track {
@@ -1738,7 +1754,7 @@ mod tests {
             active_shot: 0,
             active_clip_id: None,
             settings: Default::default(),
-            timelines: vec![timeline],
+            timelines: vec![timeline.clone()],
             active_timeline: 0,
             media: Vec::new(),
             folders: Vec::new(),
@@ -1750,6 +1766,47 @@ mod tests {
             name: "AudioOnlyTest".into(),
         }));
 
+        timeline
+    }
+
+    /// **D-444 — the Music edits Preview: the audio path plays the preview
+    /// timeline while one is set, and the project's own the moment it is
+    /// cleared.** The project's timeline has the tone; the preview is the same
+    /// timeline with the tone cut out (what a music dropout over it would
+    /// leave), so the mixer must find no source at frame 0 until the preview is
+    /// cleared.
+    #[test]
+    fn the_audio_preview_timeline_replaces_the_mix_until_it_is_cleared() {
+        let _guard = session_test_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let timeline = open_tone_project(tmp.path(), false);
+        let mut silenced = timeline.clone();
+        silenced.tracks[0].clips.clear();
+
+        super::super::edit::set_audio_preview(Some(silenced));
+        let during = resolve_sources_at(0);
+        super::super::edit::set_audio_preview(None);
+        let after = resolve_sources_at(0);
+        super::super::state::set_project(None);
+
+        assert_eq!(
+            during.expect("resolve during the preview").sources.len(),
+            0,
+            "the preview's mix has no tone"
+        );
+        assert_eq!(
+            after.expect("resolve after it").sources.len(),
+            1,
+            "cleared: the project's own tone plays again"
+        );
+    }
+
+    /// The body of the two tests above: one 3 s tone on an audio track, with or
+    /// without an empty video track beside it, resolved at frame 0.
+    fn assert_audio_track_clip_resolves(with_empty_video_track: bool) {
+        let _guard = session_test_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        open_tone_project(tmp.path(), with_empty_video_track);
         let result = resolve_sources_at(0);
         super::super::state::set_project(None);
 

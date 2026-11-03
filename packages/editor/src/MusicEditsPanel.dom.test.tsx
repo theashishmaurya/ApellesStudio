@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 /**
- * D-408 — the Music edits panel in a real DOM: an agent's proposals render as
- * reviewable rows, Accept / Reject drive the shared store, a row that cannot
- * land shows why and cannot be accepted, Apply cuts the accepted ones as one
- * undo step, and the breath button cuts a second before the playhead.
+ * D-408 / D-444 — the Music edits panel in a real DOM: an agent's suggestions
+ * render as reviewable rows, Approve / Skip drive the shared store, a row that
+ * cannot land shows why and cannot be approved, Apply cuts the approved ones as
+ * one undo step; with nothing marked the empty state's breath cuts a second
+ * before the playhead; making one reads its range from the timeline's In / Out
+ * marks, the kind pills change the sentence, the fade dots drag (one store
+ * write per frame), and Preview hands the edited document to the audio path
+ * without touching the timeline or the history (B-364).
  *
  * Tier: jsdom. It proves the wiring between the panel, the store and the one
  * `music_edits` op; layout and the resizable split are checked live.
@@ -14,6 +18,8 @@ import React from 'react';
 import {
   actSync,
   createInvokeStub,
+  dragPointer,
+  installPointerCaptureStub,
   installElementAnimationsStub,
   installResizeObserverStub,
   mount,
@@ -21,8 +27,14 @@ import {
   type MountedComponent,
 } from './testUtils/pointerHarness';
 
+const previewCalls = vi.hoisted(() => [] as unknown[]);
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: createInvokeStub({ chroma_timeline_set: () => undefined }),
+  invoke: createInvokeStub({
+    chroma_timeline_set: () => undefined,
+    chroma_audio_preview_set: (a) => {
+      previewCalls.push((a as { timeline: unknown }).timeline);
+    },
+  }),
 }));
 
 import { useHistoryStore } from '@apelles/history';
@@ -124,13 +136,94 @@ describe('MusicEditsPanel (D-408)', () => {
     expect(useMusicEditStore.getState().proposals[1].rows.map((r) => r.id)).toEqual(['a1', 'a2']);
   });
 
-  it('cuts a stop-time breath before the playhead', async () => {
-    actSync(() => useEditorTimelineStore.setState({ playhead: 120 }));
+  it('with nothing marked or suggested, the empty state cuts a breath before the playhead', async () => {
+    actSync(() => {
+      useMusicEditStore.getState().clear();
+      useEditorTimelineStore.setState({ playhead: 120 });
+    });
+    await waitFrames(1);
+    expect($('[data-chroma-music-edits-empty]')).not.toBeNull();
     click('[data-chroma-music-edits-breath]');
     await waitFrames(1);
     expect(bed().map((c) => [c.start_frame, c.duration])).toEqual([
       [0, 96],
       [120, 360],
     ]);
+  });
+});
+
+describe('making one (D-444)', () => {
+  beforeEach(async () => {
+    installPointerCaptureStub();
+    previewCalls.length = 0;
+    actSync(() => {
+      useMusicEditStore.getState().clear();
+      useEditorTimelineStore.setState({ playhead: 48, inPoint: null, outPoint: null });
+    });
+    await waitFrames(1);
+  });
+
+  it('starts from the playhead, takes its range from the In / Out marks, and Apply cuts it and clears them', async () => {
+    click('[data-chroma-music-edits-start]');
+    await waitFrames(1);
+    expect(useEditorTimelineStore.getState().inPoint).toBe(48);
+    expect($('[data-chroma-music-edits-maker]')).not.toBeNull();
+    expect($<HTMLButtonElement>('[data-chroma-music-edits-cut]')?.disabled).toBe(true);
+    actSync(() => useEditorTimelineStore.setState({ playhead: 72 }));
+    click('[data-chroma-music-edits-mark-out]');
+    await waitFrames(1);
+    expect(useEditorTimelineStore.getState().outPoint).toBe(72);
+    expect($('[data-chroma-music-edits-maker]')?.textContent).toContain('0:02.00');
+    expect($('[data-chroma-music-edits-maker]')?.textContent).toContain('0:03.00');
+
+    click('[data-chroma-music-edits-kind="breath"]');
+    await waitFrames(1);
+    expect($('[data-chroma-music-edits-kind-hint]')?.textContent).toContain('About 1 s of silence');
+    expect($('[data-chroma-music-edits-kind="breath"]')?.getAttribute('aria-checked')).toBe('true');
+
+    click('[data-chroma-music-edits-mode-option="pause"]');
+    expect(useMusicEditStore.getState().defaults.mode).toBe('pause');
+
+    click('[data-chroma-music-edits-cut]');
+    await waitFrames(1);
+    expect(bed().map((c) => c.start_frame)).toEqual([0, 72]);
+    expect($('[data-chroma-music-edits-notice="ok"]')?.textContent).toMatch(/Breath cut into track 1/);
+    expect(useEditorTimelineStore.getState().inPoint).toBeNull();
+  });
+
+  it('drags the fade-out dot on the diagram, writing the defaults in frames', async () => {
+    actSync(() => useEditorTimelineStore.setState({ inPoint: 48, outPoint: 72 }));
+    await waitFrames(1);
+    const dot = $('[data-chroma-music-fade-handle="out"]')!;
+    const before = useMusicEditStore.getState().defaults.fadeOutFrames;
+    // Dragging the fade-out dot LEFT lengthens the fade out.
+    await dragPointer(dot, [{ x: 100, y: 18 }, { x: 90, y: 18 }, { x: 80, y: 18 }], { moveTarget: dot, release: dot });
+    const after = useMusicEditStore.getState().defaults.fadeOutFrames;
+    expect(after).toBeGreaterThan(before);
+    expect(dot.getAttribute('aria-valuetext')).toBe(`${(after / 24).toFixed(2)} s`);
+    // And the keyboard: one frame per arrow.
+    actSync(() => dot.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })));
+    expect(useMusicEditStore.getState().defaults.fadeOutFrames).toBe(after - 1);
+  });
+
+  it('Preview hands the edited document to the audio path and plays, without touching the timeline or the history', async () => {
+    actSync(() => useEditorTimelineStore.setState({ inPoint: 48, outPoint: 72 }));
+    await waitFrames(1);
+    const tlBefore = useEditorTimelineStore.getState().timeline;
+    const depth = useHistoryStore.getState().undoStack.length;
+    click('[data-chroma-music-edits-preview]');
+    await waitFrames(2);
+    expect(previewCalls).toHaveLength(1);
+    const preview = previewCalls[0] as Timeline;
+    expect(preview.tracks[1].clips.map((c) => c.start_frame)).toEqual([0, 72]);
+    expect(useEditorTimelineStore.getState().timeline).toBe(tlBefore);
+    expect(useHistoryStore.getState().undoStack.length).toBe(depth);
+    expect(useEditorTimelineStore.getState().playing).toBe(true);
+    expect(useEditorTimelineStore.getState().playhead).toBe(0); // 2 s of pre-roll, clamped at 0
+    expect($('[data-chroma-music-edits-preview]')?.getAttribute('aria-label')).toBe('Stop the preview');
+    // Stopping playback ends the preview: the override is cleared.
+    actSync(() => useEditorTimelineStore.getState().setPlaying(false));
+    await waitFrames(1);
+    expect(previewCalls).toEqual([preview, null]);
   });
 });

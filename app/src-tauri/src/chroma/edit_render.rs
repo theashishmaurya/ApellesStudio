@@ -48,6 +48,7 @@ use shared_child::SharedChild;
 
 use super::edit::{self, FrameIntent};
 use super::export::{drain_stderr_pipe, tail};
+use super::export_job;
 use super::export_status::{self, ExportJob};
 
 /// One headless render + encode.
@@ -106,6 +107,13 @@ pub struct TimelineRenderRequest {
     /// [`SegmentedEncodePlan`]'s fields are).
     #[serde(default, rename = "timelineId")]
     pub timeline_id: Option<String>,
+    /// **D-441 — the export queue's job id, so this render can be cancelled.**
+    /// Every encoder and the concat step are attached to
+    /// [`super::export_job`]'s registration under it; `chroma_cancel_editor_
+    /// export(token)` kills them and the render returns `cancelled: true` with
+    /// its partial output removed. `None` (a direct caller) cannot be cancelled.
+    #[serde(default, rename = "cancelToken")]
+    pub cancel_token: Option<String>,
 }
 
 /// The two extra argvs a segmented render needs, compiled by
@@ -139,6 +147,9 @@ pub struct TimelineRenderOutcome {
     /// D-401 — what the loudness pass measured and did, when one was requested.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub loudness: Option<LoudnessReport>,
+    /// D-441 — the render was cancelled (`ok` is then `false` and the partial
+    /// output has been removed).
+    pub cancelled: bool,
 }
 
 /// How many finished frames may sit between the compositor and the encoder
@@ -540,6 +551,19 @@ pub fn render_timeline(
     let canvas = canvas_plan(comp, out);
     let started = Instant::now();
 
+    // D-441 — registered before anything spawns, so a job cancelled while it
+    // was being started is refused here instead of rendering anyway.
+    let cancel = match export_job::register(req.cancel_token.as_deref()) {
+        Ok(g) => g,
+        Err(reason) if reason == export_job::CANCELLED_MESSAGE => {
+            return Ok(cancelled_outcome(started));
+        }
+        Err(e) => return Err(e),
+    };
+    if let Some(output) = req.output.as_deref() {
+        export_job::ensure_output_dir(Path::new(output))?;
+    }
+
     // D-360 — split into contiguous segments when the caller compiled the argv
     // for it AND this machine and this export are big enough to be worth it.
     // D-362 — the partition is decided HERE, once, whichever path runs, because
@@ -568,6 +592,9 @@ pub fn render_timeline(
         req.output.clone(),
         export_status::STALL_TIMEOUT,
     )?;
+    // D-441 — every encoder this job attaches is now also killed by a cancel,
+    // and the per-frame loop stops on it.
+    job.bind_cancel(cancel.handle().clone());
 
     let outcome = match (&req.segments, ranges.len()) {
         (Some(plan), n) if n > 1 => render_segmented(
@@ -591,8 +618,16 @@ pub fn render_timeline(
             ms: started.elapsed().as_millis(),
             stderr_tail: one.stderr_tail,
             loudness: None,
+            cancelled: false,
         }),
     };
+
+    // D-441 — a cancel outranks every other outcome: the killed encoders
+    // surface downstream as broken pipes, and a loudness pass that finished
+    // after the cancel produced a file nobody wants. Remove what was written.
+    if cancel.is_cancelled() {
+        return Ok(finish_cancelled(req, &job, started));
+    }
 
     // D-362 — the watchdog's verdict outranks whatever error its own kill
     // produced downstream. Killing a wedged encoder surfaces as a broken pipe,
@@ -608,6 +643,7 @@ pub fn render_timeline(
                     Ok(o)
                 }
                 Some(target) => match normalise_output(req, target, &job) {
+                    Ok(_) if cancel.is_cancelled() => Ok(finish_cancelled(req, &job, started)),
                     Ok(report) => {
                         o.loudness = Some(report);
                         job.finish(Ok(()));
@@ -626,6 +662,34 @@ pub fn render_timeline(
             Err(e)
         }
     }
+}
+
+/// D-441 — what a render that was cancelled before it started answers.
+fn cancelled_outcome(started: Instant) -> TimelineRenderOutcome {
+    TimelineRenderOutcome {
+        ok: false,
+        frames: 0,
+        segments: 0,
+        ms: started.elapsed().as_millis(),
+        stderr_tail: export_job::CANCELLED_MESSAGE.to_string(),
+        loudness: None,
+        cancelled: true,
+    }
+}
+
+/// D-441 — settle a cancelled render: the status slot reads `cancelled`, and
+/// the partial output (and any loudness scratch file) is removed. The segment
+/// directory is a `TempDir` and has already removed itself.
+fn finish_cancelled(
+    req: &TimelineRenderRequest,
+    job: &ExportJob,
+    started: Instant,
+) -> TimelineRenderOutcome {
+    job.finish_cancelled();
+    if let Some(output) = req.output.as_deref() {
+        export_job::discard_partial_output(Path::new(output));
+    }
+    cancelled_outcome(started)
 }
 
 /// D-401 — run the loudness pass over the finished render, inside its job.
@@ -771,8 +835,8 @@ fn render_range(
         // every other segment has rendered itself out in full. D-362 — the
         // watchdog sets the same flag, so a stall stops every segment here too,
         // not only the one that wedged.
-        if job.abort().load(std::sync::atomic::Ordering::Relaxed) {
-            render_err = Some("another segment failed".to_string());
+        if job.should_stop() {
+            render_err = Some("another segment failed, or the export was cancelled".to_string());
             break;
         }
         let frame = match edit::render_timeline_frame(
@@ -921,7 +985,7 @@ fn render_segmented(
     // D-362, because `job`'s progress arithmetic is only a true fraction of the
     // render if the ranges the workers walk are the ranges it was built from.
     let files: Vec<PathBuf> = (0..ranges.len())
-        .map(|i| dir.path().join(format!("segment-{i:03}.mp4")))
+        .map(|i| dir.path().join(segment_file_name(i, req.output.as_deref())))
         .collect();
     let argvs = files
         .iter()
@@ -1008,6 +1072,7 @@ fn render_segmented(
         )
         .map_err(|e| format!("spawn the concat step: {e}"))?,
     );
+    job.attach_aux(&joiner);
     let concat_err = drain_stderr_pipe(joiner.take_stderr());
     let status = wait_bounded(&joiner, job.stall_after(), "the concat step")?;
     if !status.success() {
@@ -1026,7 +1091,25 @@ fn render_segmented(
         ms: started.elapsed().as_millis(),
         stderr_tail,
         loudness: None,
+        cancelled: false,
     })
+}
+
+/// **D-441 — a segment's file name, in the OUTPUT's container.**
+///
+/// Segments are `-c:v copy`-concatenated into the output, so they must be a
+/// container that can hold the output's codec: an H.264 export's segments are
+/// `.mp4`, the ProRes master's are `.mov` (the mp4 muxer does not take
+/// ProRes). The extension follows the output's; no output, or one without an
+/// extension, keeps the long-standing `.mp4`.
+fn segment_file_name(index: usize, output: Option<&str>) -> String {
+    let ext = output
+        .and_then(|o| Path::new(o).extension())
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .filter(|e| !e.is_empty())
+        .unwrap_or_else(|| "mp4".to_string());
+    format!("segment-{index:03}.{ext}")
 }
 
 /// `editor_export`'s D-350 render path, as a Tauri command: resolve the OPEN
@@ -1450,6 +1533,23 @@ mod tests {
         assert_eq!(procs_per_segment(&tl), 3);
 
         assert_eq!(procs_per_segment(&Timeline::default()), 1);
+    }
+
+    #[test]
+    fn segments_take_the_outputs_container() {
+        assert_eq!(
+            segment_file_name(0, Some("/m/Master.mov")),
+            "segment-000.mov"
+        );
+        assert_eq!(
+            segment_file_name(12, Some("/m/Short.MP4")),
+            "segment-012.mp4"
+        );
+        assert_eq!(
+            segment_file_name(1, Some("/m/no-extension")),
+            "segment-001.mp4"
+        );
+        assert_eq!(segment_file_name(2, None), "segment-002.mp4");
     }
 
     #[test]
@@ -2019,6 +2119,7 @@ mod parity_tests {
                         output: None,
                         loudness: None,
                         timeline_id: None,
+                        cancel_token: None,
                     },
                     &plan,
                     ranges,
@@ -2090,6 +2191,7 @@ mod parity_tests {
                     output: None,
                     loudness: None,
                     timeline_id: None,
+                    cancel_token: None,
                 },
             )
         } else {
@@ -2109,6 +2211,7 @@ mod parity_tests {
                     output: None,
                     loudness: None,
                     timeline_id: None,
+                    cancel_token: None,
                 },
                 &plan,
                 segments,
@@ -2461,6 +2564,7 @@ mod parity_tests {
             output: None,
             loudness: None,
             timeline_id: None,
+            cancel_token: None,
         };
         let outcome = render_timeline(&timeline, &settings, &req).expect("the new render path");
         assert_eq!(
@@ -2608,6 +2712,7 @@ mod parity_tests {
             output: None,
             loudness: None,
             timeline_id: None,
+            cancel_token: None,
         };
         let outcome = render_timeline(&timeline, &settings, &req).expect("the render path");
         assert_eq!(
@@ -3020,6 +3125,7 @@ mod parity_tests {
                 output: None,
                 loudness: None,
                 timeline_id: None,
+                cancel_token: None,
             },
         )
         .expect("the single-stream render");
@@ -3034,6 +3140,7 @@ mod parity_tests {
             output: None,
             loudness: None,
             timeline_id: None,
+            cancel_token: None,
         };
         let plan = SegmentedEncodePlan {
             segment_args: localise(&fx.segment_args, dir, &segmented_out),
@@ -3310,6 +3417,7 @@ mod parity_tests {
             output: None,
             loudness: None,
             timeline_id: None,
+            cancel_token: None,
         };
         let timeline = localise_timeline(&st.timeline, dir);
         let settings = ProjectSettings {
@@ -3566,6 +3674,7 @@ mod parity_tests {
             output: None,
             loudness: None,
             timeline_id: None,
+            cancel_token: None,
         };
         let outcome = render_timeline(&timeline, &settings, &req)
             .expect("a sizeless project renders at the export's own size");
@@ -3667,6 +3776,7 @@ mod parity_tests {
             output: None,
             loudness: None,
             timeline_id: None,
+            cancel_token: None,
         };
         let outcome =
             render_timeline(&timeline, &settings, &req).expect("an audio-only timeline exports");

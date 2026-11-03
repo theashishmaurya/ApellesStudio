@@ -44,14 +44,34 @@ export const MUSIC_EDIT_KINDS = ['dropout', 'breath', 'dry_open', 'dry_cta', 'se
 
 export type MusicEditKind = (typeof MUSIC_EDIT_KINDS)[number];
 
-/** The panel's and the answers' names for each kind. */
+/** The panel's and the answers' names for each kind (D-444: the owner's
+ *  short names, which fit a pill). The stored kind ids are unchanged. */
 export const MUSIC_EDIT_KIND_LABELS: Record<MusicEditKind, string> = {
   dropout: 'Dropout',
-  breath: 'Stop-time breath',
-  dry_open: 'Dry cold open',
-  dry_cta: 'Dry call to action',
-  section_out: 'Section closer',
+  breath: 'Breath',
+  dry_open: 'Dry open',
+  dry_cta: 'Dry CTA',
+  section_out: 'Section end',
 };
+
+/** D-444 — what each kind is for, in one line: the selected pill's sentence
+ *  and every pill's tooltip in the Music edits panel. */
+export const MUSIC_EDIT_KIND_HINTS: Record<MusicEditKind, string> = {
+  dropout: 'The music fades out and comes back after a moment.',
+  breath: 'About 1 s of silence, so the next line lands.',
+  dry_open: 'The video starts with no music under it.',
+  dry_cta: 'No music under your ask to subscribe or buy.',
+  section_out: 'The music stops to close a chapter.',
+};
+
+/** `1:12.40` — minutes, seconds and hundredths of a timeline frame, the way
+ *  the Music edits panel writes a range. */
+export function fmtMusicTime(frame: number, fps: number): string {
+  const secs = Math.max(0, frame / fps);
+  const m = Math.floor(secs / 60);
+  const s = secs - m * 60;
+  return `${m}:${s.toFixed(2).padStart(5, '0')}`;
+}
 
 /** How long a stop-time breath is when only its re-entry word is given: the
  *  reference's breaths measured ~1 s (1:27.4, 2:43.3, 5:38.1, 8:42.7). */

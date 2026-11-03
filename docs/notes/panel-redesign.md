@@ -1,10 +1,10 @@
 # Panel redesigns: Clipper, Music edits, Inspector Audio + EQ, Inspector Video sections, Export
 
 **Status: approved by the owner (2026-11-03, "Looks good the UI you gave :)", revision 2).
-Built so far: the Inspector Audio + EQ (§3, B-365, D-442) and the Inspector Video sections
-(§4, B-366, D-443): see "As built" at the end. Clipper, Music edits and Export are built
-separately.** Original status:
-mockups ready for owner approval (2026-11-03). This is the
+All five built: the Inspector Audio + EQ (§3, B-365, D-442), the Inspector Video sections
+(§4, B-366, D-443), Export (§5, B-367, D-441), Music edits (§2, B-364, D-444) and the Clipper
+(§1, B-363, D-445). See "Owner decisions" and the "As built" sections at the end.** Original
+status: mockups ready for owner approval (2026-11-03). This is the
 research → mockup step of the D-432 flow for the five panels the owner called unintuitive
 on 2026-11-01: B-363 (Clipper), B-364 (Music edits), B-365 (Inspector Audio + EQ), B-366
 (Inspector Video sections) and B-367 (Export). Roadmap 00r (v0.3.0) item (b): "panel research
@@ -680,3 +680,104 @@ the display units. UI harness: `inspector-crop-in-viewer` and `inspector-eq-dot-
 - The level meter is the whole mix's output, not the clip's own level: that is what
   `chroma_audio_level` measures, and a per-clip meter would need a new tap in the mixer.
 
+## Owner decisions on the open questions (2026-11-03)
+
+The owner approved revision 2 ("Looks good the UI you gave :)") and answered:
+
+- **Clipper.** The review lives in the viewer area while the Shorts tab is active (not a
+  full-window view). Reasons only, no score. "Make and export" stays MCP-only
+  (`editor_build_clips` `mode` / `export_dir`). (1.2 "Suggest as a short" was not
+  asked again; candidates stay evidence, per D-411.)
+- **Music edits.** Preview plays the edit before it is applied: a temporary,
+  non-committing, deterministic preview. "Save for later" stays in the ⋯ menu. The kinds
+  are named Dropout / Breath / Dry open / Dry CTA / Section end.
+- **Export.** Add a ProRes 422 HQ master (the Master preset; a real `prores_ks` path
+  through the existing export pipeline, `.mov`). User-saved presets, stored with the app
+  settings, one shared preset table for the GUI and MCP. Cancel a running export for real
+  (kill the ffmpeg / segment jobs, clean partial files, job state `cancelled`). Per-clip
+  fit / Freeze become "Stretch to fill" / "Hold last frame" under "Clip exceptions".
+  Export runs in the background with progress in the top bar (the existing queue).
+  Publish destinations drawn dimmed, "Publish · soon", no behaviour.
+
+## As built: Export (D-441, B-367)
+
+- **Sheet** `packages/editor/src/EditorExportDialog.tsx` (the component keeps its name and
+  the `export-dialog` panel id): destinations (File; YouTube / Instagram / TikTok dimmed under
+  "Publish · soon", tooltip only), title + timeline picker ("name · length · 16:9"), preset
+  chips (icon, short name, tag; saved presets get a delete × on hover), the name field with
+  its extension and "in ~/Movies/<project>" plus Change…, the one-line summary with "≈ size"
+  and a warning icon (tooltip: grade notes, or a preset whose shape stretches the timeline),
+  More settings (Size, Frame rate, Loudness, Loudest peak, Format, Save these settings as a
+  preset, Clip exceptions), footer Cancel · Export. Opens on the last preset used for the
+  timeline's shape (else 16:9 → YouTube 1080p, 9:16 → Shorts, 1:1 → Square). A hand change in
+  More settings leaves no chip selected.
+- **Top bar**: `ExportQueueButton` in the same `headerAction`: the pill and its popover (per
+  job: progress and time left, loudness result in words, Cancel / Show in Finder / Try again /
+  dimmed Post…, Clear finished).
+- **Presets** `exportPresets.ts`: the built-in table, the saved-preset store (persisted via
+  `appSettings.export` from `Root.tsx`), `withPreset` for `editor_export`, the default path.
+  **Formats** `exportFormat.ts`: H.264 MP4 / ProRes 422 HQ and their codec tails, the size
+  estimate.
+- **Backend**: `chroma::export_job` (cancel registry, partial-file cleanup, output folder,
+  unused default name), `chroma_run_editor_export` (the filter path, cancellable, loudness
+  inside), the compositor's encoders and concat attached to the same registration, segment
+  files in the output's container, PCM kept by the loudness pass in a `.mov`.
+- **MCP**: `editor_export` `preset` / `format` / optional `out_path`;
+  `editor_cancel_export`, `editor_list_export_presets`, `editor_save_export_preset`.
+- **Size** (owner follow-up, "over lapping"): `min(880 px, window − 64 px)` wide, at most
+  `min(760 px, window − 64 px)` tall, a 32 px inset from every edge (`EXPORT_SHEET_INSET_PX`),
+  height from its content, body scrolling inside; selected chips use an inset ring.
+- **Deviations from the mockup**: the Master chip is the ProRes master (tag "ProRes") instead
+  of an H.264 "as edited" chip; Save as preset sits at the end of More settings; no system
+  notification when an export finishes (the pill shows it). Reasons in D-441.
+
+## As built: Music edits (D-444, B-364)
+
+- **Panel** `packages/editor/src/MusicEditsPanel.tsx`: the track line ("On A3 · <music>",
+  Automatic entry kept, its explanation in the trigger's tooltip); the empty state (one
+  sentence, "Music stops at the playhead (I)", the one-second breath); making one (kind pills
+  with the selected kind's sentence, the range row, the fade diagram with draggable dots, the
+  "Song keeps time / Song resumes" segmented control, Preview ▶ · Apply · ⋯ › Save for later);
+  the suggestions list (rows with Preview, Change, Approve, Skip; Approve all, Dismiss, the
+  stale warning, "Apply N approved · one undo"; "Make one yourself" below it).
+- **The range is the timeline's In / Out marks** (B-348): I / O and the fields' playhead
+  targets set it, the ruler draws it, Apply clears it. The music returns AT the Out mark.
+- **Preview** `musicPreview.ts` + `chroma_audio_preview_set` (`chroma::edit::set_audio_preview`):
+  the edited document (the `music_edits` reducer's own result) replaces the audio path's mix
+  while it plays, 2 s before to 2 s after; nothing is committed, saved or undoable.
+- **Kinds** (`musicEdits.ts`): labels Dropout / Breath / Dry open / Dry CTA / Section end,
+  one-line hints in `MUSIC_EDIT_KIND_HINTS`; ids unchanged.
+- **Deviations from the mockup**: the range shows on the ruler, not as a box on the music
+  lane, and suggestions are not hatched on the lane (the lane renderer is being changed by
+  another pass; the ruler band is the same range); the breath button is also under the maker.
+  Reasons in D-444.
+
+## As built: Clipper (D-445, B-363)
+
+- **List** `packages/editor/src/clipper/ClipperPanel.tsx` (the Shorts tab): the set picker
+  ("Shorts from <source> · <date>") with ＋, the state line, one card per short (9:16 poster
+  with its length, title, opening line, clean-cut chip, status, Open on a made short), the
+  count line, "Approve the rest", "Make N shorts" (the approved ones only) or its reason.
+  With no run: earlier runs and New shorts.
+- **Surface** `ClipperSurface.tsx`, laid over the viewer by `EditorTab` while the Shorts tab is
+  showing (× or Esc brings the viewer back): New shorts (with More options), Reading / Ready
+  for your AI agent (steps, the request to copy), and the review (the poster with the opening
+  line as caption, Show in source / Open, rename, length vs target, source span, check chip,
+  "Opens with" / "Why your agent picked it", the warnings with what to try, "What's in it",
+  Start / End ‹ Earlier · Later ›, Other moments, Details, Skip (X) / Approve (A), ↑ / ↓).
+- **Words** `clipperView.ts` (pure); **actions and keys** `clipperReview.ts`; **posters**
+  `clipperPoster.ts` (the shared `clipThumbs` cache); **state** `clipperStore` (surface,
+  selection, notice; the analysis keeps its source paths).
+- **MCP**: no new tool; rename, status, trims, More options and Make map to
+  `editor_set_clip_proposal` / `editor_auto_clip` / `editor_build_clips(ids)`.
+- **Deviations from the mockup**: the player is the short's opening frame until it is made
+  (there is no timeline to play before the build; Show in source plays it on the long
+  timeline); "Suggest as a short" not built. Reasons in D-445.
+
+## Screenshots of the build (2026-11-03)
+
+`scratch/ui-compare/panels-v030/` (main checkout; a debug bundle, `studio.apelles.perf4`, on a
+copy of a real project): `export-rest`, `export-master-more`, `export-1280x800-more` (the inset
+holds at 1280 × 800; the body scrolls), `music-empty`, `music-make`, `clipper-review`,
+`clipper-setup`. Compared with the mockup's states: layout, order and wording match; the
+deviations are the ones listed per panel above.

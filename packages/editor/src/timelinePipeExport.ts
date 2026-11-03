@@ -38,6 +38,7 @@
 import type { Clip, Timeline } from './timeline';
 import { resolveSpeedSegments } from './speedRamp';
 import type { TimelineExportOptions } from './timelineExport';
+import { audioCodecArgs, pipeVideoCodecArgs } from './exportFormat';
 import {
   audioRefBracket,
   audioRefMapArg,
@@ -209,11 +210,11 @@ function buildPipeAudioGraph(timeline: Timeline, opts: TimelineExportOptions): A
   return { inputs, filterSteps, mapArg: '[outa]' };
 }
 
-/** The output codec tail. h.264/`yuv420p` — the same default
- *  `chroma::export`'s single-clip renderer uses, and the same one the old
- *  filter-graph path got from ffmpeg's own extension-driven default for `.mp4`. */
-function videoCodecArgs(): string[] {
-  return ['-c:v', 'libx264', '-crf', '18', '-pix_fmt', 'yuv420p'];
+/** The output codec tail for this export's format (D-441, `exportFormat.ts`):
+ *  h.264/`yuv420p` by default — the same default `chroma::export`'s
+ *  single-clip renderer uses — or ProRes 422 HQ for the master. */
+function videoCodecArgs(opts: TimelineExportOptions): string[] {
+  return pipeVideoCodecArgs(opts.format ?? 'h264');
 }
 
 /** D-360 — the placeholder the Rust side replaces with a segment's own output
@@ -302,8 +303,8 @@ export function buildPipeExportPlan(
     args.push('-filter_complex_threads', '2', '-filter_complex', audio.filterSteps.join(';'));
   }
   args.push('-map', `${PIPE_VIDEO_INPUT_IDX}:v`);
-  if (audio.mapArg) args.push('-map', audio.mapArg);
-  args.push(...videoCodecArgs());
+  if (audio.mapArg) args.push('-map', audio.mapArg, ...audioCodecArgs(opts.format ?? 'h264'));
+  args.push(...videoCodecArgs(opts));
   // `-r`/`-t` for the same reason the old path carries them: the pipe is a raw
   // stream with no container timing of its own, and the audio inputs must not
   // be allowed to run the output past the picture.
@@ -342,7 +343,7 @@ function buildSegmentArgs(opts: TimelineExportOptions): string[] {
     ...pipeVideoInputArgs(opts.width, opts.height, opts.fps),
     '-map',
     `${PIPE_VIDEO_INPUT_IDX}:v`,
-    ...videoCodecArgs(),
+    ...videoCodecArgs(opts),
     '-r',
     String(opts.fps),
     SEGMENT_OUT_TOKEN,
@@ -387,7 +388,7 @@ function buildConcatArgs(
     args.push('-filter_complex_threads', '2', '-filter_complex', audio.filterSteps.join(';'));
   }
   args.push('-map', `${PIPE_VIDEO_INPUT_IDX}:v`);
-  if (audio.mapArg) args.push('-map', audio.mapArg);
+  if (audio.mapArg) args.push('-map', audio.mapArg, ...audioCodecArgs(opts.format ?? 'h264'));
   args.push('-c:v', 'copy');
   args.push('-t', String(totalDurationSec), outPath);
   return args;

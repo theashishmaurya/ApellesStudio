@@ -485,6 +485,14 @@ ExportRenderer = Literal["filter", "compositor"]
 # mix is normalised to. "off" is the default (no post-processing at all).
 LoudnessPreset = Literal["youtube", "broadcast", "podcast", "off"]
 
+# `editor_export`'s / `editor_save_export_preset`'s `format` (D-441): H.264 in an
+# .mp4 (the delivery file) or Apple ProRes 422 HQ in a .mov (the master).
+ExportFormat = Literal["h264", "prores_hq"]
+
+# `editor_save_export_preset`'s `loudness` (D-441): a named platform spec, off,
+# or "custom" with `loudness_lufs` / `true_peak_dbtp`.
+PresetLoudness = Literal["off", "youtube", "broadcast", "podcast", "custom"]
+
 # D-411 Phase 0 — `editor_generate_captions_from_transcript`'s `scope`: caption
 # one source FILE (shifted by `offset_frames`), or the whole TIMELINE from its
 # stitched transcript, so every cue follows the edit's cuts. (The design note

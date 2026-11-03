@@ -50,6 +50,8 @@ from schemas import (
     EaseCurve,
     ExportRenderer,
     LoudnessPreset,
+    ExportFormat,
+    PresetLoudness,
     FitMode,
     GapSelector,
     LayerTransformKey,
@@ -4960,7 +4962,9 @@ def _await_export_job(env: dict, out_path: str, job_id: str) -> dict:
 
 @mcp.tool()
 def editor_export(
-    out_path: str,
+    out_path: str | None = None,
+    preset: str | None = None,
+    format: ExportFormat | None = None,
     width: int | None = None,
     height: int | None = None,
     fps: float | None = None,
@@ -4979,6 +4983,21 @@ def editor_export(
     is the only Edit-tab tool that produces a real output file;
     `editor_get_timeline` and every `editor_set_*`/`editor_add_*` tool above
     only change in-memory state.
+
+    **`preset` (D-441) — one of the Export panel's presets, by id or name**
+    (`editor_list_export_presets` lists them: `youtube-1080p`, `youtube-4k`,
+    `vertical` (Shorts · Reels · TikTok), `square`, `master` (ProRes 422 HQ at
+    the timeline's own size, loudness as mixed), `podcast`, plus any the person
+    or you saved with `editor_save_export_preset`). A preset fills size, frame
+    rate, loudness and format; any of those you ALSO pass explicitly wins over
+    the preset's value. **`format`** is `"h264"` (default; an .mp4) or
+    `"prores_hq"` (Apple ProRes 422 HQ, 10-bit 4:2:2, 24-bit PCM audio — the
+    master; `out_path` must then end in `.mov`). **`out_path` is optional**:
+    omitted, the file goes where the Export panel's pre-filled "Save as" puts it,
+    `~/Movies/<project>/<timeline name>.mp4` (or `.mov`), never over an existing
+    file. The answer carries `outPath`. **A running export can be stopped** with
+    `editor_cancel_export(job_id)` — its encoders are killed and the partial
+    file removed; `editor_export_status` then reads `cancelled`.
 
     `width`/`height` are the output composition's pixel size (every clip's
     `position_x`/`position_y`/`scale` from `editor_set_clip_transform` are
@@ -5092,7 +5111,13 @@ def editor_export(
     # B-335 -- this call's own job id, made BEFORE the call so it can follow its
     # own job even when the bridge times out first.
     job_id = f"export-{uuid.uuid4().hex[:12]}"
-    args: dict = {"outPath": out_path, "jobId": job_id}
+    args: dict = {"jobId": job_id}
+    if out_path is not None:
+        args["outPath"] = out_path
+    if preset is not None:
+        args["preset"] = preset
+    if format is not None:
+        args["format"] = format
     if width is not None:
         args["width"] = width
     if height is not None:
@@ -5123,7 +5148,7 @@ def editor_export(
     # real progress on the compositor path, so rather than hand the caller a
     # verdict that is simply wrong, poll for the true one.
     if not env.get("ok"):
-        env = _await_export_job(env, out_path, job_id)
+        env = _await_export_job(env, out_path or "", job_id)
     # B-091 — the compiled ffmpeg `args` (the FULL filter_complex, verbatim)
     # made this response grow with keyframe count/precision until it was
     # observed hitting an unreliable size boundary: the same general payload
@@ -5158,7 +5183,9 @@ def editor_export_status(job_id: str | None = None) -> str:
 
     **Read `state` first.** `running` (still going; poll again), `done` (the
     file is written and finalised), `failed` (`error` says why), `stalled`
-    (see below), or `idle` (no export has run in this session).
+    (see below), `cancelled` (stopped by `editor_cancel_export` or the Export
+    panel's Cancel; the partial file was removed — D-441), or `idle` (no export
+    has run in this session).
 
     **`stalled` is a real, named failure and it matters.** It means a render
     worker wrote no frame at all for `stallTimeoutSecs`, so the export was
@@ -5188,6 +5215,85 @@ def editor_export_status(job_id: str | None = None) -> str:
     if job_id is not None:
         args["job_id"] = job_id
     return json.dumps(_op("editor_export_status", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_cancel_export(job_id: str) -> str:
+    """Cancel an `editor_export` job by its `jobId` (D-441) — the same action as
+    the Export queue's Cancel button in the top bar.
+
+    A job still `queued` (waiting behind another export) leaves the queue at
+    once. A `running` one is stopped for real on either renderer: its ffmpeg /
+    segment encoders and the concat step are killed and the partial output file
+    (and any loudness-pass scratch file) is removed; `editor_export_status(
+    job_id)` reads `cancelled` once the run has unwound (usually well under a
+    second; a cancel during the short loudness pass is honoured when that pass
+    returns). A finished job cannot be cancelled. The answer says
+    `wasRunning`."""
+    import json
+
+    return json.dumps(_op("editor_cancel_export", job_id=job_id), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_list_export_presets() -> str:
+    """The Export panel's presets (D-441): the built-ins (`youtube-1080p`,
+    `youtube-4k`, `vertical` for Shorts · Reels · TikTok, `square`, `master` —
+    ProRes 422 HQ at the timeline's own size with loudness as mixed — and
+    `podcast`) followed by every preset the person or an agent saved. Each row:
+    `id`, `name`, `builtIn`, `width`/`height`/`fps` (null = the timeline's own),
+    `format` (`h264` | `prores_hq`), `loudness` (`off`, a platform name, or
+    `{lufs, truePeakDbtp}`) and a one-line `summary`. Pass an `id` or `name` as
+    `editor_export(preset=...)`. One table serves the panel's chips and this
+    tool, so the two never disagree."""
+    import json
+
+    return json.dumps(_op("editor_list_export_presets"), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_save_export_preset(
+    name: str,
+    width: int | None = None,
+    height: int | None = None,
+    fps: float | None = None,
+    loudness: PresetLoudness | None = None,
+    loudness_lufs: float | None = None,
+    true_peak_dbtp: float | None = None,
+    format: ExportFormat | None = None,
+    delete: bool | None = None,
+) -> str:
+    """Save an export preset under `name` (D-441) — the Export panel's "Save as
+    preset", for an agent. It is stored with the app's settings (not the
+    project), shows up as a chip in the Export panel and in
+    `editor_list_export_presets`, and `editor_export(preset=name)` uses it.
+    Saving under an existing saved name replaces it; a built-in's name is
+    refused. `width`/`height` (both or neither) and `fps` omitted = the
+    timeline's own. `loudness` is `"off"` (default), `"youtube"`, `"broadcast"`,
+    `"podcast"`, or `"custom"` with `loudness_lufs` (-40..-5) and optionally
+    `true_peak_dbtp` (-9..0, default -1). `format` is `"h264"` (default) or
+    `"prores_hq"`. `delete: true` removes the saved preset called `name`
+    instead (built-ins cannot be deleted)."""
+    import json
+
+    args: dict = {"name": name}
+    if width is not None:
+        args["width"] = width
+    if height is not None:
+        args["height"] = height
+    if fps is not None:
+        args["fps"] = fps
+    if loudness is not None:
+        args["loudness"] = loudness
+    if loudness_lufs is not None:
+        args["loudnessLufs"] = loudness_lufs
+    if true_peak_dbtp is not None:
+        args["truePeakDbtp"] = true_peak_dbtp
+    if format is not None:
+        args["format"] = format
+    if delete is not None:
+        args["delete"] = delete
+    return json.dumps(_op("editor_save_export_preset", **args), indent=2, default=str)
 
 
 @mcp.tool()

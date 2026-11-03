@@ -91,10 +91,14 @@
 //!   project's own timebase, and write a subtitle track back out as one
 //!   (D-229). The parsing itself is `apelles_timeline::subtitle_import`
 //! - `export`   — graded-clip render to ProRes/H.264 + `.cube` bake (D-022)
-//! - `ffmpeg_run` — generic `ffmpeg <argv>` spawn/capture primitive (D-183),
-//!   used by the Edit-tab timeline exporter (`packages/editor/src/
-//!   timelineExport.ts` builds the argv; this just runs it — no ffmpeg-arg
-//!   knowledge lives here, mirroring `apelles-motion`'s own render/exec split)
+//! - `export_job` — **the Edit export's job lifecycle (D-441)**: a real Cancel
+//!   for a running export on either renderer (`chroma_cancel_editor_export`),
+//!   the partial-file cleanup it owes, and creating the output folder
+//! - `ffmpeg_run` — `ffmpeg <argv>` spawn/capture (D-183): the Edit-tab
+//!   timeline exporter's filter-graph run (`packages/editor/src/
+//!   timelineExport.ts` builds the argv; this runs it, cancellable, with the
+//!   D-401 loudness pass inside the run — D-441) and the debug recorder's
+//!   streaming sink. No ffmpeg-arg knowledge lives here
 //! - `grade`    — the `grade.json` document command bridge: save / load
 //!                (D-025); the model itself lives in `apelles-grade-model` (D-143)
 //! - `grade_lut` — **the Colorist ⇄ Edit bridge (D-256)**: bakes a clip's saved
@@ -168,6 +172,7 @@ pub mod edit;
 pub mod edit_journal;
 pub mod edit_render;
 pub mod export;
+pub mod export_job;
 pub mod export_status;
 pub mod ffmpeg_run;
 pub mod filmstrip;
@@ -176,7 +181,6 @@ pub mod grade_lut;
 pub mod highlight_draw;
 pub mod keyframes;
 pub mod load;
-pub mod loudness;
 pub mod mask;
 pub mod media_cache;
 pub mod media_understanding;

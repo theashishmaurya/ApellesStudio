@@ -10,8 +10,15 @@
  *   behind it (D-198: one job at a time) instead of running beside it or
  *   inheriting its answer.
  * - [`exportJobStatus`] — `editor_export_status` with a `job_id`: that job's
- *   state (`queued` / `running` / `done` / `failed`), its output path and, while
- *   it renders, its live progress.
+ *   state (`queued` / `running` / `done` / `failed` / `cancelled`), its output
+ *   path and, while it renders, its live progress.
+ * - [`cancelExportJob`] — `editor_cancel_export` (D-441): the queue's own
+ *   `cancel`, the same action the Export queue's Cancel button runs.
+ *
+ * **D-441 — `preset` and a default `outPath`.** `editor_export(preset=…)` is
+ * resolved through `exportPresets.ts`'s one table (`withPreset`: explicit
+ * arguments win), and an omitted `outPath` becomes the Export panel's own
+ * default, `~/Movies/<project>/<timeline>.<ext>`.
  *
  * **Why.** Before B-335 the op ran the render directly and the MCP tool, on a
  * bridge timeout, polled the renderer's single "latest export" slot — so an
@@ -25,14 +32,21 @@
  */
 import { prepareEditorExport, type CompileError, type EditorExportResult } from './editorExport';
 import { useExportQueueStore, type ExportJob } from './exportQueueStore';
+import { defaultExportPath, findExportPreset, withPreset } from './exportPresets';
+import { isExportFormat } from './exportFormat';
+import { useEditorTimelineStore } from './timelineStore';
+import type { Timeline } from './timeline';
 
-type ExportArgs = Parameters<typeof prepareEditorExport>[0] & { jobId?: string };
+type ExportArgs = Parameters<typeof prepareEditorExport>[0] & { jobId?: string; preset?: unknown };
+
+const isSettled = (job: ExportJob) => job.status === 'done' || job.status === 'failed' || job.status === 'cancelled';
 
 /** What a finished (or failed) job reports as `editor_export`'s result. */
 function resultOf(job: ExportJob): EditorExportResult & { jobId: string } {
   return {
     jobId: job.id,
     ok: job.status === 'done',
+    ...(job.status === 'cancelled' ? { cancelled: true } : {}),
     error: job.error,
     outPath: job.outPath,
     timelineId: job.timelineId,
@@ -49,14 +63,26 @@ function resultOf(job: ExportJob): EditorExportResult & { jobId: string } {
 export async function runQueuedEditorExport(
   a: ExportArgs,
 ): Promise<(EditorExportResult & { jobId: string }) | CompileError> {
-  const prepared = await prepareEditorExport(a);
+  const presetName = typeof a.preset === 'string' ? findExportPreset(a.preset)?.name : undefined;
+  const filled = withPreset(a);
+  if ('error' in filled) return filled;
+  const prepared = await prepareEditorExport(filled);
   if ('error' in prepared) return prepared;
-  const name = typeof a.outPath === 'string' ? (a.outPath.split('/').pop() ?? a.outPath) : 'export';
-  const queued = useExportQueueStore.getState().enqueue(name, a, prepared.timeline, a.jobId || undefined);
+  let args: ExportArgs = filled;
+  if (filled.outPath === undefined || filled.outPath === null || filled.outPath === '') {
+    const format = isExportFormat(filled.format) ? filled.format : 'h264';
+    try {
+      args = { ...filled, outPath: await defaultExportPath(useEditorTimelineStore.getState().openProjectKey, timelineName(prepared.timeline), format) };
+    } catch (e: unknown) {
+      return { error: `could not work out a default output path (pass out_path): ${String((e as Error)?.message ?? e)}` };
+    }
+  }
+  const name = typeof args.outPath === 'string' ? (args.outPath.split('/').pop() ?? args.outPath) : 'export';
+  const queued = useExportQueueStore.getState().enqueue(name, args, prepared.timeline, a.jobId || undefined, presetName);
   if ('error' in queued) return queued;
   const settled = (): ExportJob | undefined => {
     const job = useExportQueueStore.getState().jobs.find((j) => j.id === queued.id);
-    return job && (job.status === 'done' || job.status === 'failed') ? job : undefined;
+    return job && isSettled(job) ? job : undefined;
   };
   const already = settled();
   if (already) return resultOf(already);
@@ -84,3 +110,29 @@ export function exportJobStatus(a: { job_id?: unknown }): Record<string, unknown
   if (job.status === 'running') return { ...(job.progress ?? {}), ...base, state: 'running' };
   return { ...base, error: job.error, loudness: job.loudnessReport };
 }
+
+/** The name an export of `tl` is saved under by default. */
+function timelineName(tl: Timeline): string {
+  const active = useEditorTimelineStore.getState();
+  if (tl.name) return tl.name;
+  const listed = active.timelines.find((t) => t.id === tl.id)?.name;
+  return listed || 'Timeline';
+}
+
+/** `editor_cancel_export` (D-441): cancel one job by id — a queued job leaves
+ *  the line, a running one is stopped and its partial file removed. */
+export async function cancelExportJob(a: { job_id?: unknown }): Promise<Record<string, unknown> | CompileError> {
+  const id = typeof a.job_id === 'string' ? a.job_id : '';
+  if (!id) return { error: 'job_id is required — the jobId editor_export answered (or editor_export_status lists)' };
+  const out = await useExportQueueStore.getState().cancel(id);
+  if ('error' in out) return out;
+  return {
+    ok: true,
+    jobId: id,
+    wasRunning: out.wasRunning,
+    note: out.wasRunning
+      ? 'stopped: its encoders were killed and the partial file is being removed; editor_export_status(job_id) reads "cancelled" once it has unwound'
+      : 'it had not started; it was taken out of the queue',
+  };
+}
+

@@ -16,7 +16,7 @@
  * media-understanding ones; `motion_*`; `debug_*`; the remainder is Colorist).
  */
 
-export const VERIFIED_ON = '2026-09-18';
+export const VERIFIED_ON = '2026-11-03';
 
 export interface ToolGroup {
   /** Short label used as the group's heading. */
@@ -93,6 +93,14 @@ export interface ToolGroup {
  * `motion_refill_template` and `motion_delete_template` (Motion 52 → 59).
  * Re-counted against the real file.
  *
+ * 255 → 275 on 2026-11-03 (D-441), re-counted against the real file: this
+ * pass's own `editor_cancel_export`, `editor_list_export_presets` and
+ * `editor_save_export_preset` (the Export panel's Cancel, presets and saved
+ * presets), plus drift since 2026-10-28 that nobody re-counted (among it
+ * `editor_set_marks` from B-348, `editor_set_target_track` from D-440,
+ * `ai_set_video_understanding` and seven more `debug_*` tools). Edit 111 → 122,
+ * Colorist 44 → 46, debugOnly 12 → 19.
+ *
  * 252 → 255 on 2026-10-28 (B-318, B-315, D-421): `editor_list_tracks`,
  * `editor_set_track_sync_locked` and `editor_remove_track` (Edit 108 → 111).
  * Re-counted against the real file.
@@ -153,15 +161,15 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 255,
-  shipped: 243,
-  debugOnly: 12,
+  all: 275,
+  shipped: 256,
+  debugOnly: 19,
 } as const;
 
 export const TOOL_GROUPS: readonly ToolGroup[] = [
   {
     name: 'Edit',
-    count: 111,
+    count: 122,
     blurb:
       'The whole multi-track NLE. Browse and organise the media pool, place and trim clips, perform any of the seven edit types at the playhead, roll/slip/slide, manage tracks, key transforms, set transitions, markers, captions and per-clip EQ, then render the timeline to a real file.',
     sample: [
@@ -194,7 +202,7 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
   },
   {
     name: 'Colorist',
-    count: 44,
+    count: 46,
     blurb:
       'Grading by the numbers. Primary, curves and wheels; composable shape, AI-subject and depth masks with keyframed geometry; SAM 2 tracking; a temporal depth track; relight pucks; and real scope measurement an agent reads back before and after every change.',
     sample: [

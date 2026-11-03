@@ -5,6 +5,7 @@
 
 import type { Scenario } from '../scenario.ts';
 import { EDIT_TOOL_SCENARIOS } from './editTools.ts';
+import { PANEL_SCENARIOS } from './panels.ts';
 import { PERF_300_SCENARIOS } from './perf300.ts';
 import { PANEL_REDESIGN_SCENARIOS } from './panelRedesign.ts';
 import { REDESIGN_SCENARIOS } from './redesign.ts';
@@ -18,5 +19,7 @@ export const SCENARIOS: readonly Scenario[] = [
   ...REDESIGN_SCENARIOS,
   // v0.3.0 panel redesign (D-442 / D-443): crop in the viewer, the EQ dot drag.
   ...PANEL_REDESIGN_SCENARIOS,
+  // v0.3.0 browser-panel redesigns (D-441 / D-444 / D-445): Export presets, Music edits fades, the Clipper surface.
+  ...PANEL_SCENARIOS,
   ...PERF_300_SCENARIOS,
 ];

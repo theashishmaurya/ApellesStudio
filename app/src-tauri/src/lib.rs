@@ -2379,6 +2379,8 @@ pub fn run() {
             chroma::filmstrip::chroma_clip_thumbnails,
             chroma::ocr::chroma_ocr_media,
             chroma::audio::chroma_audio_play,
+            // D-444 — the Music edits panel's non-committing Preview.
+            chroma::audio::chroma_audio_preview_set,
             chroma::audio::chroma_audio_stop,
             chroma::audio::chroma_audio_set_volume,
             chroma::audio::chroma_audio_level,
@@ -2396,8 +2398,11 @@ pub fn run() {
             chroma::export::chroma_export_video,
             chroma::export::chroma_export_progress,
             chroma::export::chroma_bake_lut,
-            chroma::ffmpeg_run::chroma_run_ffmpeg,
-            chroma::loudness::chroma_normalize_loudness,
+            // D-441 — the Edit export's filter-graph run, cancellable, and the
+            // cancel itself (either renderer). See `chroma::export_job`.
+            chroma::ffmpeg_run::chroma_run_editor_export,
+            chroma::export_job::chroma_cancel_editor_export,
+            chroma::export_job::chroma_unused_export_path,
             // D-350 — the Edit tab's headless timeline render path: composite
             // through the live preview's own compositor, pipe raw frames to one
             // ffmpeg process. See `chroma::edit_render`.

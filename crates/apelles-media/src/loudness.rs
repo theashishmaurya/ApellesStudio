@@ -65,6 +65,9 @@ const LIMITER_OVERSAMPLE: u32 = 4;
 /// Re-encoded audio bitrate. A transparent rate for stereo AAC-LC; the
 /// exporter's own default (128k) would be a quality step down from the mix.
 const AUDIO_BITRATE: &str = "192k";
+/// D-441 — the audio codec of a `.mov` (the Edit export's ProRes master): the
+/// same 24-bit PCM the export itself writes there.
+pub const MASTER_AUDIO_CODEC: &str = "pcm_s24le";
 /// `alimiter` accepts a linear limit no lower than this (about -24 dB).
 const ALIMITER_MIN_LIMIT: f64 = 0.0625;
 
@@ -209,6 +212,12 @@ pub fn filter_chain(gain_db: f64, limiter_ceiling_dbtp: f64, sample_rate: u32) -
 
 /// The `-c:a` codec args for `path`'s container, or an error naming the
 /// containers this module will rewrite.
+///
+/// **D-441 — a `.mov` keeps uncompressed audio.** The Edit export writes `.mov`
+/// only for its ProRes 422 HQ master, whose sound is 24-bit PCM; re-encoding it
+/// to AAC here would put a lossy generation into the one file meant to be
+/// lossless. PCM also cannot overshoot a peak the way AAC does, so the measured
+/// correction below lands on its first attempt.
 fn audio_codec_args(path: &Path) -> Result<Vec<String>, String> {
     let ext = path
         .extension()
@@ -216,7 +225,8 @@ fn audio_codec_args(path: &Path) -> Result<Vec<String>, String> {
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
     match ext.as_str() {
-        "mp4" | "m4v" | "mov" | "mkv" => Ok(vec![
+        "mov" => Ok(vec!["-c:a".into(), MASTER_AUDIO_CODEC.into()]),
+        "mp4" | "m4v" | "mkv" => Ok(vec![
             "-c:a".into(),
             "aac".into(),
             "-b:a".into(),
@@ -241,6 +251,13 @@ fn sibling_temp(path: &Path) -> PathBuf {
         None => format!("{stem}.loudness-tmp"),
     };
     path.with_file_name(name)
+}
+
+/// D-441 — every scratch file [`normalise_in_place`] may leave beside `path`
+/// while it runs: the attempt being written and the best attempt so far. An
+/// export cancelled during the loudness pass removes these with the output.
+pub fn scratch_paths(path: &Path) -> [PathBuf; 2] {
+    [sibling_temp(path), best_path(path)]
 }
 
 /// `<stem>.loudness-best.<ext>` beside `path`: the best attempt so far, kept
@@ -522,6 +539,23 @@ mod tests {
     fn an_unrewritable_container_is_named() {
         let err = audio_codec_args(Path::new("/tmp/x.webm")).expect_err("webm is refused");
         assert!(err.contains(".webm"));
+    }
+
+    /// D-441 — the ProRes master (`.mov`) keeps 24-bit PCM through the loudness
+    /// pass; the delivery containers stay AAC.
+    #[test]
+    fn a_master_mov_keeps_pcm_and_a_delivery_mp4_gets_aac() {
+        let mov = audio_codec_args(Path::new("/tmp/master.mov")).expect("mov");
+        assert_eq!(mov, vec!["-c:a".to_string(), "pcm_s24le".to_string()]);
+        let mp4 = audio_codec_args(Path::new("/tmp/short.MP4")).expect("mp4");
+        assert_eq!(mp4[..2], ["-c:a".to_string(), "aac".to_string()]);
+    }
+
+    #[test]
+    fn the_scratch_paths_sit_beside_the_output_with_its_extension() {
+        let [tmp, best] = scratch_paths(Path::new("/tmp/out/Short 1.mov"));
+        assert_eq!(tmp, Path::new("/tmp/out/Short 1.loudness-tmp.mov"));
+        assert_eq!(best, Path::new("/tmp/out/Short 1.loudness-best.mov"));
     }
 
     // ---- measured tests: the bundled ffmpeg's own ebur128 is the judge ----

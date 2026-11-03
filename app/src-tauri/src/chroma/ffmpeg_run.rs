@@ -12,17 +12,16 @@
 //!   without spawning anything; a thin execute wrapper on top of it) one
 //!   level more generic, since this one has no fixed program args of its
 //!   own at all beyond the `ffmpeg` binary itself.
-//! What it does NOT do: build a filtergraph, validate the argv, know an
-//!   output path exists, or report progress (`run_ffmpeg` blocks the
-//!   calling thread for the whole run — the Tauri command wraps it in
-//!   `spawn_blocking`, the same shape `chroma::motion_job`'s worker uses).
+//! What it does NOT do: build a filtergraph or validate the argv.
 //!
-//! **Two execution shapes** (D-330 added the second): [`run_ffmpeg`] is
-//! one-shot — spawn, wait, hand back the output — which is right whenever the
-//! whole input already exists on disk. [`FfmpegStdinSink`] is the streaming
-//! one, for a caller whose frames do not exist yet when ffmpeg starts and
-//! arrive over seconds (the debug video recorder, `debug_record.rs`). Both go
-//! through the same [`build_command`]. Which `ffmpeg` binary that is, is not
+//! **Two execution shapes** (D-330 added the second, D-441 reshaped the first):
+//! [`run_editor_export`] is the Edit export's filter-graph run — spawn, wait,
+//! hand back the output — attached to `export_job`'s cancel registration so a
+//! running export can be stopped, with the output folder created first and the
+//! optional loudness pass (D-401) inside the same run. [`FfmpegStdinSink`] is the
+//! streaming one, for a caller whose frames do not exist yet when ffmpeg starts
+//! and arrive over seconds (the debug video recorder, `debug_record.rs`). Both
+//! go through the same [`build_command`]. Which `ffmpeg` binary that is, is not
 //! decided here at all: it is `apelles_media::ffmpeg_locate`'s, the one
 //! resolver every spawn in the workspace uses (D-389, B-253).
 //!
@@ -34,8 +33,13 @@
 //! that only got stdout back would see nothing informative most of the time.
 
 use std::io::Write;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
+
+use apelles_media::loudness::{LoudnessReport, LoudnessTarget};
+
+use super::export_job;
 
 /// One ffmpeg invocation: just the argv that follows `ffmpeg` itself. No
 /// cwd of its own (unlike `apelles_motion::RenderRequest`, which must run
@@ -65,7 +69,7 @@ pub struct FfmpegRunOutcome {
 }
 
 /// Build the `ffmpeg <args>` invocation — pure, no I/O beyond what
-/// `Command` construction itself needs. Split out from [`run_ffmpeg`] so
+/// `Command` construction itself needs. Split out from [`run_editor_export`] so
 /// the exact argv is unit-testable without actually spawning `ffmpeg`,
 /// mirroring `apelles_motion::build_command`'s own reason for existing.
 ///
@@ -79,7 +83,7 @@ pub fn build_command(req: &FfmpegRunRequest) -> Result<Command, String> {
 
 /// A running `ffmpeg` that frames are fed to over stdin (D-330).
 ///
-/// Why this exists next to [`run_ffmpeg`]: that one is one-shot — it spawns,
+/// Why this exists next to [`run_editor_export`]: that one is one-shot — it spawns,
 /// waits, and hands back the whole output. The debug video recorder cannot
 /// work that way, because its input does not exist yet when ffmpeg starts:
 /// frames are captured live, over seconds, and must go down the pipe as they
@@ -261,25 +265,6 @@ pub fn spill_oversized_filtergraph(
     Ok((out, Some(SpilledFiltergraph { path })))
 }
 
-/// Run `req`, blocking until `ffmpeg` exits. Callers on an async runtime
-/// should wrap this in `spawn_blocking` (the Tauri command
-/// `chroma_run_ffmpeg` does) — same convention `apelles_motion::run_render`
-/// already established.
-pub fn run_ffmpeg(req: &FfmpegRunRequest) -> Result<FfmpegRunOutcome, String> {
-    // B-243 — `_graph_file` must stay in scope until ffmpeg has exited.
-    let (args, _graph_file) = spill_oversized_filtergraph(&req.args)
-        .map_err(|e| format!("failed to write filtergraph script: {e}"))?;
-    let output = build_command(&FfmpegRunRequest::new(args))?
-        .output()
-        .map_err(|e| format!("failed to spawn ffmpeg: {e}"))?;
-
-    Ok(FfmpegRunOutcome {
-        ok: output.status.success(),
-        stdout_tail: tail(&String::from_utf8_lossy(&output.stdout), 20),
-        stderr_tail: tail(&String::from_utf8_lossy(&output.stderr), 40),
-    })
-}
-
 /// The last `n` lines of `s` — enough context to explain a failure (or
 /// confirm a real success) without dumping ffmpeg's whole console log into
 /// the result. Copied verbatim from `apelles_motion`'s own private `tail()`
@@ -292,16 +277,163 @@ fn tail(s: &str, n: usize) -> String {
     lines[start..].join("\n")
 }
 
-/// Run an arbitrary ffmpeg command line — see this module's own doc
-/// comment for why this command has no idea what `args` means. Blocks on a
-/// background thread until ffmpeg exits (no progress reporting this pass,
-/// same floor the Motion render worker holds).
+/// What [`run_editor_export`] reports (D-441).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EditorExportRunOutcome {
+    pub ok: bool,
+    /// The run was cancelled; its partial output is gone.
+    pub cancelled: bool,
+    pub stdout_tail: String,
+    pub stderr_tail: String,
+    /// D-401 — what the loudness pass measured and did, when one was asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loudness: Option<LoudnessReport>,
+}
+
+impl EditorExportRunOutcome {
+    fn cancelled(stdout_tail: String) -> Self {
+        Self {
+            ok: false,
+            cancelled: true,
+            stdout_tail,
+            stderr_tail: export_job::CANCELLED_MESSAGE.to_string(),
+            loudness: None,
+        }
+    }
+}
+
+/// **The filter-graph Edit export, start to finish, cancellable (D-183, D-401,
+/// D-441).**
+///
+/// Spawns the caller's argv (one ffmpeg that composites, encodes and muxes the
+/// whole timeline) as a `SharedChild` attached to the export's
+/// [`export_job`] registration under `cancel_token`, so the Export panel's
+/// Cancel and `editor_cancel_export` can stop it. Creates the output folder
+/// first (the panel's default is `~/Movies/<project>/`, which does not exist
+/// before the first export). When `loudness` is given, the finished file is
+/// normalised in place by `apelles_media::loudness` inside the same
+/// registration (D-401), so a cancel during that pass is honoured too.
+///
+/// A cancelled run removes its partial output (and the loudness pass's scratch
+/// files) and returns `cancelled: true`. A failed run reports ffmpeg's own
+/// stderr tail.
+pub fn run_editor_export(
+    req: &FfmpegRunRequest,
+    output: &Path,
+    cancel_token: Option<&str>,
+    loudness: Option<LoudnessTarget>,
+) -> Result<EditorExportRunOutcome, String> {
+    let guard = match export_job::register(cancel_token) {
+        Ok(g) => g,
+        Err(reason) if reason == export_job::CANCELLED_MESSAGE => {
+            return Ok(EditorExportRunOutcome::cancelled(String::new()));
+        }
+        Err(e) => return Err(e),
+    };
+    export_job::ensure_output_dir(output)?;
+    // B-243 — `_graph_file` must stay in scope until ffmpeg has exited.
+    let (args, _graph_file) = spill_oversized_filtergraph(&req.args)
+        .map_err(|e| format!("failed to write filtergraph script: {e}"))?;
+    let mut cmd = build_command(&FfmpegRunRequest::new(args))?;
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = Arc::new(
+        shared_child::SharedChild::spawn(&mut cmd)
+            .map_err(|e| format!("failed to spawn ffmpeg: {e}"))?,
+    );
+    guard.attach(&child);
+    let stdout = drain(child.take_stdout());
+    let stderr = drain(child.take_stderr());
+    let status = child
+        .wait()
+        .map_err(|e| format!("could not wait for ffmpeg: {e}"))?;
+    let stdout_tail = tail(&String::from_utf8_lossy(&joined(stdout)), 20);
+    let stderr_tail = tail(&String::from_utf8_lossy(&joined(stderr)), 40);
+    if guard.is_cancelled() {
+        export_job::discard_partial_output(output);
+        return Ok(EditorExportRunOutcome::cancelled(stdout_tail));
+    }
+    if !status.success() {
+        return Ok(EditorExportRunOutcome {
+            ok: false,
+            cancelled: false,
+            stdout_tail,
+            stderr_tail,
+            loudness: None,
+        });
+    }
+    let Some(target) = loudness else {
+        return Ok(EditorExportRunOutcome {
+            ok: true,
+            cancelled: false,
+            stdout_tail,
+            stderr_tail,
+            loudness: None,
+        });
+    };
+    let report = apelles_media::loudness::normalise_in_place(output, target);
+    if guard.is_cancelled() {
+        export_job::discard_partial_output(output);
+        return Ok(EditorExportRunOutcome::cancelled(stdout_tail));
+    }
+    Ok(match report {
+        Ok(report) => EditorExportRunOutcome {
+            ok: true,
+            cancelled: false,
+            stdout_tail,
+            stderr_tail,
+            loudness: Some(report),
+        },
+        Err(e) => EditorExportRunOutcome {
+            ok: false,
+            cancelled: false,
+            stdout_tail,
+            stderr_tail: format!("the export was written but loudness normalisation failed: {e}"),
+            loudness: None,
+        },
+    })
+}
+
+/// Read a child's pipe to the end on a background thread. Both pipes must be
+/// drained while the child runs: one nobody reads fills its OS buffer and
+/// stalls ffmpeg.
+fn drain<R: std::io::Read + Send + 'static>(
+    pipe: Option<R>,
+) -> Option<std::thread::JoinHandle<Vec<u8>>> {
+    pipe.map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut out = Vec::new();
+            // A read error ends the drain; whatever was read is still the tail.
+            let _ = std::io::Read::read_to_end(&mut pipe, &mut out);
+            out
+        })
+    })
+}
+
+/// The bytes a [`drain`] thread read, once the child has exited (its pipe then
+/// hits end of file, so the join is prompt).
+fn joined(drain: Option<std::thread::JoinHandle<Vec<u8>>>) -> Vec<u8> {
+    drain.and_then(|h| h.join().ok()).unwrap_or_default()
+}
+
+/// The Edit export's filter-graph run (D-441): [`run_editor_export`] on a
+/// worker thread. `output` is the file the argv writes (its folder is created;
+/// a cancelled run removes it), `cancelToken` the export queue's job id, and
+/// `loudness` the optional D-401 target.
 #[tauri::command]
-pub async fn chroma_run_ffmpeg(args: Vec<String>) -> Result<FfmpegRunOutcome, String> {
+pub async fn chroma_run_editor_export(
+    args: Vec<String>,
+    output: String,
+    cancel_token: Option<String>,
+    loudness: Option<LoudnessTarget>,
+) -> Result<EditorExportRunOutcome, String> {
     let req = FfmpegRunRequest::new(args);
-    tauri::async_runtime::spawn_blocking(move || run_ffmpeg(&req))
-        .await
-        .map_err(|e| format!("ffmpeg task panicked: {e}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        run_editor_export(&req, Path::new(&output), cancel_token.as_deref(), loudness)
+    })
+    .await
+    .map_err(|e| format!("ffmpeg task panicked: {e}"))?
 }
 
 #[cfg(test)]
@@ -350,41 +482,99 @@ mod tests {
         assert_eq!(cmd.get_args().count(), 0);
     }
 
-    /// A real integration test — `ffmpeg` is already a hard dependency
-    /// everywhere else in this crate's own siblings (`apelles-media`,
-    /// `chroma::export`'s own module doc: "Decode the loaded clip
-    /// frame-by-frame with ffmpeg"), so it's safe to assume present here
-    /// too. `-version` is one of the few ffmpeg invocations that writes its
-    /// real output to STDOUT rather than stderr.
+    /// D-441 — a running filter-path export is stopped by a cancel under its
+    /// job id, reports `cancelled`, and leaves no partial file; its output
+    /// folder was created for it.
     #[test]
-    fn run_ffmpeg_version_succeeds_with_stdout() {
-        let req = FfmpegRunRequest::new(vec!["-version".to_string()]);
-        let outcome = run_ffmpeg(&req).expect("spawning ffmpeg itself must not fail");
-        assert!(outcome.ok, "ffmpeg -version should exit 0");
+    fn a_cancelled_editor_export_stops_and_removes_its_partial_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let out = dir.path().join("new folder").join("cancel-me.mp4");
+        // A long synthetic encode: minutes of work unless it is stopped.
+        let args: Vec<String> = [
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=1280x720:rate=30",
+            "-t",
+            "600",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryslow",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .chain(std::iter::once(out.to_string_lossy().into_owned()))
+        .collect();
+        let canceller = std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            super::super::export_job::cancel("ffmpeg-run-cancel")
+        });
+        let started = std::time::Instant::now();
+        let outcome = run_editor_export(
+            &FfmpegRunRequest::new(args),
+            &out,
+            Some("ffmpeg-run-cancel"),
+            None,
+        )
+        .expect("the run itself must not error");
+        assert!(canceller.join().expect("join").was_running);
+        assert!(outcome.cancelled && !outcome.ok, "{outcome:?}");
         assert!(
-            outcome
-                .stdout_tail
-                .to_lowercase()
-                .contains("ffmpeg version"),
-            "expected ffmpeg's own version banner on stdout, got: {}",
-            outcome.stdout_tail
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "stopped promptly"
+        );
+        assert!(!out.exists(), "the partial file is removed");
+        assert!(
+            out.parent().is_some_and(std::path::Path::is_dir),
+            "the folder was created"
         );
     }
 
     /// A rejected argv reports failure with a real, non-empty stderr tail —
-    /// confirming this actually captures something useful, not just a bool.
+    /// confirming the run captures something useful, not just a bool.
     #[test]
-    fn run_ffmpeg_reports_failure_and_stderr_for_a_bad_flag() {
+    fn a_failed_editor_export_reports_ffmpegs_own_reason() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let out = dir.path().join("never.mp4");
         let req = FfmpegRunRequest::new(vec!["-not-a-real-flag".to_string()]);
-        let outcome = run_ffmpeg(&req).expect("spawning ffmpeg itself must not fail");
-        assert!(
-            !outcome.ok,
-            "an unrecognized flag should make ffmpeg exit non-zero"
-        );
+        let outcome = run_editor_export(&req, &out, None, None).expect("spawning must not fail");
+        assert!(!outcome.ok && !outcome.cancelled);
         assert!(
             !outcome.stderr_tail.trim().is_empty(),
             "expected ffmpeg to explain the bad flag on stderr"
         );
+    }
+
+    /// A real, tiny encode finishes `ok` and writes its file.
+    #[test]
+    fn a_short_editor_export_finishes_and_writes_its_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let out = dir.path().join("ok.mp4");
+        let args: Vec<String> = [
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=64x64:rate=10",
+            "-t",
+            "0.5",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .chain(std::iter::once(out.to_string_lossy().into_owned()))
+        .collect();
+        let outcome =
+            run_editor_export(&FfmpegRunRequest::new(args), &out, None, None).expect("run");
+        assert!(outcome.ok, "{outcome:?}");
+        assert!(out.exists());
     }
 
     /// B-243 — an ordinary export's argv is left completely alone, so the

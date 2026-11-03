@@ -300,7 +300,14 @@ export async function analyseRun(
   } catch (e: unknown) {
     return { error: `the analysis failed: ${message(e)}` };
   }
-  if (opts.includeAnalysis) useClipperStore.getState().setAnalysis(run.id, { wire, provisional: input.provisional, at: Date.now() });
+  if (opts.includeAnalysis) {
+    useClipperStore.getState().setAnalysis(run.id, {
+      wire,
+      provisional: input.provisional,
+      at: Date.now(),
+      sourcePaths: input.sources.map((s) => s.path),
+    });
+  }
   return { wire, input };
 }
 

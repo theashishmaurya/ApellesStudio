@@ -61,6 +61,8 @@ import { EditorInspectorPanel } from './EditorInspectorPanel';
 import { EditBrowser } from './EditBrowser';
 import { NoProjectState } from './EditEmptyStates';
 import { PreviewPane } from './PreviewPane';
+import { ClipperSurface } from './clipper/ClipperSurface';
+import { useClipperStore } from './clipper/clipperStore';
 import { CaptionInspectorPanel } from './CaptionInspectorPanel';
 import { TextClipInspectorPanel } from './TextClipInspectorPanel';
 import { AdjustmentClipInspectorPanel } from './AdjustmentClipInspectorPanel';
@@ -164,6 +166,11 @@ export function EditorTab({ mediaPool, browserActions }: EditorTabProps) {
   const hasTracks = useEditorTimelineStore((s) => (s.timeline?.tracks.length ?? 0) > 0);
   // D-432 P5 — the browser's flag and the persisted split sizes.
   const browserOpen = useEditLayoutStore((s) => s.browserOpen);
+  // D-445 — the Clipper's surface takes the viewer area only while the
+  // browser shows the Shorts tab.
+  const shortsTab = useEditorTimelineStore((s) => s.libraryMode === 'clipper');
+  const clipperSurfaceOpen = useClipperStore((s) => s.surface !== 'closed');
+  const clipperSurface = shortsTab && clipperSurfaceOpen;
   const setBrowserOpen = useEditLayoutStore((s) => s.setBrowserOpen);
   const layout = useLayoutSizes();
 
@@ -265,7 +272,7 @@ export function EditorTab({ mediaPool, browserActions }: EditorTabProps) {
               id={PANEL_ID.viewer}
               data-chroma-panel="edit-viewer"
               minSize={VIEWER_MIN_WIDTH}
-              className="flex min-h-0 min-w-0 flex-col"
+              className="relative flex min-h-0 min-w-0 flex-col"
             >
               {/* B-292 — each pane crashes alone. `useEditorControl()` above is
                   deliberately OUTSIDE every pane boundary, so the `editor_*` ops
@@ -292,6 +299,14 @@ export function EditorTab({ mediaPool, browserActions }: EditorTabProps) {
                   }
                 />
               </PanelErrorBoundary>
+              {/* D-445 — the Clipper's review lives in the viewer area while the
+                  Shorts tab is showing (owner decision): laid over the viewer,
+                  which stays mounted underneath and comes back on close. */}
+              {clipperSurface && browserOpen && (
+                <PanelErrorBoundary panel="Clipper">
+                  <ClipperSurface />
+                </PanelErrorBoundary>
+              )}
             </ResizablePanel>
             {inspectorOpen && (
               <>
