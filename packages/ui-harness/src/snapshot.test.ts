@@ -18,7 +18,7 @@ describe('timelineSnapshot', () => {
           { id: 'id-new', index: 1, startFrame: 90, duration: 45 },
         ],
       },
-      { index: 1, clips: [] },
+      { index: 1, target: true, clips: [] },
     ],
     markers: [{ id: 'm', name: 'probe', frame: 150 }],
   };
@@ -35,6 +35,12 @@ describe('timelineSnapshot', () => {
     expect(snap.tracks[1]).toEqual([]);
     expect(snap.clipCount).toBe(3);
     expect(snap.markers).toEqual([{ id: 'm', name: 'probe', frame: 150 }]);
+  });
+
+  it('reports clip opacity (1 when unset) and the target track (v0.3.0)', () => {
+    expect(snap.clips.a.opacity).toBe(1);
+    expect(snap.targetTrack).toBe(1);
+    expect(timelineSnapshot({ tracks: [{ index: 0, clips: [] }] }).targetTrack).toBeNull();
   });
 
   it('an empty answer is an empty timeline, not a crash', () => {
