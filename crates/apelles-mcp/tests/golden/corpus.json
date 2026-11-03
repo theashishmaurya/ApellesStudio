@@ -7721,6 +7721,52 @@
       }
     },
     {
+      "name": "editor_set_marks",
+      "description": "Read or set the Edit timeline's IN and OUT marks: the same marks the I and O keys\n    set at the playhead and Alt+X clears (B-348), drawn as a tinted range on the\n    ruler. Pass any subset; pass nothing to only READ them.\n\n    `in_point` / `out_point`: absolute timeline frames (0-based). The range is\n    INCLUSIVE of both frames, as Premiere, Resolve and Final Cut mark it (out_point\n    is the last frame you want). Either may be alone: an In alone means \"from here\n    to the end\", an Out alone \"from the start to here\". Frames are clamped to the\n    timeline. Setting an In after the current Out clears the Out (and an Out before\n    the current In clears the In); to place both at once, pass both. `clear`: true\n    drops both marks first (then applies any `in_point` / `out_point` in the call).\n\n    Session state like the playhead: not part of the document, not undoable, not\n    saved, and cleared when the project or the active timeline changes. **They are\n    marks only: `editor_export` still renders the whole timeline** (a range export\n    is not built). Also reported by `editor_get_state` as `inPoint` / `outPoint`\n    (null when unset). Returns `{inPoint, outPoint}`.",
+      "inputSchema": {
+        "properties": {
+          "in_point": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "In Point"
+          },
+          "out_point": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Out Point"
+          },
+          "clear": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Clear"
+          }
+        },
+        "type": "object",
+        "title": "editor_set_marksArguments"
+      }
+    },
+    {
       "name": "editor_set_playback_rate",
       "description": "Set the Edit tab's **preview playback rate** \u2014 how many timeline seconds\n    the transport plays per real second. The same control the human uses next\n    to play/pause in the viewer's transport bar (D-280).\n\n    **This is NOT a clip's speed.** It changes how fast you WATCH and nothing\n    else: no clip is touched, nothing is persisted, nothing is undoable, and an\n    export taken while the preview is at 4x renders *exactly* what an export at\n    1x renders. If what you actually want is to make a clip play fast in the\n    finished video, that is `editor_set_clip_speed` (D-236) \u2014 a different tool\n    that edits the cut. \"Make this faster\" is genuinely ambiguous between the\n    two; pick deliberately.\n\n    `1` is normal. `2` / `3` / `4` are the review speeds the viewer offers as\n    one-click presets; anything from `0.25` to `8` is accepted and anything\n    outside that is CLAMPED rather than rejected (the response says so when it\n    clamped). `0.5` and below play slower than real time.\n\n    **Audio keeps up and stays intelligible.** Fast playback is not muted and\n    not chipmunked: the mixer time-stretches the mixed output with pitch\n    preserved (WSOLA), so dialogue at 3x is still dialogue. That is deliberately\n    different from a *clip's* speed ramp, which varispeeds like tape (D-242).\n\n    Safe to set while playing \u2014 the transport re-baselines picture and sound\n    together from wherever the playhead is, so you continue rather than jump.\n\n    `editor_get_state` reports the current value as `playbackRate`.",
       "inputSchema": {
@@ -21372,6 +21418,52 @@
             "name": "v_editor_set_marker.name",
             "note": "v_editor_set_marker.note",
             "durationFrames": 73
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_set_marks",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "editor_set_marks",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_set_marks",
+      "case": "full",
+      "arguments": {
+        "in_point": 13,
+        "out_point": 10,
+        "clear": false
+      },
+      "requests": [
+        {
+          "op": "editor_set_marks",
+          "args": {
+            "inPoint": 13,
+            "outPoint": 10,
+            "clear": false
           },
           "timeout_ms": 20000
         }

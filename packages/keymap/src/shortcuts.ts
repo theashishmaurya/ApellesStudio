@@ -144,6 +144,19 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
   // Final Cut, Premiere and Resolve all use to jump between edit points.
   { id: 'edit.prev_edit', label: 'Go to previous edit point', category: 'playback', scope: 'edit', defaultCombo: ['ArrowUp'] },
   { id: 'edit.next_edit', label: 'Go to next edit point', category: 'playback', scope: 'edit', defaultCombo: ['ArrowDown'] },
+  // B-348 — the J / K / L shuttle (Premiere / Resolve / Final Cut). L plays
+  // forward and each further L doubles the speed (1x, 2x, 4x, 8x); J does the
+  // same in reverse (the player has no reverse playback, so J scrubs the
+  // playhead backward at that speed with no audio); K stops. Hold K and tap J
+  // or L to step one frame back / forward (the "K+J / K+L" slow-motion step).
+  { id: 'edit.shuttle_back', label: 'Shuttle backward (repeat: faster)', category: 'playback', scope: 'edit', defaultCombo: ['KeyJ'] },
+  { id: 'edit.shuttle_stop', label: 'Shuttle stop (hold + J / L: step a frame)', category: 'playback', scope: 'edit', defaultCombo: ['KeyK'] },
+  { id: 'edit.shuttle_forward', label: 'Shuttle forward (repeat: faster)', category: 'playback', scope: 'edit', defaultCombo: ['KeyL'] },
+  // B-348 — In / Out marks: I and O mark the range's first and last frame at the
+  // playhead, Alt+X clears both (Premiere's Clear In and Out; Resolve's is Opt+X).
+  { id: 'edit.mark_in', label: 'Mark in point', category: 'playback', scope: 'edit', defaultCombo: ['KeyI'] },
+  { id: 'edit.mark_out', label: 'Mark out point', category: 'playback', scope: 'edit', defaultCombo: ['KeyO'] },
+  { id: 'edit.clear_marks', label: 'Clear in and out points', category: 'playback', scope: 'edit', defaultCombo: ['alt', 'KeyX'] },
 
   // ── Timeline editing (Edit tab) ──────────────────────────────────────────
   {
@@ -162,6 +175,15 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     scope: 'edit',
     defaultCombo: ['Delete'],
     aliases: [['Backspace']],
+  },
+  // B-348 — Premiere's Ripple Delete (Shift+Delete); Resolve's is Shift+Backspace.
+  {
+    id: 'edit.ripple_delete',
+    label: 'Ripple delete selected clips',
+    category: 'timeline',
+    scope: 'edit',
+    defaultCombo: ['shift', 'Delete'],
+    aliases: [['shift', 'Backspace']],
   },
   // B-339 — M adds (or, on a frame that already has a marker, opens it: Resolve's
   // and Final Cut's "M again edits it"); Alt/Option+M adds AND opens the editor

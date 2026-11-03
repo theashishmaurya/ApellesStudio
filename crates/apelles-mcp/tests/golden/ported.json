@@ -123,6 +123,7 @@
     "editor_set_marker",
     "editor_set_playback_rate",
     "editor_set_playhead",
+    "editor_set_marks",
     "editor_set_playing",
     "editor_set_preview_zoom",
     "editor_set_selection",

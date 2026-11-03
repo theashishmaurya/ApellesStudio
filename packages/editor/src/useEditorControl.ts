@@ -2243,6 +2243,9 @@ export function useEditorControl(): void {
           status: s.status,
           error: s.error,
           playhead: s.playhead,
+          // B-348 — the In / Out marks (`editor_set_marks`); null when unset.
+          inPoint: s.inPoint,
+          outPoint: s.outPoint,
           playing: s.playing,
           hasTimeline: !!s.timeline,
           // D-411 Phase 0 — WHICH timeline every other `editor_*` tool is
@@ -2469,6 +2472,27 @@ export function useEditorControl(): void {
         if (!Number.isFinite(frame)) return { error: 'frame must be a finite number' };
         useEditorTimelineStore.getState().seekPlayhead(frame);
         return { ok: true, playhead: useEditorTimelineStore.getState().playhead };
+      },
+
+      // B-348 — the timeline's In / Out marks (I, O, Alt+X): the same store
+      // action the keys write, so the ruler's range band follows an agent too.
+      editor_set_marks: (a) => {
+        const num = (v: unknown): number | undefined | { error: string } => {
+          if (v === undefined || v === null) return undefined;
+          const n = Math.round(Number(v));
+          return Number.isFinite(n) ? n : { error: 'in_point / out_point must be finite frame numbers' };
+        };
+        const inPoint = num(a?.inPoint);
+        const outPoint = num(a?.outPoint);
+        if (typeof inPoint === 'object') return inPoint;
+        if (typeof outPoint === 'object') return outPoint;
+        const store = useEditorTimelineStore.getState();
+        if (a?.clear) store.setMarks({ inPoint: null, outPoint: null });
+        if (inPoint !== undefined || outPoint !== undefined) {
+          useEditorTimelineStore.getState().setMarks({ inPoint, outPoint });
+        }
+        const s = useEditorTimelineStore.getState();
+        return { ok: true, inPoint: s.inPoint, outPoint: s.outPoint };
       },
 
       editor_set_playing: (a) => {

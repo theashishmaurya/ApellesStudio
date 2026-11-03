@@ -1794,6 +1794,41 @@ def editor_set_playhead(frame: int) -> str:
 
 
 @mcp.tool()
+def editor_set_marks(
+    in_point: int | None = None,
+    out_point: int | None = None,
+    clear: bool | None = None,
+) -> str:
+    """Read or set the Edit timeline's IN and OUT marks: the same marks the I and O keys
+    set at the playhead and Alt+X clears (B-348), drawn as a tinted range on the
+    ruler. Pass any subset; pass nothing to only READ them.
+
+    `in_point` / `out_point`: absolute timeline frames (0-based). The range is
+    INCLUSIVE of both frames, as Premiere, Resolve and Final Cut mark it (out_point
+    is the last frame you want). Either may be alone: an In alone means "from here
+    to the end", an Out alone "from the start to here". Frames are clamped to the
+    timeline. Setting an In after the current Out clears the Out (and an Out before
+    the current In clears the In); to place both at once, pass both. `clear`: true
+    drops both marks first (then applies any `in_point` / `out_point` in the call).
+
+    Session state like the playhead: not part of the document, not undoable, not
+    saved, and cleared when the project or the active timeline changes. **They are
+    marks only: `editor_export` still renders the whole timeline** (a range export
+    is not built). Also reported by `editor_get_state` as `inPoint` / `outPoint`
+    (null when unset). Returns `{inPoint, outPoint}`."""
+    import json
+
+    args: dict = {}
+    if in_point is not None:
+        args["inPoint"] = in_point
+    if out_point is not None:
+        args["outPoint"] = out_point
+    if clear is not None:
+        args["clear"] = clear
+    return json.dumps(_op("editor_set_marks", **args), indent=2, default=str)
+
+
+@mcp.tool()
 def editor_set_playing(playing: bool) -> str:
     """Start (`True`) or stop (`False`) Edit-tab playback.
 
