@@ -195,13 +195,17 @@ async function mountHarness(): Promise<MountedComponent> {
   return mounted;
 }
 
-/** The transport's mute button, by the accessible name it exposes. */
+/** The transport's mute button, by the accessible name it exposes. v0.3.0
+ *  (B-354) — it lives in the volume popover (portalled to the body), so the
+ *  transport's Volume button opens it first. */
 function muteButton(): HTMLElement | null {
-  return (
-    (mounted?.container.querySelector(
-      'button[aria-label="Mute"], button[aria-label="Unmute"]',
-    ) as HTMLElement | null) ?? null
-  );
+  const find = () =>
+    document.querySelector('button[aria-label="Mute"], button[aria-label="Unmute"]') as HTMLElement | null;
+  if (!find()) {
+    const trigger = mounted?.container.querySelector('button[aria-label="Volume"]') as HTMLElement | null;
+    actSync(() => trigger?.click());
+  }
+  return find();
 }
 
 beforeEach(() => {
@@ -241,8 +245,9 @@ describe('the viewer monitoring controls (D-126/D-266)', () => {
   it('the human mute button drives the same store state the op reads', async () => {
     await mountHarness();
 
+    const mute = muteButton()!;
     await act(async () => {
-      muteButton()!.click();
+      mute.click();
     });
     await waitFrames(3);
 

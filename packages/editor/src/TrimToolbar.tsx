@@ -116,7 +116,16 @@ export function TrimToolbar({ active, onSelect }: TrimToolbarProps) {
   const osPlatform = useKeymapStore((s) => s.osPlatform);
 
   return (
-    <div role="group" aria-label="Trim tool" className="flex items-center gap-0.5" data-chroma-trim-toolbar="">
+    // v0.3.0 (B-354) — ONE rounded segmented group, as the approved mockup
+    // and §4.9 draw it (24 px high, 28 px segments, 16 px icons): a
+    // `bg-secondary` track whose active segment is `card-active` with an
+    // accent icon.
+    <div
+      role="group"
+      aria-label="Trim tool"
+      className="flex h-6 shrink-0 items-center gap-0.5 rounded-sm bg-bg-secondary p-0.5"
+      data-chroma-trim-toolbar=""
+    >
       {TRIM_TOOLS.map(({ tool, label, shortcutId, blurb }) => {
         const Icon = TRIM_TOOL_ICONS[tool];
         const isActive = tool === active;
@@ -131,9 +140,12 @@ export function TrimToolbar({ active, onSelect }: TrimToolbarProps) {
               render={
                 <Button
                   // D-432 §4.9 — the active tool is the `card-active` segment
-                  // with an accent icon, in an otherwise flat strip.
+                  // with an accent icon.
                   variant="ghost"
-                  className={isActive ? 'bg-card-active text-accent-text hover:bg-card-active' : undefined}
+                  className={
+                    'h-5 w-7 rounded-xs [&_svg]:size-4 ' +
+                    (isActive ? 'bg-card-active text-accent-text hover:bg-card-active' : 'text-text-secondary hover:text-text-primary')
+                  }
                   size="icon-sm"
                   aria-pressed={isActive}
                   aria-label={shortcut ? `${label} tool (${shortcut})` : `${label} tool`}

@@ -139,11 +139,11 @@ status: open (owner, 2026-11-01: "all the things inside this as well") · severi
   - no raw ids or internal terms;
   - controls labelled or with tooltips;
   - related values grouped: Position X/Y on one row, Size W/H linked;
-  - inline sliders where the mockup has them (Scale, Rotation, Opacity; B-359 item 2);
+  - ~~inline sliders where the mockup has them (Scale, Rotation, Opacity; B-359 item 2)~~ (done 2026-11-03);
   - a clear reset per row and per section;
   - previews where an action isn't obvious (Dynamic zoom's start/end boxes, Highlights, Speed ramps);
   - a one-line header summary when a section is collapsed (e.g. Speed "100%", Fade "0:12 in · 0:00 out", as in the mockup), so users don't have to open it to see its state.
-- **Also from B-359:** the Inspector header gets the clip duration on the right, and the icon tabs (Video / Audio / Speed / Info) are decided in the same pass.
+- ~~**Also from B-359:** the Inspector header gets the clip duration on the right, and the icon tabs (Video / Audio / Speed / Info) are decided in the same pass.~~ Done 2026-11-03 with B-359 (as are the paired Position row and the Scale / Rotation / Opacity sliders); the rest of this list stays open.
 - **Direction:** part of roadmap 00c's research → mockup → build UX pass. References: DaVinci Resolve's Inspector, FCP's Video Inspector, Premiere's Effect Controls. Human + AI parity is unchanged: the same `editor_*` ops.
 
 ## B-365 — the Inspector's Audio tab (Audio + EQ) is not intuitive: raw ids, no units, an unlabelled graph and a tall list of 12 numeric fields
@@ -250,7 +250,7 @@ status: **fixed** (2026-11-01) · severity: high (every drag-in below or above t
 
 ## B-359 — the app still differs from the approved D-432 mockup in eight places (comparison pass 2026-11-01)
 
-status: open (queued with B-354, after D-437 S10); **item 6 fixed 2026-11-03** (below; follow-up B-373: the quiet window no longer carries across a timeline switch) · severity: minor (polish), except item 6 (medium: the playhead goes off screen) · area: Inspector header and rows, the browser header, the timeline toolbar, track headers, view follow, marker lines
+status: **fixed 2026-11-03** (all eight items; item 6 earlier the same day, follow-up B-373; the rest in the v0.3.0 gap closure, `docs/notes/ui-redesign.md` §6e) · severity: minor (polish), except item 6 (medium: the playhead goes off screen) · area: Inspector header and rows, the browser header, the timeline toolbar, track headers, view follow, marker lines
 
 - The full list, with screenshots: `docs/notes/ui-redesign.md` › "Mockup vs app comparison (2026-11-01)".
 - In short:
@@ -262,6 +262,15 @@ status: open (queued with B-354, after D-437 S10); **item 6 fixed 2026-11-03** (
   - **the view not following a programmatic seek, and the zoom persisting across runs and timelines**;
   - marker lines through the lanes;
   - the empty states and volume popover (B-354).
+- **Items 1–5, 7, 8 fixed (2026-11-03, v0.3.0 gap closure; §6e has the detail and every deviation):**
+  1. Inspector header: the clip's timeline duration on the right; four icon tabs Video / Audio / Speed / Info (Speed = the retime, moved out of Video; Info = read-only media facts and in / out, `ClipInfoPanel`; no codec row, the probe has none).
+  2. Rows: Position X / Y on one paired row behind one keyframe slot (one keyframe write, one undo); Scale / Rotation / Opacity with the new `@apelles/ui` `SliderField` (inline slider + field, one undo per drag).
+  3. Browser: the "SOURCES · Select · + Import" row is gone in the Edit browser; Import on the tab row, "N items" and Select on the All media row (`SourcesPanel variant="browser"`, the bin in `useShellStore`).
+  4. Toolbar: the mockup's three columns (true centre); tools as one segmented group; a 96 px zoom slider in place of `− 20% +`; the BPM readout, beat snapping and Snap cuts to beats in one Beat grid popover; Remove contextual.
+  5. Track headers: names were already real (P3); the target track is new (D-440): the accent ID pill, `set_target_track`, `editor_set_target_track` in both MCP servers (272 tools now, with `debug_set_inspector_section`).
+  7. The lines through the lanes were the beat grid's downbeats, not markers; the beat lane now stays in the ruler and marker band.
+  8. Empty states (timeline, no clips, browser, Inspector, no project) and the volume popover; Cmd+4 toggles the Inspector.
+  - Tests: `SliderField.dom.test.tsx`, `ClipInspectorPanel.v030.dom.test.tsx`, `SourcesPanel.browser.dom.test.tsx`, `TimelinePane.toolbar.dom.test.tsx`, `TimelineBeats.dom.test.tsx`, `targetTrack.test.ts` (+ the pill in `TimelinePane.p3`, the tool in `timelineView.dom`), `EditEmptyStates.dom.test.tsx`, the volume popover in `Player.layout`, Cmd+4 in `EditorTab.layout` and `store.test.ts`, `debugOps.inspectorSection.test.ts`. Harness: `inspector-slider-drag-one-undo`, `track-target-pill-click`, `zoom-toolbar-slider` (`packages/ui-harness/src/scenarios/redesign.ts`).
 - **Item 6 fixed (2026-11-03, v0.3.0 blocker).** Two causes. (1) B-326's follower in `TimelinePane`'s playhead subscription returned early unless playing, so a paused jump (`editor_set_playhead`, a marker row in the Index panel, ↑/↓ to an edit point, a transcript line: all `setPlayhead`/`seekPlayhead`) never moved the view. Now a paused jump that lands outside the visible window CENTRES it (`seekFollowScrollLeft` in `playbackFollow.ts`; Premiere/Resolve behaviour for a jump), except during a scrub (`isScrubbing()`: the playhead, the ruler and the viewer's bar drag it under the pointer) and within 300 ms of the user's own scroll. Playback keeps B-326's paging. (2) The zoom was one session-wide value in `timelineView.ts`, so a harness run's 20 % stayed on the owner's timeline. The view store now keeps a per-timeline map (`viewByTimeline`, keyed by `Timeline.id`): a module-level subscription to the timeline store files the outgoing timeline's zoom and loads the incoming one's (the default for a timeline not shown yet), with or without the pane mounted, and the pane files and restores each timeline's scroll offsets on the switch. Clip Appearance, snapping and skimming stay app-wide. AI parity unchanged: `editor_get_state.timelineView` reports the active timeline's view and `editor_set_timeline_view` sets it. Tests: `TimelinePane.seekFollow.dom.test.tsx` (8), `playbackFollow.test.ts` (+5), `TimelinePane.scrollState.dom.test.tsx` (+1), `TimelinePane.seek.dom.test.tsx` (the paused case now centres). Harness: new scenario `seek-far-playhead-visible`. Not yet run live.
 
 ## B-358 - the production-React debug app (`tauri build --debug`) had the Rust `debug_*` ops but no frontend registry, so the UI harness could not drive it
@@ -308,7 +317,9 @@ status: **fixed 2026-11-01** (D-437 S7; not re-seen live) · severity: minor · 
 
 ## B-354 — D-432 P5 leftovers: the toolbar tools are not regrouped, the §4.13 empty states are not designed, and Cmd+4 / the volume popover are missing
 
-status: open (queued after D-437) · severity: minor · area: `TimelinePane.tsx` toolbar row, empty states, keymap, player transport
+status: **fixed 2026-11-03** (v0.3.0 gap closure, with B-359; `docs/notes/ui-redesign.md` §6e) · severity: minor · area: `TimelinePane.tsx` toolbar row, empty states, keymap, player transport
+
+- **Fixed (2026-11-03):** the toolbar is the mockup's three-column grid (so the centre is exactly centred), the tools one rounded segmented group, then a divider, Split, Add marker and Transitions, then contextual actions; on the right Snapping, Skimming, a Beat grid popover, Clip Appearance and a zoom slider. The §4.13 empty states are designed (`EditEmptyStates.tsx`, the browser's Import zone, the Inspector message). Cmd+4 (`edit.toggle_inspector`, rebindable, conflict-free) toggles the Inspector. The volume control is a popover (mute, keyboard slider, level). Deviations: Remove stays as a contextual toolbar button (clips have no context menu yet); the mockup's Linked selection / Audio scrubbing toggles are not added (not modes in this app); "press E to append" and "⌘I" are not shown (no such shortcuts yet).
 
 - **From the P5 report (`docs/notes/ui-redesign.md` "P5 as built"):**
   - The timeline toolbar's tools are not regrouped per the mockup (select/trim tools/blade | markers | snapping/skimming/linked | zoom). That code is inside `TimelinePane.tsx`, which D-437 rewrites, so it waits for S4.

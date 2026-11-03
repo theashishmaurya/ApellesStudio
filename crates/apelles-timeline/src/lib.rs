@@ -609,6 +609,17 @@ pub struct Track {
     /// exports differently because of it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
+    /// **D-440 — this is the timeline's target track**, Premiere's track
+    /// targeting / Resolve's destination track: where an edit that names no
+    /// track lands (the viewer's edit overlay drop, `editor_edit_in` without a
+    /// `track`). The header draws its ID pill in the accent colour. On the track
+    /// for `beat_grid`'s reason (tracks have no ids, and the flag must follow
+    /// its track on a reorder; a removed track takes it along). At most one
+    /// track carries it; the frontend's `set_target_track` op clears the others.
+    /// This crate never reads it: an editing aid, not a render input. `false`
+    /// is not written, so a pre-D-440 project round-trips byte-identically.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub target: bool,
 }
 
 /// The analysis parameters of a track's beat grid (D-413). Both optional:
@@ -858,6 +869,7 @@ impl Default for Track {
             beat_grid: None,
             name: None,
             height: None,
+            target: false,
         }
     }
 }
@@ -5290,6 +5302,21 @@ mod tests {
         let json = serde_json::to_string(&t).unwrap();
         let back: Timeline = serde_json::from_str(&json).unwrap();
         assert_eq!(back.tracks[0].gain, 0.5);
+    }
+
+    /// D-440 — the target flag round-trips, and an untargeted track writes no
+    /// key (a pre-D-440 project is byte-identical).
+    #[test]
+    fn track_target_round_trips_and_false_writes_no_key() -> Result<(), serde_json::Error> {
+        let mut t = Timeline::from_shots(&shots());
+        let plain = serde_json::to_string(&t)?;
+        assert!(!plain.contains("\"target\""));
+        t.tracks[0].target = true;
+        let json = serde_json::to_string(&t)?;
+        assert!(json.contains("\"target\":true"));
+        let back: Timeline = serde_json::from_str(&json)?;
+        assert!(back.tracks[0].target);
+        Ok(())
     }
 
     /// D-413 — a track's beat grid round-trips, and a track without one

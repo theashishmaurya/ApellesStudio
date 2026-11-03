@@ -238,8 +238,9 @@ describe('a linked picture whose audio half is gone', () => {
     select(0, VIDEO_ID);
     mounted = mount(React.createElement(EditorInspectorPanel), { strictMode: true });
     await waitFrames(2);
-    const labels = [...mounted.container.querySelectorAll('[role="tab"]')].map((t) => t.textContent);
-    expect(labels).toEqual([]);
+    const labels = [...mounted.container.querySelectorAll('[role="tab"]')].map((t) => t.getAttribute('aria-label'));
+    expect(labels).not.toContain('Audio');
+    expect(labels).toEqual(['Video', 'Speed', 'Info']);
   });
 });
 

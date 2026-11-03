@@ -56,12 +56,12 @@ import {
 } from '@phosphor-icons/react';
 import {
   Button,
+  InlineSlider,
   Popover,
   PopoverContent,
   PopoverTrigger,
   ScrubBar,
   ScrubbableNumberInput,
-  Slider,
   cn,
 } from '@apelles/ui';
 
@@ -335,6 +335,74 @@ function RateControl({
 const DEFAULT_SKIP_LABELS = { start: 'Skip to start', end: 'Skip to end' } as const;
 
 /** A 24 px ghost icon button, the size every header / transport control uses. */
+/** The transport's volume (D-432 §4.11, v0.3.0 / B-354): `SpeakerHigh` opens a
+ *  popover with the mute toggle, a slider and the level in percent, as Final
+ *  Cut's and Resolve's viewers do, instead of a slider that slid out on hover
+ *  and was unreachable from the keyboard. With no `onVolumeChange` the button
+ *  just toggles mute (nothing else to show). */
+function VolumeControl({
+  volume,
+  muted,
+  onVolumeChange,
+  onMuteToggle,
+}: {
+  volume: number;
+  muted: boolean;
+  onVolumeChange?: (volume: number) => void;
+  onMuteToggle?: () => void;
+}) {
+  const Icon = muted ? SpeakerSlashIcon : volume < 0.5 ? SpeakerLowIcon : SpeakerHighIcon;
+  if (!onVolumeChange) {
+    return (
+      <IconButton label={muted ? 'Unmute' : 'Mute'} onClick={onMuteToggle} pressed={muted}>
+        <Icon />
+      </IconButton>
+    );
+  }
+  const pct = Math.round((muted ? 0 : volume) * 100);
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            title={muted ? 'Volume (muted)' : `Volume ${pct}%`}
+            aria-label="Volume"
+            data-chroma-volume-trigger=""
+            className={cn(
+              'size-6 text-text-secondary hover:text-text-primary data-[popup-open]:bg-bg-secondary [&_svg]:size-4',
+              muted && 'text-accent-text',
+            )}
+          >
+            <Icon />
+          </Button>
+        }
+      />
+      <PopoverContent align="end" side="top" className="w-48 p-2 text-xs" data-chroma-volume-popover="">
+        <div className="flex items-center gap-2">
+          {onMuteToggle && (
+            <IconButton label={muted ? 'Unmute' : 'Mute'} onClick={onMuteToggle} pressed={muted}>
+              <Icon />
+            </IconButton>
+          )}
+          <InlineSlider
+            value={muted ? 0 : volume}
+            min={0}
+            max={1}
+            step={0.01}
+            aria-label="Volume level"
+            getAriaValueText={(v) => `${Math.round(v * 100)}%`}
+            onValueChange={onVolumeChange}
+            onReset={() => onVolumeChange(1)}
+          />
+          <span className="w-9 shrink-0 text-right font-mono tabular-nums text-text-secondary">{pct}%</span>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function IconButton({
   label,
   onClick,
@@ -457,18 +525,7 @@ export function Player({
     onSeekEnd?.();
   }, [onSeekEnd]);
 
-  // Base UI's Slider is generic over `number | readonly number[]`; the volume
-  // slider passes a single value, but the callback type still allows an array.
-  const handleVolumeSeek = useCallback(
-    (value: number | readonly number[]) => {
-      const v = Array.isArray(value) ? value[0] : (value as number);
-      onVolumeChange?.(v);
-    },
-    [onVolumeChange],
-  );
-
   const showMute = Boolean(onMuteToggle);
-  const VolumeIcon = muted ? SpeakerSlashIcon : (volume ?? 1) < 0.5 ? SpeakerLowIcon : SpeakerHighIcon;
   const zoomLabel = zoom === undefined ? '' : zoom === 1 ? 'Fit' : `${Math.round(zoom * 100)}%`;
 
   return (
@@ -611,26 +668,12 @@ export function Player({
             {/* D-280 — the playback rate. */}
             {rate !== undefined && <RateControl rate={rate} onRateChange={onRateChange} />}
             {showMute && (
-              <div className="group/volume flex items-center gap-1">
-                <IconButton label={muted ? 'Unmute' : 'Mute'} onClick={onMuteToggle} pressed={muted}>
-                  <VolumeIcon />
-                </IconButton>
-                {onVolumeChange && (
-                  <div className="w-0 overflow-hidden transition-[width] duration-150 focus-within:w-16 group-hover/volume:w-16">
-                    <Slider
-                      // B-050/D-131: `@apelles/ui`'s Slider only treats an
-                      // ARRAY value as controlled; a bare number renders two
-                      // stacked thumbs.
-                      value={[muted ? 0 : (volume ?? 1)]}
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      onValueChange={handleVolumeSeek}
-                      aria-label="Volume"
-                    />
-                  </div>
-                )}
-              </div>
+              <VolumeControl
+                volume={volume ?? 1}
+                muted={!!muted}
+                onVolumeChange={onVolumeChange}
+                onMuteToggle={onMuteToggle}
+              />
             )}
             {onSnapshot && (
               <IconButton label="Snapshot" onClick={onSnapshot}>

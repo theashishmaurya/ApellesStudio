@@ -70,6 +70,8 @@ export const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
   { id: 'playback', label: 'Playback', scope: 'edit' },
   { id: 'timeline', label: 'Timeline editing', scope: 'edit' },
   { id: 'trim-tools', label: 'Trim tools', scope: 'edit' },
+  // v0.3.0 (B-354) — the Edit tab's panel toggles.
+  { id: 'edit-view', label: 'View', scope: 'edit' },
   { id: 'library', label: 'Library', labelKey: 'settings.keybinds.sections.library', scope: 'colorist' },
   { id: 'editing', label: 'Editing', labelKey: 'settings.keybinds.sections.editing', scope: 'colorist' },
   { id: 'view', label: 'View', labelKey: 'settings.keybinds.sections.view', scope: 'colorist' },
@@ -213,6 +215,12 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     defaultCombo: ['Minus'],
     aliases: [['ctrl', 'Minus']],
   },
+
+  // ── View (Edit tab) ────────────────────────────────────────────────────────
+  // v0.3.0 (B-354, D-432 §4.1) — Final Cut's Cmd+4 shows / hides the
+  // Inspector. Free in every scope: Cmd+1..3 are the tab switches (global),
+  // and Colorist's Shift+4 is a different combo.
+  { id: 'edit.toggle_inspector', label: 'Show / hide the Inspector', category: 'edit-view', scope: 'edit', defaultCombo: ['ctrl', 'Digit4'] },
 
   // ── Trim tools (Edit tab) — Adobe's own V/B/Y/U, D-261 ───────────────────
   { id: 'edit.tool_select', label: 'Select tool', category: 'trim-tools', scope: 'edit', defaultCombo: ['KeyV'] },

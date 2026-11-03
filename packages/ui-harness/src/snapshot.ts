@@ -29,6 +29,9 @@ export interface ClipSnap {
   end: number;
   sourceStart: number;
   linkGroup: string | null;
+  /** v0.3.0 — the clip's opacity (1 when unset), for the Inspector slider
+   *  scenarios. */
+  opacity: number;
 }
 
 export interface TimelineSnap {
@@ -40,6 +43,8 @@ export interface TimelineSnap {
   tracks: ClipSnap[][];
   clipCount: number;
   markers: { id: string; name: string | null; frame: number }[];
+  /** v0.3.0 (D-440) — the target track's index, or `null`. */
+  targetTrack: number | null;
 }
 
 interface ClipDto {
@@ -50,12 +55,13 @@ interface ClipDto {
   duration: number;
   sourceStart?: number;
   linkGroup?: string | null;
+  opacity?: number;
 }
 
 interface TimelineDto {
   id?: string;
   durationFrames?: number;
-  tracks?: { index: number; clips?: ClipDto[] }[];
+  tracks?: { index: number; target?: boolean; clips?: ClipDto[] }[];
   markers?: { id: string; name?: string | null; frame: number }[];
 }
 
@@ -78,6 +84,7 @@ export function timelineSnapshot(dto: unknown, names: Readonly<Record<string, st
         end: c.startFrame + c.duration,
         sourceStart: c.sourceStart ?? 0,
         linkGroup: c.linkGroup ?? null,
+        opacity: c.opacity ?? 1,
       };
       row.push(snap);
       clips[c.id] = snap;
@@ -94,6 +101,10 @@ export function timelineSnapshot(dto: unknown, names: Readonly<Record<string, st
     tracks,
     clipCount,
     markers: (tl.markers ?? []).map((m) => ({ id: m.id, name: m.name ?? null, frame: m.frame })),
+    targetTrack: (() => {
+      const i = (tl.tracks ?? []).findIndex((t) => t.target === true);
+      return i >= 0 ? i : null;
+    })(),
   };
 }
 

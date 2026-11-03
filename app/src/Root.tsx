@@ -20,6 +20,7 @@ import ProjectOpenOverlay from './components/chroma/ProjectOpenOverlay';
 import { openProgressView, type OpenProgressState } from './store/openProgress';
 import { useOpenProgressStore } from './store/useOpenProgressStore';
 import { SourcesPanel } from './components/chroma/SourcesPanel';
+import { SourcesImportButton } from './components/chroma/SourcesImportButton';
 import { selectProjectKey, useSessionStore } from './store/useSessionStore';
 import { useSettingsStore } from './store/useSettingsStore';
 import {
@@ -542,7 +543,9 @@ export function Root() {
             // arrangement: the timeline runs full width beneath it), so it is
             // handed the shared media pool to show on the browser's Sources tab
             // and the shell draws no docked column for it.
-            element: <EditorTab mediaPool={<SourcesPanel />} />,
+            // v0.3.0 (B-359 item 3) — the browser variant has no header row
+            // of its own; Import sits on the browser's tab row.
+            element: <EditorTab mediaPool={<SourcesPanel variant="browser" />} browserActions={<SourcesImportButton />} />,
             ownsLibraryColumn: true,
           },
           // D-391 — a build can leave Motion out (`buildFeatures.ts`); the v0.2.0

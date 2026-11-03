@@ -170,6 +170,10 @@ export {
   resolveClipInspectorTab,
 } from './clipInspectorTabs';
 export type { ClipInspectorTab } from './clipInspectorTabs';
+// v0.3.0 — the Inspector's collapsible section ids, for `@apelles/debug`'s
+// `debug_set_inspector_section`.
+export { INSPECTOR_SECTION_IDS, parseInspectorSectionId } from './EditorSection';
+export type { InspectorSectionId } from './EditorSection';
 export type { TimelineSummary, TimelineActionResult } from './timelineStore';
 // D-252 — the popover/dialog panel registry. Exported for `@apelles/debug`'s
 // `debug_set_popover_open`, which validates against the same id list the

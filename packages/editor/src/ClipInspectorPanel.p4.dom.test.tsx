@@ -128,8 +128,8 @@ describe('rows: full labels in a fixed label column', () => {
     await render();
     const labels = rows().map(labelOf);
     for (const want of [
-      'Position X',
-      'Position Y',
+      // v0.3.0 (B-359 item 2) — X and Y share one paired row.
+      'Position',
       'Scale',
       'Rotation',
       'Corner radius',
@@ -199,7 +199,9 @@ describe('collapsible sections', () => {
     const ids = [...(mounted?.container.querySelectorAll('[data-chroma-section]') ?? [])].map((s) =>
       s.getAttribute('data-chroma-section'),
     );
-    expect(ids).toEqual(expect.arrayContaining(['transform', 'compositing', 'crop', 'dynamic-zoom', 'speed', 'fade', 'keyframes']));
+    // v0.3.0 — Speed has its own tab now, so the Video tab does not list it.
+    expect(ids).toEqual(expect.arrayContaining(['transform', 'compositing', 'crop', 'dynamic-zoom', 'fade', 'keyframes']));
+    expect(ids).not.toContain('speed');
     for (const id of ids) {
       expect(sectionButton(id as string).getAttribute('aria-expanded'), String(id)).toBe('false');
       expect(ALL_INSPECTOR_SECTION_IDS as readonly string[], `${id} is in the test helper's list`).toContain(id);

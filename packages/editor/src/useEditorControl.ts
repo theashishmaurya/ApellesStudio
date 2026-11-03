@@ -108,10 +108,11 @@ import { listen, emit } from '@tauri-apps/api/event';
 
 import {
   assertRequestLive,
+  isAudioOnlyItem,
+  type MediaItem,
   newBridgeClaim,
   useMediaPoolStore,
   useVideoUnderstandingStore,
-  type MediaItem,
 } from '@apelles/bridge';
 import { runForRequest } from '@apelles/history';
 // B-217/D-358 — the cross-store project-identity guard; see the dispatcher below.
@@ -168,6 +169,8 @@ import {
   checkEditIn,
   isDropEditType,
   videoTrackIndex,
+  destinationTrack,
+  targetTrackIndex,
   DROP_EDIT_TYPES,
   isAdjustmentClip,
   isGeneratedPictureClip,
@@ -256,7 +259,16 @@ import {
 // D-413 — the beat grid: the same functions the track header's metronome and
 // the toolbar's "Snap cuts to beats" call.
 import { detectTrackBeats, setBeatGridOp, snapCutsToBeatsOp } from './beatOps';
-import { listTracks, renameTrackArgs, sliceTimelineDto, syncLockArgs, trackHeightArgs, trackLabels } from './trackOps';
+import {
+  listTracks,
+  renameTrackArgs,
+  sliceTimelineDto,
+  syncLockArgs,
+  targetTrackArgs,
+  trackBadges,
+  trackHeightArgs,
+  trackLabels,
+} from './trackOps';
 import { detectedForGate, gateDetectorGroups, type DetectorGateResult } from './detectorGate';
 
 /** What a retake answer says about the gate behind its `status` (D-382). */
@@ -771,6 +783,8 @@ export function timelineDto(tl: Timeline) {
       duckReleaseMs: t.duck_release_ms ?? DEFAULT_DUCK_RELEASE_MS,
       // D-413 — present only on the one track whose beats are shown.
       ...(t.beat_grid ? { beatGrid: t.beat_grid } : {}),
+      // D-440 — present only on the timeline's target track.
+      ...(t.target ? { target: true } : {}),
       // D-226 — this track's transitions, in cut order, alongside its clips so
       // `editor_get_timeline` stays one call for "what is on this timeline".
       transitions: transitionsOf(t).map(transitionDto),
@@ -3446,7 +3460,13 @@ export function useEditorControl(): void {
           return { error: `duration must be > 0 and sourceStart+duration must be <= ${frames} (the source's own length)` };
         }
 
-        const track = a?.track !== undefined ? Math.round(Number(a.track)) : videoTrackIndex(timeline);
+        // D-440 — no `track` → the target track when its kind fits the source
+        // (an audio-only file on an audio track, picture on a video track), else
+        // the first video track, as before.
+        const track =
+          a?.track !== undefined && a?.track !== null
+            ? Math.round(Number(a.track))
+            : destinationTrack(timeline, isAudioOnlyItem(media) ? 'audio' : 'video', videoTrackIndex(timeline));
         // The playhead is the default on purpose: every one of the seven is
         // defined against it in the reference, and an agent that has just
         // called `editor_set_playhead` should not have to restate the number.
@@ -6330,6 +6350,22 @@ export function useEditorControl(): void {
         const track = Math.round(Number(a?.track));
         useEditorTimelineStore.getState().applyOp({ kind: 'set_track_hidden', track, hidden: !!a?.hidden });
         return { ok: true, track, hidden: !!a?.hidden };
+      },
+      // D-440 — the track header's ID-pill click, as an op: the SAME
+      // `set_target_track` the pill applies.
+      editor_set_target_track: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const args = targetTrackArgs(tl, a);
+        if ('error' in args) return args;
+        useEditorTimelineStore.getState().applyOp({ kind: 'set_target_track', ...args });
+        const after = useEditorTimelineStore.getState().timeline;
+        const target = targetTrackIndex(after);
+        return {
+          ok: true,
+          target,
+          ...(target !== null && after ? { badge: trackBadges(after)[target], name: trackLabels(after)[target] } : {}),
+        };
       },
       // D-432 P3 — the track header's double-click rename, as an op: the SAME
       // `set_track_name` the header's inline field commits.

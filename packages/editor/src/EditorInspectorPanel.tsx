@@ -397,15 +397,30 @@ export function EditorInspectorPanel() {
    *  one op/one undo step; when they differ it is deliberately two ops (the
    *  edit model has one op per history entry — see `applyOp` — and there is
    *  no combined transform-and-keyframes op to reach for). */
-  const toggleParamKeyframes = (param: ClipKeyframeParam) => {
-    const ctx = ctxOf(param);
+  //
+  // v0.3.0 (B-359 item 2) — also takes several properties of ONE facet (the
+  // paired Position row) and writes them as a single keyframe array: two
+  // separate writes would each start from this render's keyframes and the
+  // second would drop the first. Any of them animated → stop every animated
+  // one; none animated → key them all at the playhead.
+  const toggleParamKeyframes = (input: ClipKeyframeParam | readonly ClipKeyframeParam[]) => {
+    const params: readonly ClipKeyframeParam[] = typeof input === 'string' ? [input] : input;
+    if (params.length === 0) return;
+    const ctx = ctxOf(params[0]);
     if (!ctx.target) return;
-    if (hasParamKeyframes(ctx.keyframes, param)) {
-      const held = paramValueAt(ctx.keyframes, param, liveSourceFrame(ctx.target), staticValue(param));
-      if (held !== staticValue(param)) staticWrite(param, held);
-      applyKeyframes(removeClipKeyframeParam(ctx.keyframes, param), ctx);
+    const sourceFrame = liveSourceFrame(ctx.target);
+    if (params.some((p) => hasParamKeyframes(ctx.keyframes, p))) {
+      let next = ctx.keyframes;
+      for (const p of params) {
+        if (!hasParamKeyframes(next, p)) continue;
+        const held = paramValueAt(next, p, sourceFrame, staticValue(p));
+        if (held !== staticValue(p)) staticWrite(p, held);
+        next = removeClipKeyframeParam(next, p) ?? [];
+      }
+      applyKeyframes(next, ctx);
     } else {
-      applyKeyframes(mergeClipKeyframeParams(ctx.keyframes, liveSourceFrame(ctx.target), { [param]: staticValue(param) }), ctx);
+      const values = Object.fromEntries(params.map((p) => [p, staticValue(p)]));
+      applyKeyframes(mergeClipKeyframeParams(ctx.keyframes, sourceFrame, values), ctx);
     }
   };
 
@@ -430,13 +445,19 @@ export function EditorInspectorPanel() {
    *  exactly the D-193 reason its own number field does: without that, a
    *  clip with a `box_width`/`box_height` pair would report scale 1 while
    *  still rendering at the overridden size. */
-  const resetParam = (param: ClipKeyframeParam) => {
-    const ctx = ctxOf(param);
+  //
+  // v0.3.0 — several properties of one facet reset as ONE keyframe write, for
+  // the reason `toggleParamKeyframes` gives.
+  const resetParam = (input: ClipKeyframeParam | readonly ClipKeyframeParam[]) => {
+    const params: readonly ClipKeyframeParam[] = typeof input === 'string' ? [input] : input;
+    if (params.length === 0) return;
+    const ctx = ctxOf(params[0]);
     if (!ctx.target) return;
-    const value = CLIP_KEYFRAME_DEFAULTS[param];
-    staticWrite(param, value);
-    if (hasParamKeyframes(ctx.keyframes, param)) {
-      applyKeyframes(mergeClipKeyframeParams(ctx.keyframes, liveSourceFrame(ctx.target), { [param]: value }), ctx);
+    for (const p of params) staticWrite(p, CLIP_KEYFRAME_DEFAULTS[p]);
+    const animated = params.filter((p) => hasParamKeyframes(ctx.keyframes, p));
+    if (animated.length > 0) {
+      const values = Object.fromEntries(animated.map((p) => [p, CLIP_KEYFRAME_DEFAULTS[p]]));
+      applyKeyframes(mergeClipKeyframeParams(ctx.keyframes, liveSourceFrame(ctx.target), values), ctx);
     }
   };
 
@@ -586,6 +607,7 @@ export function EditorInspectorPanel() {
       onDynamicZoomSwap={swapDynamicZoom}
       tab={inspectorTab}
       onTabChange={setInspectorTab}
+      fps={fps}
     />
   );
 }

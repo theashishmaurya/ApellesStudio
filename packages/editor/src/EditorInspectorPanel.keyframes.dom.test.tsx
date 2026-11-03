@@ -168,7 +168,7 @@ async function render() {
 describe('per-property keyframing (D-208)', () => {
   it('the diamond starts hollow for every property on an un-keyframed clip', async () => {
     await render();
-    for (const label of ['Opacity', 'Position X', 'Position Y', 'Scale', 'Rotation', 'Crop left', 'Crop top']) {
+    for (const label of ['Opacity', 'Position', 'Scale', 'Rotation', 'Crop left', 'Crop top']) {
       expect(button(`Toggle ${label} keyframes`).getAttribute('aria-pressed')).toBe('false');
     }
     expect(keys()).toEqual([]);
@@ -188,7 +188,7 @@ describe('per-property keyframing (D-208)', () => {
     expect(animatedParams()).toEqual(['scale']);
     expect(button('Toggle Scale keyframes').getAttribute('aria-pressed')).toBe('true');
     // …and no other property became animated as a side effect.
-    for (const label of ['Opacity', 'Position X', 'Position Y', 'Rotation', 'Crop left']) {
+    for (const label of ['Opacity', 'Position', 'Rotation', 'Crop left']) {
       expect(button(`Toggle ${label} keyframes`).getAttribute('aria-pressed')).toBe('false');
     }
 
@@ -422,7 +422,7 @@ describe('the whole-clip Keyframes section (D-208 — kept, and now merging)', (
       'rotation',
       'scale',
     ]);
-    for (const label of ['Opacity', 'Position X', 'Scale', 'Rotation', 'Corner radius', 'Crop left', 'Crop bottom']) {
+    for (const label of ['Opacity', 'Position', 'Scale', 'Rotation', 'Corner radius', 'Crop left', 'Crop bottom']) {
       expect(button(`Toggle ${label} keyframes`).getAttribute('aria-pressed')).toBe('true');
     }
   });

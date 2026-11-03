@@ -55,9 +55,11 @@ import {
   type PanelSize,
 } from '@apelles/ui';
 import { SidebarSimpleIcon } from '@phosphor-icons/react';
+import { useShortcut } from '@apelles/keymap';
 
 import { EditorInspectorPanel } from './EditorInspectorPanel';
 import { EditBrowser } from './EditBrowser';
+import { NoProjectState } from './EditEmptyStates';
 import { PreviewPane } from './PreviewPane';
 import { CaptionInspectorPanel } from './CaptionInspectorPanel';
 import { TextClipInspectorPanel } from './TextClipInspectorPanel';
@@ -141,9 +143,12 @@ export interface EditorTabProps {
    *  Sources tab. Injected by the composition root (`Root.tsx`): this package
    *  must not import `app/` (D-039). */
   mediaPool?: ReactNode;
+  /** v0.3.0 — the browser tab row's right end (`EditBrowser.tabRowEnd`): the
+   *  root's Import button. */
+  browserActions?: ReactNode;
 }
 
-export function EditorTab({ mediaPool }: EditorTabProps) {
+export function EditorTab({ mediaPool, browserActions }: EditorTabProps) {
   const load = useEditorTimelineStore((s) => s.load);
   const projectOpen = useEditorTimelineStore((s) => s.openProjectKey !== null);
   const status = useEditorTimelineStore((s) => s.status);
@@ -171,6 +176,11 @@ export function EditorTab({ mediaPool }: EditorTabProps) {
   // (B-007). No arguments — see that hook's own doc comment for why.
   useEditorControl();
 
+  // v0.3.0 (B-354) — Cmd+4 shows / hides the Inspector, as in Final Cut: the
+  // same store flag the viewer header's toggle and `debug_set_editor_inspector`
+  // write.
+  useShortcut('edit.toggle_inspector', () => setInspectorOpen(!inspectorOpen), { enabled: projectOpen });
+
   // D-416 — this tab's brand applier (captions and titles, one undo step).
   useEffect(() => registerBrandApplier('edit', applyBrandToEdit), []);
 
@@ -186,14 +196,8 @@ export function EditorTab({ mediaPool }: EditorTabProps) {
   }, [load]);
 
   if (!projectOpen) {
-    return (
-      <div className="h-full w-full flex flex-col items-center justify-center gap-2 bg-bg-primary text-center px-6">
-        <h1 className="text-lg font-semibold text-text-primary">No project open</h1>
-        <p className="text-sm text-text-secondary max-w-md">
-          Open a project in the Colorist tab — its shots become the Edit timeline.
-        </p>
-      </div>
-    );
+    // v0.3.0 (§4.13) — the copy is unchanged, restyled to the type scale.
+    return <NoProjectState />;
   }
 
   if (status === 'error') {
@@ -252,7 +256,7 @@ export function EditorTab({ mediaPool }: EditorTabProps) {
                   maxSize={BROWSER_WIDTH.max}
                   className="h-full min-h-0 overflow-hidden bg-surface"
                 >
-                  <EditBrowser mediaPool={mediaPool} />
+                  <EditBrowser mediaPool={mediaPool} tabRowEnd={browserActions} />
                 </ResizablePanel>
                 <ResizableHandle className="bg-divider" />
               </>
@@ -341,7 +345,7 @@ export function EditorTab({ mediaPool }: EditorTabProps) {
               </div>
             )}
             <div className="min-h-0 flex-1">
-              <TimelinePane toolbarCenter={<TimelineToolbarCenter />} />
+              <TimelinePane toolbarCenter={<TimelineToolbarCenter />} emptyAction={browserActions} />
             </div>
           </PanelErrorBoundary>
         </ResizablePanel>

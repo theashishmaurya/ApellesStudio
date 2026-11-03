@@ -4,10 +4,18 @@
  *
  * **What it is.** Final Cut Pro 12's beat display, taken from its own
  * description (`scratch/beat-sync-reference/NOTES.md`): weight by importance —
- * a downbeat is a solid line through every track with its bar number in the
- * marker band, every other beat a short tick in that band — and fewer of them
- * as you zoom out, so the grid never turns into a grey wash (beats disappear
- * below [`MIN_BEAT_SPACING_PX`], then every other bar, every fourth…).
+ * a downbeat is a full-height tick in the marker band with its bar number,
+ * every other beat a short tick in that band — and fewer of them as you zoom
+ * out, so the grid never turns into a grey wash (beats disappear below
+ * [`MIN_BEAT_SPACING_PX`], then every other bar, every fourth…).
+ *
+ * **Ruler and marker band only (v0.3.0, B-359 item 7).** A downbeat used to
+ * also draw a faint line down through every track. Those were the "faint
+ * vertical lines through the lanes" the 2026-11-01 mockup comparison saw (it
+ * took them for marker lines; markers never drew any). The approved mockup
+ * and Final Cut's own timeline keep the lanes clear, so nothing here reaches
+ * below the marker band: the beat grid still shows on the ruler, and snapping
+ * to beats is unchanged.
  *
  * **What it does NOT do.** No hit targets (everything is
  * `pointer-events-none`; markers, clips and the ruler keep every gesture), no
@@ -85,7 +93,6 @@ export const BeatLane = memo(function BeatLane({ beats, fps, pxPerSec, scrollLef
               className="absolute w-px bg-accent/80"
               style={{ left: x, top: RULER_HEIGHT_PX, height: DOWNBEAT_TICK_PX }}
             />
-            <div className="absolute bottom-0 w-px bg-accent/20" style={{ left: x, top: RULER_HEIGHT_PX + MARKER_STRIP_HEIGHT }} />
             {shown.labels && (
               <span
                 className="absolute text-[9px] leading-none text-accent"

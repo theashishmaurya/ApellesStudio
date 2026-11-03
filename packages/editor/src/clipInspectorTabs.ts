@@ -22,6 +22,12 @@
  * Audio one. We match the split, with the two tabs we actually have content
  * for.
  *
+ * **v0.3.0 (D-432 §4.10, B-359 item 1): four tabs, as the approved mockup has
+ * them.** Speed (the retime, D-236) moved out of the Video tab into its own,
+ * the way Final Cut's Inspector and the mockup keep retiming apart from
+ * geometry; Info (Final Cut's Info inspector, Resolve's File tab) is a
+ * read-only page of the clip's media facts and its in / out.
+ *
  * **Availability is per clip, and it is not cosmetic.** A text clip has no
  * audio at all — `ClipInspectorPanel` already hid its Volume/Pan and EQ
  * sections (D-211/D-223/D-224) — so it gets no Audio tab rather than an empty
@@ -33,13 +39,15 @@ import type { Clip } from './timeline';
 /** The clip Inspector's tabs, in the order they render. Resolve's own order
  *  (Video before Audio) — and the one the sections already had down the old
  *  single scroll, so nothing moves relative to anything else. */
-export const CLIP_INSPECTOR_TABS = ['video', 'audio'] as const;
+export const CLIP_INSPECTOR_TABS = ['video', 'audio', 'speed', 'info'] as const;
 
 export type ClipInspectorTab = (typeof CLIP_INSPECTOR_TABS)[number];
 
 export const CLIP_INSPECTOR_TAB_LABELS: Readonly<Record<ClipInspectorTab, string>> = {
   video: 'Video',
   audio: 'Audio',
+  speed: 'Speed',
+  info: 'Info',
 };
 
 /** The tab a clip Inspector shows when nothing else has been chosen. Video,
@@ -56,12 +64,17 @@ export const DEFAULT_CLIP_INSPECTOR_TAB: ClipInspectorTab = 'video';
  *  clips — keeps both, because every one of them renders at least one section
  *  in each. */
 export function clipInspectorTabs(clip: Clip, audioClip: Clip | null = clip): readonly ClipInspectorTab[] {
-  if (clip.text) return ['video'];
+  const tabs: ClipInspectorTab[] = ['video'];
   // B-334/D-430 — a linked picture whose audio half is gone is silent, so it
   // has no audible clip to show (`inspectorTarget.ts`): no Audio tab rather
   // than one editing fields the mix never reads.
-  if (!audioClip) return ['video'];
-  return CLIP_INSPECTOR_TABS;
+  if (!clip.text && audioClip) tabs.push('audio');
+  // D-236 — a generated layer (a title, an adjustment clip) has no source
+  // footage to retime, so the Speed section never rendered for one; no tab.
+  if (!clip.text && !clip.adjustment) tabs.push('speed');
+  // Every clip has facts to show: its place on the timeline at least.
+  tabs.push('info');
+  return tabs;
 }
 
 /** The tab actually shown: the requested one when this clip has it, else the

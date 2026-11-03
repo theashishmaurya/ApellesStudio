@@ -118,6 +118,8 @@ export function listTracks(tl: Timeline) {
             }
           : {}),
         ...(t.beat_grid ? { beatGrid: t.beat_grid } : {}),
+        // D-440 — present only on the timeline's target track.
+        ...(t.target ? { target: true } : {}),
         clipCount: t.clips.length,
         sourceCount: sources.length,
         sources: sources.slice(0, MAX_SOURCES_PER_TRACK),
@@ -271,6 +273,18 @@ export function syncLockArgs(tl: Timeline, a: OpArgs): { track: number; syncLock
 
 /** A track name's longest legal length: a header label, not a description. */
 export const TRACK_NAME_MAX = 64;
+
+/** D-440 — `editor_set_target_track`'s argument, validated: an in-range
+ *  track index, or `null` to clear the target. */
+export function targetTrackArgs(tl: Timeline, a: OpArgs): { track: number | null } | { error: string } {
+  const raw = a?.track;
+  if (raw === null) return { track: null };
+  const track = typeof raw === 'number' ? raw : Number.NaN;
+  if (!Number.isInteger(track) || !tl.tracks[track]) {
+    return { error: `track must be a track index, 0..${tl.tracks.length - 1}, or null to clear the target` };
+  }
+  return { track };
+}
 
 /** D-432 P3 — `editor_rename_track`'s arguments, validated: an in-range
  *  `track` and a `name` that is a string (blank clears) or `null` (clears). */

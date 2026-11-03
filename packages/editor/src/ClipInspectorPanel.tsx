@@ -196,12 +196,17 @@ import { useState } from 'react';
 import {
   DiamondIcon,
   ArrowCounterClockwiseIcon,
+  CursorClickIcon,
   FilmStripIcon,
+  GaugeIcon,
+  InfoIcon,
   LinkSimpleBreakIcon,
   LinkSimpleIcon,
   SpeakerHighIcon,
   XIcon,
+  type Icon as PhosphorIcon,
 } from '@phosphor-icons/react';
+import { fmtTimecode } from '@apelles/player';
 import {
   Button,
   InspectorRow,
@@ -253,6 +258,7 @@ import {
   eqBandsForDisplay,
   eqKindUsesGain,
   easePresetName,
+  endFrame,
   hasActiveEq,
   type Clip,
   type ClipAudioParam,
@@ -265,7 +271,14 @@ import {
 import type { ClipKeyframe } from './clipKeyframes';
 import { CLIP_SCALING_LABELS, CLIP_SCALING_MODES, effectiveClipScaling, type ClipScaling } from './clipScaling';
 import type { ClipGeometry } from './useClipGeometry';
-import { PropertyRow, staticPropertyState, type PropertyState } from './PropertyRow';
+import {
+  PairedPropertyRow,
+  PropertyRow,
+  staticPropertyState,
+  type PropertyState,
+  type SliderSpan,
+} from './PropertyRow';
+import { ClipInfoPanel } from './ClipInfoPanel';
 
 export type TransformPatch = Partial<{
   opacity: number;
@@ -345,11 +358,13 @@ const TRANSFORM_FIELDS: Array<{
   min?: number;
   max?: number;
   unit?: string;
+  /** v0.3.0 (B-359 item 2) — the inline slider's span, where the mockup has
+   *  one: Scale 0–4 (0–400 %, Final Cut's Scale range), Rotation a full
+   *  turn either way. The field's own bounds are unchanged. */
+  slider?: SliderSpan;
 }> = [
-  { param: 'position_x', label: 'Position X', step: CROP_STEP },
-  { param: 'position_y', label: 'Position Y', step: CROP_STEP },
-  { param: 'scale', label: 'Scale', step: 0.01, min: 0 },
-  { param: 'rotation', label: 'Rotation', step: 1, unit: '°' },
+  { param: 'scale', label: 'Scale', step: 0.01, min: 0, slider: { min: 0, max: 4 } },
+  { param: 'rotation', label: 'Rotation', step: 1, unit: '°', slider: { min: -180, max: 180 } },
   // D-344 — output-composition PIXELS, so it steps by 1 like `rotation`'s
   // degrees and unlike the fraction-valued rows above it. `min: 0` and no
   // `max`: the real upper bound is half the clip's resolved on-canvas box,
@@ -393,7 +408,22 @@ const AUDIO_FIELDS: Array<{
  *  do anything for a title. Filters `TRANSFORM_FIELDS` down to those three
  *  for a text clip, rather than rendering rows that silently do nothing (or
  *  worse, that a human edits and then can't work out why nothing moved). */
+/** D-432 §4.10 — one Phosphor glyph per Inspector tab (the mockup's four). */
+const CLIP_INSPECTOR_TAB_ICONS: Record<ClipInspectorTab, PhosphorIcon> = {
+  video: FilmStripIcon,
+  audio: SpeakerHighIcon,
+  speed: GaugeIcon,
+  info: InfoIcon,
+};
+
 const TEXT_CLIP_TRANSFORM_PARAMS = new Set<ClipTransformParam>(['opacity', 'position_x', 'position_y']);
+
+/** v0.3.0 (B-359 item 2) — Position as ONE paired row (`X [..] Y [..]`), the
+ *  mockup's and Final Cut's single Position parameter. `position_x` /
+ *  `position_y` step by `CROP_STEP` because D-136 made them normalised
+ *  fractions of the composition (B-043's fix), not absolute pixels. A title
+ *  keeps it (`TEXT_CLIP_TRANSFORM_PARAMS`). */
+const POSITION_PARAMS = ['position_x', 'position_y'] as const satisfies readonly [ClipTransformParam, ClipTransformParam];
 
 /** D-224 — one EQ band's three numeric rows, in Resolve's own order
  *  (Frequency, Gain, Q). Same `PropertyRow`-shaped record `TRANSFORM_FIELDS`
@@ -463,6 +493,7 @@ export function ClipInspectorPanel({
   onDynamicZoomSwap,
   tab,
   onTabChange,
+  fps,
 }: {
   /** The PICTURE half — what every Video-tab section reads (B-334/D-430;
    *  `inspectorTarget.ts`). For an unlinked clip, the selected clip itself. */
@@ -506,9 +537,11 @@ export function ClipInspectorPanel({
    *  playhead, not (only) on its static field — the caller decides, this
    *  panel just says which property changed to what. */
   onParamChange: (param: ClipKeyframeParam, value: number) => void;
-  onKeyframeToggle: (param: ClipKeyframeParam) => void;
+  /** One property, or several on the same facet as ONE keyframe write (the
+   *  paired Position row, v0.3.0). */
+  onKeyframeToggle: (params: ClipKeyframeParam | readonly ClipKeyframeParam[]) => void;
   onKeyframeNav: (param: ClipKeyframeParam, dir: -1 | 1) => void;
-  onResetParam: (param: ClipKeyframeParam) => void;
+  onResetParam: (params: ClipKeyframeParam | readonly ClipKeyframeParam[]) => void;
   /** D-233 — open (or close) one property's ease curve in the timeline's
    *  curve editor lane. Passed straight through to every keyframeable
    *  `PropertyRow`; the rows themselves decide whether to render the button
@@ -547,6 +580,9 @@ export function ClipInspectorPanel({
    *  Video tab without the panel forgetting where the user was. */
   tab: ClipInspectorTab;
   onTabChange: (tab: ClipInspectorTab) => void;
+  /** The timeline's frame rate: the header's duration and the Info tab's
+   *  timecodes (v0.3.0, B-359 item 1). */
+  fps: number;
 }) {
   // D-193 — locked by default for a clip with no independent-axis override
   // yet (the common "just scale it" case); a clip an MCP agent or a prior
@@ -558,7 +594,14 @@ export function ClipInspectorPanel({
   const [ratioLocked, setRatioLocked] = useState(() => clip?.box_width == null && clip?.box_height == null);
 
   if (!clip) {
-    return <InspectorEmptyState>Select a clip to edit its properties.</InspectorEmptyState>;
+    // v0.3.0 (§4.13) — reached when the selection resolves to no single clip
+    // (several selected, or one the open timeline does not hold); no selection
+    // at all shows the timeline settings instead. Say what to do, with a glyph.
+    return (
+      <InspectorEmptyState icon={<CursorClickIcon aria-hidden />}>
+        Select a clip to edit its properties.
+      </InspectorEmptyState>
+    );
   }
 
   const transformFields = clip.text
@@ -624,7 +667,7 @@ export function ClipInspectorPanel({
     param: ClipTransformParam | ClipAudioParam,
     label: string,
     step: number,
-    opts: { min?: number; max?: number; unit?: string; locked: boolean },
+    opts: { min?: number; max?: number; unit?: string; slider?: SliderSpan; locked: boolean },
   ) => (
     <PropertyRow
       key={param}
@@ -635,6 +678,7 @@ export function ClipInspectorPanel({
       min={opts.min}
       max={opts.max}
       unit={opts.unit}
+      slider={opts.slider}
       disabled={opts.locked}
       onChange={(v) => onParamChange(param, v)}
       onKeyframeToggle={onKeyframeToggle}
@@ -665,6 +709,15 @@ export function ClipInspectorPanel({
           <div className="text-text-primary min-w-0 flex-1 truncate text-base font-semibold" title={clip.name}>
             {clip.name}
           </div>
+          {/* v0.3.0 (B-359 item 1) — the clip's length on the timeline, as
+              Final Cut's Inspector header and the mockup show it. */}
+          <span
+            data-chroma-inspector-duration=""
+            className="text-text-secondary shrink-0 font-mono text-xs tabular-nums"
+            title="Duration on the timeline"
+          >
+            {fmtTimecode(endFrame(clip, fps) - clip.start_frame, fps)}
+          </span>
         </div>
         {trackLocked && (
           <div className="text-text-secondary border-border-color border-b px-3 py-1.5 text-2xs">
@@ -690,9 +743,12 @@ export function ClipInspectorPanel({
                 value={id}
                 aria-label={CLIP_INSPECTOR_TAB_LABELS[id]}
                 title={CLIP_INSPECTOR_TAB_LABELS[id]}
-                className="text-text-secondary data-active:bg-bg-secondary data-active:text-accent-text h-[22px] w-7 flex-none rounded-sm px-0"
+                className="text-text-secondary group-data-[variant=line]/tabs-list:data-active:bg-bg-secondary data-active:text-accent-text h-[22px] w-7 flex-none rounded-sm px-0"
               >
-                {id === 'video' ? <FilmStripIcon size={15} /> : <SpeakerHighIcon size={15} />}
+                {(() => {
+                  const TabIcon = CLIP_INSPECTOR_TAB_ICONS[id];
+                  return <TabIcon size={15} />;
+                })()}
               </TabsTrigger>
             ))}
           </TabsList>
@@ -724,8 +780,22 @@ export function ClipInspectorPanel({
                 here: only the caller knows whether the property is currently
                 animated, and an edit to an animated `Scale` has to land on its
                 keyframe. */}
-            {transformFields.map(({ param, label, step, min, max, unit }) =>
-              propertyRow(param, label, step, { min, max, unit, locked: trackLocked }),
+            <PairedPropertyRow
+              label="Position"
+              params={POSITION_PARAMS}
+              prefixes={['X', 'Y']}
+              states={[paramStates.position_x, paramStates.position_y]}
+              step={CROP_STEP}
+              disabled={trackLocked}
+              onChange={onParamChange}
+              onKeyframeToggle={onKeyframeToggle}
+              onKeyframeNav={onKeyframeNav}
+              onReset={onResetParam}
+              onOpenCurve={onOpenCurve}
+              openCurveParam={openCurveParam}
+            />
+            {transformFields.map(({ param, label, step, min, max, unit, slider }) =>
+              propertyRow(param, label, step, { min, max, unit, slider, locked: trackLocked }),
             )}
 
             {/* D-193 — independent Width/Height, in pixels of the project's
@@ -819,7 +889,7 @@ export function ClipInspectorPanel({
               from Transform; blend modes would join it). Always present — a
               title has opacity too. */}
           <EditorSection id="compositing" label="Compositing">
-            {propertyRow('opacity', 'Opacity', 0.01, { min: 0, max: 1, locked: trackLocked })}
+            {propertyRow('opacity', 'Opacity', 0.01, { min: 0, max: 1, slider: { min: 0, max: 1 }, locked: trackLocked })}
           </EditorSection>
 
           {/* D-132 — Crop, the Edit tab's first (D-127 Finding 3). Its own
@@ -922,18 +992,6 @@ export function ClipInspectorPanel({
               have no decoded picture to draw on. Self-contained (reads the
               stores itself). */}
           {!clip.text && !clip.adjustment && !clip.caption && <ClipHighlightsSection />}
-
-          {/* D-236 — Speed (retime). Placed above Fade because a retime changes
-              the clip's LENGTH, which is what every duration below it is
-              measured against. Not offered on a generated layer: a title or an
-              adjustment clip has no source footage to retime. */}
-          {!clip.text && !clip.adjustment && (
-            <SpeedRampEditor
-              clip={clip}
-              trackLocked={trackLocked}
-              onSpeedChange={onSpeedChange}
-            />
-          )}
 
           {/* D-147 — Fade in / out. Its own section: a fade is not part of a
               clip's geometry, it is a time-domain envelope over whatever that
@@ -1162,6 +1220,23 @@ export function ClipInspectorPanel({
             </EditorSection>
           </TabsContent>
         )}
+
+        {/* v0.3.0 (B-359 item 1) — the SPEED tab: D-236's retime, moved out of
+            the Video tab into its own, as the mockup and Final Cut's
+            Inspector keep retiming apart from geometry. Offered only where
+            the section ever rendered (`clipInspectorTabs`): a title or an
+            adjustment clip has no source footage to retime. */}
+        {tabs.includes('speed') && (
+          <TabsContent value="speed" className="flex flex-col">
+            <SpeedRampEditor clip={clip} trackLocked={trackLocked} onSpeedChange={onSpeedChange} />
+          </TabsContent>
+        )}
+
+        {/* v0.3.0 (B-359 item 1) — the INFO tab: read-only media facts and
+            the clip's in / out (`ClipInfoPanel`). */}
+        <TabsContent value="info" className="flex flex-col">
+          <ClipInfoPanel clip={clip} fps={fps} />
+        </TabsContent>
       </div>
     </Tabs>
   );

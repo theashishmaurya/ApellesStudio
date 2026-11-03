@@ -306,7 +306,6 @@ import {
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import {
   ArrowsLeftRightIcon,
-  FilmStripIcon,
   ArrowsInLineHorizontalIcon,
   // D-138 — the A/V-link action's own icon. Deliberately `Link`, not
   // `LinkSimpleHorizontal`: that one is the track header's sync-lock-ON icon
@@ -320,10 +319,6 @@ import {
   SplitHorizontalIcon,
   MagnifyingGlassPlusIcon,
   MagnifyingGlassMinusIcon,
-  // D-413 — the toolbar's "snap cuts to beats" (a metronome, FCP/Logic's own
-  // beat glyph) and the beat-snapping toggle.
-  MetronomeIcon,
-  MagnetStraightIcon,
 } from '@phosphor-icons/react';
 import { snapSpan, snapTo } from '@apelles/beats';
 import { beatFramesOf } from './beatGrid';
@@ -480,7 +475,9 @@ import {
 import { useViewportWidth } from './useViewportWidth';
 import { trackBadges, trackLabels } from './trackOps';
 import { TrackHeader, trackDragId } from './TrackHeader';
-import { ClipAppearanceButton, SnapSkimToggles } from './TimelineViewControls';
+import { ClipAppearanceButton, SnapSkimToggles, TimelineZoomSlider } from './TimelineViewControls';
+import { TimelineBeatControl } from './TimelineBeatControl';
+import { TimelineEmptyState, TimelineNoClipsHint } from './EditEmptyStates';
 import { TimelineRuler } from './TimelineRuler';
 import { usePreviewPeekStore } from './previewPeek';
 // D-432 P3 — per-track height.
@@ -672,7 +669,15 @@ function TrackDropZone({ track, top, height }: { track: number; top: number; hei
 
 /** D-432 P5 — `toolbarCenter`: what the Edit tab centres in this pane's
  *  toolbar row (the timeline switcher and timecode, spec §4.9). */
-export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
+export function TimelinePane({
+  toolbarCenter,
+  emptyAction,
+}: {
+  toolbarCenter?: ReactNode;
+  /** v0.3.0 (§4.13) — the empty timeline's action (the composition root's
+   *  Import button), shown under its one-line instruction. */
+  emptyAction?: ReactNode;
+}) {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   // D-325 — deliberately NOT `useEditorTimelineStore((s) => s.playhead)`. This
   // is the only component in the codebase where that selector's ordinary
@@ -3177,8 +3182,6 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
       setSelection([{ track: toTrack, id: clipId }]);
     };
 
-  const zoomPct = Math.round((pxPerSec / DEFAULT_PX_PER_SEC) * 100);
-
   /** B-116 — the one zoom entry point, for both the ctrl/pinch wheel and the
    *  toolbar's +/- buttons. Captures the timeline frame under the anchor
    *  BEFORE the zoom changes and hands it to the effect above, which puts that
@@ -3352,20 +3355,11 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
   if (tracks.length === 0) {
     // a brand new timeline (`chroma_timeline_create`) has no tracks yet —
     // the first drop creates one (see `applyOp`'s 'add_clip' handling).
+    // v0.3.0 (§4.13) — placeholder V1 / A1 lanes and one line, not a dashed
+    // box. The drop handlers stay on this wrapper.
     return (
-      <div
-        className={
-          'h-full w-full flex flex-col items-center justify-center gap-2 text-center px-6 border-2 border-dashed rounded-none transition-colors ' +
-          (dragOver ? 'border-accent bg-accent/5' : 'border-transparent')
-        }
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={onDrop}
-      >
-        <FilmStripIcon className="size-6 text-text-secondary/50" />
-        <p className="text-xs text-text-secondary">
-          Empty timeline — drag a clip from Sources to get started.
-        </p>
+      <div className="h-full w-full" onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+        <TimelineEmptyState action={emptyAction} dragOver={dragOver} />
       </div>
     );
   }
@@ -3389,336 +3383,304 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
         tabIndex={0}
       >
       <TooltipProvider>
-        <div className="shrink-0 flex items-center gap-1 px-3 py-1.5 border-b border-border-color bg-surface text-text-primary">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={doSplit}
-                  disabled={selection.length === 0}
-                  data-testid={TIMELINE_TEST_IDS.split}
-                  aria-label="Split at playhead"
-                >
-                  <SplitHorizontalIcon />
-                </Button>
-              }
-            />
-            <TooltipContent>
-              <span className="font-medium">Split</span>
-              <span className="ml-1.5 text-text-secondary">
-                Split every selected clip at the playhead
-              </span>
-            </TooltipContent>
-          </Tooltip>
-          {/* D-261 — the trim palette. It sits here, first among the actions
-              that operate on the clips already in the timeline, because unlike
-              every other button in this row it is MODAL: it changes what the
-              next drag means rather than doing something once. A separator
-              keeps that distinction visible instead of letting five icon
-              buttons read as five more one-shot actions.
+        {/* v0.3.0 (B-354 / B-359 item 4) — the mockup's grouping, in three
+            columns so the centre is truly centred (a `1fr auto 1fr` grid,
+            the mock's `.ttool`): tools | Split, Marker, Transitions |
+            contextual actions · switcher + timecode · Snapping, Skimming, Beat
+            grid, Clip Appearance | the zoom slider. */}
+        <div
+          data-chroma-timeline-toolbar=""
+          className="grid h-9 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-b border-border-color bg-surface px-2 text-text-primary"
+        >
+          <div data-chroma-toolbar-group="left" className="flex min-w-0 items-center gap-1 overflow-hidden">
+            {/* D-261 — the trim palette. It sits here, first among the actions
+                that operate on the clips already in the timeline, because unlike
+                every other button in this row it is MODAL: it changes what the
+                next drag means rather than doing something once. A separator
+                keeps that distinction visible instead of letting five icon
+                buttons read as five more one-shot actions.
 
-              Adobe's own panel is a vertical strip docked to the timeline's
-              edge; this is the same set of buttons in this app's existing
-              toolbar row, which is where every other timeline action already
-              lives (CLAUDE.md: match the app's convention, and Adobe's own page
-              notes the panel can be oriented either way). See
-              `TrimToolbar.tsx` for the icon choices and their provenance. */}
-          <Separator orientation="vertical" className="mx-1 h-5" />
-          <TrimToolbar active={trimTool} onSelect={selectTrimTool} />
-          <Separator orientation="vertical" className="mx-1 h-5" />
-          {/* D-248 — the Title (D-211) and Adjust (D-230) buttons stood here.
-              They are library items, not timeline actions, and both references
-              describe them as things you DRAG out of the effects library — so
-              they moved to `EditLibraryRail.tsx` on the left edge of the tab,
-              where they are now a real drag source as well as the same
-              click-to-add they were here. What is left in this toolbar is
-              exactly what acts on the timeline you already have. */}
-          {/* D-222 — markers. A marker annotates a POSITION in this timeline,
-              so the add button belongs in this toolbar. The owner removed the
-              toolbar's marker list / counter (2026-11-01): markers are listed,
-              jumped to and deleted in the Index panel, and on the flag's own
-              editor (B-114's delete stays reachable from both). */}
-          <AddMarkerButton onAdd={() => doAddMarker(true)} shortcut="M" />
-          {/* D-226 — the transitions library. Beside Title/Marker for the same
-              reason those two sit together: all three are "bring something new
-              into the edit", none is scoped to the current selection. The drag
-              itself starts inside its popover — see `TimelineTransitions.tsx`. */}
-          <TransitionsPaletteButton />
-          {/* D-235 — the context-sensitive trim tool's readout. Resolve tells
-              you which of the four trims you are about to get by swapping the
-              cursor (`scratch/resolve-reference/trim.jpg`); this names it. Only
-              present while Alt/Option is actually held, so it is a hint during
-              the gesture rather than permanent toolbar furniture — and it says
-              the arm key when nothing is hovered yet, which is the only
-              discoverability this feature has. */}
-          {trimArmed && (
-            <span
-              data-chroma-trim-hint=""
-              role="status"
-              className="rounded border border-border-color bg-surface px-2 py-1 text-[10px] text-text-secondary"
-            >
-              {hoverTrimMode ? (trimModeLabel(hoverTrimMode) ?? 'Trim') : 'Trim: hover a clip'}
-            </span>
-          )}
-          {dropError && (
-            <button
-              type="button"
-              onClick={() => setDropError(null)}
-              className="max-w-[26rem] truncate rounded border border-border-color bg-surface px-2 py-1 text-left text-[10px] text-text-secondary"
-              title={`${dropError} (click to dismiss)`}
-            >
-              {dropError}
-            </button>
-          )}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={doRemove}
-                  disabled={selection.length === 0}
-                  data-testid={TIMELINE_TEST_IDS.delete}
-                  aria-label="Remove clip"
-                >
-                  <TrashIcon />
-                </Button>
-              }
-            />
-            <TooltipContent>
-              <span className="font-medium">Remove</span>
-              <span className="ml-1.5 text-text-secondary">
-                Remove every selected clip (with its linked audio)
-              </span>
-            </TooltipContent>
-          </Tooltip>
-          {/* D-128 — only shown when the selection is actually linked: an
-              Unlink button that's permanently present but almost always
-              inert would be noise, and its whole meaning is "this clip HAS a
-              linked half." Both reference NLEs put unlink on the clip's own
-              context menu; this toolbar is where every other per-clip action
-              in this pane already lives, so it goes here for consistency. */}
-          {selectionIsLinked && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button variant="ghost" size="icon-sm" onClick={doUnlink} data-testid={TIMELINE_TEST_IDS.unlink} aria-label="Unlink audio and video">
-                    <LinkBreakIcon />
-                  </Button>
-                }
-              />
-              <TooltipContent>
-                <span className="font-medium">Unlink</span>
-                <span className="ml-1.5 text-text-secondary">
-                  Break the A/V link so the picture and its audio can be trimmed and moved apart (an L-cut)
-                </span>
-              </TooltipContent>
-            </Tooltip>
-          )}
-
-          {/* D-138 — the manual counterpart to Unlink: shown only when the
-              selection is actually shaped like a link candidate (exactly two
-              clips, see `linkCheck`'s own doc) — same "don't show an action
-              that's almost always inert" reasoning as Unlink above. Unlike
-              Unlink, whether it's ENABLED can still say no (wrong track
-              kind, already linked, a locked track) — the button stays
-              visible but disabled in that case, with `linkCheck.result.
-              reason` in the tooltip, so the reason is surfaced rather than
-              the button just silently vanishing (the owner's own ask). */}
-          {linkCheck && (
+                Adobe's own panel is a vertical strip docked to the timeline's
+                edge; this is the same set of buttons in this app's existing
+                toolbar row, which is where every other timeline action already
+                lives (CLAUDE.md: match the app's convention, and Adobe's own page
+                notes the panel can be oriented either way). See
+                `TrimToolbar.tsx` for the icon choices and their provenance. */}
+            <TrimToolbar active={trimTool} onSelect={selectTrimTool} />
+            <Separator orientation="vertical" className="mx-1 h-4" />
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Button
                     variant="ghost"
                     size="icon-sm"
-                    onClick={doLink}
-                    disabled={!linkCheck.result.ok}
-                    data-testid={TIMELINE_TEST_IDS.link}
-                    aria-label="Link audio and video"
+                    onClick={doSplit}
+                    disabled={selection.length === 0}
+                    data-testid={TIMELINE_TEST_IDS.split}
+                    aria-label="Split at playhead"
                   >
-                    <LinkIcon />
+                    <SplitHorizontalIcon />
                   </Button>
                 }
               />
               <TooltipContent>
-                <span className="font-medium">Link</span>
+                <span className="font-medium">Split</span>
                 <span className="ml-1.5 text-text-secondary">
-                  {linkCheck.result.ok
-                    ? 'Link these two clips so they move, trim, split and delete together'
-                    : linkCheck.result.reason}
+                  Split every selected clip at the playhead
                 </span>
               </TooltipContent>
             </Tooltip>
-          )}
-
-          {/* D-105 — the mirror-image toolbar action for a selected GAP
-              (empty track space, not a clip): closes it, rippling everything
-              after it earlier. A separate button rather than overloading
-              "Remove" itself — the two selections are mutually exclusive, so
-              at most one of these two buttons is ever enabled/relevant at
-              once, but a distinct label/icon ("Close Gap"/`ArrowsInLineHorizontal`
-              vs. "Remove"/`Trash`) makes clear this closes the space rather
-              than just deleting something, matching the real, different
-              underlying operation (D-105's `remove_gap` ripples; `remove`
-              deliberately doesn't). Same Delete/Backspace keybinding covers
-              both — see this component's `onKeyDown`. */}
-          {/* B-236 — disabled, with the refusal's own reason in the tooltip,
-              when `checkRemoveGap` says no: the same "surface the reason
-              rather than silently do nothing" treatment the Link button
-              (D-138) already gets. */}
-          {selectedGap && gapCloseCheck && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={doRemoveGap}
-                    disabled={!gapCloseCheck.ok}
-                    data-testid={TIMELINE_TEST_IDS.removeGap}
-                    aria-label="Close gap"
-                  >
-                    <ArrowsInLineHorizontalIcon />
-                  </Button>
-                }
-              />
-              <TooltipContent>
-                <span className="font-medium">Close Gap</span>
-                <span className="ml-1.5 text-text-secondary">
-                  {gapCloseCheck.ok
-                    ? 'Close the selected gap — everything after it shifts left'
-                    : gapCloseCheck.reason}
-                </span>
-              </TooltipContent>
-            </Tooltip>
-          )}
-
-          {/* D-080: cross-track move — see the module doc for why this is a
-              dropdown and not a drag gesture. */}
-          {primary && otherTracks.length > 0 && (
-            <DropdownMenu>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <DropdownMenuTrigger
-                      render={
-                        <Button variant="ghost" size="icon-sm" aria-label="Move to another track">
-                          <ArrowsLeftRightIcon />
-                        </Button>
-                      }
-                    />
-                  }
-                />
-                <TooltipContent>
-                  <span className="font-medium">Move to</span>
-                  <span className="ml-1.5 text-text-secondary">Move the selected clip to another track</span>
-                </TooltipContent>
-              </Tooltip>
-              <DropdownMenuContent align="start">
-                {otherTracks.map((i) => (
-                  <DropdownMenuItem key={i} onClick={() => doMoveToTrack(i)}>
-                    {labels[i]}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-
-          {/* D-090's clip-transform popover was removed in D-102 — the
-              persistent `ClipInspectorPanel` replaces it (D-117: now a
-              full-height sibling panel in `EditorTab.tsx`, not nested here),
-              same fields/ops, better UX for iterating on values, no reason
-              to keep both. */}
-
-          {toolbarCenter && <div className="mx-auto flex shrink-0 items-center px-3">{toolbarCenter}</div>}
-          <div className="ml-auto flex items-center gap-0.5">
-            {/* D-413 — the beat grid's controls, shown only while a track's
-                beats are on: its tempo (or that it is still being analysed),
-                beat snapping, and "snap the selected clip's track's cuts to
-                the beat" — the same `snapCutsToBeats` the
-                `editor_snap_cuts_to_beats` tool runs. */}
-            {beatView.track !== null && (
+            {/* D-248 — the Title (D-211) and Adjust (D-230) buttons stood here.
+                They are library items, not timeline actions, and both references
+                describe them as things you DRAG out of the effects library — so
+                they moved to `EditLibraryRail.tsx` on the left edge of the tab,
+                where they are now a real drag source as well as the same
+                click-to-add they were here. What is left in this toolbar is
+                exactly what acts on the timeline you already have. */}
+            {/* D-222 — markers. A marker annotates a POSITION in this timeline,
+                so the add button belongs in this toolbar. The owner removed the
+                toolbar's marker list / counter (2026-11-01): markers are listed,
+                jumped to and deleted in the Index panel, and on the flag's own
+                editor (B-114's delete stays reachable from both). */}
+            <AddMarkerButton onAdd={() => doAddMarker(true)} shortcut="M" />
+            {/* D-226 — the transitions library. Beside Title/Marker for the same
+                reason those two sit together: all three are "bring something new
+                into the edit", none is scoped to the current selection. The drag
+                itself starts inside its popover — see `TimelineTransitions.tsx`. */}
+            <TransitionsPaletteButton />
+            {/* D-235 — the context-sensitive trim tool's readout. Resolve tells
+                you which of the four trims you are about to get by swapping the
+                cursor (`scratch/resolve-reference/trim.jpg`); this names it. Only
+                present while Alt/Option is actually held, so it is a hint during
+                the gesture rather than permanent toolbar furniture — and it says
+                the arm key when nothing is hovered yet, which is the only
+                discoverability this feature has. */}
+            {trimArmed && (
+              <span
+                data-chroma-trim-hint=""
+                role="status"
+                className="rounded border border-border-color bg-surface px-2 py-1 text-[10px] text-text-secondary"
+              >
+                {hoverTrimMode ? (trimModeLabel(hoverTrimMode) ?? 'Trim') : 'Trim: hover a clip'}
+              </span>
+            )}
+            {dropError && (
+              <button
+                type="button"
+                onClick={() => setDropError(null)}
+                className="max-w-[26rem] truncate rounded border border-border-color bg-surface px-2 py-1 text-left text-[10px] text-text-secondary"
+                title={`${dropError} (click to dismiss)`}
+              >
+                {dropError}
+              </button>
+            )}
+            {/* v0.3.0 (B-354) — Remove is contextual, like Unlink / Link / Close
+                Gap: shown while a clip is selected. §4.9 drops it from the
+                toolbar, but the clip has no context menu yet, so this stays the
+                pointer's way to delete (the Delete key is the other). */}
+            {selection.length > 0 && (
               <>
-                <span
-                  data-chroma-beat-readout
-                  className="px-1 text-[11px] tabular-nums text-text-secondary/70"
-                  title={beatView.errors.map((e) => `${e.path}: ${e.error}`).join('\n') || undefined}
-                >
-                  {beatView.errors.length > 0
-                    ? 'beats failed'
-                    : beatView.pending.length > 0
-                      ? 'analysing beats…'
-                      : `${Math.round(beatView.tempoBpm)} BPM`}
-                </span>
-                {beatNotice && (
-                  <span role="status" className="max-w-56 truncate px-1 text-[11px] text-text-secondary" title={beatNotice}>
-                    {beatNotice}
-                  </span>
-                )}
                 <Tooltip>
                   <TooltipTrigger
                     render={
                       <Button
                         variant="ghost"
-                        size="sm"
-                        className={beatSnap ? 'text-accent-text' : undefined}
-                        aria-pressed={beatSnap}
-                        onClick={() => setBeatSnap(!beatSnap)}
-                        aria-label={beatSnap ? 'Turn beat snapping off' : 'Turn beat snapping on'}
+                        size="icon-sm"
+                        onClick={doRemove}
+                        disabled={selection.length === 0}
+                        data-testid={TIMELINE_TEST_IDS.delete}
+                        aria-label="Remove clip"
                       >
-                        {/* D-432 P3 — the straight magnet: the toolbar's own
-                            Snapping toggle (N) has the round one, and beats
-                            are one of its targets. */}
-                        <MagnetStraightIcon />
+                        <TrashIcon />
                       </Button>
                     }
                   />
                   <TooltipContent>
-                    {beatSnap
-                      ? snapping
-                        ? 'Beat snapping on: drags, trims and the playhead land on beats'
-                        : 'Beat snapping on, but Snapping (N) is off'
-                      : 'Beat snapping off'}
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={!primary || snappingCuts}
-                        onClick={doSnapCutsToBeats}
-                        aria-label="Snap cuts to beats"
-                      >
-                        <MetronomeIcon />
-                      </Button>
-                    }
-                  />
-                  <TooltipContent>
-                    <span className="font-medium">Snap cuts to beats</span>
+                    <span className="font-medium">Remove</span>
                     <span className="ml-1.5 text-text-secondary">
-                      Roll every cut on the selected clip&apos;s track onto its nearest beat (one undo)
+                      Remove every selected clip (with its linked audio)
                     </span>
                   </TooltipContent>
                 </Tooltip>
               </>
             )}
-            {/* D-249 — D-198's Export button stood here, at the far right of
-                this toolbar. It is now in the Edit tab's own top strip
-                (`EditorTab.tsx`), beside the Inspector toggle: delivering the
-                finished cut is the tab's terminal action, not one of the
-                per-clip edit actions this strip holds, and the owner asked for
-                it there directly (an arrow drawn from it up to the top bar).
-                The dialog component is unchanged — only where it is mounted. */}
-            {/* D-432 P3 — Snapping (N), Skimming (S) and the Clip Appearance
-                popover (§4.9), then zoom. */}
+            {/* D-128 — only shown when the selection is actually linked: an
+                Unlink button that's permanently present but almost always
+                inert would be noise, and its whole meaning is "this clip HAS a
+                linked half." Both reference NLEs put unlink on the clip's own
+                context menu; this toolbar is where every other per-clip action
+                in this pane already lives, so it goes here for consistency. */}
+            {selectionIsLinked && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button variant="ghost" size="icon-sm" onClick={doUnlink} data-testid={TIMELINE_TEST_IDS.unlink} aria-label="Unlink audio and video">
+                      <LinkBreakIcon />
+                    </Button>
+                  }
+                />
+                <TooltipContent>
+                  <span className="font-medium">Unlink</span>
+                  <span className="ml-1.5 text-text-secondary">
+                    Break the A/V link so the picture and its audio can be trimmed and moved apart (an L-cut)
+                  </span>
+                </TooltipContent>
+              </Tooltip>
+            )}
+
+            {/* D-138 — the manual counterpart to Unlink: shown only when the
+                selection is actually shaped like a link candidate (exactly two
+                clips, see `linkCheck`'s own doc) — same "don't show an action
+                that's almost always inert" reasoning as Unlink above. Unlike
+                Unlink, whether it's ENABLED can still say no (wrong track
+                kind, already linked, a locked track) — the button stays
+                visible but disabled in that case, with `linkCheck.result.
+                reason` in the tooltip, so the reason is surfaced rather than
+                the button just silently vanishing (the owner's own ask). */}
+            {linkCheck && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={doLink}
+                      disabled={!linkCheck.result.ok}
+                      data-testid={TIMELINE_TEST_IDS.link}
+                      aria-label="Link audio and video"
+                    >
+                      <LinkIcon />
+                    </Button>
+                  }
+                />
+                <TooltipContent>
+                  <span className="font-medium">Link</span>
+                  <span className="ml-1.5 text-text-secondary">
+                    {linkCheck.result.ok
+                      ? 'Link these two clips so they move, trim, split and delete together'
+                      : linkCheck.result.reason}
+                  </span>
+                </TooltipContent>
+              </Tooltip>
+            )}
+
+            {/* D-105 — the mirror-image toolbar action for a selected GAP
+                (empty track space, not a clip): closes it, rippling everything
+                after it earlier. A separate button rather than overloading
+                "Remove" itself — the two selections are mutually exclusive, so
+                at most one of these two buttons is ever enabled/relevant at
+                once, but a distinct label/icon ("Close Gap"/`ArrowsInLineHorizontal`
+                vs. "Remove"/`Trash`) makes clear this closes the space rather
+                than just deleting something, matching the real, different
+                underlying operation (D-105's `remove_gap` ripples; `remove`
+                deliberately doesn't). Same Delete/Backspace keybinding covers
+                both — see this component's `onKeyDown`. */}
+            {/* B-236 — disabled, with the refusal's own reason in the tooltip,
+                when `checkRemoveGap` says no: the same "surface the reason
+                rather than silently do nothing" treatment the Link button
+                (D-138) already gets. */}
+            {selectedGap && gapCloseCheck && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={doRemoveGap}
+                      disabled={!gapCloseCheck.ok}
+                      data-testid={TIMELINE_TEST_IDS.removeGap}
+                      aria-label="Close gap"
+                    >
+                      <ArrowsInLineHorizontalIcon />
+                    </Button>
+                  }
+                />
+                <TooltipContent>
+                  <span className="font-medium">Close Gap</span>
+                  <span className="ml-1.5 text-text-secondary">
+                    {gapCloseCheck.ok
+                      ? 'Close the selected gap — everything after it shifts left'
+                      : gapCloseCheck.reason}
+                  </span>
+                </TooltipContent>
+              </Tooltip>
+            )}
+
+            {/* D-080: cross-track move — see the module doc for why this is a
+                dropdown and not a drag gesture. */}
+            {primary && otherTracks.length > 0 && (
+              <DropdownMenu>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <DropdownMenuTrigger
+                        render={
+                          <Button variant="ghost" size="icon-sm" aria-label="Move to another track">
+                            <ArrowsLeftRightIcon />
+                          </Button>
+                        }
+                      />
+                    }
+                  />
+                  <TooltipContent>
+                    <span className="font-medium">Move to</span>
+                    <span className="ml-1.5 text-text-secondary">Move the selected clip to another track</span>
+                  </TooltipContent>
+                </Tooltip>
+                <DropdownMenuContent align="start">
+                  {otherTracks.map((i) => (
+                    <DropdownMenuItem key={i} onClick={() => doMoveToTrack(i)}>
+                      {labels[i]}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+
+            {/* D-090's clip-transform popover was removed in D-102 — the
+                persistent `ClipInspectorPanel` replaces it (D-117: now a
+                full-height sibling panel in `EditorTab.tsx`, not nested here),
+                same fields/ops, better UX for iterating on values, no reason
+                to keep both. */}
+
+          </div>
+          <div data-chroma-toolbar-group="center" className="flex shrink-0 items-center justify-center px-1">
+            {toolbarCenter}
+          </div>
+          <div data-chroma-toolbar-group="right" className="flex min-w-0 items-center justify-end gap-1">
+              {/* D-249 — D-198's Export button stood here, at the far right of
+                  this toolbar. It is now in the Edit tab's own top strip
+                  (`EditorTab.tsx`), beside the Inspector toggle: delivering the
+                  finished cut is the tab's terminal action, not one of the
+                  per-clip edit actions this strip holds, and the owner asked for
+                  it there directly (an arrow drawn from it up to the top bar).
+                  The dialog component is unchanged — only where it is mounted. */}
+            {/* D-432 P3 — Snapping (N) and Skimming (S); v0.3.0 — then the Beat
+                grid (its tempo, beat snapping and "Snap cuts to beats" in one
+                popover, where the readout and two buttons used to sit loose
+                in this row), Clip Appearance, and the zoom slider (§4.9). */}
             <SnapSkimToggles />
+            <TimelineBeatControl
+              active={beatView.track !== null}
+              readout={
+                beatView.track === null
+                  ? null
+                  : beatView.errors.length > 0
+                    ? 'beats failed'
+                    : beatView.pending.length > 0
+                      ? 'analysing beats…'
+                      : `${Math.round(beatView.tempoBpm)} BPM`
+              }
+              readoutTitle={beatView.errors.map((e) => `${e.path}: ${e.error}`).join('\n') || undefined}
+              notice={beatNotice}
+              beatSnap={beatSnap}
+              snapping={snapping}
+              onBeatSnapChange={setBeatSnap}
+              canSnapCuts={!!primary && !snappingCuts}
+              onSnapCuts={doSnapCutsToBeats}
+            />
             <ClipAppearanceButton />
-            <Separator orientation="vertical" className="mx-1 h-5" />
+            <Separator orientation="vertical" className="mx-1 h-4" />
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -3729,12 +3691,14 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
               />
               <TooltipContent>Zoom out (−, or ctrl/pinch-scroll over the timeline)</TooltipContent>
             </Tooltip>
-            <span
-              data-testid={TIMELINE_TEST_IDS.zoomReadout}
-              className="w-10 text-center text-[11px] tabular-nums text-text-secondary/70"
-            >
-              {zoomPct}%
-            </span>
+            <TimelineZoomSlider
+              className="w-24"
+              pxPerSec={pxPerSec}
+              testId={TIMELINE_TEST_IDS.toolbarZoomSlider}
+              // The playhead (or the view centre) holds still, as the +/-
+              // buttons do: the same `zoomBy` with no pointer anchor.
+              onZoom={(px) => zoomBy(px / pxPerSec, null)}
+            />
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -3822,6 +3786,8 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
                     onRemove={() => doRemoveTrack(i)}
                     beatGrid={track.beat_grid != null}
                     onToggleBeats={() => (track.beat_grid != null ? setBeatGrid(null, null) : setBeatGrid(i, {}))}
+                    target={!!track.target}
+                    onToggleTarget={() => applyOp({ kind: 'set_target_track', track: track.target ? null : i })}
                     onRename={(name) => applyOp({ kind: 'set_track_name', track: i, name })}
                     onSetHeight={(height) => applyOp({ kind: 'set_track_height', track: i, height })}
                     onHeightDragStart={startTrackHeightDrag}
@@ -4281,6 +4247,9 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
                 snap guide and the Blade line (one set per pane, positioned
                 imperatively by `useEditGesture`). */}
             <EditFeedbackLayer ref={feedbackRef} />
+            {/* v0.3.0 (§4.13) — tracks but no clips: the instruction over the
+                lanes (clicks pass through everywhere but its button). */}
+            {tracks.every((t) => t.clips.length === 0) && <TimelineNoClipsHint action={emptyAction} />}
           </div>
             </ResizablePanel>
 

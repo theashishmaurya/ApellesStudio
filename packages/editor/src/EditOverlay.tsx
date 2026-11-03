@@ -49,12 +49,14 @@ import {
   StackIcon,
   type Icon as PhosphorIcon,
 } from '@phosphor-icons/react';
+import { isAudioOnlyItem, useMediaPoolStore } from '@apelles/bridge';
 
 import {
   CHROMA_MEDIA_DRAG_MIME,
   DROP_EDIT_TYPES,
   checkEditIn,
   checkEditTarget,
+  destinationTrack as targetedDestination,
   editTargetIndexAt,
   linkedClipsFromDraggedMedia,
   timelineFps,
@@ -81,15 +83,19 @@ const EDIT_TYPE_ICONS: Record<DropEditType, PhosphorIcon> = {
  *  sentence, short enough that it never becomes furniture. */
 const DROP_ERROR_MS = 6000;
 
-/** The destination track an overlay drop targets: the selected clip's own
- *  track when there is a selection (the nearest thing this app has to
- *  Resolve's destination-track patching), else the topmost video track. */
-function destinationTrack(): number {
+/** The destination track an overlay drop targets. D-440: the timeline's
+ *  target track (the accent ID pill, Resolve's destination track) when its
+ *  kind fits the source; else, as before, the selected clip's own track, else
+ *  the topmost video track. `mediaId` names the dragged pool item when it is
+ *  known (the drop); mid-drag the HTML5 payload is unreadable, so the source
+ *  is taken as picture, the common case. */
+function destinationTrack(mediaId?: string): number {
   const { timeline, selection } = useEditorTimelineStore.getState();
   if (!timeline) return 0;
+  const item = mediaId ? useMediaPoolStore.getState().items.find((m) => m.id === mediaId) : undefined;
   const sel = selection[0];
-  if (sel && timeline.tracks[sel.track]) return sel.track;
-  return videoTrackIndex(timeline);
+  const fallback = sel && timeline.tracks[sel.track] ? sel.track : videoTrackIndex(timeline);
+  return targetedDestination(timeline, item && isAudioOnlyItem(item) ? 'audio' : 'video', fallback);
 }
 
 export function EditOverlay() {
@@ -202,7 +208,7 @@ export function EditOverlay() {
     const op = {
       kind: 'edit_in' as const,
       editType,
-      track: destinationTrack(),
+      track: destinationTrack(media.id),
       clip: pair.video,
       atFrame: playhead,
       linkedAudio: pair.audio ?? undefined,

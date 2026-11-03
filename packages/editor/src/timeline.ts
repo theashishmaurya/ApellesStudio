@@ -1359,6 +1359,12 @@ export interface Track {
    *  renders or exports differently. Written by `set_track_height`, clamped to
    *  `trackHeight.ts`'s 32..200. */
   height?: number | null;
+  /** D-440 — this is the timeline's target track (Premiere's track targeting,
+   *  Resolve's destination track): where an edit that names no track lands
+   *  (`destinationTrack`). Mirrors `apelles_timeline::Track::target`. At most
+   *  one track carries it (`set_target_track` clears the others); absent =
+   *  `false`. On the track so it follows a reorder, as `beat_grid` does. */
+  target?: boolean;
 }
 
 /** D-413 — a beat grid's analysis parameters; mirrors
@@ -2320,6 +2326,22 @@ export function timelineDuration(tl: Timeline | null): number {
 export function videoTrackIndex(tl: Timeline): number {
   const i = tl.tracks.findIndex((t) => t.kind === 'video');
   return i >= 0 ? i : 0;
+}
+
+/** D-440 — the timeline's target track, or `null` when none is set. */
+export function targetTrackIndex(tl: Timeline | null | undefined): number | null {
+  const i = tl?.tracks.findIndex((t) => t.target) ?? -1;
+  return i >= 0 ? i : null;
+}
+
+/** D-440 — where an edit that names no track lands: the target track when its
+ *  kind fits the source (`'audio'` for an audio-only source, `'video'` for
+ *  footage or a still), else `fallback` (the caller's pre-D-440 default). A
+ *  target that does not fit is not an error, it just does not apply: a music
+ *  file dropped in the viewer while V1 is targeted still lands where it did. */
+export function destinationTrack(tl: Timeline, sourceKind: 'video' | 'audio', fallback: number): number {
+  const target = targetTrackIndex(tl);
+  return target !== null && tl.tracks[target]?.kind === sourceKind ? target : fallback;
 }
 
 /** D-095 — where a new clip of `duration` frames should land on `tr` if
@@ -4056,6 +4078,12 @@ export type EditOp =
    *  to the view's default height. Clamped to 32..200 px. Always succeeds for
    *  an in-range track, for `set_track_name`'s reason. */
   | { kind: 'set_track_height'; track: number; height: number | null }
+  /** D-440 — make `track` the timeline's target track (the header's ID-pill
+   *  click, `editor_set_target_track`), clearing every other track's flag;
+   *  `null` clears the target. Always succeeds for an in-range track or
+   *  `null`: a track-list property like `set_track_name`, not gated by a
+   *  track's lock. */
+  | { kind: 'set_target_track'; track: number | null }
   /** D-149 — set a track's ducking: which track triggers it (`duckFrom`, or
    *  `null` to turn ducking off) and the three real DSP numbers. Mirrors
    *  `apelles_timeline::Track`'s `duck_from`/`duck_db`/`duck_attack_ms`/
@@ -4756,6 +4784,8 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return op.name && op.name.trim() ? `Rename track ${op.track + 1}` : `Reset name of track ${op.track + 1}`;
     case 'set_track_height':
       return op.height == null ? `Reset height of track ${op.track + 1}` : `Resize track ${op.track + 1}`;
+    case 'set_target_track':
+      return op.track == null ? 'Clear the target track' : `Target track ${op.track + 1}`;
     case 'set_track_duck':
       return op.duckFrom == null
         ? `Stop ducking track ${op.track + 1}`
@@ -6361,6 +6391,17 @@ function applyOpCopy(tl: Timeline, op: EditOp): Timeline {
     // round-trips byte-identically.
     if (name) next.tracks[op.track].name = name;
     else delete next.tracks[op.track].name;
+    return next;
+  }
+  if (op.kind === 'set_target_track') {
+    if (op.track !== null && (op.track < 0 || op.track >= tl.tracks.length)) return tl;
+    if (tl.tracks.every((t, i) => !!t.target === (i === op.track))) return tl;
+    const next = clone(tl);
+    next.tracks.forEach((t, i) => {
+      // `false` is never stored, so an untargeted track keeps no key.
+      if (i === op.track) t.target = true;
+      else delete t.target;
+    });
     return next;
   }
   if (op.kind === 'set_track_height') {

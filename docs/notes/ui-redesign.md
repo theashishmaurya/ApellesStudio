@@ -1,7 +1,6 @@
 # UI redesign: an FCP-style Edit tab (research + spec)
 
-**Status: accepted (D-432). P1 (tokens and type) and P2 (clip block, handles, edit-tool feedback, playhead, layer scale) done 2026-10-31; P3 (track headers, per-track height, ruler, markers, snapping / skimming, two-up viewer) done 2026-11-01; P4 (Inspector) done 2026-11-01; P5 not started.**
-**Status: accepted (D-432). P1 (tokens and type) and P2 (clip block, handles, edit-tool feedback, playhead, layer scale) done 2026-10-31; P3 (track headers, per-track height, ruler, markers, snapping / skimming, two-up viewer) done 2026-11-01; P5 (chrome and layout: full-width timeline, browser tabs, viewer header and transport, top bar) done 2026-11-01, ahead of P4; P4 not started.**
+**Status: accepted (D-432). P1 (tokens and type) and P2 (clip block, handles, edit-tool feedback, playhead, layer scale) done 2026-10-31; P3 (track headers, per-track height, ruler, markers, snapping / skimming, two-up viewer), P5 (chrome and layout) and P4 (Inspector) done 2026-11-01; the v0.3.0 gap closure against the approved mockup (B-359, B-354: §6e) done 2026-11-03.**
 This note is the research trail, the design system, the per-component spec, the list of
 concrete CSS defects in today's components, and the phased plan. The look is shown in
 the static mockup `scratch/ui-redesign-mockup.html` (not app code; `scratch/` is
@@ -946,6 +945,197 @@ minimum at 1280×800 in the real window, the harness scenarios after the
 layout change (the edit area is wider, so H11's outside-the-visible-area
 misses should drop), and the scrub bar's feel on a trackpad.
 
+## 6e. v0.3.0 gap closure as built (2026-11-03)
+
+The eight gaps the 2026-11-01 comparison found (B-359) and B-354's P5
+leftovers, closed against the approved mockup (owner: "loved the design",
+"yes please" to pulling them into v0.3.0). One subsection per piece.
+
+**Inspector header and tabs (B-359 item 1).**
+- The 44 px header carries the clip's duration on the timeline on the right
+  (`data-chroma-inspector-duration`, `HH:MM:SS:FF` in mono `text-secondary`,
+  from `endFrame - start_frame` at the timeline's rate). The panel now gets the
+  timeline fps as a prop, which is what P4 lacked.
+- Four icon tabs, as the mockup: Video `FilmStrip`, Audio `SpeakerHigh`, Speed
+  `Gauge`, Info `Info` (`CLIP_INSPECTOR_TABS`). Speed holds D-236's retime
+  section, moved out of the Video tab; it is offered where that section ever
+  rendered (not a title, not an adjustment clip). Info (`ClipInfoPanel.tsx`)
+  is read-only: Media (name, format, resolution, frame rate, length, audio,
+  folder, path), Source (in / out) and Timeline (start / end / duration), all
+  from the clip and the media pool's existing probe; a title / caption /
+  adjustment clip shows its kind and its timeline facts. A title now has a tab
+  bar (Video, Info) where it had none.
+- `debug_set_inspector_tab` accepts the four names (both servers' descriptions
+  updated, corpus re-captured).
+- Deviation: no codec row. The pool's probe (`MediaVideoInfo`) records no
+  codec, and a codec guessed from the extension would be a guess shown as a
+  fact; the container format (the extension) is shown as "Format" instead.
+
+**Inspector rows (B-359 item 2).**
+- `@apelles/ui` `InlineSlider` / `SliderField` (`slider-field.tsx`): Base UI
+  slider drawn to §4.10 (3 px track, no fill, 12 px `text-primary` thumb),
+  double-click resets, beside a 56 px `NumberScrubber` on the same value. The
+  slider's span (`sliderMin`/`sliderMax`) is separate from the field's bounds,
+  so a typed value past it is kept and pins the thumb.
+- One gesture, one undo: a slider drag or one key press on the thumb calls the
+  field's `onScrubStart` / `onScrubEnd` once (changes coalesced per frame, the
+  last flushed first). `InspectorSliderField` brackets them with the store's
+  history group, exactly as `InspectorNumber` does for a scrub.
+- Scale (0-4), Rotation (-180..180 deg) and Opacity (0-1) rows carry the
+  slider (`PropertyRow`'s new `slider` prop). Corner radius, crop and audio
+  rows keep the bare field, as the mockup draws them.
+- Position X / Y are one paired row (`PairedPropertyRow`: `X [..] Y [..]`,
+  Final Cut's single Position parameter) behind one keyframe slot: the diamond
+  animates both or stops every animated half, ‹ › go to the nearest key of
+  either, ↺ resets both. The two halves are written as ONE keyframe array
+  (`toggleParamKeyframes` / `resetParam` take a list of params), inside one
+  history group: one undo step.
+- Deviation: values stay in their stored units (Scale 1.12, Opacity 0.85)
+  where the mockup shows percentages; display units are B-366's pass.
+
+**Browser header (B-359 item 3).**
+- `SourcesPanel` takes a `variant`: `'browser'` (the Edit browser's Sources
+  tab) drops the "SOURCES · Select · + Import" row; `'panel'` (the Motion /
+  Colorist column) keeps it. The Edit grid gains that row's ~37 px.
+- `+ Import` sits on the browser's tab row (`EditBrowser.tabRowEnd`, injected
+  by `Root.tsx` as `SourcesImportButton`). The word shows only when the row is
+  at least 300 px wide (a container query on the row), so the eight tabs stay
+  readable at the 220 px minimum; the icon and its tooltip are always there.
+- The "All media" root row carries "N items" (what the grid is showing, so it
+  follows the bin and the search) and, in the browser variant, the Select
+  toggle (`aria-pressed`), beside New folder.
+- The selected bin moved to `useShellStore.sourcesActiveFolder` so the tab-row
+  Import imports into the bin on screen; both Imports run one hook
+  (`useSourcesImport`).
+- Deviation: the folder tree (D-436, built after the mockup) stays, so "All
+  media · N items" is the tree's root row rather than a separate crumb row.
+
+**Timeline toolbar (B-359 item 4, B-354).**
+- 36 px, a `minmax(0,1fr) auto minmax(0,1fr)` grid (the mockup's `.ttool`),
+  so the switcher and timecode sit at true centre; B-354's "about 20 px off
+  centre" is gone. Groups carry `data-chroma-toolbar-group` (left / center /
+  right).
+- Left: the six trim tools as ONE rounded segmented group (`TrimToolbar`:
+  `bg-secondary` track, 28 × 20 segments, `card-active` + accent for the
+  active tool), a divider, then Split, Add marker, Transitions, then the
+  contextual actions (trim-mode hint, drop error, Remove, Unlink, Link, Close
+  gap, Move to), each shown only when it applies. The left group clips rather
+  than pushing the centre.
+- Right: Snapping, Skimming, **Beat grid**, Clip Appearance, a divider, then
+  `MagnifyingGlassMinus`, a 96 px zoom slider and `MagnifyingGlassPlus`. The
+  `20%` readout is gone; the percent is the slider's `aria-valuetext` and its
+  tooltip. `=` / `-` and pinch are unchanged.
+- The zoom slider (`TimelineZoomSlider`, shared with the Clip Appearance
+  popover: one logarithmic mapping, `zoomSliderPosition` /
+  `pxPerSecAtSliderPosition`) goes through the pane's `zoomBy`, so it anchors
+  on the playhead like the buttons and writes the same per-timeline view store
+  `editor_set_timeline_view` writes.
+- Beat grid (`TimelineBeatControl.tsx`): one `Metronome` toggle, accent while
+  a track's beats are on, opening a popover with the tempo ("128 BPM",
+  "analysing beats…"), the beat-snapping switch, "Snap cuts to beats" and the
+  last snap's result. The loose "128 BPM" text and the two loose buttons are
+  gone from the row. With no beat track it says how to turn one on (the track
+  header's Show beats toggle).
+- Deviations: (1) Remove stays, as a contextual button, where §4.9 drops it:
+  the clip has no context menu yet, so the toolbar is the pointer's only way
+  to delete. (2) The mockup's Linked selection and Audio scrubbing toggles are
+  not added: linked selection is not a mode in this app (links are per clip,
+  Link / Unlink) and audio scrubbing's waveform toggle lives in the viewer
+  header; Skimming takes that slot.
+
+**Lines through the lanes (B-359 item 7).**
+- The faint vertical lines the comparison saw were not markers (markers draw
+  only in the ruler's marker strip, and always did): they were the beat grid's
+  downbeats (D-413), which drew a 20 % accent line down through every track.
+  At 128 BPM that is a line every ~1.9 s, which is what the screenshot shows.
+- `BeatLane` now draws everything inside the ruler and marker band: the
+  downbeat's full-band tick and bar number, and the beats' short ticks.
+  Nothing reaches the lanes, as in the mockup and Final Cut's timeline.
+  Snapping to beats is unchanged. Pinned by `TimelineBeats.dom.test.tsx`.
+
+**Track headers: names and the target track (B-359 item 5, D-440).**
+- Names were already real (P3: `Track.name`, the double-click rename,
+  `editor_rename_track`); the comparison's "Video 1 / Audio 1" was that
+  project's data. Nothing to build there.
+- The target track: a flag on the track (`Track.target`, at most one), set by
+  clicking the `V1` / `A1` pill (a button, `aria-pressed`, accent with
+  `text-button-text` when set; a second click clears it; its press never
+  starts the reorder drag) and by `editor_set_target_track {track | null}`.
+  One `set_target_track` op, one undo step. It follows its track on a reorder
+  and leaves with a removed track.
+- It steers the edits that name no track when its kind fits the source
+  (`destinationTrack`): the viewer's edit overlay drop and `editor_edit_in`
+  without `track`. `editor_add_clip` without `track` still makes a new track
+  (B-273), deliberately; see D-440.
+- Deviation: the mockup's own track names ("Interview", "Dialogue") are its
+  sample data; the app shows the user's names when set and "Video 1" style
+  labels otherwise, as before.
+
+**Empty states (§4.13, B-354, B-359 item 8).** `EditEmptyStates.tsx`:
+- Timeline with no tracks: two placeholder lanes (V1 over A1, default
+  height, the strip colours, `timeline-bg` / `lane-alt` banding, dimmed
+  headers) under the switcher row, and one centred line, "Drag media here
+  from the browser to start editing", with the Import button (the same
+  injected `SourcesImportButton`, via `TimelinePane.emptyAction`). The dashed
+  2 px box is gone; a drag over it rings the panel in the accent.
+- Tracks but no clips: the same line centred over the lanes
+  (`TimelineNoClipsHint`, `pointer-events-none` except the button).
+- Browser, no media: the grid is a dashed `border-color` `--radius-md` zone
+  with `FilmStrip` 24 px and "Import media"; a press opens the picker.
+- Inspector: no selection already shows the timeline / project settings
+  (P4, never blank). A selection that resolves to no single clip shows
+  `InspectorEmptyState`, now `text-xs text-secondary` with a `CursorClick`
+  glyph: "Select a clip to edit its properties." (the shared component gained
+  an optional `icon`).
+- No project: the same copy with a `FolderOpen` glyph, on the type scale.
+- Deviations: the spec's "press E to append" and the browser zone's "⌘I" are
+  not shown, because neither shortcut exists yet; the line names the drag
+  instead, and the zone says media is referenced in place.
+
+**Volume popover (B-354).** The transport's `SpeakerHigh` button
+(`aria-label="Volume"`) opens a popover above it: the mute toggle, an
+`InlineSlider` (keyboard: arrows / Shift / Home / End; double-click back to
+100 %) and the level in percent, writing the same `onVolumeChange` /
+`onMuteToggle` (the Edit tab's monitor volume). It replaces the slider that
+slid out on hover and could not be reached from the keyboard. A `Player`
+given only `onMuteToggle` keeps a plain mute button.
+
+**Cmd+4 (B-354, §4.1).** `edit.toggle_inspector` (⌘4 / Ctrl+4, new Edit
+"View" category in `@apelles/keymap`, rebindable in the Keyboard Shortcuts
+window) shows / hides the Inspector, as in Final Cut, through the same
+`inspectorOpen` flag the viewer header's toggle and
+`debug_set_editor_inspector` write. Conflict-checked: Cmd+1..3 are the global
+tab switches, Colorist's colour label is Shift+4, and `conflictingIds({})`
+does not list it (pinned in `store.test.ts`).
+
+**Verification (2026-11-03).**
+- Unit / DOM: editor 3142 (the two `editJournal` B-274 cases timed out only
+  while a Rust build saturated the machine; they pass alone), app 117, ui 19,
+  keymap 112, motion 1047, ui-harness 95, debug 127, player 39; tsc editor 3 /
+  app 65 (baselines); `cargo test -p apelles-mcp` (parity, 272 tools) and
+  `apelles-timeline`'s new round-trip test; clippy clean.
+- Live, a `tauri build --debug` bundle (`studio.apelles.perf3`, control port
+  19797): the three new harness scenarios pass, and the full default suite is
+  60/61 (only `zoom-trackpad-pinch`, the known second-instance magnify issue,
+  roadmap 00r item 5).
+- Screenshots, in the main checkout's `scratch/ui-compare/after-v030/`:
+  `rest.png` (compare with `../mockup-rest.png`), `inspector-info.png`,
+  `empty-timeline.png`. Taken on a synthetic demo project (the harness's test
+  media): the owner's projects reference `~/Downloads`, which macOS blocks
+  for a new bundle id until access is granted, so a copy of them could not
+  open in the test bundle (its probes wait on that permission; not an app
+  bug).
+- Two defects seen only live and fixed: the empty line wrapped one word per
+  row (a `@container` on a shrink-wrapped box), and the active Inspector tab
+  had no `bg-secondary` chip (the line variant's group selector won, a P4
+  leftover). A screenshot of an occluded window freezes CSS transitions, so
+  the shots were taken with the bundle briefly frontmost
+  (`debug_activate_app`, then restored).
+- Known look difference, not fixed: at the default 320 px Inspector the
+  inline sliders are short (about 40 px), because the row keeps P4's 80 px
+  keyframe slot (the spec's is 36) beside the 56 px field. Widening the
+  Inspector widens them; a narrower slot belongs to B-366's pass.
+
 ## 7. Human + AI parity
 
 Every new GUI capability gets its MCP surface in the same phase (standing rule):
@@ -1047,12 +1237,12 @@ Screenshots: `scratch/ui-compare/app-now.png` (the live dev app, "Nemotron Trans
 - terracotta accent instead of the mock's blue (owner, D-432);
 - Inspector sections collapsed by default (owner, 2026-11-01).
 
-**Gaps, open as B-359:**
-1. The Inspector header lacks the clip duration timecode on the right, and has 2 icon tabs (Video / Audio) where the mock has 4 (Video / Audio / Speed / Info). P4 deviation.
-2. Inspector rows: the mock pairs Position X / Y on one row and gives Scale / Rotation / Opacity inline sliders next to the value; the app uses one field per row and has no sliders. P4 deviation.
-3. Browser: the app has an extra "SOURCES · Select · + Import" header row. The mock puts `+ Import` on the tab row and shows "All media · N items" as a single row, so the app has less room for thumbnails.
-4. Timeline toolbar: the mock's grouping is tools | markers | snapping/link/waveform | a zoom slider. The app has more loose icons, the "128 BPM" text and `− 20% +` instead of a slider. This is B-354's regroup.
-5. Track headers: the mock highlights the target track's badge (accent V1) and shows the track's own name. The app's tracks are still "Video 1 / Audio 1" (the project's data), and there is no target-track concept yet. P3 deviation.
+**Gaps, open as B-359 — all closed 2026-11-03 (§6e has what was built and each deviation; the after screenshots are in `scratch/ui-compare/after-v030/`):**
+1. The Inspector header lacks the clip duration timecode on the right, and has 2 icon tabs (Video / Audio) where the mock has 4 (Video / Audio / Speed / Info). P4 deviation. **Closed:** duration on the right, four tabs (Speed = the retime, Info = read-only facts).
+2. Inspector rows: the mock pairs Position X / Y on one row and gives Scale / Rotation / Opacity inline sliders next to the value; the app uses one field per row and has no sliders. P4 deviation. **Closed:** a paired Position row, `SliderField` on Scale / Rotation / Opacity.
+3. Browser: the app has an extra "SOURCES · Select · + Import" header row. The mock puts `+ Import` on the tab row and shows "All media · N items" as a single row, so the app has less room for thumbnails. **Closed:** Import on the tab row, "N items" and Select on the All media row.
+4. Timeline toolbar: the mock's grouping is tools | markers | snapping/link/waveform | a zoom slider. The app has more loose icons, the "128 BPM" text and `− 20% +` instead of a slider. This is B-354's regroup. **Closed:** the three-column regroup, a zoom slider, the BPM inside a Beat grid popover.
+5. Track headers: the mock highlights the target track's badge (accent V1) and shows the track's own name. The app's tracks are still "Video 1 / Audio 1" (the project's data), and there is no target-track concept yet. P3 deviation. **Closed:** the target track (D-440), the accent pill; names were already the user's own when set.
 6. **The playhead is off screen after a seek through MCP:** `editor_set_playhead` to 0:06 left the timeline scrolled at 3:55–5:05 with zoom at 20 %. The view doesn't follow a programmatic seek, and the zoom a harness run left behind persists in the session's view store. To check: does the view follow a seek (the B-326 follow covers playback), and should the zoom be per timeline? **Fixed 2026-11-03 (B-359 item 6):** a paused jump outside the view centres it; zoom and scroll are per timeline.
-7. Faint vertical lines run through the lanes at marker positions in the app; the mock has none. Decide whether markers should draw through the lanes; FCP draws them in the ruler only.
-8. Empty states and the volume popover are still missing (B-354).
+7. Faint vertical lines run through the lanes at marker positions in the app; the mock has none. Decide whether markers should draw through the lanes; FCP draws them in the ruler only. **Closed:** they were the beat grid's downbeat lines, now in the ruler and marker band only.
+8. Empty states and the volume popover are still missing (B-354). **Closed:** §4.13 empty states, the volume popover, Cmd+4.

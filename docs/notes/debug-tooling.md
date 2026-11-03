@@ -71,9 +71,12 @@ several rounds of the owner's own screenshots before an agent could even confirm
    left rail), `debug_set_editor_inspector`, `debug_set_editor_layout` (D-432 P5 —
    the Edit tab's split sizes and the browser's visibility, read back as
    `editor.layout`; clamped and persisted exactly as a drag is),
-   `debug_set_inspector_tab` (D-246 — the clip Inspector's own Video/Audio tab;
-   only one renders at a time, so a screenshot of the panel is a screenshot of
-   one of them), plus the read
+   `debug_set_inspector_tab` (D-246 — the clip Inspector's own Video/Audio tab,
+   Video/Audio/Speed/Info since v0.3.0; only one renders at a time, so a
+   screenshot of the panel is a screenshot of one of them),
+   `debug_set_inspector_section` (v0.3.0 — open or collapse one Inspector
+   section, `setInspectorSectionOpen`; sections start collapsed, so a harness
+   step that drives a control inside one opens it first), plus the read
    half `debug_ui_state` (every flag above, the Edit selection/playhead, and the
    dialogs the DOM actually has open). Explicit named ops per real UI state — **not**
    a generic "set any field" backdoor and **not** a synthesised click; D-219 has the

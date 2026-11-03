@@ -133,6 +133,11 @@ export interface TrackHeaderProps {
   /** every track's label, for the "duck from" picker */
   trackLabels: string[];
   beatGrid: boolean;
+  /** D-440 — this is the timeline's target track: the ID pill is accent. */
+  target: boolean;
+  /** D-440 — the pill's click: target this track, or clear the target when it
+   *  already is (Premiere's targeting toggle). One `set_target_track`. */
+  onToggleTarget: () => void;
   onToggleLock: () => void;
   onToggleHidden: () => void;
   onToggleMute: () => void;
@@ -379,6 +384,8 @@ export function TrackHeader(props: TrackHeaderProps) {
     duck,
     trackLabels,
     beatGrid,
+    target,
+    onToggleTarget,
     onToggleLock,
     onToggleHidden,
     onToggleMute,
@@ -442,12 +449,33 @@ export function TrackHeader(props: TrackHeaderProps) {
           }
         >
           <span aria-hidden className={'h-full w-[3px] shrink-0 ' + KIND_STRIP[kind]} />
-          <span
+          {/* D-440 — the ID pill is the target-track control (§4.8: "the pill
+              turns accent when the track is the target for edits"). A real
+              button: click (or Enter / Space) targets the track, again clears
+              it; its press never starts the header's reorder drag. */}
+          <button
+            type="button"
             data-testid={TIMELINE_TEST_IDS.trackBadge}
-            className="flex h-4 w-5 shrink-0 items-center justify-center rounded-xs bg-bg-secondary font-mono text-2xs font-semibold text-text-secondary"
+            data-chroma-target={target ? '' : undefined}
+            aria-pressed={target}
+            aria-label={target ? `${badge} is the target track: click to clear` : `Target ${badge}`}
+            title={
+              target
+                ? 'Target track: edits that name no track land here (the viewer’s edit overlay). Click to clear.'
+                : 'Make this the target track: edits that name no track land here'
+            }
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleTarget();
+            }}
+            className={
+              'flex h-4 w-5 shrink-0 items-center justify-center rounded-xs font-mono text-2xs font-semibold outline-none focus-visible:ring-1 focus-visible:ring-focus-ring ' +
+              (target ? 'bg-accent text-button-text' : 'bg-bg-secondary text-text-secondary hover:text-text-primary')
+            }
           >
             {badge}
-          </span>
+          </button>
           {renaming ? (
             <TrackNameInput
               initial={label}

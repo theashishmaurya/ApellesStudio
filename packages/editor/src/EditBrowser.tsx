@@ -84,9 +84,14 @@ export interface EditBrowserProps {
   /** The shared media pool (`app/`'s `SourcesPanel`), shown on the Sources
    *  tab. Omitted (a harness, a test) → the Sources tab shows nothing. */
   mediaPool?: ReactNode;
+  /** v0.3.0 (B-359 item 3) — what sits at the right end of the tab row: the
+   *  composition root's `+ Import` (`app/`'s `SourcesImportButton`), where
+   *  the mockup puts it, instead of a "SOURCES · Select · Import" row of its
+   *  own above the grid. Injected for the reason `mediaPool` is. */
+  tabRowEnd?: ReactNode;
 }
 
-export function EditBrowser({ mediaPool }: EditBrowserProps) {
+export function EditBrowser({ mediaPool, tabRowEnd }: EditBrowserProps) {
   const mode = useEditorTimelineStore((s) => s.libraryMode);
   const setLibraryMode = useEditorTimelineStore((s) => s.setLibraryMode);
 
@@ -99,11 +104,14 @@ export function EditBrowser({ mediaPool }: EditBrowserProps) {
             const next = parseEditLibraryMode(value);
             if (next) setLibraryMode(next);
           }}
-          className="shrink-0 gap-0 border-b border-border-color px-2 py-1.5"
+          // `@container` — the Import button shows its word only when the row
+          // is wide enough to keep the eight tabs readable beside it.
+          className="@container shrink-0 flex-row data-horizontal:flex-row items-center gap-1.5 border-b border-border-color px-2 py-1.5"
+          data-chroma-browser-tabrow=""
         >
           <TabsList
             aria-label="Browser libraries"
-            className="h-7 w-full gap-0.5 rounded-sm bg-bg-secondary p-0.5"
+            className="h-7 min-w-0 flex-1 gap-0.5 rounded-sm bg-bg-secondary p-0.5"
           >
             {EDIT_LIBRARY_MODES.map((m) => {
               const Icon = BROWSER_TAB_ICONS[m];
@@ -130,6 +138,7 @@ export function EditBrowser({ mediaPool }: EditBrowserProps) {
               );
             })}
           </TabsList>
+          {tabRowEnd}
         </Tabs>
       </TooltipProvider>
       {/* `overflow-x-hidden` is a guard, not the fix: each library keeps its own
