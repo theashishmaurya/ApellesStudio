@@ -376,8 +376,7 @@ const SILENCE_SCAN_MAX_SECS: f64 = 600.0;
 fn parse_volumedetect(stderr: &str) -> Option<(f64, f64)> {
     let field = |name: &str| -> Option<f64> {
         let rest = stderr.split(name).nth(1)?;
-        rest.trim_start()
-            .split_whitespace()
+        rest.split_whitespace()
             .next()?
             .parse::<f64>()
             .ok()
