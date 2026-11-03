@@ -70,6 +70,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { useEditorTimelineStore } from './timelineStore';
 import { TimelinePane } from './TimelinePane';
 import { TRIM_ARM_HINT } from './trimMode';
+import { GESTURE_CURSOR_TEST_ID } from './gestureCursor';
 import type { Timeline } from './timeline';
 
 const FPS = 24;
@@ -592,5 +593,74 @@ describe('B-123 — the smart trim tool survives a late-mounted edit area', () =
     // A slip never moves the clip — this is what separates it from the move
     // the broken build silently did instead.
     expect(clipById('a').start_frame).toBe(0);
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// the release frame's own cost — B-374 (D-437 S11)
+// --------------------------------------------------------------------------- //
+
+describe('the release does no page-wide work (B-374)', () => {
+  const layer = () => document.querySelector<HTMLElement>(`[data-testid="${GESTURE_CURSOR_TEST_ID}"]`);
+
+  it('19. shows the gesture cursor on one layer, never as a style on the edit area', async () => {
+    const y = ROW_HEIGHT_PX * 0.25;
+    const area = mounted!.container.querySelector<HTMLElement>('[data-testid="timeline-edit-area"]')!;
+    firePointerEvent(bodies()[1], 'pointerdown', { x: 200, y }, { altKey: true });
+    await nextFrame();
+    firePointerEvent(document, 'pointermove', { x: 230, y }, { altKey: true });
+    await nextFrame();
+
+    expect(layer(), 'the gesture shows its cursor on the full-window layer').not.toBeNull();
+    expect(layer()!.hidden).toBe(false);
+    expect(layer()!.style.cursor).toBe('ew-resize');
+    // The marker stays (the pane reads it), but no stylesheet rule names it
+    // (`timelineOverrides.test.ts`), so toggling it restyles nothing.
+    expect(area.dataset.chromaEditGesture).toBe('slip');
+
+    firePointerEvent(document, 'pointerup', { x: 230, y }, { altKey: true });
+    await nextFrame();
+    expect(layer()!.hidden).toBe(true);
+    expect(area.dataset.chromaEditGesture).toBeUndefined();
+  });
+
+  it('20. swallows the click the release itself produces, and only that one', async () => {
+    const y = ROW_HEIGHT_PX * 0.25;
+    firePointerEvent(bodies()[1], 'pointerdown', { x: 200, y }, { altKey: true });
+    await nextFrame();
+    firePointerEvent(document, 'pointermove', { x: 260, y }, { altKey: true });
+    await nextFrame();
+
+    let selectionWrites = 0;
+    const unsub = useEditorTimelineStore.subscribe((s, prev) => {
+      if (s.selection !== prev.selection) selectionWrites += 1;
+    });
+    // A native release: pointerup, then click, in one task.
+    actSync(() => {
+      firePointerEvent(document, 'pointerup', { x: 260, y }, { altKey: true });
+      bodies()[1].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 260, clientY: y }));
+    });
+    unsub();
+    expect(clipById('b').source_start, 'the slip committed').toBe(100 + framesFor(60));
+    expect(selectionWrites, 'the edit selects its clip once; the release click must not select it again').toBe(1);
+    expect(useEditorTimelineStore.getState().selection).toEqual([{ track: 0, id: 'b' }]);
+
+    // A real click in a later task is a click again.
+    await nextFrame();
+    actSync(() => useEditorTimelineStore.setState({ selection: [] }));
+    actSync(() => {
+      bodies()[0].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 20, clientY: y }));
+    });
+    expect(useEditorTimelineStore.getState().selection).toEqual([{ track: 0, id: 'a' }]);
+  });
+
+  it('21. a pane unmounted mid-gesture takes its cursor layer down with it', async () => {
+    const y = ROW_HEIGHT_PX * 0.25;
+    firePointerEvent(bodies()[1], 'pointerdown', { x: 200, y }, { altKey: true });
+    await nextFrame();
+    expect(layer()!.hidden).toBe(false);
+    mounted!.unmount();
+    mounted = null;
+    expect(layer()!.hidden, 'a visible full-window layer would swallow every click in the app').toBe(true);
   });
 });

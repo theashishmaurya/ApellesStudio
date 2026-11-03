@@ -8422,6 +8422,7 @@ def debug_perf_entries(
     prefix: str | None = None,
     clear: bool = False,
     wait_idle_ms: int | None = None,
+    trace_release_ms: int | None = None,
 ) -> str:
     """Read the app's own timing marks for the Edit timeline's edit gestures
     (`performance.mark` / `performance.measure` entries named `apelles:*`), so a
@@ -8448,9 +8449,15 @@ def debug_perf_entries(
         wait_idle_ms: before reading, wait until the page has been idle (frames
             on time, no long task) for about this long, at most five seconds;
             use it between building a fixture and measuring.
+        trace_release_ms: arm the release tracer (`releaseTrace.ts`, B-374):
+            from every following `apelles:edit:commit` for this many ms
+            (0 disarms, at most 2000), forced layouts, timer / rAF / message /
+            observer callbacks, listeners added after arming and main-thread
+            gaps are written as `apelles:trace:<kind>|<label>` measures, read
+            back with `prefix: "apelles:trace:"`.
 
     Returns {entries: [{name, entryType, startTime, duration}], build: {dev},
-    idle?: {waitedMs, reached}}."""
+    idle?: {waitedMs, reached}, trace?: {armed, windowMs, unwrapped}}."""
     import json
 
     args: dict[str, Any] = {}
@@ -8460,6 +8467,8 @@ def debug_perf_entries(
         args["clear"] = True
     if wait_idle_ms is not None:
         args["waitIdleMs"] = wait_idle_ms
+    if trace_release_ms is not None:
+        args["traceReleaseMs"] = trace_release_ms
     return json.dumps(_op("debug_perf_entries", **args), indent=2, default=str)
 
 

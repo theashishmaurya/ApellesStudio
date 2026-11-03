@@ -1063,7 +1063,7 @@
     },
     {
       "name": "debug_perf_entries",
-      "description": "Read the app's own timing marks for the Edit timeline's edit gestures\n    (`performance.mark` / `performance.measure` entries named `apelles:*`), so a\n    gesture's phases are exact numbers instead of a profiler's proportions\n    (docs/notes/timeline-drag-perf.md).\n\n    Marks the app writes during a trim / ripple / slide / slip / roll gesture\n    (development builds of the web layer only; a production web bundle writes\n    none and says so in `build`):\n      * `apelles:edit:press` - the press claimed the gesture.\n      * `apelles:edit:preview` (measure) - one live preview: the op applied to a\n        copy plus the style writes, per pointer move.\n      * `apelles:edit:commit` - the release called the op.\n      * `apelles:edit:commit-rendered` (measure) - from the commit to React\n        having rendered the result.\n      * `apelles:edit:commit-painted` (measure) - from the commit to the frame\n        after it.\n\n    Args:\n        prefix: keep only entries whose name starts with this (default\n            `apelles:`).\n        clear: also delete the matching entries after reading, so the next read\n            holds only the next gesture.\n        wait_idle_ms: before reading, wait until the page has been idle (frames\n            on time, no long task) for about this long, at most five seconds;\n            use it between building a fixture and measuring.\n\n    Returns {entries: [{name, entryType, startTime, duration}], build: {dev},\n    idle?: {waitedMs, reached}}.",
+      "description": "Read the app's own timing marks for the Edit timeline's edit gestures\n    (`performance.mark` / `performance.measure` entries named `apelles:*`), so a\n    gesture's phases are exact numbers instead of a profiler's proportions\n    (docs/notes/timeline-drag-perf.md).\n\n    Marks the app writes during a trim / ripple / slide / slip / roll gesture\n    (development builds of the web layer only; a production web bundle writes\n    none and says so in `build`):\n      * `apelles:edit:press` - the press claimed the gesture.\n      * `apelles:edit:preview` (measure) - one live preview: the op applied to a\n        copy plus the style writes, per pointer move.\n      * `apelles:edit:commit` - the release called the op.\n      * `apelles:edit:commit-rendered` (measure) - from the commit to React\n        having rendered the result.\n      * `apelles:edit:commit-painted` (measure) - from the commit to the frame\n        after it.\n\n    Args:\n        prefix: keep only entries whose name starts with this (default\n            `apelles:`).\n        clear: also delete the matching entries after reading, so the next read\n            holds only the next gesture.\n        wait_idle_ms: before reading, wait until the page has been idle (frames\n            on time, no long task) for about this long, at most five seconds;\n            use it between building a fixture and measuring.\n        trace_release_ms: arm the release tracer (`releaseTrace.ts`, B-374):\n            from every following `apelles:edit:commit` for this many ms\n            (0 disarms, at most 2000), forced layouts, timer / rAF / message /\n            observer callbacks, listeners added after arming and main-thread\n            gaps are written as `apelles:trace:<kind>|<label>` measures, read\n            back with `prefix: \"apelles:trace:\"`.\n\n    Returns {entries: [{name, entryType, startTime, duration}], build: {dev},\n    idle?: {waitedMs, reached}, trace?: {armed, windowMs, unwrapped}}.",
       "inputSchema": {
         "properties": {
           "prefix": {
@@ -1094,6 +1094,18 @@
             ],
             "default": null,
             "title": "Wait Idle Ms"
+          },
+          "trace_release_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Trace Release Ms"
           }
         },
         "type": "object",
@@ -16282,7 +16294,8 @@
       "arguments": {
         "prefix": "v_debug_perf_entries.prefix",
         "clear": true,
-        "wait_idle_ms": 32
+        "wait_idle_ms": 32,
+        "trace_release_ms": 73
       },
       "requests": [
         {
@@ -16290,7 +16303,8 @@
           "args": {
             "prefix": "v_debug_perf_entries.prefix",
             "clear": true,
-            "waitIdleMs": 32
+            "waitIdleMs": 32,
+            "traceReleaseMs": 73
           },
           "timeout_ms": 20000
         }

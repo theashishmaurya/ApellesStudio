@@ -63,6 +63,7 @@ import { rowHeightAt, rowTopAt } from './trackHeight';
 import { usePreviewPeekStore } from './previewPeek';
 import { twoUpView } from './twoUp';
 import { afterPaint } from './afterPaint';
+import { hideGestureCursor, showGestureCursor } from './gestureCursor';
 import { EDIT_PERF, perfMark, perfMeasure, perfMeasureAfterPaint, perfMeasureAtFrame } from './editPerf';
 
 /** Snap threshold, px at any zoom (Palmier Pro's 8 px, spec §5). */
@@ -136,6 +137,22 @@ interface Gesture {
 const clipBodySelector = (id: string) =>
   `[data-testid="${TIMELINE_TEST_IDS.clip}"][data-chroma-clip-id="${id.replace(/["\\]/g, '\\$&')}"]`;
 
+/**
+ * Swallow the `click` the release that ends an edit produces. A native (or the
+ * harness's synthetic) release dispatches `pointerup`, `mouseup` and `click` in
+ * one task, so the listener is gone again by the next task whether or not a
+ * click came (a release outside the window produces none). Capture phase on
+ * `window`, so it runs before React's root listener.
+ */
+function swallowReleaseClick(): void {
+  const swallow = (e: MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+  };
+  window.addEventListener('click', swallow, { capture: true, once: true });
+  window.setTimeout(() => window.removeEventListener('click', swallow, true), 0);
+}
+
 /** Drop a gesture's inline preview styles. `layers` also drops the `will-change`
  *  promotion; a committed edit keeps it until its frame has painted (below). */
 function resetStyles(styled: Map<string, StyledClip>, layers = true): void {
@@ -175,6 +192,9 @@ export interface EditGestureController {
   committedRendered: () => void;
   /** the passive-effect half of the same commit (a perf mark only, D-437 S0a) */
   committedEffects: () => void;
+  /** the pane is going away: end a running gesture as a cancel (B-374: its
+   *  full-window cursor layer must not outlive the pane) */
+  cancel: () => void;
 }
 
 /**
@@ -323,16 +343,19 @@ export function createEditGesture(
       // the capture was never taken (jsdom) or is already gone
     }
     const area = editAreaRef.current;
-    if (area) {
-      delete area.dataset.chromaEditGesture;
-      area.style.cursor = '';
-    }
+    if (area) delete area.dataset.chromaEditGesture;
+    hideGestureCursor();
     feedbackRef.current?.clear();
     usePreviewPeekStore.getState().setTwoUp(null);
     hoverKeyRef.current = null;
     const v = viewRef.current;
     const op = commit ? editOpFor(g.tl, g.target, g.preview.delta) : null;
     if (op) {
+      // B-374 — the release's own `click` is part of the drag, not a click: it
+      // used to reach the clip under the pointer (re-selecting it, a second
+      // render of the pane) or the empty edit area (clearing the selection the
+      // edit just made, after a layout read).
+      swallowReleaseClick();
       perfMark(EDIT_PERF.commit);
       v.applyOp(op);
       const edited = g.tl.tracks[g.target.track]?.clips[g.target.clip];
@@ -468,10 +491,9 @@ export function createEditGesture(
     // D-432 P3 — the two-up viewer opens with the edit's current frames.
     usePreviewPeekStore.getState().setTwoUp(twoUpView(tl, target, tl));
     const area = editAreaRef.current;
-    if (area) {
-      area.dataset.chromaEditGesture = target.mode;
-      area.style.cursor = GESTURE_CURSOR[target.mode];
-    }
+    // A marker only (no stylesheet rule names it: B-374); the cursor is the layer's.
+    if (area) area.dataset.chromaEditGesture = target.mode;
+    showGestureCursor(GESTURE_CURSOR[target.mode]);
     perfMark(EDIT_PERF.press);
     // The readout's one layout read, before this gesture writes anything (F1).
     feedbackRef.current?.measure();
@@ -552,6 +574,9 @@ export function createEditGesture(
       perfMeasureAtFrame(EDIT_PERF.commitFrame, EDIT_PERF.commit);
       perfMeasureAfterPaint(EDIT_PERF.commitPainted, EDIT_PERF.commit);
     },
+    cancel() {
+      finish(false);
+    },
     committedEffects() {
       if (!effectsPending) return;
       effectsPending = false;
@@ -580,5 +605,6 @@ export function useEditGesture(
   useEffect(() => {
     controller.committedEffects();
   }, [controller, view.timeline]);
+  useEffect(() => () => controller.cancel(), [controller]);
   return controller;
 }
