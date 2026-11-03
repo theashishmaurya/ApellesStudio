@@ -9,7 +9,14 @@
  * what job 1 renders), pushes it `'queued'`, and `runNext` picks the first
  * queued job the moment nothing else is `'running'` — so job 2 starts the
  * instant job 1 finishes, with no polling and no idle gap. Real, live
- * per-job status (`queued`/`running`/`done`/`failed`), not a decorative list.
+ * per-job status (`queued`/`running`/`done`/`failed`/`cancelled`), not a
+ * decorative list.
+ *
+ * **D-441 — Cancel and Try again.** `cancel(id)` takes a queued job out of the
+ * line, or stops a running one for real: `chroma_cancel_editor_export(id)`
+ * kills its ffmpeg / segment encoders and removes the partial file (the Rust
+ * side, `chroma::export_job`), and the job settles `cancelled`. `retry(id)`
+ * queues a failed or cancelled job's frozen argv again as a new job.
  *
  * **Sequential, not parallel — a deliberate D-198 scope call, not an
  * oversight.** ffmpeg is already CPU/GPU-heavy per export; running two at
@@ -25,10 +32,12 @@
  * closes the dialog and reopens it later, or switches tabs.
  */
 import { create } from 'zustand';
+import { invoke } from '@tauri-apps/api/core';
 import { compileEditorExportArgs, readTimelineExportStatus, runCompiledExport } from './editorExport';
 import type { TimelineExportStatus } from './editorExport';
 import type { TimelineRenderPlan } from './timelinePipeExport';
 import type { LoudnessReport, LoudnessTarget } from './loudness';
+import type { ExportFormat } from './exportFormat';
 import type { Timeline } from './timeline';
 
 /** How often a running compositor job's real progress is re-read (D-362).
@@ -41,7 +50,7 @@ import type { Timeline } from './timeline';
  *  for a core would be the wrong trade. */
 const PROGRESS_POLL_MS = 500;
 
-export type ExportJobStatus = 'queued' | 'running' | 'done' | 'failed';
+export type ExportJobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
 export interface ExportJob {
   id: string;
@@ -61,6 +70,10 @@ export interface ExportJob {
   render?: TimelineRenderPlan;
   /** D-401 — the loudness target frozen at enqueue, like `args`. */
   loudness?: LoudnessTarget;
+  /** D-441 — the file format `args` writes, and the preset the job was made
+   *  from (a label for the queue list; absent for a call without one). */
+  format?: ExportFormat;
+  preset?: string;
   /** D-411 Phase 0 — the id of the timeline `args` was compiled from, frozen
    *  like `args`: the compositor render draws that timeline even if another
    *  is active (or was switched to) by the time the job reaches the front. */
@@ -106,11 +119,18 @@ interface ExportQueueState {
      *  calls, so it can follow ITS job after a bridge timeout). Omitted, one
      *  is made. Refused when a job already has it. */
     id?: string,
+    /** D-441 — the preset's name, for the queue list. */
+    presetName?: string,
   ): { id: string } | { error: string };
-  /** Drop every finished (`done`/`failed`) job from the list — a `queued`/
-   *  `running` job is never removed by this (there is no cancel this pass;
-   *  see D-198's own honestly-scoped gaps). */
+  /** Drop every finished (`done`/`failed`/`cancelled`) job from the list — a
+   *  `queued`/`running` job is never removed by this (`cancel` it first). */
   clearFinished(): void;
+  /** D-441 — cancel a job: a queued one leaves the line at once; a running
+   *  one is stopped (its ffmpeg / encoders killed, its partial file removed)
+   *  and settles `cancelled` when the run unwinds. */
+  cancel(id: string): Promise<{ ok: true; wasRunning: boolean } | { error: string }>;
+  /** D-441 — queue a failed or cancelled job's frozen argv again, as a new job. */
+  retry(id: string): { id: string } | { error: string };
 }
 
 /** D-362 — follow the renderer's own progress counters onto `job`, until it
@@ -175,10 +195,11 @@ function runNext(): void {
     }));
   };
 
-  runCompiledExport(next.args, next.render, next.outPath, next.loudness, next.timelineId)
+  // D-441 — the job id is the run's cancel token.
+  runCompiledExport(next.args, next.render, next.outPath, next.loudness, next.timelineId, next.id)
     .then((outcome) => {
       settle({
-        status: outcome.ok ? 'done' : 'failed',
+        status: outcome.cancelled ? 'cancelled' : outcome.ok ? 'done' : 'failed',
         error: outcome.error,
         loudnessReport: outcome.loudness,
         stdoutTail: outcome.stdoutTail,
@@ -191,15 +212,15 @@ function runNext(): void {
     .finally(() => runNext()); // cascade to the next queued job, if any
 }
 
-export const useExportQueueStore = create<ExportQueueState>((set) => ({
+export const useExportQueueStore = create<ExportQueueState>((set, get) => ({
   jobs: [],
-  enqueue: (name, exportArgs, timeline, wantedId) => {
+  enqueue: (name, exportArgs, timeline, wantedId, presetName) => {
     if (wantedId && useExportQueueStore.getState().jobs.some((j) => j.id === wantedId)) {
       return { error: `an export job with id ${wantedId} already exists` };
     }
     const compiled = compileEditorExportArgs(exportArgs, timeline);
     if (!('ok' in compiled)) return { error: compiled.error };
-    const id = wantedId || `export-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const id = wantedId || newJobId();
     const job: ExportJob = {
       id,
       name,
@@ -210,6 +231,8 @@ export const useExportQueueStore = create<ExportQueueState>((set) => ({
       render: compiled.render,
       loudness: compiled.loudness,
       timelineId: compiled.timelineId,
+      format: compiled.format,
+      ...(presetName ? { preset: presetName } : {}),
       status: 'queued',
       progress: null,
       error: null,
@@ -222,4 +245,48 @@ export const useExportQueueStore = create<ExportQueueState>((set) => ({
     return { id };
   },
   clearFinished: () => set((s) => ({ jobs: s.jobs.filter((j) => j.status === 'queued' || j.status === 'running') })),
+  cancel: async (id) => {
+    const job = get().jobs.find((j) => j.id === id);
+    if (!job) return { error: `no export job with id "${id}"` };
+    if (job.status === 'queued') {
+      set((s) => ({
+        jobs: s.jobs.map((j) => (j.id === id ? { ...j, status: 'cancelled' as const, finishedAt: Date.now() } : j)),
+      }));
+      return { ok: true, wasRunning: false };
+    }
+    if (job.status !== 'running') return { error: `export job ${id} is already ${job.status}` };
+    // The run settles the job `cancelled` itself when it unwinds (above); a run
+    // that had not reached its first ffmpeg yet is refused when it does.
+    try {
+      const out = await invoke<{ wasRunning: boolean }>('chroma_cancel_editor_export', { token: id });
+      return { ok: true, wasRunning: out.wasRunning };
+    } catch (e: unknown) {
+      return { error: `could not cancel export ${id}: ${String((e as Error)?.message ?? e)}` };
+    }
+  },
+  retry: (id) => {
+    const job = get().jobs.find((j) => j.id === id);
+    if (!job) return { error: `no export job with id "${id}"` };
+    if (job.status !== 'failed' && job.status !== 'cancelled') return { error: `export job ${id} is ${job.status}; only a failed or cancelled job can be tried again` };
+    const again: ExportJob = {
+      ...job,
+      id: newJobId(),
+      status: 'queued',
+      progress: null,
+      error: null,
+      loudnessReport: undefined,
+      stdoutTail: undefined,
+      stderrTail: undefined,
+      enqueuedAt: Date.now(),
+      startedAt: null,
+      finishedAt: null,
+    };
+    set((s) => ({ jobs: [...s.jobs, again] }));
+    runNext();
+    return { id: again.id };
+  },
 }));
+
+function newJobId(): string {
+  return `export-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}

@@ -5,6 +5,9 @@ Built so far: the Inspector Audio + EQ (§3, B-365, D-442) and the Inspector Vid
 (§4, B-366, D-443): see "As built" at the end. Clipper, Music edits and Export are built
 separately.** Original status:
 mockups ready for owner approval (2026-11-03). This is the
+**Status: revision 2 approved by the owner (2026-11-03). Built: Export (D-441). Clipper and
+Music edits are being built in the same pass; the Inspector Audio + EQ and Video sections are
+a later wave. See "Owner decisions" and the "As built" sections at the end.** This was the
 research → mockup step of the D-432 flow for the five panels the owner called unintuitive
 on 2026-11-01: B-363 (Clipper), B-364 (Music edits), B-365 (Inspector Audio + EQ), B-366
 (Inspector Video sections) and B-367 (Export). Roadmap 00r (v0.3.0) item (b): "panel research
@@ -680,3 +683,50 @@ the display units. UI harness: `inspector-crop-in-viewer` and `inspector-eq-dot-
 - The level meter is the whole mix's output, not the clip's own level: that is what
   `chroma_audio_level` measures, and a per-clip meter would need a new tap in the mixer.
 
+## Owner decisions on the open questions (2026-11-03)
+
+The owner approved revision 2 ("Looks good the UI you gave :)") and answered:
+
+- **Clipper.** The review lives in the viewer area while the Shorts tab is active (not a
+  full-window view). Reasons only, no score. "Make and export" stays MCP-only
+  (`editor_build_clips` `mode` / `export_dir`). (1.2 "Suggest as a short" was not
+  asked again; candidates stay evidence, per D-411.)
+- **Music edits.** Preview plays the edit before it is applied: a temporary,
+  non-committing, deterministic preview. "Save for later" stays in the ⋯ menu. The kinds
+  are named Dropout / Breath / Dry open / Dry CTA / Section end.
+- **Export.** Add a ProRes 422 HQ master (the Master preset; a real `prores_ks` path
+  through the existing export pipeline, `.mov`). User-saved presets, stored with the app
+  settings, one shared preset table for the GUI and MCP. Cancel a running export for real
+  (kill the ffmpeg / segment jobs, clean partial files, job state `cancelled`). Per-clip
+  fit / Freeze become "Stretch to fill" / "Hold last frame" under "Clip exceptions".
+  Export runs in the background with progress in the top bar (the existing queue).
+  Publish destinations drawn dimmed, "Publish · soon", no behaviour.
+
+## As built: Export (D-441, B-367)
+
+- **Sheet** `packages/editor/src/EditorExportDialog.tsx` (the component keeps its name and
+  the `export-dialog` panel id): destinations (File; YouTube / Instagram / TikTok dimmed under
+  "Publish · soon", tooltip only), title + timeline picker ("name · length · 16:9"), preset
+  chips (icon, short name, tag; saved presets get a delete × on hover), the name field with
+  its extension and "in ~/Movies/<project>" plus Change…, the one-line summary with "≈ size"
+  and a warning icon (tooltip: grade notes, or a preset whose shape stretches the timeline),
+  More settings (Size, Frame rate, Loudness, Loudest peak, Format, Save these settings as a
+  preset, Clip exceptions), footer Cancel · Export. Opens on the last preset used for the
+  timeline's shape (else 16:9 → YouTube 1080p, 9:16 → Shorts, 1:1 → Square). A hand change in
+  More settings leaves no chip selected.
+- **Top bar**: `ExportQueueButton` in the same `headerAction`: the pill and its popover (per
+  job: progress and time left, loudness result in words, Cancel / Show in Finder / Try again /
+  dimmed Post…, Clear finished).
+- **Presets** `exportPresets.ts`: the built-in table, the saved-preset store (persisted via
+  `appSettings.export` from `Root.tsx`), `withPreset` for `editor_export`, the default path.
+  **Formats** `exportFormat.ts`: H.264 MP4 / ProRes 422 HQ and their codec tails, the size
+  estimate.
+- **Backend**: `chroma::export_job` (cancel registry, partial-file cleanup, output folder,
+  unused default name), `chroma_run_editor_export` (the filter path, cancellable, loudness
+  inside), the compositor's encoders and concat attached to the same registration, segment
+  files in the output's container, PCM kept by the loudness pass in a `.mov`.
+- **MCP**: `editor_export` `preset` / `format` / optional `out_path`;
+  `editor_cancel_export`, `editor_list_export_presets`, `editor_save_export_preset`.
+- **Deviations from the mockup**: the Master chip is the ProRes master (tag "ProRes") instead
+  of an H.264 "as edited" chip; Save as preset sits at the end of More settings; no system
+  notification when an export finishes (the pill shows it). Reasons in D-441.

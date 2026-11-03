@@ -173,9 +173,10 @@ describe('debug_set_popover_open', () => {
 
     expect(result).toEqual({ ok: true, id: 'export-dialog', open: true });
     expect(popoverInDom(), 'the op must actually open the real popover').toBe(true);
-    // Not a stand-in: the dialog's own real content is what rendered, not an
-    // empty shell.
-    expect(document.body.textContent).toContain('Export timeline');
+    // Not a stand-in: the sheet's own real content (D-441) is what rendered,
+    // not an empty shell.
+    expect(document.querySelector('[data-chroma-export-sheet]')).not.toBeNull();
+    expect(document.body.textContent).toContain('Publish · soon');
   });
 
   it('closes it again the same way', async () => {

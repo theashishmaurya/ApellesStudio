@@ -65,7 +65,7 @@ const invokeMock = vi.hoisted(() =>
         return { ok: true, frames: 48, segments: 1, ms: 1, stderr_tail: '' };
       case 'chroma_editor_export_status':
         return { state: 'idle', jobId: 0, framesTotal: 0, framesWritten: 0, percent: 0, segmentsTotal: 0, segmentsDone: 0, segments: [] };
-      case 'chroma_run_ffmpeg':
+      case 'chroma_run_editor_export':
         return { ok: true, stdout_tail: '', stderr_tail: '' };
       default:
         throw new Error(`no stub for ${cmd}`);
@@ -106,7 +106,7 @@ describe('editor_export(timeline_id) — D-411 Phase 0', () => {
   it('compiles the named timeline’s clips, not the open one’s (filter path)', async () => {
     const result = await runEditorExport({ outPath: '/tmp/short.mp4', timelineId: 'short' });
     if (!('ok' in result)) throw new Error(result.error);
-    const argv = (lastCall('chroma_run_ffmpeg')?.args?.args as string[]).join(' ');
+    const argv = (lastCall('chroma_run_editor_export')?.args?.args as string[]).join(' ');
     expect(argv).toContain('/media/short-source.mov');
     expect(argv).not.toContain('/media/long-source.mov');
     expect(argv).toContain('1080x1920');

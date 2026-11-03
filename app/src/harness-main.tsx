@@ -422,13 +422,20 @@ function installInvokeStub(): void {
     chroma_audio_scrub_begin: () => undefined,
     chroma_audio_scrub_update: () => undefined,
     chroma_audio_scrub_end: () => undefined,
-    // D-198 — `EditorExportDialog`'s "Add to queue" -> `chroma_run_ffmpeg`
-    // path, reachable from `TimelinePane`'s own toolbar. A real-looking
-    // success/failure DTO — this harness never actually spawns ffmpeg, and
-    // doesn't need to for a dialog/queue-state pointer-gesture check (queue
+    // D-198 / D-441 — the Export sheet's Export -> `chroma_run_editor_export`
+    // path. A real-looking success DTO — this harness never actually spawns
+    // ffmpeg, and doesn't need to for a sheet/queue-state check (queue
     // transitions are unit-tested for real in `exportQueueStore.test.ts`;
-    // this is for SEEING the dialog/queue).
-    chroma_run_ffmpeg: () => ({ ok: true, stdout_tail: '', stderr_tail: '' }),
+    // this is for SEEING the sheet and the queue). The default "Save as"
+    // resolves ~/Movies through the path plugin and names the file through
+    // `chroma_unused_export_path`; Cancel calls `chroma_cancel_editor_export`.
+    chroma_run_editor_export: () => ({ ok: true, cancelled: false, stdout_tail: '', stderr_tail: '' }),
+    chroma_unused_export_path: (args) => {
+      const { dir, stem, ext } = args as { dir: string; stem: string; ext: string };
+      return `${dir}/${stem}.${ext}`;
+    },
+    chroma_cancel_editor_export: () => ({ wasRunning: false }),
+    'plugin:path|resolve_directory': () => '/Users/harness/Movies',
     'plugin:dialog|save': () => '/tmp/harness-export.mp4',
   };
   (

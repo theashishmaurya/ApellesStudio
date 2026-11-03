@@ -23,7 +23,8 @@ use crate::args::WireArgs;
 use crate::render;
 use crate::schemas::{
     CaptionScope, ClipHighlightSpec, ClipKeyframe, ClipSelector, CurveSpec, DynamicZoomFraming,
-    ExportRenderer, FitMode, GapSelector, LoudnessPreset, SpeedRampPoint,
+    ExportFormat, ExportRenderer, FitMode, GapSelector, LoudnessPreset, PresetLoudness,
+    SpeedRampPoint,
 };
 use crate::server::ApellesMcp;
 
@@ -1109,7 +1110,16 @@ pub struct EditorExportStatusArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EditorExportArgs {
-    pub out_path: String,
+    /// D-441 — optional: omitted, the Export panel's default
+    /// `~/Movies/<project>/<timeline>.<ext>`.
+    #[serde(default)]
+    pub out_path: Option<String>,
+    /// D-441 — an export preset id or name (`editor_list_export_presets`).
+    #[serde(default)]
+    pub preset: Option<String>,
+    /// D-441 — `"h264"` or `"prores_hq"`.
+    #[serde(default)]
+    pub format: Option<ExportFormat>,
     /// D-411 Phase 0 — optional now: omitted (with `height`), the export is
     /// written at the timeline's own frame size.
     #[serde(default)]
@@ -1145,6 +1155,32 @@ pub struct EditorExportArgs {
     /// without switching to it.
     #[serde(default)]
     pub timeline_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorCancelExportArgs {
+    pub job_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorSaveExportPresetArgs {
+    pub name: String,
+    #[serde(default)]
+    pub width: Option<i64>,
+    #[serde(default)]
+    pub height: Option<i64>,
+    #[serde(default)]
+    pub fps: Option<f64>,
+    #[serde(default)]
+    pub loudness: Option<PresetLoudness>,
+    #[serde(default)]
+    pub loudness_lufs: Option<f64>,
+    #[serde(default)]
+    pub true_peak_dbtp: Option<f64>,
+    #[serde(default)]
+    pub format: Option<ExportFormat>,
+    #[serde(default)]
+    pub delete: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -5422,6 +5458,21 @@ impl ApellesMcp {
     `editor_get_timeline` and every `editor_set_*`/`editor_add_*` tool above
     only change in-memory state.
 
+    **`preset` (D-441) — one of the Export panel's presets, by id or name**
+    (`editor_list_export_presets` lists them: `youtube-1080p`, `youtube-4k`,
+    `vertical` (Shorts · Reels · TikTok), `square`, `master` (ProRes 422 HQ at
+    the timeline's own size, loudness as mixed), `podcast`, plus any the person
+    or you saved with `editor_save_export_preset`). A preset fills size, frame
+    rate, loudness and format; any of those you ALSO pass explicitly wins over
+    the preset's value. **`format`** is `"h264"` (default; an .mp4) or
+    `"prores_hq"` (Apple ProRes 422 HQ, 10-bit 4:2:2, 24-bit PCM audio — the
+    master; `out_path` must then end in `.mov`). **`out_path` is optional**:
+    omitted, the file goes where the Export panel's pre-filled "Save as" puts it,
+    `~/Movies/<project>/<timeline name>.mp4` (or `.mov`), never over an existing
+    file. The answer carries `outPath`. **A running export can be stopped** with
+    `editor_cancel_export(job_id)` — its encoders are killed and the partial
+    file removed; `editor_export_status` then reads `cancelled`.
+
     `width`/`height` are the output composition's pixel size (every clip's
     `position_x`/`position_y`/`scale` from `editor_set_clip_transform` are
     fractions of this). Omit BOTH to export at the timeline's own frame size
@@ -5533,13 +5584,15 @@ impl ApellesMcp {
         &self,
         Parameters(p): Parameters<EditorExportArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        let out_path = p.out_path.clone();
+        let out_path = p.out_path.clone().unwrap_or_default();
         // B-335 -- this call's own job id, made BEFORE the call so it can follow its own
         // job even when the bridge times out first.
         let job_id = new_export_job_id();
         let args = WireArgs::new()
-            .set("outPath", p.out_path)
             .set("jobId", job_id.clone())
+            .put("outPath", p.out_path)
+            .put("preset", p.preset)
+            .put("format", p.format)
             .put("width", p.width)
             .put("height", p.height)
             .put("timelineId", p.timeline_id)
@@ -5586,7 +5639,9 @@ impl ApellesMcp {
 
     **Read `state` first.** `running` (still going; poll again), `done` (the
     file is written and finalised), `failed` (`error` says why), `stalled`
-    (see below), or `idle` (no export has run in this session).
+    (see below), `cancelled` (stopped by `editor_cancel_export` or the Export
+    panel's Cancel; the partial file was removed — D-441), or `idle` (no export
+    has run in this session).
 
     **`stalled` is a real, named failure and it matters.** It means a render
     worker wrote no frame at all for `stallTimeoutSecs`, so the export was
@@ -5621,6 +5676,84 @@ impl ApellesMcp {
                 WireArgs::new().put("job_id", p.job_id),
             )
             .await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_cancel_export",
+        description = r#"Cancel an `editor_export` job by its `jobId` (D-441) — the same action as
+    the Export queue's Cancel button in the top bar.
+
+    A job still `queued` (waiting behind another export) leaves the queue at
+    once. A `running` one is stopped for real on either renderer: its ffmpeg /
+    segment encoders and the concat step are killed and the partial output file
+    (and any loudness-pass scratch file) is removed; `editor_export_status(
+    job_id)` reads `cancelled` once the run has unwound (usually well under a
+    second; a cancel during the short loudness pass is honoured when that pass
+    returns). A finished job cannot be cancelled. The answer says
+    `wasRunning`."#
+    )]
+    pub async fn editor_cancel_export(
+        &self,
+        Parameters(p): Parameters<EditorCancelExportArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let env = self
+            .op(
+                "editor_cancel_export",
+                WireArgs::new().set("job_id", p.job_id),
+            )
+            .await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_list_export_presets",
+        description = r#"The Export panel's presets (D-441): the built-ins (`youtube-1080p`,
+    `youtube-4k`, `vertical` for Shorts · Reels · TikTok, `square`, `master` —
+    ProRes 422 HQ at the timeline's own size with loudness as mixed — and
+    `podcast`) followed by every preset the person or an agent saved. Each row:
+    `id`, `name`, `builtIn`, `width`/`height`/`fps` (null = the timeline's own),
+    `format` (`h264` | `prores_hq`), `loudness` (`off`, a platform name, or
+    `{lufs, truePeakDbtp}`) and a one-line `summary`. Pass an `id` or `name` as
+    `editor_export(preset=...)`. One table serves the panel's chips and this
+    tool, so the two never disagree."#
+    )]
+    pub async fn editor_list_export_presets(&self) -> Result<CallToolResult, ErrorData> {
+        let env = self
+            .op("editor_list_export_presets", WireArgs::new())
+            .await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_save_export_preset",
+        description = r#"Save an export preset under `name` (D-441) — the Export panel's "Save as
+    preset", for an agent. It is stored with the app's settings (not the
+    project), shows up as a chip in the Export panel and in
+    `editor_list_export_presets`, and `editor_export(preset=name)` uses it.
+    Saving under an existing saved name replaces it; a built-in's name is
+    refused. `width`/`height` (both or neither) and `fps` omitted = the
+    timeline's own. `loudness` is `"off"` (default), `"youtube"`, `"broadcast"`,
+    `"podcast"`, or `"custom"` with `loudness_lufs` (-40..-5) and optionally
+    `true_peak_dbtp` (-9..0, default -1). `format` is `"h264"` (default) or
+    `"prores_hq"`. `delete: true` removes the saved preset called `name`
+    instead (built-ins cannot be deleted)."#
+    )]
+    pub async fn editor_save_export_preset(
+        &self,
+        Parameters(p): Parameters<EditorSaveExportPresetArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("name", p.name)
+            .put("width", p.width)
+            .put("height", p.height)
+            .put("fps", p.fps)
+            .put("loudness", p.loudness)
+            .put("loudnessLufs", p.loudness_lufs)
+            .put("truePeakDbtp", p.true_peak_dbtp)
+            .put("format", p.format)
+            .put("delete", p.delete);
+        let env = self.op("editor_save_export_preset", args).await?;
         Ok(render::json_text(&env))
     }
 

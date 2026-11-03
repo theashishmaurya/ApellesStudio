@@ -1,82 +1,80 @@
 /**
- * @apelles/editor — the Edit tab's own Export button + dialog + queue
- * (D-198, `docs/notes/export-dialog-queue.md`).
+ * @apelles/editor — the Export button, the Export sheet and the export queue's
+ * top-bar progress (D-198 queue, D-441 redesign; B-367).
  *
- * The owner pointed at a real screenshot of the running Edit tab: no Export
- * affordance anywhere, despite `editor_export`/`runEditorExport`
- * (`editorExport.ts`) being a real, working backend capability reachable
- * only through MCP. This is the GUI surface for that SAME capability — see
- * this file's own `handleAddToQueue`, which calls `useExportQueueStore
- * .enqueue`, which calls `compileEditorExportArgs` (`editorExport.ts`), the
- * exact function `useEditorControl.ts`'s `editor_export` op now also calls.
- * Not a parallel implementation.
+ * **What it is.** Everything the chrome bar's `headerAction` shows for export:
  *
- * Follows Colorist's own `ExportDialog.tsx` (D-049) conventions: a
- * `Dialog`/`DialogContent` from `@apelles/ui`, a native `save()` picker for
- * the output path, plain elements + colour tokens for the rest. What's
- * different here, because the underlying capability is different: per-clip
- * `fitOverrides`/`freezeOverrides` rows (Colorist's export has no multi-clip
- * timeline to speak of) and a real job QUEUE instead of a single blocking
- * progress bar — `editorExport.ts`'s own module doc and D-198 explain why
- * sequential-only this pass, not decorative, not parallel.
+ * - **The top-bar progress pill** (when there are jobs): "Exporting 42%" with a
+ *   thin bar, or "1 queued" / "Exported" / "Export failed". Its popover lists
+ *   every job with its real progress and time left (the compositor's own
+ *   counters, D-362), the loudness result in words, and per job Cancel (queued
+ *   or running — a real backend cancel, D-441), Show in Finder, Try again, and a
+ *   dimmed "Post…" for later (roadmap 00d). Exports run in the background: the
+ *   sheet closes the moment Export is pressed and editing carries on.
+ * - **The Export sheet** (approved mockup `scratch/panel-redesign-mockup.html`,
+ *   "Export", revision 2 — `docs/notes/panel-redesign.md` §5): destinations on
+ *   the left (File; YouTube / Instagram / TikTok drawn dimmed under "Publish ·
+ *   soon", no behaviour), the timeline picker, the preset chips (built-ins and
+ *   the person's saved presets, one table with `editor_export(preset=…)` —
+ *   `exportPresets.ts`), the pre-filled name and folder
+ *   (`~/Movies/<project>/<timeline>.<ext>`, never over an existing file), one
+ *   summary line with the size estimate and a warning icon when the export will
+ *   differ from the preview, and "More settings": size, frame rate, loudness,
+ *   loudest peak, format (H.264 MP4 or the ProRes 422 HQ master), Save as preset,
+ *   and "Clip exceptions" (per clip "Stretch to fill" / "Hold last frame", the
+ *   export-time `fitOverrides` / `freezeOverrides`). Footer: Cancel · Export.
  *
- * **D-276 dropped this dialog's own per-clip SPEED override.** It used to sit
- * alongside `fitOverrides`/`freezeOverrides` here; D-236 later gave every
- * clip a real, persisted Speed (Retime) section in its own Inspector, which
- * export already prefers over this dialog's flat override (`editorExport.ts`'s
- * `resolveSpeedSegments`: persisted `speed_points`, else a flat override,
- * else 1×) — a second, less capable GUI for the same fact was confusing, not
- * useful, confirmed live. `editorExport.ts`'s `speedOverrides` param itself is
- * untouched (a scripted `editor_export` MCP call can still pass one); this
- * dialog just never populates it now.
+ * Every action is the function an agent's tool calls: Export enqueues through
+ * `useExportQueueStore.enqueue` after `prepareEditorExport` (what
+ * `editor_export` runs), the chips read the same preset table, Save as preset
+ * is `useExportPresetStore.savePreset` (`editor_save_export_preset`), Cancel is
+ * the queue's `cancel` (`editor_cancel_export`).
  *
- * Width/height default from the project's own composition size
- * (`compositionSize.ts`'s `warmCompositionSize`, i.e.
- * `chroma_timeline_composition_size` — D-199's selection-independent resolver),
- * falling back to a plain 1920×1080 when there is nothing yet to derive it from
- * (a brand-new, empty project). fps defaults to the timeline's own rate
- * (`timelineFps`).
- *
- * **B-208/D-353 — that same warm is also what makes this dialog's ENQUEUE
- * correct**, not just its default form values: `compileEditorExportArgs` reads
- * the composition size synchronously to resolve what each clip's `scale` is a
- * multiple OF, and the queue compiles a job's argv at enqueue time (D-198).
- * This dialog used to resolve the size with its own walk over
- * `chroma_timeline_clip_geometry` for the form fields alone; it now goes
- * through the one shared resolver, so the number on screen and the number the
- * compiler uses cannot be two different answers.
- *
- * **D-411 Phase 0 — any timeline, not only the active one.** A Timeline picker
- * (shown once a project has more than one) chooses what to export, the way
- * Resolve's Deliver page and Premiere's Export dialog name the sequence being
- * rendered. Width/height default to THAT timeline's own size (a 9:16 short's
- * 1080×1920 in a 16:9 project), the per-clip rows list its clips, and the
- * queued job carries its id so the compositor renders it without switching the
- * view. The async half (resolve the timeline, warm fonts, sizes, caption
- * metrics and grades) is `prepareEditorExport`, the same function
- * `editor_export` runs.
+ * **What it does NOT do.** Compile or run anything itself (`editorExport.ts`,
+ * `exportQueueStore.ts`), or publish (roadmap 00d: the destinations are drawn so
+ * the sheet has room for them, nothing more).
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
-import { WarningIcon, CheckCircleIcon, DownloadSimpleIcon, CircleNotchIcon, XCircleIcon } from '@phosphor-icons/react';
+import {
+  ArrowClockwiseIcon,
+  BookmarkSimpleIcon,
+  CaretDownIcon,
+  CaretRightIcon,
+  CheckCircleIcon,
+  CircleNotchIcon,
+  DeviceMobileIcon,
+  DownloadSimpleIcon,
+  FileVideoIcon,
+  FilmReelIcon,
+  FolderOpenIcon,
+  InstagramLogoIcon,
+  MicrophoneIcon,
+  ShareNetworkIcon,
+  SquareIcon,
+  StopIcon,
+  TiktokLogoIcon,
+  WarningIcon,
+  XCircleIcon,
+  XIcon,
+  YoutubeLogoIcon,
+} from '@phosphor-icons/react';
 import {
   Button,
   Dialog,
   DialogContent,
-  DialogFooter,
-  DialogHeader,
   DialogTitle,
   Input,
-  Label,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   Progress,
-  ScrollArea,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Separator,
   Switch,
   Tooltip,
   TooltipContent,
@@ -85,106 +83,152 @@ import {
 
 import { usePanelOpen } from './panelRegistry';
 import { useEditorTimelineStore } from './timelineStore';
-import { timelineFps, type Clip, type Timeline } from './timeline';
-import { useExportQueueStore, type ExportJob, type ExportJobStatus } from './exportQueueStore';
-// D-256 / D-411 — everything the queue's synchronous compile needs warm (the
-// Colorist grade .cubes its argv names, fonts, sizes, caption metrics), for
-// whichever timeline is being exported.
+import { timelineDuration, timelineFps, type Clip, type Timeline } from './timeline';
+import { useExportQueueStore, type ExportJob } from './exportQueueStore';
 import { prepareEditorExport } from './editorExport';
-// B-208/D-353 — the composition size, for this dialog's default width/height
-// AND for the compiler the queue runs at enqueue time.
 import { warmCompositionSize } from './compositionSize';
-// D-401 — the audio loudness target, offered the way Premiere's Export Settings
-// (Audio > Loudness normalization) and Resolve's Deliver page (Audio >
-// Normalize audio, with a loudness standard and a max true peak) do: a preset
-// list that fills the two numbers, with the numbers editable.
-import { LOUDNESS_PRESETS, DEFAULT_TRUE_PEAK_DBTP, type LoudnessPresetName, type LoudnessReport } from './loudness';
-
-type LoudnessChoice = 'off' | LoudnessPresetName | 'custom';
-
-const LOUDNESS_LABELS: Record<LoudnessChoice, string> = {
-  off: 'Off (as mixed)',
-  youtube: 'YouTube (-14 LUFS)',
-  broadcast: 'Broadcast, EBU R128 (-23 LUFS)',
-  podcast: 'Podcast (-16 LUFS)',
-  custom: 'Custom…',
-};
-
-/** `-21.6 → -14.0 LUFS · peak -6.5 → -1.1 dBTP` — the measured result. */
-function loudnessSummary(r: LoudnessReport): string {
-  if (r.skipped || !r.before || !r.after) return r.skipped ?? '';
-  return (
-    `${r.before.integratedLufs.toFixed(1)} → ${r.after.integratedLufs.toFixed(1)} LUFS · ` +
-    `peak ${r.before.truePeakDbtp.toFixed(1)} → ${r.after.truePeakDbtp.toFixed(1)} dBTP` +
-    (r.targetMet ? '' : ' (target not fully reached)')
-  );
-}
+import {
+  DEFAULT_TRUE_PEAK_DBTP,
+  LOUDNESS_PRESETS,
+  type LoudnessPresetName,
+  type LoudnessReport,
+} from './loudness';
+import {
+  EXPORT_FORMAT_INFO,
+  EXPORT_FORMATS,
+  estimateExportBytes,
+  fmtApproxSize,
+  type ExportFormat,
+} from './exportFormat';
+import {
+  BUILT_IN_EXPORT_PRESETS,
+  defaultExportPath,
+  fmtSigned,
+  initialPresetFor,
+  loudnessLabel,
+  presetExportArgs,
+  shapeOf,
+  useExportPresetStore,
+  type ExportLoudness,
+  type ExportPreset,
+  type ExportPresetIcon,
+} from './exportPresets';
 
 const FALLBACK_WIDTH = 1920;
 const FALLBACK_HEIGHT = 1080;
+/** Frame rates offered besides the timeline's own. */
+const FPS_CHOICES = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60];
 
-/** `timelineFps` can carry a long floating-point tail (e.g. an NTSC-derived
- *  rate) — round to the same 3-decimal display precision the rest of the app
- *  already uses for fps (`ProjectSettingsForm`'s own custom-fps field steps
- *  by `0.001`, `AdjustmentClipInspectorPanel`'s numeric fields round the
- *  same way) rather than showing every raw digit. */
-function formatFps(fps: number): string {
+type LoudnessChoice = 'off' | LoudnessPresetName | 'custom';
+
+const LOUDNESS_CHOICE_LABELS: Record<LoudnessChoice, string> = {
+  off: 'As mixed (off)',
+  youtube: 'YouTube: −14 LUFS',
+  broadcast: 'Broadcast: −23 LUFS',
+  podcast: 'Podcast: −16 LUFS',
+  custom: 'Custom',
+};
+
+const PRESET_ICON: Record<ExportPresetIcon, typeof YoutubeLogoIcon> = {
+  youtube: YoutubeLogoIcon,
+  mobile: DeviceMobileIcon,
+  square: SquareIcon,
+  master: FilmReelIcon,
+  podcast: MicrophoneIcon,
+  saved: BookmarkSimpleIcon,
+};
+
+/** Everything the sheet's settings hold. A preset writes all of it at once;
+ *  changing any one value by hand leaves no preset selected ("Custom"). */
+interface ExportValues {
+  /** `null` = the timeline's own size / rate. */
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  loudness: LoudnessChoice;
+  customLufs: number;
+  peakDbtp: number;
+  format: ExportFormat;
+}
+
+function valuesOf(p: ExportPreset): ExportValues {
+  const l = p.loudness;
+  return {
+    width: p.width,
+    height: p.height,
+    fps: p.fps,
+    loudness: typeof l === 'object' ? 'custom' : l,
+    customLufs: typeof l === 'object' ? l.lufs : -14,
+    peakDbtp: typeof l === 'object' ? l.peakDbtp : DEFAULT_TRUE_PEAK_DBTP,
+    format: p.format,
+  };
+}
+
+function loudnessOf(v: ExportValues): ExportLoudness {
+  if (v.loudness === 'custom') return { lufs: v.customLufs, peakDbtp: v.peakDbtp };
+  return v.loudness;
+}
+
+/** `7:44` / `1:02:03`. */
+function fmtLength(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
+
+/** `16:9`, `9:16`, `1:1`, else `W×H`. */
+function aspectLabel(w: number, h: number): string {
+  const g = (a: number, b: number): number => (b === 0 ? a : g(b, a % b));
+  const d = g(w, h);
+  const [a, b] = [w / d, h / d];
+  return a <= 32 && b <= 32 ? `${a}:${b}` : `${w}×${h}`;
+}
+
+function fmtFps(fps: number): string {
   return String(Number(fps.toFixed(3)));
 }
 
-function suggestedExt(): string {
-  return 'mp4';
-}
-
-function stemOf(path: string): string {
-  const base = path.split(/[\\/]/).pop() || 'timeline';
-  const dot = base.lastIndexOf('.');
-  return dot > 0 ? base.slice(0, dot) : base;
-}
-
-/** Every VIDEO clip on `tl`, across every track, in track/clip order — the
- *  set of clips the per-clip override rows below are offered for. Audio
- *  clips have no `speedOverrides`/`fitOverrides`/`freezeOverrides` meaning
- *  worth a row here (see `editorExport.ts`'s own doc on `speedOverrides`
- *  being a generic-by-`Clip.id` map — an audio clip COULD receive one, but
- *  there is no real per-export creative reason a human would want that from
- *  this dialog, unlike a video clip's speed/fit/freeze). */
+/** Every VIDEO clip on `tl`, in track order — the clips "Clip exceptions"
+ *  can be set for (an audio clip has no framing to stretch or hold). */
 function videoClips(tl: Timeline | null): Clip[] {
   if (!tl) return [];
-  return tl.tracks.filter((t) => t.kind === 'video').flatMap((t) => t.clips);
+  return tl.tracks.filter((t) => t.kind === 'video').flatMap((t) => t.clips.filter((c) => !c.text && !c.adjustment));
 }
 
-/** The project's composition size for this dialog's width/height fields —
- *  and, as a side effect that the enqueue path below depends on, the warm
- *  `compositionSize.ts` snapshot `compileEditorExportArgs` reads (B-208/D-353).
- *  `FALLBACK_*` stands in only when there is genuinely nothing to derive a
- *  size from, which is the one case the resolver answers `null` for. */
-async function fetchCompositionSize(
-  tl: Timeline | null,
-  timelineId?: string,
-): Promise<{ width: number; height: number }> {
-  if (!tl && timelineId === undefined) return { width: FALLBACK_WIDTH, height: FALLBACK_HEIGHT };
-  const size = await warmCompositionSize(timelineId);
-  return size ?? { width: FALLBACK_WIDTH, height: FALLBACK_HEIGHT };
+function splitPath(path: string): { dir: string; stem: string; ext: string } {
+  const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  const dir = slash >= 0 ? path.slice(0, slash) : '';
+  const base = slash >= 0 ? path.slice(slash + 1) : path;
+  const dot = base.lastIndexOf('.');
+  return dot > 0 ? { dir, stem: base.slice(0, dot), ext: base.slice(dot + 1) } : { dir, stem: base, ext: '' };
 }
 
-const statusLabel: Record<ExportJobStatus, string> = {
-  queued: 'Queued',
-  running: 'Exporting…',
-  done: 'Done',
-  failed: 'Failed',
-};
-
-function StatusIcon({ status }: { status: ExportJobStatus }) {
-  if (status === 'running') return <CircleNotchIcon className="size-3.5 animate-spin text-accent" />;
-  if (status === 'done') return <CheckCircleIcon className="size-3.5 text-green-400" />;
-  if (status === 'failed') return <XCircleIcon className="size-3.5 text-red-400" />;
-  return <span className="size-3.5 rounded-full border border-border-color inline-block" />;
+/** `~/Movies/Five Levels` — the home folder shortened, the way Finder's path
+ *  bar reads. */
+function prettyDir(dir: string): string {
+  const m = /^\/Users\/[^/]+(\/.*)?$/.exec(dir);
+  return m ? `~${m[1] ?? ''}` : dir;
 }
 
-/** `1h 04m` / `4m 20s` / `18s` — a remaining time a human reads at a glance.
- *  Seconds are dropped past a minute because an ETA extrapolated from a
- *  partial render is not accurate to the second and should not pretend to be. */
+/** `Loudness raised from −21.6 to −14.0 LUFS, peaks under −1 dB.` */
+function loudnessSentence(r: LoudnessReport): string {
+  if (r.skipped || !r.before || !r.after) return r.skipped ? `Loudness left as mixed: ${r.skipped}.` : '';
+  const verb = r.after.integratedLufs >= r.before.integratedLufs ? 'raised' : 'lowered';
+  return (
+    `Loudness ${verb} from ${fmtSigned(r.before.integratedLufs)} to ${fmtSigned(r.after.integratedLufs)} LUFS, ` +
+    `peaks under ${fmtSigned(r.target.truePeakDbtp)} dB` +
+    (r.targetMet ? '.' : ' (target not fully reached).')
+  );
+}
+
+/** A rejected promise's reason, in words. */
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** `1m 20s` / `18s` / `1h 04m`. */
 function shortDuration(ms: number): string {
   const total = Math.max(0, Math.round(ms / 1000));
   const [h, m, s] = [Math.floor(total / 3600), Math.floor((total % 3600) / 60), total % 60];
@@ -193,225 +237,179 @@ function shortDuration(ms: number): string {
   return `${s}s`;
 }
 
-/** D-362 — a running job's REAL progress, where the queue used to show only a
- *  spinner and the word "Exporting…".
- *
- *  The percentage is the renderer's own `framesWritten / framesTotal` summed
- *  across D-360's concurrent segments, not a guess from elapsed time. The
- *  segment count is shown alongside it whenever the render actually split,
- *  because the percentage alone cannot distinguish four workers evenly at 78%
- *  from three finished and one wedged — which is the situation B-231 was filed
- *  about and the one a human most needs to see. */
-function JobProgress({ job }: { job: ExportJob }) {
-  const p = job.progress;
-  // A filter-graph job, or a compositor job whose render has not begun: there
-  // is no honest number, so nothing is drawn rather than a fake zero.
-  if (!p || p.state !== 'running') return null;
-  const concatenating = p.phase === 'concatenating';
+// ───────────────────────────────────────────────────────────── top bar
+
+/** The queue's top-bar pill and its popover. Renders nothing without jobs. */
+function ExportQueueButton() {
+  const jobs = useExportQueueStore((s) => s.jobs);
+  const [open, setOpen] = useState(false);
+  if (jobs.length === 0) return null;
+  const running = jobs.find((j) => j.status === 'running');
+  const queued = jobs.filter((j) => j.status === 'queued').length;
+  const failed = jobs.some((j) => j.status === 'failed');
+  const percent = running?.progress?.state === 'running' ? running.progress.percent : null;
+  let label: string;
+  let icon: React.ReactNode;
+  if (running) {
+    label = percent === null ? 'Exporting…' : `Exporting ${Math.floor(percent)}%`;
+    icon = <CircleNotchIcon className="size-3.5 animate-spin text-accent-text" />;
+  } else if (queued > 0) {
+    label = `${queued} queued`;
+    icon = <CircleNotchIcon className="size-3.5 text-text-secondary" />;
+  } else if (failed) {
+    label = 'Export failed';
+    icon = <XCircleIcon weight="fill" className="size-3.5 text-destructive" />;
+  } else {
+    label = 'Exported';
+    icon = <CheckCircleIcon weight="fill" className="size-3.5 text-accent-text" />;
+  }
   return (
-    <div className="mt-1.5 flex flex-col gap-1">
-      <Progress value={p.percent} />
-      <div className="flex items-center justify-between gap-2 text-[10px] text-text-secondary tabular-nums">
-        <span>
-          {concatenating
-            ? 'Joining segments…'
-            : `${p.percent.toFixed(1)}% · ${p.framesWritten.toLocaleString()} / ${p.framesTotal.toLocaleString()} frames`}
-          {p.segmentsTotal > 1 && !concatenating ? ` · ${p.segmentsDone}/${p.segmentsTotal} segments` : ''}
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            data-chroma-export-queue-pill
+            aria-label={`Exports: ${label}`}
+            className="flex h-6 items-center gap-1.5 rounded-sm bg-bg-secondary px-2 text-xs text-text-primary hover:bg-card-active"
+          >
+            {icon}
+            <span className="tabular-nums">{label}</span>
+            {running && (
+              <span className="h-[3px] w-14 overflow-hidden rounded-full bg-card-active" aria-hidden>
+                <span className="block h-full bg-accent" style={{ width: `${percent ?? 0}%` }} />
+              </span>
+            )}
+          </button>
+        }
+      />
+      <PopoverContent align="end" className="w-[380px] gap-2 p-2.5" data-chroma-export-queue>
+        <div className="flex items-center">
+          <span className="flex-1 text-sm font-semibold text-text-primary">Exports</span>
+          <Button variant="ghost" size="xs" onClick={() => useExportQueueStore.getState().clearFinished()}>
+            Clear finished
+          </Button>
+        </div>
+        <div className="flex max-h-[60vh] flex-col gap-1.5 overflow-y-auto">
+          {[...jobs].reverse().map((job) => (
+            <QueueJob key={job.id} job={job} />
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function QueueJob({ job }: { job: ExportJob }) {
+  const p = job.progress;
+  const live = job.status === 'running' && p?.state === 'running' ? p : null;
+  const status =
+    job.status === 'running'
+      ? live
+        ? live.phase === 'concatenating'
+          ? 'Joining…'
+          : live.phase === 'normalising'
+            ? 'Levelling…'
+            : `${Math.floor(live.percent)}%${live.etaMs !== undefined ? ` · ${shortDuration(live.etaMs)} left` : ''}`
+        : 'Exporting…'
+      : job.status === 'queued'
+        ? 'Waiting'
+        : job.status === 'done'
+          ? 'Done'
+          : job.status === 'cancelled'
+            ? 'Cancelled'
+            : 'Failed';
+  const icon =
+    job.status === 'running' ? (
+      <CircleNotchIcon className="size-3.5 shrink-0 animate-spin text-accent-text" />
+    ) : job.status === 'done' ? (
+      <CheckCircleIcon weight="fill" className="size-3.5 shrink-0 text-accent-text" />
+    ) : job.status === 'failed' ? (
+      <XCircleIcon weight="fill" className="size-3.5 shrink-0 text-destructive" />
+    ) : (
+      <span className="size-3.5 shrink-0 rounded-full border border-text-tertiary" />
+    );
+  const hint =
+    job.status === 'running' || job.status === 'queued'
+      ? `${job.preset ?? 'Custom settings'}. Keep editing; it runs in the background.`
+      : job.status === 'done' && job.loudnessReport
+        ? loudnessSentence(job.loudnessReport)
+        : job.status === 'cancelled'
+          ? 'Stopped. The unfinished file was removed.'
+          : null;
+  return (
+    <div
+      data-chroma-export-job={job.id}
+      data-chroma-export-job-status={job.status}
+      className="flex flex-col gap-1.5 rounded-sm bg-bg-secondary p-2"
+    >
+      <div className="flex items-center gap-2 text-sm">
+        {icon}
+        <span className="min-w-0 flex-1 truncate text-text-primary" title={job.outPath}>
+          {job.name}
         </span>
-        {p.etaMs !== undefined && !concatenating ? <span>{shortDuration(p.etaMs)} left</span> : null}
+        <span className="shrink-0 text-xs tabular-nums text-text-secondary">{status}</span>
+      </div>
+      {job.status === 'running' && live && <Progress value={live.percent} />}
+      {hint && <span className="text-xs leading-snug text-text-secondary">{hint}</span>}
+      {job.status === 'failed' && job.error && (
+        <span className="line-clamp-3 text-xs leading-snug text-destructive" title={job.error}>
+          {job.error}
+        </span>
+      )}
+      <div className="flex flex-wrap gap-1.5">
+        {(job.status === 'running' || job.status === 'queued') && (
+          <Button
+            variant="outline"
+            size="xs"
+            data-chroma-export-cancel={job.id}
+            onClick={() => void useExportQueueStore.getState().cancel(job.id)}
+          >
+            <StopIcon /> Cancel
+          </Button>
+        )}
+        {job.status === 'done' && (
+          <>
+            <Button variant="outline" size="xs" onClick={() => void invoke('show_in_finder', { path: job.outPath }).catch(() => {})}>
+              <FolderOpenIcon /> Show in Finder
+            </Button>
+            <Tooltip>
+              <TooltipTrigger render={<span />}>
+                <Button variant="outline" size="xs" disabled>
+                  <ShareNetworkIcon /> Post…
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Publishing to YouTube, Instagram and TikTok is coming later</TooltipContent>
+            </Tooltip>
+          </>
+        )}
+        {(job.status === 'failed' || job.status === 'cancelled') && (
+          <Button
+            variant="outline"
+            size="xs"
+            data-chroma-export-retry={job.id}
+            onClick={() => useExportQueueStore.getState().retry(job.id)}
+          >
+            <ArrowClockwiseIcon /> Try again
+          </Button>
+        )}
       </div>
     </div>
   );
 }
 
+// ───────────────────────────────────────────────────────────── the sheet
+
 export function EditorExportDialog() {
-  const timeline = useEditorTimelineStore((s) => s.timeline);
-  const timelines = useEditorTimelineStore((s) => s.timelines);
-  const jobs = useExportQueueStore((s) => s.jobs);
-  const clearFinished = useExportQueueStore((s) => s.clearFinished);
-
-  // D-252 — lifted out of local `useState` so `debug_set_popover_open
-  // ('export-dialog', ...)` can drive this same flag; see
-  // `panelRegistry.ts`'s module doc.
+  // D-252 — `debug_set_popover_open('export-dialog', …)` drives this flag.
   const [open, setOpen] = usePanelOpen('export-dialog');
-  const [outPath, setOutPath] = useState<string | null>(null);
-  const [width, setWidth] = useState(String(FALLBACK_WIDTH));
-  const [height, setHeight] = useState(String(FALLBACK_HEIGHT));
-  const [fps, setFps] = useState(formatFps(timelineFps(timeline)));
-  const [fitOverrides, setFitOverrides] = useState<Record<string, 'fit' | 'stretch'>>({});
-  const [freezeOverrides, setFreezeOverrides] = useState<Record<string, boolean>>({});
-  const [validationError, setValidationError] = useState<string | null>(null);
-  const [loudnessChoice, setLoudnessChoice] = useState<LoudnessChoice>('off');
-  const [customLufs, setCustomLufs] = useState('-14');
-  const [customPeak, setCustomPeak] = useState(String(DEFAULT_TRUE_PEAK_DBTP));
-  /** D-256 — what baking the clips' Colorist grades had to drop (a masked
-   *  layer, a Colorist crop). Shown in the dialog rather than only logged:
-   *  these are precisely the cases where the exported file will NOT match what
-   *  the Colorist tab shows, and the user is the only one who can decide
-   *  whether that matters. */
-  const [gradeNotes, setGradeNotes] = useState<string[]>([]);
-  /** The bake runs before the job is queued, so the button has a real busy
-   *  state rather than appearing to do nothing on a cold cache. */
-  const [queueing, setQueueing] = useState(false);
-  /** D-411 Phase 0 — which timeline to export. `null` = the active one (the
-   *  default every time the dialog opens). */
-  const [exportTimelineId, setExportTimelineId] = useState<string | null>(null);
-  /** That timeline's document when it is NOT the active one, read by id (for
-   *  its clip rows and its name) — the store holds only the active one. */
-  const [otherTimeline, setOtherTimeline] = useState<Timeline | null>(null);
-  const exportingOther = exportTimelineId !== null && exportTimelineId !== timeline?.id;
-  const target = exportingOther ? otherTimeline : timeline;
-
-  const clips = useMemo(() => videoClips(target), [target]);
-
-  // Re-derive sensible defaults every time the dialog opens (not on every
-  // keystroke) — the same "reset only on open" convention Colorist's own
-  // `ExportDialog.tsx` uses for the identical reason.
-  //
-  // D-201 — the "reset only on open" dependency array used to need a
-  // line-scoped suppression of the `exhaustive-deps` react-hooks rule, because
-  // the body reads `timeline` but must NOT re-run when it changes. A
-  // suppression of any react-hooks rule also switches the React Compiler off
-  // for the whole file (`docs/notes/react-compiler-coverage.md`), which
-  // `reactCompiler.test.ts` now fails on, so this uses the standard latest-ref
-  // shape instead: the ref is written in its own effect (never during render),
-  // and effects run in declaration order within a commit, so the reset effect
-  // below always reads the value from the same commit.
-  const timelineRef = useRef(timeline);
-  useEffect(() => {
-    timelineRef.current = timeline;
-  }, [timeline]);
-
-  useEffect(() => {
-    if (!open) return;
-    const tl = timelineRef.current;
-    setOutPath(null);
-    setFitOverrides({});
-    setFreezeOverrides({});
-    setValidationError(null);
-    setFps(formatFps(timelineFps(tl)));
-    setExportTimelineId(null);
-    setOtherTimeline(null);
-    let cancelled = false;
-    fetchCompositionSize(tl).then(({ width: w, height: h }) => {
-      if (!cancelled) {
-        setWidth(String(w));
-        setHeight(String(h));
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
-
-  /** D-411 Phase 0 — pick the timeline to export: read it (when it is not the
-   *  active one) and re-default the size and rate to its own. */
-  const chooseTimeline = async (id: string) => {
-    const active = id === timeline?.id;
-    setExportTimelineId(active ? null : id);
-    setFitOverrides({});
-    setFreezeOverrides({});
-    setValidationError(null);
-    let doc: Timeline | null = timeline;
-    if (!active) {
-      try {
-        doc = await invoke<Timeline>('chroma_timeline_get_by_id', { id });
-      } catch (e) {
-        setValidationError(`Could not read that timeline: ${String((e as Error)?.message ?? e)}`);
-        return;
-      }
-      setOtherTimeline(doc);
-    } else {
-      setOtherTimeline(null);
-    }
-    setFps(formatFps(timelineFps(doc)));
-    const size = await fetchCompositionSize(doc, active ? undefined : id);
-    setWidth(String(size.width));
-    setHeight(String(size.height));
-  };
-
-  const handleChoosePath = async () => {
-    const ext = suggestedExt();
-    const suggested = `${stemOf(target?.name ?? 'timeline')}.${ext}`;
-    try {
-      const chosen = await save({
-        title: 'Export timeline',
-        defaultPath: suggested,
-        filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
-      });
-      if (chosen) setOutPath(chosen as string);
-    } catch (e) {
-      console.error('Export path picker failed:', e);
-    }
-  };
-
-  const handleAddToQueue = async () => {
-    setValidationError(null);
-    if (!outPath) {
-      setValidationError('Choose an output file first.');
-      return;
-    }
-    const w = parseInt(width, 10);
-    const h = parseInt(height, 10);
-    const f = parseFloat(fps);
-    if (!Number.isFinite(w) || w <= 0 || !Number.isFinite(h) || h <= 0) {
-      setValidationError('Width and height must be positive numbers.');
-      return;
-    }
-    if (!Number.isFinite(f) || f <= 0) {
-      setValidationError('Frame rate must be a positive number.');
-      return;
-    }
-
-    if (!timeline) {
-      setValidationError('No timeline — open a project first.');
-      return;
-    }
-    const exportArgs = {
-      outPath,
-      ...(exportingOther && exportTimelineId ? { timelineId: exportTimelineId } : {}),
-      width: w,
-      height: h,
-      fps: f,
-      fitOverrides: Object.keys(fitOverrides).length > 0 ? fitOverrides : undefined,
-      freezeOverrides: Object.keys(freezeOverrides).length > 0 ? freezeOverrides : undefined,
-      ...(loudnessChoice === 'custom'
-        ? { loudnessLufs: parseFloat(customLufs), truePeakDbtp: parseFloat(customPeak) }
-        : { loudnessPreset: loudnessChoice }),
-    };
-    // D-256 / B-208 / B-276 / D-411 — the queue freezes a job's argv at
-    // enqueue time (D-198), and that argv names each graded clip's `.cube` by
-    // path and sizes every `scale`d clip against the composition, so both have
-    // to be current NOW, for the timeline being exported, after any pending
-    // save has landed. `prepareEditorExport` does all of it (the same function
-    // `editor_export` runs) and returns the timeline to compile.
-    setQueueing(true);
-    const prepared = await prepareEditorExport(exportArgs);
-    setQueueing(false);
-    if ('error' in prepared) {
-      setValidationError(prepared.error);
-      return;
-    }
-    setGradeNotes(prepared.gradeWarnings);
-
-    const result = useExportQueueStore.getState().enqueue(stemOf(outPath), exportArgs, prepared.timeline);
-    if ('error' in result) {
-      setValidationError(result.error);
-      return;
-    }
-    // Leave the dialog open on the queue view — a real multi-export session
-    // (queue several outputs, watch them run) is the whole point of D-198,
-    // unlike Colorist's single-export dialog which closes on success.
-    setOutPath(null);
-  };
-
   return (
-    <>
+    <div className="flex items-center gap-1.5">
+      <ExportQueueButton />
       <Tooltip>
         <TooltipTrigger
           render={
-            // D-432 P5 / spec §4.2 — a secondary button in the top bar:
-            // `bg-secondary`, `DownloadSimple`, `text-sm` 500.
+            // D-432 P5 / spec §4.2 — a secondary button in the top bar.
             <Button
               variant="ghost"
               size="sm"
@@ -424,260 +422,637 @@ export function EditorExportDialog() {
             </Button>
           }
         />
-        <TooltipContent>Export the timeline to a video file, or queue several exports</TooltipContent>
+        <TooltipContent>Export the timeline to a video file</TooltipContent>
       </Tooltip>
-
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Export timeline</DialogTitle>
-          </DialogHeader>
+        <DialogContent
+          showCloseButton={false}
+          className="grid h-[min(640px,calc(100vh-6rem))] w-[880px] max-w-[calc(100%-2rem)] grid-cols-[200px_minmax(0,1fr)] gap-0 overflow-hidden bg-surface-raised p-0 sm:max-w-[880px]"
+        >
+          {open && <ExportSheet onClose={() => setOpen(false)} />}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
 
-          <div className="flex flex-col gap-4 text-sm">
-            {/* D-411 Phase 0 — which timeline. Shown only when there is a choice. */}
-            {timelines.length > 1 && (
-              <div className="flex flex-col gap-1.5">
-                <Label>Timeline</Label>
-                <Select
-                  value={exportTimelineId ?? timeline?.id ?? ''}
-                  onValueChange={(v) => {
-                    if (typeof v === 'string' && v) void chooseTimeline(v);
-                  }}
+function ExportSheet({ onClose }: { onClose: () => void }) {
+  const timeline = useEditorTimelineStore((s) => s.timeline);
+  const timelines = useEditorTimelineStore((s) => s.timelines);
+  const projectKey = useEditorTimelineStore((s) => s.openProjectKey);
+  const userPresets = useExportPresetStore((s) => s.userPresets);
+
+  /** `null` = the active timeline. */
+  const [timelineId, setTimelineId] = useState<string | null>(null);
+  const [otherTimeline, setOtherTimeline] = useState<Timeline | null>(null);
+  const target = timelineId && timelineId !== timeline?.id ? otherTimeline : timeline;
+  const [comp, setComp] = useState<{ width: number; height: number } | null>(null);
+  const [presetId, setPresetId] = useState<string | null>(null);
+  const [values, setValues] = useState<ExportValues>(() => valuesOf(BUILT_IN_EXPORT_PRESETS[0]));
+  const [outPath, setOutPath] = useState<string>('');
+  /** Set once the person picks a folder or edits the name: a format change then
+   *  only swaps the extension instead of re-deriving the default. */
+  const pathTouched = useRef(false);
+  const [more, setMore] = useState(false);
+  const [fitOverrides, setFitOverrides] = useState<Record<string, 'fit' | 'stretch'>>({});
+  const [freezeOverrides, setFreezeOverrides] = useState<Record<string, boolean>>({});
+  const [presetName, setPresetName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [notes, setNotes] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  const allPresets = useMemo(() => [...BUILT_IN_EXPORT_PRESETS, ...userPresets], [userPresets]);
+  const fps = timelineFps(target);
+  const seconds = target ? timelineDuration(target) / fps : 0;
+  const tlW = comp?.width ?? FALLBACK_WIDTH;
+  const tlH = comp?.height ?? FALLBACK_HEIGHT;
+  const outW = values.width ?? tlW;
+  const outH = values.height ?? tlH;
+  const outFps = values.fps ?? fps;
+  const clips = useMemo(() => videoClips(target), [target]);
+
+  // The timeline's size, then the preset that shape opens on, then the default
+  // path — again whenever the timeline being exported changes.
+  const targetName = target?.name || timelines.find((t) => t.id === (timelineId ?? timeline?.id))?.name || 'Timeline';
+  const targetKey = timelineId ?? timeline?.id ?? '';
+  useEffect(() => {
+    let cancelled = false;
+    void warmCompositionSize(timelineId ?? undefined).then((size) => {
+      if (cancelled) return;
+      const s = size ?? { width: FALLBACK_WIDTH, height: FALLBACK_HEIGHT };
+      setComp(s);
+      const p = initialPresetFor(shapeOf(s.width, s.height));
+      setPresetId(p.id);
+      setValues(valuesOf(p));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [timelineId]);
+
+  useEffect(() => {
+    if (pathTouched.current) {
+      // Keep the person's folder and name; follow the format's extension.
+      setOutPath((cur) => {
+        if (!cur) return cur;
+        const { dir, stem } = splitPath(cur);
+        return `${dir}/${stem}.${EXPORT_FORMAT_INFO[values.format].ext}`;
+      });
+      return;
+    }
+    let cancelled = false;
+    void defaultExportPath(projectKey, targetName, values.format)
+      .then((p) => {
+        if (!cancelled) setOutPath(p);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [projectKey, targetName, targetKey, values.format]);
+
+  const choosePreset = (p: ExportPreset) => {
+    setPresetId(p.id);
+    setValues(valuesOf(p));
+    setError(null);
+  };
+  /** A hand change leaves no preset selected. */
+  const edit = (patch: Partial<ExportValues>) => {
+    setPresetId(null);
+    setValues((v) => ({ ...v, ...patch }));
+    setError(null);
+  };
+
+  const chooseTimeline = async (id: string) => {
+    setFitOverrides({});
+    setFreezeOverrides({});
+    setError(null);
+    if (id === timeline?.id) {
+      setOtherTimeline(null);
+      setTimelineId(null);
+      return;
+    }
+    const read = await invoke<Timeline>('chroma_timeline_get_by_id', { id }).then(
+      (doc) => ({ doc }),
+      (e: unknown) => ({ error: errorText(e) }),
+    );
+    if ('error' in read) {
+      setError(`Could not read that timeline: ${read.error}`);
+      return;
+    }
+    setOtherTimeline(read.doc);
+    setTimelineId(id);
+  };
+
+  const changeFolder = async () => {
+    const { stem } = splitPath(outPath);
+    const ext = EXPORT_FORMAT_INFO[values.format].ext;
+    const picked = await save({
+      title: 'Export to',
+      defaultPath: outPath || `${stem || targetName}.${ext}`,
+      filters: [{ name: EXPORT_FORMAT_INFO[values.format].label, extensions: [ext] }],
+    }).then(
+      (chosen) => ({ chosen }),
+      (e: unknown) => ({ error: errorText(e) }),
+    );
+    if ('error' in picked) {
+      setError(`The folder picker failed: ${picked.error}`);
+      return;
+    }
+    if (picked.chosen) {
+      pathTouched.current = true;
+      setOutPath(picked.chosen);
+    }
+  };
+
+  const savePreset = () => {
+    const out = useExportPresetStore.getState().savePreset({
+      name: presetName,
+      width: values.width,
+      height: values.height,
+      fps: values.fps,
+      loudness: values.loudness,
+      loudnessLufs: values.customLufs,
+      truePeakDbtp: values.peakDbtp,
+      format: values.format,
+    });
+    if ('error' in out) {
+      setError(`Could not save the preset: ${out.error}`);
+      return;
+    }
+    setPresetName('');
+    setPresetId(out.id);
+  };
+
+  const shapeDiffers = shapeOf(outW, outH) !== shapeOf(tlW, tlH);
+  const warnings = [
+    ...(shapeDiffers
+      ? [
+          `This timeline is ${aspectLabel(tlW, tlH)}; ${outW} × ${outH} is ${aspectLabel(outW, outH)}, so the picture is stretched to fit. Make a ${aspectLabel(outW, outH)} timeline instead (the Clipper, or the timeline's output size).`,
+        ]
+      : []),
+    ...notes,
+  ];
+  const preset = presetId ? allPresets.find((p) => p.id === presetId) : undefined;
+
+  const runExport = async () => {
+    setError(null);
+    if (!outPath) {
+      setError('Choose where to save the file.');
+      return;
+    }
+    if (values.loudness === 'custom' && !Number.isFinite(values.customLufs)) {
+      setError('Give the loudness target in LUFS.');
+      return;
+    }
+    const exportArgs = {
+      outPath,
+      ...(timelineId && timelineId !== timeline?.id ? { timelineId } : {}),
+      ...presetExportArgs({
+        width: values.width,
+        height: values.height,
+        fps: values.fps,
+        loudness: loudnessOf(values),
+        format: values.format,
+      }),
+      fitOverrides: Object.keys(fitOverrides).length > 0 ? fitOverrides : undefined,
+      freezeOverrides: Object.values(freezeOverrides).some(Boolean) ? freezeOverrides : undefined,
+    };
+    setBusy(true);
+    const prepared = await prepareEditorExport(exportArgs);
+    setBusy(false);
+    if ('error' in prepared) {
+      setError(prepared.error);
+      return;
+    }
+    setNotes(prepared.gradeWarnings);
+    const name = outPath.split(/[\\/]/).pop() ?? outPath;
+    const queued = useExportQueueStore.getState().enqueue(name, exportArgs, prepared.timeline, undefined, preset?.name);
+    if ('error' in queued) {
+      setError(queued.error);
+      return;
+    }
+    if (presetId) useExportPresetStore.getState().setLastPreset(shapeOf(tlW, tlH), presetId);
+    onClose();
+  };
+
+  const { dir, stem, ext } = splitPath(outPath);
+  const loudnessWords = loudnessLabel(loudnessOf(values));
+
+  return (
+    <>
+      {/* Destinations. Publishing is drawn, not built (roadmap 00d). */}
+      <nav className="flex flex-col gap-0.5 border-r border-border-color bg-surface px-2 py-3.5" aria-label="Export to">
+        <span className="px-2 pt-1.5 pb-1 text-[10px] font-semibold tracking-wide text-text-tertiary uppercase">Export to</span>
+        <button
+          type="button"
+          aria-current="true"
+          className="flex h-[30px] items-center gap-2 rounded-sm bg-card-active px-2 text-left text-sm text-text-primary"
+        >
+          <FileVideoIcon className="size-4" />
+          File
+        </button>
+        <span className="mt-2.5 px-2 pt-1.5 pb-1 text-[10px] font-semibold tracking-wide text-text-tertiary uppercase">
+          Publish · soon
+        </span>
+        {[
+          { label: 'YouTube', Icon: YoutubeLogoIcon },
+          { label: 'Instagram', Icon: InstagramLogoIcon },
+          { label: 'TikTok', Icon: TiktokLogoIcon },
+        ].map(({ label, Icon }) => (
+          <Tooltip key={label}>
+            <TooltipTrigger
+              render={
+                <span
+                  aria-disabled="true"
+                  data-chroma-export-publish={label}
+                  className="flex h-[30px] cursor-default items-center gap-2 rounded-sm px-2 text-sm text-text-secondary opacity-50"
                 >
-                  <SelectTrigger className="h-9 w-full" data-chroma-field="export-timeline">
-                    <SelectValue>{target?.name || 'Untitled timeline'}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {timelines.map((t) => (
-                      <SelectItem key={t.id} value={t.id}>
-                        {(t.active && timeline ? timeline.name : t.name) || 'Untitled timeline'}
-                        {t.output ? ` · ${t.output.width}×${t.output.height}` : ''}
-                        {t.active ? ' (open)' : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+                  <Icon className="size-4" />
+                  {label}
+                </span>
+              }
+            />
+            <TooltipContent>Coming later: connect your account, then post straight from here</TooltipContent>
+          </Tooltip>
+        ))}
+      </nav>
 
-            {/* output path */}
-            <div className="flex flex-col gap-1.5">
-              <Label>Output file</Label>
-              <div className="flex items-center gap-2">
-                <div
-                  className="flex h-9 w-full min-w-0 items-center truncate rounded-md border border-border-color bg-bg-primary px-3 text-sm text-text-secondary"
-                  title={outPath ?? ''}
-                >
-                  {outPath ?? 'Choose a destination…'}
-                </div>
-                <Button variant="outline" size="sm" onClick={handleChoosePath} className="shrink-0">
-                  Choose…
-                </Button>
-              </div>
-            </div>
-
-            {/* width / height / fps */}
-            <div className="flex items-center gap-2">
-              <div className="flex flex-1 flex-col gap-1.5">
-                <Label>Width</Label>
-                <Input type="number" min={1} value={width} onChange={(e) => setWidth(e.target.value)} />
-              </div>
-              <span className="mt-5 text-text-secondary">×</span>
-              <div className="flex flex-1 flex-col gap-1.5">
-                <Label>Height</Label>
-                <Input type="number" min={1} value={height} onChange={(e) => setHeight(e.target.value)} />
-              </div>
-              <div className="flex flex-1 flex-col gap-1.5">
-                <Label>FPS</Label>
-                <Input type="number" min={1} step="any" value={fps} onChange={(e) => setFps(e.target.value)} />
-              </div>
-            </div>
-
-            {/* D-401 — loudness target. Off leaves the mix exactly as the tracks sum. */}
-            <div className="flex flex-col gap-1.5">
-              <Label>Audio loudness</Label>
-              <div className="flex items-center gap-2">
-                <Select value={loudnessChoice} onValueChange={(v) => setLoudnessChoice(v as LoudnessChoice)}>
-                  <SelectTrigger className="h-9 flex-1">
-                    <SelectValue>{LOUDNESS_LABELS[loudnessChoice]}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(Object.keys(LOUDNESS_LABELS) as LoudnessChoice[]).map((k) => (
-                      <SelectItem key={k} value={k}>
-                        {LOUDNESS_LABELS[k]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {loudnessChoice === 'custom' && (
-                  <>
-                    <Input
-                      type="number"
-                      step="any"
-                      className="w-20"
-                      aria-label="Target loudness (LUFS)"
-                      value={customLufs}
-                      onChange={(e) => setCustomLufs(e.target.value)}
-                    />
-                    <span className="text-xs text-text-secondary">LUFS</span>
-                    <Input
-                      type="number"
-                      step="any"
-                      className="w-20"
-                      aria-label="True-peak ceiling (dBTP)"
-                      value={customPeak}
-                      onChange={(e) => setCustomPeak(e.target.value)}
-                    />
-                    <span className="text-xs text-text-secondary">dBTP</span>
-                  </>
-                )}
-              </div>
-              {loudnessChoice !== 'off' && loudnessChoice !== 'custom' && (
-                <p className="text-[11px] text-text-secondary/70">
-                  Measures the finished mix, then applies one gain and a true-peak limiter to reach{' '}
-                  {LOUDNESS_PRESETS[loudnessChoice].integratedLufs} LUFS with peaks under{' '}
-                  {LOUDNESS_PRESETS[loudnessChoice].truePeakDbtp} dBTP. The picture is not re-encoded.
-                </p>
-              )}
-            </div>
-
-            {/* per-clip overrides — fit / freeze (export-time-only, B-074/D-188).
-                D-276 dropped the per-clip SPEED override that used to sit here:
-                D-236 later gave every clip a real, persisted Speed (Retime)
-                section in its own Inspector — reachable, keyframeable, and
-                already what export renders from FIRST (`timelineExport.ts`'s
-                own `resolveSpeedSegments`: a clip's persisted `speed_points`,
-                else this dialog's flat override, else 1×). Once that existed,
-                this flat export-time-only field was a second, less capable
-                place to set the exact same thing — confirmed live (owner,
-                2026-09-10) as confusing rather than useful. Freeze has no
-                persisted equivalent (no `Clip`/`EditOp` field holds "extend to
-                the export's own total duration" — a genuinely export-specific
-                fact, not a property of the clip itself), so it stays; `fit`
-                stays for the same reason (`fitOverrides`'s own stretch escape
-                hatch, B-074, has no timeline-model equivalent either). The
-                underlying `speedOverrides` plumbing in `editorExport.ts`/
-                `timelineExport.ts` is untouched — still real state
-                `compileEditorExportArgs` reads, just never populated from
-                this dialog now; a scripted MCP `editor_export` call can still
-                pass one. */}
-            {clips.length > 0 && (
-              <div className="flex flex-col gap-1.5">
-                <Label>Per-clip export options</Label>
-                <ScrollArea className="max-h-48 rounded-md border border-border-color">
-                  <div className="flex flex-col divide-y divide-border-color">
-                    {clips.map((clip) => (
-                      <div key={clip.id} className="flex items-center gap-2 px-2.5 py-1.5">
-                        <span className="min-w-0 flex-1 truncate text-xs text-text-primary" title={clip.name}>
-                          {clip.name}
-                        </span>
-                        <Select
-                          value={fitOverrides[clip.id] ?? 'fit'}
-                          onValueChange={(v) => setFitOverrides((s) => ({ ...s, [clip.id]: v as 'fit' | 'stretch' }))}
-                        >
-                          <SelectTrigger className="h-7 w-24 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="fit">Fit</SelectItem>
-                            <SelectItem value="stretch">Stretch</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <div className="flex shrink-0 items-center gap-1" title="Freeze this clip's last frame to fill the export's total runtime">
-                          <Switch
-                            id={`freeze-${clip.id}`}
-                            checked={!!freezeOverrides[clip.id]}
-                            onCheckedChange={(v) => setFreezeOverrides((s) => ({ ...s, [clip.id]: v }))}
-                          />
-                          <Label htmlFor={`freeze-${clip.id}`} className="cursor-pointer text-[11px] text-text-secondary">
-                            Freeze
-                          </Label>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </ScrollArea>
-                <p className="text-[11px] text-text-secondary/70">
-                  Audio (gain, ducking, fades) mixes in automatically from the timeline's own tracks — no separate control
-                  needed here.
-                </p>
-              </div>
-            )}
-
-            {validationError && (
-              <span className="flex items-center gap-1.5 text-xs text-red-400">
-                <XCircleIcon size={12} /> {validationError}
-              </span>
-            )}
-
-            {/* D-256 — the parts of a Colorist grade a 3D LUT cannot carry.
-                Shown, not swallowed: this is the one case where the exported
-                file legitimately differs from what the Colorist tab shows, and
-                only the user can decide whether that is acceptable. */}
-            {gradeNotes.length > 0 && (
-              <div className="flex flex-col gap-1">
-                {gradeNotes.map((note) => (
-                  <span key={note} className="flex items-start gap-1.5 text-xs text-text-secondary">
-                    <WarningIcon size={12} className="mt-0.5 shrink-0" /> {note}
+      <div className="flex min-h-0 flex-col" data-chroma-export-sheet>
+        <div className="flex items-center gap-2.5 px-5 pt-4 pb-2.5">
+          <DialogTitle className="text-lg font-semibold text-text-primary">Export</DialogTitle>
+          <Select value={timelineId ?? timeline?.id ?? ''} onValueChange={(v) => typeof v === 'string' && v && void chooseTimeline(v)}>
+            <SelectTrigger className="h-7 w-[260px] text-sm" data-chroma-field="export-timeline" aria-label="Timeline">
+              <SelectValue>
+                <span className="truncate">
+                  {targetName}
+                  <span className="text-text-tertiary">
+                    {' '}
+                    · {fmtLength(seconds)} · {aspectLabel(tlW, tlH)}
                   </span>
-                ))}
-              </div>
-            )}
+                </span>
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {timelines.map((t) => (
+                <SelectItem key={t.id} value={t.id}>
+                  {(t.active && timeline ? timeline.name : t.name) || 'Untitled timeline'}
+                  {t.output ? ` · ${aspectLabel(t.output.width, t.output.height)}` : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span className="flex-1" />
+          <Button variant="ghost" size="icon-sm" aria-label="Close" onClick={onClose}>
+            <XIcon />
+          </Button>
+        </div>
 
-            {/* the queue */}
-            {jobs.length > 0 && (
-              <>
-                <Separator />
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between">
-                    <Label>Export queue</Label>
-                    <Button variant="ghost" size="xs" onClick={clearFinished}>
-                      Clear finished
-                    </Button>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    {jobs.map((job) => (
-                      <div key={job.id} className="flex flex-col rounded-md border border-border-color px-2.5 py-1.5">
-                        <div className="flex items-center gap-2">
-                          <StatusIcon status={job.status} />
-                          <span className="min-w-0 flex-1 truncate text-xs text-text-primary" title={job.outPath}>
-                            {job.name}
-                          </span>
-                          <span
-                            className={
-                              'shrink-0 text-[11px] ' +
-                              (job.status === 'failed' ? 'text-red-400' : job.status === 'done' ? 'text-green-400' : 'text-text-secondary')
-                            }
-                            title={job.error ?? undefined}
+        <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-5 pb-3">
+          <div className="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label="Preset" data-chroma-export-presets>
+            {allPresets.map((p) => {
+              const Icon = PRESET_ICON[p.icon];
+              const on = p.id === presetId;
+              return (
+                <Tooltip key={p.id}>
+                  <TooltipTrigger
+                    render={
+                      <div
+                        role="radio"
+                        aria-checked={on}
+                        tabIndex={0}
+                        data-chroma-export-preset={p.id}
+                        onClick={() => choosePreset(p)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            choosePreset(p);
+                          }
+                        }}
+                        className={`group relative flex h-10 cursor-pointer items-center gap-2 rounded-md bg-bg-secondary px-3 text-left outline outline-1 hover:bg-card-active ${
+                          on ? 'outline-accent' : 'outline-transparent'
+                        }`}
+                      >
+                        <Icon className={`size-4 shrink-0 ${on ? 'text-accent-text' : 'text-text-secondary'}`} />
+                        <span className="truncate text-sm font-medium text-text-primary">{p.chip}</span>
+                        <span className="ml-auto shrink-0 text-xs text-text-tertiary">{p.tag}</span>
+                        {!p.builtIn && (
+                          <button
+                            type="button"
+                            aria-label={`Delete the preset ${p.name}`}
+                            data-chroma-export-preset-delete={p.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              useExportPresetStore.getState().deletePreset(p.id);
+                              if (presetId === p.id) setPresetId(null);
+                            }}
+                            className="absolute -top-1.5 -right-1.5 hidden size-4 items-center justify-center rounded-full bg-card-active text-text-secondary group-hover:flex hover:text-text-primary"
                           >
-                            {statusLabel[job.status]}
-                          </span>
-                        </div>
-                        {/* D-362 — the real percentage while it renders. */}
-                        <JobProgress job={job} />
-                        {job.loudnessReport && (
-                          <span className="mt-1 text-[10px] text-text-secondary tabular-nums">
-                            {loudnessSummary(job.loudnessReport)}
-                          </span>
+                            <XIcon className="size-2.5" />
+                          </button>
                         )}
                       </div>
-                    ))}
-                  </div>
-                </div>
-              </>
+                    }
+                  />
+                  <TooltipContent>{p.name}</TooltipContent>
+                </Tooltip>
+              );
+            })}
+          </div>
+
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
+            <div className="flex h-7 min-w-0 items-center gap-1.5 rounded-sm bg-bg-secondary px-2 text-sm">
+              <input
+                aria-label="File name"
+                data-chroma-export-name
+                className="min-w-0 flex-1 bg-transparent text-text-primary outline-none"
+                value={stem}
+                onChange={(e) => {
+                  pathTouched.current = true;
+                  setOutPath(`${dir}/${e.target.value}.${ext || EXPORT_FORMAT_INFO[values.format].ext}`);
+                }}
+              />
+              <span className="shrink-0 text-xs text-text-tertiary">.{ext || EXPORT_FORMAT_INFO[values.format].ext}</span>
+              <span className="max-w-[45%] shrink-0 truncate text-xs text-text-tertiary" title={dir}>
+                in {prettyDir(dir)}
+              </span>
+            </div>
+            <Button variant="outline" size="sm" className="h-7" onClick={() => void changeFolder()}>
+              Change…
+            </Button>
+          </div>
+
+          <div
+            data-chroma-export-summary
+            className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 rounded-sm bg-bg-secondary px-2.5 py-2 text-xs text-text-secondary"
+          >
+            <span>
+              <b className="font-medium text-text-primary">
+                {outW} × {outH}
+              </b>{' '}
+              · {fmtFps(outFps)} fps · {EXPORT_FORMAT_INFO[values.format].label} ·{' '}
+              {values.loudness === 'off' ? 'loudness as mixed' : loudnessWords} · {fmtLength(seconds)}
+            </span>
+            <span className="flex-1" />
+            <span className="text-text-tertiary">{fmtApproxSize(estimateExportBytes(values.format, outW, outH, outFps, seconds))}</span>
+            {warnings.length > 0 && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span data-chroma-export-warning aria-label="The export will differ from the preview">
+                      <WarningIcon weight="fill" className="size-3.5 text-text-primary" />
+                    </span>
+                  }
+                />
+                <TooltipContent className="max-w-xs">
+                  {warnings.map((w) => (
+                    <p key={w}>{w}</p>
+                  ))}
+                </TooltipContent>
+              </Tooltip>
             )}
           </div>
 
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setOpen(false)}>
-              Close
-            </Button>
-            <Button onClick={() => void handleAddToQueue()} disabled={queueing}>
-              {queueing ? 'Baking grades…' : 'Add to queue'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          {error && (
+            <p data-chroma-export-error className="flex items-start gap-1.5 text-xs leading-snug text-destructive">
+              <XCircleIcon className="mt-0.5 size-3.5 shrink-0" /> {error}
+            </p>
+          )}
+
+          <div>
+            <button
+              type="button"
+              aria-expanded={more}
+              data-chroma-export-more
+              onClick={() => setMore((m) => !m)}
+              className="flex h-7 w-full items-center gap-1.5 text-sm font-medium text-text-secondary hover:text-text-primary"
+            >
+              {more ? <CaretDownIcon className="size-2.5" /> : <CaretRightIcon className="size-2.5" />}
+              More settings
+            </button>
+            {more && (
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 pt-1 pl-4">
+                <Field label="Size">
+                  <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-1">
+                    <NumberBox
+                      aria-label="Width"
+                      value={values.width}
+                      placeholder={String(tlW)}
+                      unit="px"
+                      onChange={(n) => edit({ width: n, height: n === null ? null : (values.height ?? tlH) })}
+                    />
+                    <span className="text-text-tertiary">×</span>
+                    <NumberBox
+                      aria-label="Height"
+                      value={values.height}
+                      placeholder={String(tlH)}
+                      unit="px"
+                      onChange={(n) => edit({ height: n, width: n === null ? null : (values.width ?? tlW) })}
+                    />
+                  </div>
+                </Field>
+                <Field label="Frame rate">
+                  <Select value={values.fps === null ? 'timeline' : String(values.fps)} onValueChange={(v) => edit({ fps: v === 'timeline' || v === null ? null : Number(v) })}>
+                    <SelectTrigger className="h-7 w-full text-sm" aria-label="Frame rate">
+                      <SelectValue>{values.fps === null ? `${fmtFps(fps)} fps (same as the timeline)` : `${fmtFps(values.fps)} fps`}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="timeline">{fmtFps(fps)} fps (same as the timeline)</SelectItem>
+                      {FPS_CHOICES.filter((f) => Math.abs(f - fps) > 0.001).map((f) => (
+                        <SelectItem key={f} value={String(f)}>
+                          {fmtFps(f)} fps
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Loudness">
+                  <div className="flex items-center gap-1.5">
+                    <Select value={values.loudness} onValueChange={(v) => v && edit({ loudness: v as LoudnessChoice })}>
+                      <SelectTrigger className="h-7 min-w-0 flex-1 text-sm" aria-label="Loudness">
+                        <SelectValue>{LOUDNESS_CHOICE_LABELS[values.loudness]}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(Object.keys(LOUDNESS_CHOICE_LABELS) as LoudnessChoice[]).map((k) => (
+                          <SelectItem key={k} value={k}>
+                            {LOUDNESS_CHOICE_LABELS[k]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {values.loudness === 'custom' && (
+                      <NumberBox aria-label="Target loudness" value={values.customLufs} unit="LUFS" className="w-24" decimals onChange={(n) => n !== null && edit({ customLufs: n })} />
+                    )}
+                  </div>
+                </Field>
+                <Field label="Loudest peak">
+                  <NumberBox
+                    aria-label="Loudest peak"
+                    value={values.loudness === 'custom' ? values.peakDbtp : values.loudness === 'off' ? null : LOUDNESS_PRESETS[values.loudness].truePeakDbtp}
+                    placeholder="—"
+                    unit="dBTP"
+                    decimals
+                    disabled={values.loudness !== 'custom'}
+                    onChange={(n) => n !== null && edit({ peakDbtp: n })}
+                  />
+                </Field>
+                <Field label="Format" full>
+                  <Select value={values.format} onValueChange={(v) => v && edit({ format: v as ExportFormat })}>
+                    <SelectTrigger className="h-7 w-full text-sm" aria-label="Format" data-chroma-export-format>
+                      <SelectValue>{values.format === 'h264' ? 'H.264 MP4, high quality' : 'ProRes 422 HQ master (.mov)'}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {EXPORT_FORMATS.map((f) => (
+                        <SelectItem key={f} value={f}>
+                          {f === 'h264' ? 'H.264 MP4, high quality' : 'ProRes 422 HQ master (.mov)'}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Save these settings as a preset" full>
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      className="h-7 flex-1 text-sm"
+                      placeholder="Preset name, e.g. Client review"
+                      aria-label="Preset name"
+                      data-chroma-export-preset-name
+                      value={presetName}
+                      onChange={(e) => setPresetName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && presetName.trim()) savePreset();
+                      }}
+                    />
+                    <Button variant="outline" size="sm" className="h-7" disabled={!presetName.trim()} data-chroma-export-preset-save onClick={savePreset}>
+                      <BookmarkSimpleIcon /> Save preset
+                    </Button>
+                  </div>
+                </Field>
+                {clips.length > 0 && (
+                  <Field label="Clip exceptions (rarely needed)" full>
+                    <div className="flex max-h-44 flex-col overflow-y-auto" data-chroma-export-exceptions>
+                      {clips.map((clip) => (
+                        <div key={clip.id} className="grid grid-cols-[minmax(0,1fr)_150px_150px] items-center gap-1.5 border-b border-border-color py-1 text-xs">
+                          <span className="truncate text-text-primary" title={clip.name}>
+                            {clip.name}
+                          </span>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <span>
+                                  <Select
+                                    value={fitOverrides[clip.id] ?? 'fit'}
+                                    onValueChange={(v) => setFitOverrides((s) => ({ ...s, [clip.id]: v as 'fit' | 'stretch' }))}
+                                  >
+                                    <SelectTrigger className="h-6 w-full text-xs" aria-label={`Framing of ${clip.name}`}>
+                                      <SelectValue>{(fitOverrides[clip.id] ?? 'fit') === 'fit' ? 'Keep its framing' : 'Stretch to fill'}</SelectValue>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="fit">Keep its framing</SelectItem>
+                                      <SelectItem value="stretch">Stretch to fill</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </span>
+                              }
+                            />
+                            <TooltipContent>“Stretch to fill” ignores the clip’s own shape, for this export only</TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <label className="flex items-center gap-1.5 text-text-secondary">
+                                  <Switch
+                                    checked={!!freezeOverrides[clip.id]}
+                                    onCheckedChange={(v) => setFreezeOverrides((s) => ({ ...s, [clip.id]: v }))}
+                                    aria-label={`Hold the last frame of ${clip.name}`}
+                                  />
+                                  Hold last frame
+                                </label>
+                              }
+                            />
+                            <TooltipContent>Freezes the clip’s last frame until the export ends, for this export only</TooltipContent>
+                          </Tooltip>
+                        </div>
+                      ))}
+                    </div>
+                  </Field>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 border-t border-border-color px-5 py-3">
+          <span className="flex-1" />
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={() => void runExport()} disabled={busy} data-chroma-export-run>
+            <DownloadSimpleIcon /> {busy ? 'Preparing…' : 'Export'}
+          </Button>
+        </div>
+      </div>
     </>
+  );
+}
+
+function Field({ label, full, children }: { label: string; full?: boolean; children: React.ReactNode }) {
+  return (
+    <div className={full ? 'col-span-2' : undefined}>
+      <div className="mb-1 text-xs text-text-secondary">{label}</div>
+      {children}
+    </div>
+  );
+}
+
+/** A number field with its unit. Empty means `null` ("the timeline's own"),
+ *  shown as the placeholder. */
+function NumberBox({
+  value,
+  onChange,
+  unit,
+  placeholder,
+  decimals,
+  disabled,
+  className,
+  'aria-label': ariaLabel,
+}: {
+  value: number | null;
+  onChange: (n: number | null) => void;
+  unit: string;
+  placeholder?: string;
+  decimals?: boolean;
+  disabled?: boolean;
+  className?: string;
+  'aria-label': string;
+}) {
+  const [text, setText] = useState(value === null ? '' : String(value));
+  useEffect(() => {
+    setText(value === null ? '' : String(value));
+  }, [value]);
+  const commit = () => {
+    const t = text.trim().replace('−', '-');
+    if (!t) return onChange(null);
+    const n = decimals ? Number(t) : Math.round(Number(t));
+    if (Number.isFinite(n)) onChange(n);
+    else setText(value === null ? '' : String(value));
+  };
+  return (
+    <div className={`flex h-7 items-center gap-1 rounded-sm bg-bg-secondary px-2 text-sm ${disabled ? 'opacity-60' : ''} ${className ?? ''}`}>
+      <input
+        aria-label={ariaLabel}
+        inputMode="decimal"
+        disabled={disabled}
+        className="min-w-0 flex-1 bg-transparent tabular-nums text-text-primary outline-none placeholder:text-text-tertiary"
+        value={text}
+        placeholder={placeholder}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+        }}
+      />
+      <span className="shrink-0 text-xs text-text-tertiary">{unit}</span>
+    </div>
   );
 }

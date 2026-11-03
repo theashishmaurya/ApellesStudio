@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { toast } from 'react-toastify';
 import { Shell, useActiveTab, useShellStore } from '@apelles/shell';
-import { EditorExportDialog, EditorTab, useEditLayoutStore, useEditorTimelineStore } from '@apelles/editor';
+import {
+  EditorExportDialog,
+  EditorTab,
+  useEditLayoutStore,
+  useEditorTimelineStore,
+  useExportPresetStore,
+} from '@apelles/editor';
 import { MotionTab, clipReadsItem, useMotionProjectStore, type SceneRenderResult } from '@apelles/motion';
 import { pageStart, takeWebviewTermination, trackEvent, useMediaPoolStore, watchPageUnload } from '@apelles/bridge';
 import { useKeymapStore } from '@apelles/keymap';
@@ -441,6 +447,20 @@ export function Root() {
   useEffect(() => {
     if (editLayout) useEditLayoutStore.getState().hydrate(editLayout);
   }, [editLayout]);
+  // D-441 — the Export panel's saved presets and last preset per timeline
+  // shape, persisted in `appSettings.export` the same way.
+  const exportSettings = useSettingsStore((s) => s.appSettings?.export);
+  useEffect(() => {
+    if (exportSettings) useExportPresetStore.getState().hydrate(exportSettings);
+  }, [exportSettings]);
+  useEffect(() => {
+    useExportPresetStore.getState().setPersist((blob) => {
+      const settings = useSettingsStore.getState().appSettings;
+      if (!settings) return;
+      void useSettingsStore.getState().handleSettingsChange({ ...settings, export: blob });
+    });
+    return () => useExportPresetStore.getState().setPersist(null);
+  }, []);
   useEffect(() => {
     useEditLayoutStore.getState().setPersist((layout) => {
       const settings = useSettingsStore.getState().appSettings;

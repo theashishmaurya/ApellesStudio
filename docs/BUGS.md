@@ -129,7 +129,7 @@ status: fixed (2026-11-03; the Rust probe tests are written but were not run, se
 
 ## B-367 — the Export dialog needs a redesign: a raw form with per-clip "fit / Freeze" rows, no presets, and no direct publishing
 
-status: open (owner, 2026-11-01) · severity: medium (UX; the last step of every edit) · area: the Edit tab's Export dialog (`ExportDialog` / `timelinePipeExport.ts` UI), the export queue
+status: **fixed 2026-11-03 (worktree), D-441** (owner, 2026-11-01) · severity: medium (UX; the last step of every edit) · area: the Edit tab's Export dialog (`ExportDialog` / `timelinePipeExport.ts` UI), the export queue
 
 - **Seen:** the owner's screenshot `scratch/bug-refs/2026-11-01-export-dialog.png`. It shows Timeline, Output file + Choose…, Width × Height, FPS, Audio loudness "Off (as mixed)", then a long **"Per-clip export options"** list (each clip with a `fit` dropdown and a **Freeze** toggle), a note about audio, and Close / **Add to queue**.
 - **The owner:** "this needs a redesign as well … and no other export freeze and all, so think of that".
@@ -140,6 +140,7 @@ status: open (owner, 2026-11-01) · severity: medium (UX; the last step of every
   4. **The output file must be picked before anything happens.** Default to a sensible name and folder (`~/Movies/<project>/<timeline>.mp4`), changeable.
   5. **Exporting must never freeze the app.** It already queues ("Add to queue"); keep it fully in the background, with progress in the top bar, editing allowed meanwhile, a notification when done, and "Reveal in Finder" / "Post…" actions. Covered with B-340's memory bound.
 - **Direction:** the same research → mockup → build pass (roadmap 00c). References: FCP's Share destinations, Resolve's Deliver page quick exports, Premiere's Quick Export, CapCut's export sheet. Direct publishing is its own backlog item (roadmap 00d).
+- **Fixed (D-441):** the approved mockup built. A sheet with destinations (publishing drawn dimmed, "Publish · soon"), preset chips that set size, frame rate, loudness and format together (YouTube 1080p / 4K, Shorts, Square, a **ProRes 422 HQ master**, Podcast, plus the person's own saved presets), a pre-filled `~/Movies/<project>/<timeline>.mp4` that never overwrites, a one-line summary with the file size, and the rest under More settings; the per-clip rows are "Stretch to fill" / "Hold last frame" under "Clip exceptions". Export closes the sheet and runs in the background with progress in the top bar, where each job has a real **Cancel** (kills the ffmpeg / segment encoders, removes the partial file), Show in Finder and Try again. MCP: `editor_export` `preset` / `format` / optional `out_path`, `editor_cancel_export`, `editor_list_export_presets`, `editor_save_export_preset`. A system notification on finish was not built (the pill shows the result).
 
 ## B-366 — the contents of every Inspector Video-tab section need the same intuitive pass (Transform, Compositing, Crop, Dynamic zoom, Highlights, Speed, Fade, Keyframes)
 

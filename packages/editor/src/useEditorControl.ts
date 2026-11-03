@@ -307,7 +307,8 @@ const SPEED_RANGE_HELP =
   `to play that run in reverse (1 = normal, -1 = backwards at recorded speed)`;
 import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
 import { resolveExportTimeline } from './editorExport';
-import { exportJobStatus, runQueuedEditorExport } from './exportJobs';
+import { cancelExportJob, exportJobStatus, runQueuedEditorExport } from './exportJobs';
+import { listExportPresetsOp, saveExportPresetOp } from './exportPresets';
 // D-411 Phase 0 — the composition size of a timeline by id (FCPXML's default size).
 import { warmCompositionSize } from './compositionSize';
 import {
@@ -5029,6 +5030,11 @@ export function useEditorControl(): void {
       editor_export: (a) => runQueuedEditorExport(a ?? {}),
       // B-335 — the by-id half of the status; the id-less one is native.
       editor_export_status: (a) => exportJobStatus(a ?? {}),
+      // D-441 — the Export panel's Cancel, its preset table and its saved
+      // presets, for an agent: the same queue action and the same store.
+      editor_cancel_export: (a) => cancelExportJob(a ?? {}),
+      editor_list_export_presets: () => listExportPresetsOp(),
+      editor_save_export_preset: (a) => saveExportPresetOp(a ?? {}),
 
       // D-256 — which clips on this timeline carry a real Colorist grade, and
       // what baking it had to drop. The AI half of a feature whose human half

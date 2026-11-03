@@ -199,6 +199,12 @@ export interface AppSettings {
     inspectorWidth?: number;
     timelineHeight?: number | null;
   };
+  /** D-441 — the Export panel's saved presets and last preset per timeline
+   *  shape (`@apelles/editor`'s `ExportPresetSettings`). */
+  export?: {
+    presets?: unknown[];
+    lastPreset?: Record<string, string>;
+  };
   tonemapperOverrideEnabled?: boolean;
   defaultRawTonemapper?: string;
   defaultNonRawTonemapper?: string;

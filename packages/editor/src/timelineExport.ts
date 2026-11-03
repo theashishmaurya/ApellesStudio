@@ -109,6 +109,7 @@ import {
   resolveDuckForTrack,
   type AudioRef,
 } from './timelineExportAudio';
+import { audioCodecArgs, filterVideoCodecArgs, type ExportFormat } from './exportFormat';
 
 // --------------------------------------------------------------------------- //
 // keyframeExprAt — piecewise-linear ffmpeg expression generator
@@ -1119,6 +1120,9 @@ export interface TimelineExportOptions {
    *  the reason a missing font refuses it — shipping a file that quietly
    *  disagrees with the preview is the defect this repo keeps closing. */
   gradeLutPaths?: Record<string, string>;
+  /** D-441 — the file format (`exportFormat.ts`). Absent = `h264`, the
+   *  only format before D-441, so every existing caller compiles the same argv. */
+  format?: ExportFormat;
 }
 
 // --------------------------------------------------------------------------- //
@@ -2827,6 +2831,10 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
     `[${lastLabel}]`,
   ];
   if (audioMapArg) args.push('-map', audioMapArg);
+  // D-441 — the format's codecs (nothing for H.264: ffmpeg's `.mp4` default).
+  const format = opts.format ?? 'h264';
+  args.push(...filterVideoCodecArgs(format));
+  if (audioMapArg) args.push(...audioCodecArgs(format));
   args.push('-r', String(opts.fps), '-t', String(totalDurationSec), outPath);
   return args;
 }

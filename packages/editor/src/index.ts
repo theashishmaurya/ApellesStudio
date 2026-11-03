@@ -229,6 +229,9 @@ export type {
  *  but the component is unchanged. */
 export { EditorExportDialog } from './EditorExportDialog';
 export { useExportQueueStore } from './exportQueueStore';
+/** D-441 — the Export panel's saved presets; the composition root hands it the
+ *  saved `appSettings.export` and a persistence sink, like `useEditLayoutStore`. */
+export { useExportPresetStore } from './exportPresets';
 export type { ExportJob, ExportJobStatus } from './exportQueueStore';
 /** D-189 — media understanding (transcript + "what changed on screen"), cached
  *  by source path. Exported because the results are Edit-tab data a future

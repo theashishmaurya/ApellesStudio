@@ -370,6 +370,33 @@ pub enum LoudnessPreset {
     Off,
 }
 
+/// `editor_export`'s / `editor_save_export_preset`'s `format` (D-441): H.264 in
+/// an .mp4, or Apple ProRes 422 HQ in a .mov. Mirrors `mcp/schemas.py`'s
+/// `ExportFormat`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+pub enum ExportFormat {
+    #[serde(rename = "h264")]
+    H264,
+    #[serde(rename = "prores_hq")]
+    ProresHq,
+}
+
+/// `editor_save_export_preset`'s `loudness` (D-441). Mirrors `mcp/schemas.py`'s
+/// `PresetLoudness`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+pub enum PresetLoudness {
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "youtube")]
+    Youtube,
+    #[serde(rename = "broadcast")]
+    Broadcast,
+    #[serde(rename = "podcast")]
+    Podcast,
+    #[serde(rename = "custom")]
+    Custom,
+}
+
 /// `editor_generate_captions_from_transcript`'s `scope` (D-411 Phase 0): one
 /// source `"file"`, or the whole `"timeline"` from its stitched transcript.
 /// Mirrors `mcp/schemas.py`'s `CaptionScope`.

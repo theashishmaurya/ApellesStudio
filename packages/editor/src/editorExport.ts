@@ -15,7 +15,7 @@
  *   potentially different) at the moment it actually runs, possibly
  *   minutes later and after further edits.
  * - [`runEditorExport`] is `compileEditorExportArgs` + the actual
- *   `chroma_run_ffmpeg` invocation in one blocking call — what the MCP op
+ *   `chroma_run_editor_export` invocation in one blocking call — what the MCP op
  *   needs (a single call that both compiles AND runs, then reports the
  *   outcome). [`runCompiledExport`] is the same invocation alone, for the
  *   queue's own runner, which already has a job's frozen `args`.
@@ -48,6 +48,8 @@ import { loadTextFonts, textFontPaths } from './textFonts';
 // D-401 — the export loudness target: preset table, validator and the report
 // the Rust normaliser answers with.
 import { resolveLoudnessTarget, type LoudnessReport, type LoudnessTarget } from './loudness';
+// D-441 — the file format (H.264 delivery or the ProRes master).
+import { formatPathMismatch, isExportFormat, type ExportFormat } from './exportFormat';
 // D-243 — the per-word advances an animated caption is laid out from.
 import { captionMetricsSnapshot, warmCaptionMetrics } from './captionMetrics';
 import { captionLayout, captionLines } from './caption';
@@ -62,13 +64,16 @@ import { gradeLutPathsSnapshot, gradeLutsAreWarm, warmGradeLuts } from './gradeL
 import { compositionSizeSnapshot, warmCompositionSize } from './compositionSize';
 import { effectiveClipScaling, fittedFootprint } from './clipScaling';
 
-/** Mirrors `app/src-tauri/src/chroma/ffmpeg_run.rs`'s `FfmpegRunOutcome` —
- *  copied by hand, same reason `useEditorControl.ts`'s own copy already
- *  gives (no shared types package between this package and the Rust crate). */
-interface FfmpegRunOutcome {
+/** Mirrors `chroma::ffmpeg_run::EditorExportRunOutcome` (D-183, D-441) —
+ *  copied by hand (no shared types package between this package and the Rust
+ *  crate): the filter path's run, which can be cancelled and carries the D-401
+ *  loudness report. */
+interface EditorExportRunOutcome {
   ok: boolean;
+  cancelled: boolean;
   stdout_tail: string;
   stderr_tail: string;
+  loudness?: LoudnessReport;
 }
 
 /**
@@ -117,6 +122,8 @@ export interface CompiledExport {
    *  off: the export is not post-processed at all. Frozen into a queued job
    *  alongside `args`, for the same reason. */
   loudness?: LoudnessTarget;
+  /** D-441 — the file format the argv writes. */
+  format: ExportFormat;
 }
 
 export interface CompileError {
@@ -349,6 +356,8 @@ export function compileEditorExportArgs(
   loudnessLufs?: unknown;
   /** D-401 — the true-peak ceiling for a custom target, dBTP (default -1). */
   truePeakDbtp?: unknown;
+  /** D-441 — `"h264"` (default) or `"prores_hq"` (`exportFormat.ts`). */
+  format?: unknown;
   },
   timeline?: Timeline,
 ): CompiledExport | CompileError {
@@ -368,6 +377,13 @@ export function compileEditorExportArgs(
 
   const outPath = a?.outPath;
   if (typeof outPath !== 'string' || !outPath) return { error: 'outPath must be a non-empty absolute file path' };
+  // D-441 — the file format, and a container that can hold it.
+  if (a?.format !== undefined && !isExportFormat(a.format)) {
+    return { error: 'format must be "h264" (an .mp4) or "prores_hq" (a ProRes 422 HQ .mov master)' };
+  }
+  const format: ExportFormat = isExportFormat(a?.format) ? a.format : 'h264';
+  const mismatch = formatPathMismatch(format, outPath);
+  if (mismatch) return { error: mismatch };
   // D-411 Phase 0 — omitted sizes default to this timeline's own composition.
   const warmedComp = compositionSizeSnapshot(snapshotId);
   const sizeGiven = a?.width !== undefined && a?.width !== null && a?.height !== undefined && a?.height !== null;
@@ -525,6 +541,7 @@ export function compileEditorExportArgs(
     fontFiles,
     captionMetrics,
     gradeLutPaths,
+    format,
   };
   if (renderer === 'compositor') {
     // D-350 — refused, not silently ignored: each of these changes a clip's
@@ -557,11 +574,12 @@ export function compileEditorExportArgs(
         segments: plan.segments,
       },
       loudness,
+      format,
     };
   }
 
   const args = buildExportFfmpegArgs(tl, outPath, opts);
-  return { ok: true, outPath, args, renderer, timelineId: tl.id, width, height, loudness };
+  return { ok: true, outPath, args, renderer, timelineId: tl.id, width, height, loudness, format };
 }
 
 /**
@@ -719,8 +737,8 @@ export async function runEditorExport(
  *  `chroma_editor_export_status` both answer it (D-362, fixes B-231).
  *
  *  Mirrors `chroma::export_status::ExportStatus` — copied by hand for the same
- *  reason `FfmpegRunOutcome` and `TimelineRenderOutcome` already are. */
-export type TimelineExportState = 'idle' | 'running' | 'done' | 'failed' | 'stalled';
+ *  reason `EditorExportRunOutcome` and `TimelineRenderOutcome` already are. */
+export type TimelineExportState = 'idle' | 'running' | 'done' | 'failed' | 'stalled' | 'cancelled';
 
 export interface TimelineExportSegmentStatus {
   index: number;
@@ -733,8 +751,8 @@ export interface TimelineExportSegmentStatus {
 
 export interface TimelineExportStatus {
   state: TimelineExportState;
-  /** `'rendering'` or `'concatenating'` while running. */
-  phase?: 'rendering' | 'concatenating';
+  /** `'rendering'`, `'concatenating'` or (D-401) `'normalising'` while running. */
+  phase?: 'rendering' | 'concatenating' | 'normalising';
   /** Monotonic per render, so a reader can tell this export's numbers from a
    *  previous one's — which is the only way to poll safely, since the slot
    *  keeps the LAST export's result after it finishes. */
@@ -766,7 +784,7 @@ export async function readTimelineExportStatus(): Promise<TimelineExportStatus> 
 }
 
 /** Mirrors `chroma::edit_render::TimelineRenderOutcome` (D-350) — copied by
- *  hand for the same reason `FfmpegRunOutcome` above already is. */
+ *  hand for the same reason `EditorExportRunOutcome` above already is. */
 interface TimelineRenderOutcome {
   ok: boolean;
   frames: number;
@@ -777,6 +795,8 @@ interface TimelineRenderOutcome {
   stderr_tail: string;
   /** D-401 — present when the request carried a loudness target. */
   loudness?: LoudnessReport;
+  /** D-441 — the render was cancelled; its partial output is gone. */
+  cancelled: boolean;
 }
 
 /** Run an ALREADY-COMPILED export's argv (from [`compileEditorExportArgs`])
@@ -797,12 +817,17 @@ export async function runCompiledExport(
   /** D-411 Phase 0 — the compiled timeline's id; the compositor renders that
    *  timeline. Absent (a job queued before D-411) renders the active one. */
   timelineId?: string,
+  /** D-441 — the export queue's job id: `chroma_cancel_editor_export` with it
+   *  stops this run on either renderer. Absent = not cancellable. */
+  cancelToken?: string,
 ): Promise<{
   ok: boolean;
   error: string | null;
   stdoutTail: string;
   stderrTail: string;
   loudness?: LoudnessReport;
+  /** D-441 — the run was cancelled (its partial file removed). */
+  cancelled?: boolean;
 }> {
   if (loudness && !outPath) {
     return { ok: false, error: 'a loudness target needs the export’s output path', stdoutTail: '', stderrTail: '' };
@@ -833,6 +858,8 @@ export async function runCompiledExport(
           loudness: loudness ?? null,
           // D-411 Phase 0 — render the timeline this argv was compiled from.
           timelineId: timelineId ? timelineId : null,
+          // D-441 — so the queue's Cancel can stop this render.
+          cancelToken: cancelToken ?? null,
         },
       });
       return {
@@ -841,31 +868,34 @@ export async function runCompiledExport(
         stdoutTail: '',
         stderrTail: outcome.stderr_tail,
         loudness: outcome.loudness,
+        cancelled: outcome.cancelled,
       };
     } catch (e) {
       // A render-path failure comes back as a rejected `invoke` (the Rust side
-      // returns `Err(String)`), unlike `chroma_run_ffmpeg`'s `ok: false`
+      // returns `Err(String)`), unlike `chroma_run_editor_export`'s `ok: false`
       // outcome — surfaced as a real message rather than an unhandled rejection.
       const msg = String((e as Error)?.message ?? e);
       return { ok: false, error: msg, stdoutTail: '', stderrTail: msg };
     }
   }
-  const outcome = await invoke<FfmpegRunOutcome>('chroma_run_ffmpeg', { args });
-  if (outcome.ok && loudness && outPath) {
-    // D-401 — the filter path's ONE ffmpeg has exited and the file is final but
-    // for its loudness; the same Rust normaliser the render path runs in-job.
-    try {
-      const report = await invoke<LoudnessReport>('chroma_normalize_loudness', { path: outPath, target: loudness });
-      return { ok: true, error: null, stdoutTail: outcome.stdout_tail, stderrTail: outcome.stderr_tail, loudness: report };
-    } catch (e) {
-      const msg = `the export was written but loudness normalisation failed: ${String((e as Error)?.message ?? e)}`;
-      return { ok: false, error: msg, stdoutTail: outcome.stdout_tail, stderrTail: outcome.stderr_tail };
-    }
+  // D-441 — the filter path's one ffmpeg, run so the queue's Cancel can stop
+  // it, with its output folder created and (D-401) the loudness pass inside the
+  // same Rust run, so a cancel during that pass is honoured too.
+  if (!outPath) {
+    return { ok: false, error: 'an export needs its output path', stdoutTail: '', stderrTail: '' };
   }
+  const outcome = await invoke<EditorExportRunOutcome>('chroma_run_editor_export', {
+    args,
+    output: outPath,
+    cancelToken: cancelToken ?? null,
+    loudness: loudness ?? null,
+  });
   return {
     ok: outcome.ok,
     error: outcome.ok ? null : outcome.stderr_tail || 'ffmpeg failed with no stderr output',
     stdoutTail: outcome.stdout_tail,
     stderrTail: outcome.stderr_tail,
+    loudness: outcome.loudness,
+    cancelled: outcome.cancelled,
   };
 }
