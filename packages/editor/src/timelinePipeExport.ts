@@ -212,9 +212,10 @@ function buildPipeAudioGraph(timeline: Timeline, opts: TimelineExportOptions): A
 
 /** The output codec tail for this export's format (D-441, `exportFormat.ts`):
  *  h.264/`yuv420p` by default — the same default `chroma::export`'s
- *  single-clip renderer uses — or ProRes 422 HQ for the master. */
+ *  single-clip renderer uses — or ProRes 422 HQ for the master, on the encoder
+ *  the caller chose (D-446; absent = `software`, the pre-D-446 tail). */
 function videoCodecArgs(opts: TimelineExportOptions): string[] {
-  return pipeVideoCodecArgs(opts.format ?? 'h264');
+  return pipeVideoCodecArgs(opts.format ?? 'h264', opts.encoder ?? 'software');
 }
 
 /** D-360 — the placeholder the Rust side replaces with a segment's own output

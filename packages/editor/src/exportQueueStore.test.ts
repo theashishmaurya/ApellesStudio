@@ -337,8 +337,20 @@ describe('cancel, retry and the ProRes format (D-441)', () => {
     const job = useExportQueueStore.getState().jobs[0];
     expect(job.format).toBe('prores_hq');
     const argv = job.args.join(' ');
-    expect(argv).toContain('-c:v prores_ks -profile:v 3 -vendor apl0 -pix_fmt yuv422p10le');
+    // D-446 — hardware (VideoToolbox) by default; `encoder: 'software'` is prores_ks.
+    expect(argv).toContain('-c:v prores_videotoolbox -profile:v 3 -pix_fmt bgra');
     expect(job.args[job.args.length - 1]).toBe('/tmp/master.mov');
+    const sw = useExportQueueStore
+      .getState()
+      .enqueue('master sw', { ...validArgs, outPath: '/tmp/master2.mov', format: 'prores_hq', encoder: 'software' });
+    expect('id' in sw).toBe(true);
+    expect(useExportQueueStore.getState().jobs[1].args.join(' ')).toContain(
+      '-c:v prores_ks -profile:v 3 -vendor apl0 -pix_fmt yuv422p10le',
+    );
+    const badEncoder = useExportQueueStore
+      .getState()
+      .enqueue('master bad', { ...validArgs, outPath: '/tmp/master3.mov', format: 'prores_hq', encoder: 'gpu' });
+    expect(badEncoder).toMatchObject({ error: expect.stringContaining('encoder must be') });
     const bad = useExportQueueStore.getState().enqueue('master', { ...validArgs, outPath: '/tmp/master.mp4', format: 'prores_hq' });
     expect(bad).toEqual({ error: expect.stringContaining('.mov') });
   });

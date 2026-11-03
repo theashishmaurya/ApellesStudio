@@ -163,14 +163,37 @@ describe('the default "Save as"', () => {
 });
 
 describe('the codec tail per format', () => {
-  it('H.264 keeps each path’s long-standing tail; ProRes 422 HQ is prores_ks profile 3 with PCM sound', () => {
-    expect(filterVideoCodecArgs('h264')).toEqual([]);
+  it('software H.264 keeps each path’s long-standing tail; software ProRes 422 HQ is prores_ks profile 3 with PCM sound', () => {
+    expect(filterVideoCodecArgs('h264', 'software')).toEqual([]);
     expect(audioCodecArgs('h264')).toEqual([]);
-    expect(pipeVideoCodecArgs('h264')).toEqual(['-c:v', 'libx264', '-crf', '18', '-pix_fmt', 'yuv420p']);
+    expect(pipeVideoCodecArgs('h264', 'software')).toEqual(['-c:v', 'libx264', '-crf', '18', '-pix_fmt', 'yuv420p']);
     const prores = ['-c:v', 'prores_ks', '-profile:v', '3', '-vendor', 'apl0', '-pix_fmt', 'yuv422p10le'];
-    expect(filterVideoCodecArgs('prores_hq')).toEqual(prores);
-    expect(pipeVideoCodecArgs('prores_hq')).toEqual(prores);
+    expect(filterVideoCodecArgs('prores_hq', 'software')).toEqual(prores);
+    expect(pipeVideoCodecArgs('prores_hq', 'software')).toEqual(prores);
     expect(audioCodecArgs('prores_hq')).toEqual(['-c:a', 'pcm_s24le']);
+  });
+
+  it('D-446 — the hardware encoder is VideoToolbox on both paths: H.264 at q 70, ProRes 422 HQ fed bgra', () => {
+    const h264 = ['-c:v', 'h264_videotoolbox', '-q:v', '70', '-pix_fmt', 'yuv420p'];
+    expect(pipeVideoCodecArgs('h264', 'hardware')).toEqual(h264);
+    expect(filterVideoCodecArgs('h264', 'hardware')).toEqual(h264);
+    const prores = ['-c:v', 'prores_videotoolbox', '-profile:v', '3', '-pix_fmt', 'bgra'];
+    expect(pipeVideoCodecArgs('prores_hq', 'hardware')).toEqual(prores);
+    expect(filterVideoCodecArgs('prores_hq', 'hardware')).toEqual(prores);
+  });
+
+  it('D-446 — a compiler caller that names no encoder still gets the pre-D-446 software argv', () => {
+    const tl = {
+      id: 't',
+      name: 't',
+      rate: { num: 30, den: 1 },
+      tracks: [{ kind: 'audio', clips: [{ id: 'a', name: 'a', source_path: '/m/a.wav', source_start: 0, duration: 30, source_len: 30, start_frame: 0 }] }],
+    } as unknown as Timeline;
+    const plan = buildPipeExportPlan(tl, '/out/m.mp4', { fps: 30, width: 64, height: 64 }, 1);
+    expect(plan.args.join(' ')).toContain('-c:v libx264 -crf 18');
+    const hw = buildPipeExportPlan(tl, '/out/m.mp4', { fps: 30, width: 64, height: 64, encoder: 'hardware' }, 1);
+    expect(hw.args.join(' ')).toContain('-c:v h264_videotoolbox -q:v 70');
+    expect(hw.segments.segmentArgs.join(' ')).toContain('-c:v h264_videotoolbox -q:v 70');
   });
 
   it('the compositor plan encodes every segment as ProRes and muxes PCM at the concat step', () => {

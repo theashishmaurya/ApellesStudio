@@ -7,12 +7,26 @@
  * compositor pipe) so a format is spelled once:
  *
  * - `h264` — H.264 in an `.mp4`, the delivery file (YouTube, Shorts, posts).
- *   The compositor path writes `libx264 -crf 18 yuv420p`; the filter path keeps
- *   ffmpeg's own `.mp4` default, exactly as it did before formats existed, so
- *   an H.264 export's bytes do not change (its parity tests pin that).
  * - `prores_hq` — Apple ProRes 422 HQ in a `.mov` with 24-bit PCM sound, the
- *   master (`prores_ks -profile:v 3`, 10-bit 4:2:2), the same profile the
- *   Colorist export already writes (`chroma::export`).
+ *   master (10-bit 4:2:2), the same profile the Colorist export already writes
+ *   (`chroma::export`).
+ *
+ * …and, orthogonally, the **encoder** that compresses the picture (D-446,
+ * B-380):
+ *
+ * - `hardware` (the default) — Apple's VideoToolbox media engine:
+ *   `h264_videotoolbox -q:v 70` and `prores_videotoolbox -profile:v 3` fed
+ *   `bgra`. Measured against the software encoders on the same frames
+ *   (`docs/perf/README.md`, "Export"): H.264 at q 70 matches libx264 CRF 18 (PSNR, SSIM
+ *   and VMAF within 0.02 of each other) in a smaller file, and the hardware
+ *   ProRes scores at or above `prores_ks`; both run 4-6x faster and leave the
+ *   CPU to the compositor.
+ * - `software` — libx264 / `prores_ks` on the CPU, exactly the pre-D-446
+ *   tails: the compositor path's `libx264 -crf 18 yuv420p`, and the filter
+ *   path's ffmpeg `.mp4` default for H.264, so a software H.264 export's bytes
+ *   are unchanged (the parity fixtures pin that). Kept as an explicit choice
+ *   for a machine without the media engine, or a bit-exact comparison against
+ *   an older export.
  *
  * **What it does NOT do.** Choose sizes, rates or loudness (that is
  * `exportPresets.ts`), or run anything.
@@ -71,18 +85,59 @@ export function isExportFormat(v: unknown): v is ExportFormat {
   return typeof v === 'string' && (EXPORT_FORMATS as readonly string[]).includes(v);
 }
 
+/** D-446 — which encoder compresses the picture. See the module header. */
+export type ExportEncoder = 'hardware' | 'software';
+
+export const EXPORT_ENCODERS: readonly ExportEncoder[] = ['hardware', 'software'];
+
+/** D-446 — what `editor_export` and the Export panel use unless asked
+ *  otherwise. (The argv compilers' own `TimelineExportOptions.encoder` reads an
+ *  absent value as `software`, so a direct compiler caller — the parity
+ *  fixtures — keeps compiling the pre-D-446 argv byte for byte.) */
+export const DEFAULT_EXPORT_ENCODER: ExportEncoder = 'hardware';
+
+/** What the Export panel's More settings calls each encoder. */
+export const EXPORT_ENCODER_LABEL: Record<ExportEncoder, string> = {
+  hardware: 'Hardware (fast)',
+  software: 'Software (slow)',
+};
+
+export function isExportEncoder(v: unknown): v is ExportEncoder {
+  return typeof v === 'string' && (EXPORT_ENCODERS as readonly string[]).includes(v);
+}
+
+/** D-446 — VideoToolbox H.264's constant-quality setting (1-100, higher is
+ *  better). 70 is the value whose PSNR / SSIM / VMAF matched libx264 CRF 18 on
+ *  the benchmark fixture's frames (`docs/perf/README.md`, "Export"):
+ *  65 measured below it, 75 above it at a larger file than CRF 18's. */
+export const HARDWARE_H264_QUALITY = '70';
+
 /** The video codec tail of the compositor path's encoders (single stream and
  *  each segment). Every segment is encoded with the same arguments, so the
  *  concat demuxer's "identical codec and parameters" precondition holds. */
-export function pipeVideoCodecArgs(format: ExportFormat): string[] {
+export function pipeVideoCodecArgs(format: ExportFormat, encoder: ExportEncoder): string[] {
+  if (encoder === 'hardware') return hardwareVideoArgs(format);
   if (format === 'prores_hq') return proresVideoArgs();
   return ['-c:v', 'libx264', '-crf', '18', '-pix_fmt', 'yuv420p'];
 }
 
-/** The video codec tail of the filter-graph path. Empty for H.264: that path
- *  has always left the codec to ffmpeg's `.mp4` default. */
-export function filterVideoCodecArgs(format: ExportFormat): string[] {
+/** The video codec tail of the filter-graph path. Empty for software H.264:
+ *  that path has always left the codec to ffmpeg's `.mp4` default. */
+export function filterVideoCodecArgs(format: ExportFormat, encoder: ExportEncoder): string[] {
+  if (encoder === 'hardware') return hardwareVideoArgs(format);
   return format === 'prores_hq' ? proresVideoArgs() : [];
+}
+
+/** D-446 — the VideoToolbox tails. ProRes is fed `bgra` and VideoToolbox does
+ *  the 4:2:2 10-bit conversion itself: handing it ffmpeg's own `p210le`
+ *  produced a visibly wrong picture (PSNR ~24 dB against `prores_ks` on the
+ *  same frames), where `bgra` scores 42 dB against it and above it against the
+ *  source. The written stream is still `yuv422p10le` ProRes 422 HQ (`apch`). */
+function hardwareVideoArgs(format: ExportFormat): string[] {
+  if (format === 'prores_hq') {
+    return ['-c:v', 'prores_videotoolbox', '-profile:v', PRORES_HQ_PROFILE, '-pix_fmt', 'bgra'];
+  }
+  return ['-c:v', 'h264_videotoolbox', '-q:v', HARDWARE_H264_QUALITY, '-pix_fmt', 'yuv420p'];
 }
 
 /** The audio codec, for whichever argv carries the sound. Empty for H.264 (the
