@@ -127,3 +127,32 @@ impl GpuFrame {
         settle(self.0.wait())
     }
 }
+
+/// D-452 — a decoded frame as RGBA pixels, at `size` (its own size when
+/// `None`): one plain layer through the engine, which converts a media-engine
+/// frame from Y'CbCr and resamples it exactly as it would inside a timeline
+/// frame. For the callers that need the picture itself on the CPU (the
+/// Colorist's image pipeline, the two-up trim viewer's JPEG, a clip's
+/// highlight strokes drawn over its decoded picture).
+pub(crate) fn picture(
+    source: apelles_compositor::Source,
+    size: Option<(u32, u32)>,
+) -> Result<RgbaImage, String> {
+    let (w, h) = source.dimensions();
+    let (ow, oh) = size.unwrap_or((w, h));
+    let plan = FramePlan {
+        width: ow,
+        height: oh,
+        background: apelles_compositor::Background::Solid([0, 0, 0, 255]),
+        steps: vec![apelles_compositor::Step::Paint(apelles_compositor::Layer {
+            source,
+            crop: (0, 0, w, h),
+            size: (ow, oh),
+            origin: (0.0, 0.0),
+            opacity: 1.0,
+            corner_radius: 0.0,
+            rotation_deg: 0.0,
+        })],
+    };
+    render(&plan)
+}

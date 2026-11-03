@@ -250,7 +250,11 @@ async fn decode_and_install(
     let info = shot.info.clone();
     let view_for_task = view.clone();
     let decoded = tokio::task::spawn_blocking(move || -> Result<image::DynamicImage, String> {
-        let img = decode_pipe::playback_frame_scaled(
+        // D-452 — one decode path: the media engine (or, for a container it
+        // does not open, the ffmpeg pipe), converted by the GPU engine. A
+        // failure is the Colorist's error to show, not a cue to decode the
+        // frame a second, different way.
+        let frame = decode_pipe::playback_frame_scaled(
             decode_pipe::PipeLane::LIVE,
             decode_pipe::PipeSlot::Current,
             &path,
@@ -258,11 +262,8 @@ async fn decode_and_install(
             decode_frame_index,
             None,
         )
-        .or_else(|e| {
-            log::warn!("[chroma::session] decode pipe fell back to single-frame decode: {e}");
-            video::decode_frame(&path, video::FramePos::Index(decode_frame_index), &info)
-        })
         .map_err(|e| e.to_string())?;
+        let img = super::edit::decoded_picture(frame, None)?;
         match view_for_task {
             Some(v) => v.apply_geometry(decode_frame_index, img, None),
             None => Ok(img),

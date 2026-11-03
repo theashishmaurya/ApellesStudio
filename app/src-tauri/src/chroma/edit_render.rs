@@ -1044,22 +1044,6 @@ fn render_range(
                 out,
                 resize: needs_resize,
             },
-            Ok(Some(edit::RenderedFrame::Decoded(img))) => {
-                let rgba = img.to_rgba8();
-                Outgoing::Bytes(if needs_resize || rgba.dimensions() != out {
-                    let resize_started = Instant::now();
-                    let resized = image::imageops::resize(
-                        &rgba,
-                        out.0,
-                        out.1,
-                        image::imageops::FilterType::Triangle,
-                    );
-                    resize_time += resize_started.elapsed();
-                    resized.into_raw()
-                } else {
-                    rgba.into_raw()
-                })
-            }
             Ok(None) => Outgoing::Bytes(blank.as_raw().clone()),
             Err(e) => {
                 render_err = Some(format!("frame {pos}: {e}"));

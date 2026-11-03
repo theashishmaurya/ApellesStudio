@@ -73,3 +73,7 @@ pub mod scrub;
 pub mod still;
 pub mod timestretch;
 pub mod video;
+#[cfg(target_os = "macos")]
+pub mod vt_decode;
+#[cfg(target_os = "macos")]
+pub mod vt_encode;

@@ -58,5 +58,17 @@ tempfile = "3.27.0"
 # only new crate in the tree is `objc2-vision` itself.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
-objc2-foundation = "0.3.2"
+objc2-foundation = { version = "0.3.2", features = ["NSURL", "NSDictionary", "NSValue", "NSString", "NSArray", "NSError"] }
 objc2-vision = { version = "0.3.2", default-features = false, features = ["std", "VNObservation", "VNRecognizeTextRequest", "VNRequest", "VNRequestHandler", "VNTypes", "VNRequestRevisionProviding", "objc2-core-foundation"] }
+# D-452 — the in-process media engine: VideoToolbox decode through AVFoundation
+# (`vt_decode`) and VideoToolbox encode into AVAssetWriter (`vt_encode`), with
+# IOSurface-backed CVPixelBuffers at both ends so frames reach and leave the GPU
+# engine without a CPU copy. The same objc2 family and version as the crates
+# above and as `wgpu-hal`'s Metal backend; the three new crates in the tree are
+# the bindings for AVFoundation, CoreMedia and VideoToolbox.
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFString", "CFNumber", "CFDictionary", "CFArray", "CFBase"] }
+objc2-core-video = { version = "0.3.2", default-features = false, features = ["std", "CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVPixelBufferPool", "CVPixelBufferIOSurface", "CVReturn"] }
+objc2-core-media = { version = "0.3.2", default-features = false, features = ["std", "CMBase", "CMTime", "CMTimeRange", "CMSampleBuffer", "CMFormatDescription", "CMBlockBuffer", "CMSync", "CMAttachment", "objc2-core-video"] }
+objc2-video-toolbox = { version = "0.3.2", default-features = false, features = ["std", "VTBase", "VTCompressionSession", "VTCompressionProperties", "VTDecompressionSession", "VTSession", "VTErrors", "VTUtilities", "objc2-core-media", "objc2-core-video"] }
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["std", "block2", "AVAsset", "AVAssetReader", "AVAssetReaderOutput", "AVAssetTrack", "AVAssetWriter", "AVAssetWriterInput", "AVMediaFormat", "AVVideoSettings", "AVAsynchronousKeyValueLoading", "objc2-core-media", "objc2-core-video"] }
+block2 = "0.6.2"

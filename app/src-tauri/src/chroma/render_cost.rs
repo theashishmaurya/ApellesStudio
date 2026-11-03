@@ -176,15 +176,17 @@ pub(super) fn frame_cost(timeline: &Timeline, pos: u64) -> u32 {
     FRAME_BASE + layers.iter().map(layer_cost).sum::<u32>()
 }
 
-/// The cost of `layer` when it is the ONLY layer and takes the plain-decode
-/// fast path — or `None` when it cannot take it, in which case the caller
+/// The cost of `layer` when it is the ONLY layer and is drawn as a plain
+/// full-frame decode — or `None` when it is not, in which case the caller
 /// charges the ordinary [`layer_cost`].
 ///
-/// Mirrors `edit::render_timeline_frame`'s `single_plain` guard for everything
+/// D-452 removed the plain-decode fast path itself (every frame is drawn by
+/// the GPU engine, which converts the decoder's Y'CbCr), but such a frame is
+/// still the cheapest kind there is: one decode and one 1:1 layer, no
+/// resample, no blend. The guard is the one the fast path had, for everything
 /// the document alone can answer: a generated layer (text, adjustment, a
-/// transition's colour plate) has no plain decode to return, a transition alpha
-/// below 1.0 is a real blend, and a non-identity transform is the whole of
-/// D-132/B-053.
+/// transition's colour plate) has no decode, a transition alpha below 1.0 is a
+/// real blend, and a non-identity transform is the whole of D-132/B-053.
 fn plain_decode_cost(layer: &VisibleLayer<'_>) -> Option<u32> {
     if layer.alpha < 1.0 {
         return None;

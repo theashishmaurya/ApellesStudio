@@ -7,7 +7,16 @@ the `eq` band model + biquad math, the `adjustment` colour operator, and the
 undesigned — no real duplicate of any of them turned up in the `app/src-tauri`
 audit, see below.
 
-- **Deps:** `serde`, `thiserror`. Nothing heavy — no `wgpu`, no `ffmpeg`, no fs.
+- **Deps:** `serde`, `thiserror`; on macOS `objc2-core-foundation` and
+  `objc2-core-video`, for one type (below). Nothing heavy — no `wgpu`, no
+  `ffmpeg`, no fs.
+- **`src/video_frame.rs` (D-452)** — a decoded video frame between the media
+  engine (`apelles-media::vt_decode`) and the GPU engine
+  (`apelles-compositor`): `PixelBuffer` (a retained IOSurface-backed
+  `CVPixelBuffer`, `Send + Sync` by a documented assertion) and the plain-data
+  description of its planes, `YcbcrLayout` / `YcbcrMatrix` (matrix, range,
+  bit depth, chroma subsampling). Here because both L1 crates speak it and
+  neither may depend on the other.
 - **Depended on by:** every other `chroma-*` crate. It is the root of the
   one-directional dependency graph (D-039). `apelles-motion` (D-046) already
   consumes `ChromaError`; `app/src-tauri` (D-053) now consumes `Resolution`;

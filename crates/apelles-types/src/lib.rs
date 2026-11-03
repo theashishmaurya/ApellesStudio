@@ -157,6 +157,10 @@ pub use lut3d::Lut3d;
 /// clip corners (D-344) and clip highlights (D-396). See its own doc.
 pub mod shape;
 
+/// D-452 — a decoded video frame between the media engine and the GPU engine:
+/// its CoreVideo handle and its Y'CbCr layout.
+pub mod video_frame;
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -13,3 +13,10 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+
+# D-452 — the decoded-frame handle (`video_frame::PixelBuffer`) the media
+# engine and the GPU engine exchange: a retained CoreVideo buffer. Only the two
+# thin binding crates for that one type, on the one platform that has it.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std"] }
+objc2-core-video = { version = "0.3.2", default-features = false, features = ["std", "CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVReturn"] }
