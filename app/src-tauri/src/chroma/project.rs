@@ -1840,37 +1840,37 @@ mod tests {
         assert_eq!(tl2.tracks[1].kind, apelles_timeline::TrackKind::Audio);
 
         // move_clip: from the video track (0) onto the fresh audio track (1).
-        // B-038 — this block used to expect track 0 to survive the move as an
-        // empty track. D-123 changed that contract: a cross-track move that
-        // empties its source track now prunes it, so the audio track shifts
-        // down into index 0 and ONE track remains. D-123 updated
-        // `timeline.ts`'s mirrored test for exactly this and missed the two
-        // Rust-side ones, which have been red on `main` ever since. Stale
-        // assertion brought up to the shipped contract, not a behaviour change.
+        // D-421 / B-304 — no clip edit deletes a track: the emptied source
+        // track STAYS (as in Premiere/Resolve), so later track indices never
+        // renumber mid-edit. (D-123's pruning, which this block used to
+        // assert, was removed by D-421; the assertions here were stale.)
         super::super::edit::chroma_timeline_move_clip(0, 0, 1, 500, false).unwrap();
         let tl3 = timeline_get().unwrap();
-        assert_eq!(tl3.tracks.len(), 1, "the emptied source track 0 was pruned");
-        assert_eq!(tl3.tracks[0].kind, apelles_timeline::TrackKind::Audio);
-        assert_eq!(tl3.tracks[0].clips.len(), 1, "landed on the audio track");
-        assert_eq!(tl3.tracks[0].clips[0].id, clip_id, "identity preserved");
-        assert_eq!(tl3.tracks[0].clips[0].start_frame, 500);
+        assert_eq!(tl3.tracks.len(), 2, "the emptied source track stays");
+        assert!(tl3.tracks[0].clips.is_empty());
+        assert_eq!(tl3.tracks[1].kind, apelles_timeline::TrackKind::Audio);
+        assert_eq!(tl3.tracks[1].clips.len(), 1, "landed on the audio track");
+        assert_eq!(tl3.tracks[1].clips[0].id, clip_id, "identity preserved");
+        assert_eq!(tl3.tracks[1].clips[0].start_frame, 500);
 
         // an out-of-range move errors and leaves the persisted timeline unchanged
         assert!(super::super::edit::chroma_timeline_move_clip(9, 0, 0, 0, false).is_err());
         let tl4 = timeline_get().unwrap();
         assert_eq!(
-            tl4.tracks[0].clips.len(),
+            tl4.tracks[1].clips.len(),
             1,
             "unchanged after the failed move"
         );
 
         // remove_track (including the clip now sitting on it)
-        super::super::edit::chroma_timeline_remove_track(0).unwrap();
+        super::super::edit::chroma_timeline_remove_track(1).unwrap();
         let tl5 = timeline_get().unwrap();
-        assert!(
-            tl5.tracks.is_empty(),
+        assert_eq!(
+            tl5.tracks.len(),
+            1,
             "the audio track (and its clip) is gone"
         );
+        assert!(tl5.tracks[0].clips.is_empty());
 
         // an out-of-range remove_track errors
         assert!(super::super::edit::chroma_timeline_remove_track(9).is_err());
