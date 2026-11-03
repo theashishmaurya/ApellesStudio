@@ -260,7 +260,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      1. Smoke-test a real release build (`npm run tauri:build`). It is the first release build ever minified, after B-358's fix to `TAURI_ENV_DEBUG`. Launch, open a project, trim, roll, drag in a clip, export.
      2. The owner edits something real for about 10 minutes.
      3. One export end to end (1080p short clip): loudness and picture.
-     4. B-359 item 6: the view doesn't follow a programmatic seek, and zoom persists across timelines.
+     4. ~~B-359 item 6: the view doesn't follow a programmatic seek, and zoom persists across timelines.~~ **Fixed 2026-11-03** (a paused jump outside the view centres it; zoom and scroll are per timeline). Check live with `seek-far-playhead-visible`.
      5. Verify pinch zoom in a production bundle (unverified because of the window size).
    - **Fix or ship as a known issue (decide at release):**
      6. Playback at about 300 clips runs at rAF 26 fps / paint 22 fps (the owner's Nemotron timeline has 288). Fixed by D-437 S10.

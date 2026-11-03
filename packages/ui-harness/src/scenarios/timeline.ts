@@ -449,6 +449,28 @@ export const TIMELINE_SCENARIOS: Scenario[] = [
     ],
   },
   {
+    id: 'seek-far-playhead-visible',
+    title: 'A seek far outside the view (editor_set_playhead) scrolls the timeline to show the playhead',
+    area: 'scroll',
+    reference: 'B-359 item 6: Premiere / Resolve bring a playhead jump outside the visible timeline into view; the follow centres it',
+    fixture: LONG,
+    steps: [
+      // 4x zoom: the 28 s clip spans ~10000 px, so frame 780 is far right of any window.
+      { op: 'editor_set_timeline_view', args: { zoom: 4 } },
+      { capture: 'view', as: 'before' },
+      { op: 'editor_set_playhead', args: { frame: 780 } },
+      { waitFor: { path: 'view.scrollLeft', op: 'gt', value: { ref: 'before.scrollLeft', plus: 1000 } } },
+      { capture: 'view', as: 'after' },
+      { capture: 'dom', selector: '[data-testid="timeline-playhead"]', as: 'playhead' },
+      {
+        expect: [
+          { path: 'playhead.rect.x', op: 'gt', value: { ref: 'after.rect.x' }, label: 'the playhead is right of the edit area’s left edge' },
+          { path: 'playhead.rect.x', op: 'lt', value: { ref: 'after.rect.x', plus: 800 }, label: 'the playhead is on screen (centred in the view)' },
+        ],
+      },
+    ],
+  },
+  {
     id: 'scroll-vertical-wheel',
     title: 'A vertical scroll moves the tracks, and the track headers scroll with them',
     area: 'scroll',

@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-03** — **B-359 item 6 fixed** (v0.3.0 blocker): a paused playhead jump outside the view (`editor_set_playhead`, Index markers, ↑/↓, transcript lines) now centres it, and the timeline zoom and scroll are remembered per timeline instead of session-wide. New harness scenario `seek-far-playhead-visible`.
 - **2026-11-01** — **B-368 logged** (owner): placing a Motion render adds a linked audio clip because renders carry a silent AAC track (−91 dB). Fix both the render (no audio stream without a soundtrack) and the probe (digital silence = no audio). On the v0.3.0 checklist.
 - **2026-11-01** — **Roadmap 00g added:** a Motion style library (an `apelles-motion-styles` skill, then templates for the top 10 explainer styles, then whole-video themes, plus "not AI-made" rules), for v0.4.0. It uses an external style guide as a reference for categories and structure only.
 - **2026-11-01** — **D-438 extended:** a managed-service revenue line ("Apelles Studio": pay per video for weekly formats, a 3–5 design-partner pilot) as the near-term earner ahead of Pro (`docs/notes/monetization-plan.md` §12).

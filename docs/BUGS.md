@@ -129,7 +129,7 @@ status: **fixed** (2026-11-01) · severity: high (every drag-in below or above t
 
 ## B-359 — the app still differs from the approved D-432 mockup in eight places (comparison pass 2026-11-01)
 
-status: open (queued with B-354, after D-437 S10) · severity: minor (polish), except item 6 (medium: the playhead goes off screen) · area: Inspector header and rows, the browser header, the timeline toolbar, track headers, view follow, marker lines
+status: open (queued with B-354, after D-437 S10); **item 6 fixed 2026-11-03** (below) · severity: minor (polish), except item 6 (medium: the playhead goes off screen) · area: Inspector header and rows, the browser header, the timeline toolbar, track headers, view follow, marker lines
 
 - The full list, with screenshots: `docs/notes/ui-redesign.md` › "Mockup vs app comparison (2026-11-01)".
 - In short:
@@ -141,6 +141,7 @@ status: open (queued with B-354, after D-437 S10) · severity: minor (polish), e
   - **the view not following a programmatic seek, and the zoom persisting across runs and timelines**;
   - marker lines through the lanes;
   - the empty states and volume popover (B-354).
+- **Item 6 fixed (2026-11-03, v0.3.0 blocker).** Two causes. (1) B-326's follower in `TimelinePane`'s playhead subscription returned early unless playing, so a paused jump (`editor_set_playhead`, a marker row in the Index panel, ↑/↓ to an edit point, a transcript line: all `setPlayhead`/`seekPlayhead`) never moved the view. Now a paused jump that lands outside the visible window CENTRES it (`seekFollowScrollLeft` in `playbackFollow.ts`; Premiere/Resolve behaviour for a jump), except during a scrub (`isScrubbing()`: the playhead, the ruler and the viewer's bar drag it under the pointer) and within 300 ms of the user's own scroll. Playback keeps B-326's paging. (2) The zoom was one session-wide value in `timelineView.ts`, so a harness run's 20 % stayed on the owner's timeline. The view store now keeps a per-timeline map (`viewByTimeline`, keyed by `Timeline.id`): a module-level subscription to the timeline store files the outgoing timeline's zoom and loads the incoming one's (the default for a timeline not shown yet), with or without the pane mounted, and the pane files and restores each timeline's scroll offsets on the switch. Clip Appearance, snapping and skimming stay app-wide. AI parity unchanged: `editor_get_state.timelineView` reports the active timeline's view and `editor_set_timeline_view` sets it. Tests: `TimelinePane.seekFollow.dom.test.tsx` (8), `playbackFollow.test.ts` (+5), `TimelinePane.scrollState.dom.test.tsx` (+1), `TimelinePane.seek.dom.test.tsx` (the paused case now centres). Harness: new scenario `seek-far-playhead-visible`. Not yet run live.
 
 ## B-358 - the production-React debug app (`tauri build --debug`) had the Rust `debug_*` ops but no frontend registry, so the UI harness could not drive it
 
