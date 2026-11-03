@@ -141,9 +141,12 @@ export interface EditorTabProps {
    *  Sources tab. Injected by the composition root (`Root.tsx`): this package
    *  must not import `app/` (D-039). */
   mediaPool?: ReactNode;
+  /** v0.3.0 — the browser tab row's right end (`EditBrowser.tabRowEnd`): the
+   *  root's Import button. */
+  browserActions?: ReactNode;
 }
 
-export function EditorTab({ mediaPool }: EditorTabProps) {
+export function EditorTab({ mediaPool, browserActions }: EditorTabProps) {
   const load = useEditorTimelineStore((s) => s.load);
   const projectOpen = useEditorTimelineStore((s) => s.openProjectKey !== null);
   const status = useEditorTimelineStore((s) => s.status);
@@ -252,7 +255,7 @@ export function EditorTab({ mediaPool }: EditorTabProps) {
                   maxSize={BROWSER_WIDTH.max}
                   className="h-full min-h-0 overflow-hidden bg-surface"
                 >
-                  <EditBrowser mediaPool={mediaPool} />
+                  <EditBrowser mediaPool={mediaPool} tabRowEnd={browserActions} />
                 </ResizablePanel>
                 <ResizableHandle className="bg-divider" />
               </>

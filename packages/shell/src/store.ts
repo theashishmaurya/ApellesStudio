@@ -58,6 +58,13 @@ interface ShellStore {
    *  list was always shown before D-436. */
   sourcesFoldersOpen: boolean;
   setSourcesFoldersOpen: (open: boolean) => void;
+  /** v0.3.0 (B-359 item 3) — the Sources panel's selected bin (`null` = All
+   *  media). Session-only panel chrome, here rather than in the panel so the
+   *  Edit browser's tab-row Import button imports into the bin the grid is
+   *  showing, the way the panel's own Import always did. The panel resets it
+   *  when the project changes. */
+  sourcesActiveFolder: string | null;
+  setSourcesActiveFolder: (folder: string | null) => void;
   /** B-341 — whether the chrome bar's Agent activity popover is open.
    *  Session-only. Lives here, not in the app's agent store, so that
    *  `debug_ui_state` / `debug_set_popover_open` (which depend on the shell
@@ -77,6 +84,8 @@ export const useShellStore = create<ShellStore>((set) => ({
   setSourcesPanelOpen: (open) => set({ sourcesPanelOpen: open }),
   sourcesFoldersOpen: true,
   setSourcesFoldersOpen: (open) => set({ sourcesFoldersOpen: open }),
+  sourcesActiveFolder: null,
+  setSourcesActiveFolder: (folder) => set({ sourcesActiveFolder: folder }),
   agentActivityOpen: false,
   setAgentActivityOpen: (open) => set({ agentActivityOpen: open }),
 }));

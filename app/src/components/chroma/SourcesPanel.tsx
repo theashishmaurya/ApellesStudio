@@ -80,7 +80,7 @@ import { useMediaPoolStore } from '@apelles/bridge';
 import { CHROMA_MEDIA_DRAG_MIME, MediaThumbnail, mediaItemThumbnailProps } from '@apelles/editor';
 
 import { useSessionStore, type ProjectOpenDto } from '../../store/useSessionStore';
-import { pickClips } from './ProjectLauncher';
+import { useSourcesImport } from './SourcesImportButton';
 
 // D-436 — the folder list / media grid split (`@apelles/ui` resizable, the
 // standing resizable-panes rule). Percentages of the height under the folder
@@ -295,20 +295,31 @@ function FolderRow({
 
 // --- the panel ---------------------------------------------------------------
 
-export function SourcesPanel() {
+/** v0.3.0 (B-359 item 3) — where the panel sits.
+ *  - `'panel'` (default): the Motion / Colorist column, with its own
+ *    "SOURCES · Select · Import" header row.
+ *  - `'browser'`: the Edit browser's Sources tab, which has no such row: the
+ *    browser's tab row carries Import (`SourcesImportButton`), the "All media"
+ *    row carries the item count and the Select toggle, as the mockup's single
+ *    "All media · N items" row does, so the grid gets that row's height. */
+export type SourcesPanelVariant = 'panel' | 'browser';
+
+export function SourcesPanel({ variant = 'panel' }: { variant?: SourcesPanelVariant } = {}) {
   const projectOpen = useSessionStore((s) => !!s.projectPath || !!s.projectName);
   const items = useMediaPoolStore((s) => s.items);
   const folders = useMediaPoolStore((s) => s.folders);
   const loading = useMediaPoolStore((s) => s.loading);
   const refresh = useMediaPoolStore((s) => s.refresh);
-  const importPaths = useMediaPoolStore((s) => s.importPaths);
   const moveToFolder = useMediaPoolStore((s) => s.moveToFolder);
   const removeMedia = useMediaPoolStore((s) => s.removeMedia);
   const reprobeMedia = useMediaPoolStore((s) => s.reprobeMedia);
   const createFolder = useMediaPoolStore((s) => s.createFolder);
 
   const [search, setSearch] = useState('');
-  const [activeFolder, setActiveFolder] = useState<string | null>(null);
+  // v0.3.0 — in the shell store so the browser's tab-row Import imports into
+  // the bin shown here (`useSourcesImport`).
+  const activeFolder = useShellStore((s) => s.sourcesActiveFolder);
+  const setActiveFolder = useShellStore((s) => s.setSourcesActiveFolder);
   // D-436 — whether the bin list is expanded lives in the shell store (session
   // only, like every other piece of panel chrome there) so `debug_ui_state` /
   // `debug_set_popover_open {id: 'sources-folders'}` see and drive the very
@@ -338,7 +349,7 @@ export function SourcesPanel() {
       else next.add(path);
       return next;
     });
-  const [importing, setImporting] = useState(false);
+  const { importing, doImport } = useSourcesImport();
   const [addingId, setAddingId] = useState<string | null>(null);
   // B-073 — which row is mid-re-probe, so its action can show it is working.
   // A re-probe shells out to ffprobe; without this the card is silent for as
@@ -389,21 +400,6 @@ export function SourcesPanel() {
       return true;
     });
   }, [items, activeFolder, search]);
-
-  const doImport = async () => {
-    // D-292 — the media pool takes stills as first-class sources, so its picker
-    // offers them; the project-creation picker on the launcher screen does not
-    // (its paths become Colorist shots). See `pickClips`.
-    const paths = await pickClips({ stills: true });
-    if (!paths.length) return;
-    setImporting(true);
-    const res = await importPaths(paths, activeFolder ?? undefined);
-    setImporting(false);
-    if (!res.ok) toast.error(`Import failed: ${res.error}`);
-    else if (res.added && res.added.length < paths.length) {
-      toast.info(`${paths.length - res.added.length} clip(s) were already in the pool`);
-    }
-  };
 
   const doMove = async (id: string, folder: string) => {
     const res = await moveToFolder(id, folder);
@@ -531,17 +527,40 @@ export function SourcesPanel() {
             expandable
             rowProps={{ 'data-chroma-folders-header': '' }}
             trailing={
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setNewFolderParent(null);
-                }}
-                title="New folder"
-                aria-label="New folder"
-                className="size-5 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover"
-              >
-                <FolderPlusIcon className="size-3" />
-              </button>
+              <>
+                {/* v0.3.0 — the mockup's "All media · N items": what the grid
+                    below is showing, so the count follows the bin and search. */}
+                <span data-chroma-media-count className="shrink-0 px-1 text-[11px] tabular-nums text-text-secondary">
+                  {filtered.length} {filtered.length === 1 ? 'item' : 'items'}
+                </span>
+                {variant === 'browser' && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleSelecting();
+                    }}
+                    disabled={items.length === 0}
+                    title={selecting ? 'Done selecting' : 'Select media'}
+                    aria-label={selecting ? 'Done selecting' : 'Select media'}
+                    aria-pressed={selecting}
+                    data-testid="sources-select-toggle"
+                    className="size-5 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover aria-pressed:text-accent-text disabled:opacity-40"
+                  >
+                    <CheckSquareIcon className="size-3" />
+                  </button>
+                )}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setNewFolderParent(null);
+                  }}
+                  title="New folder"
+                  aria-label="New folder"
+                  className="size-5 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover"
+                >
+                  <FolderPlusIcon className="size-3" />
+                </button>
+              </>
             }
           >
             {tree.map((n) => (
@@ -715,24 +734,26 @@ export function SourcesPanel() {
   );
 
   return (
-    <div className="h-full w-full flex flex-col bg-surface text-text-primary">
-      <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-2 border-b border-border-color">
-        <span className="text-[11px] font-semibold tracking-wide text-text-secondary flex-1">
-          SOURCES
-        </span>
-        <Button
-          variant={selecting ? 'secondary' : 'ghost'}
-          size="xs"
-          onClick={toggleSelecting}
-          disabled={items.length === 0}
-          className="h-6 gap-1"
-        >
-          <CheckSquareIcon className="size-3" /> Select
-        </Button>
-        <Button variant="ghost" size="xs" onClick={doImport} disabled={importing} className="h-6 gap-1">
-          <PlusIcon className="size-3" /> Import
-        </Button>
-      </div>
+    <div className="h-full w-full flex flex-col bg-surface text-text-primary" data-chroma-sources-variant={variant}>
+      {variant === 'panel' && (
+        <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-2 border-b border-border-color">
+          <span className="text-[11px] font-semibold tracking-wide text-text-secondary flex-1">
+            SOURCES
+          </span>
+          <Button
+            variant={selecting ? 'secondary' : 'ghost'}
+            size="xs"
+            onClick={toggleSelecting}
+            disabled={items.length === 0}
+            className="h-6 gap-1"
+          >
+            <CheckSquareIcon className="size-3" /> Select
+          </Button>
+          <Button variant="ghost" size="xs" onClick={() => void doImport()} disabled={importing} className="h-6 gap-1">
+            <PlusIcon className="size-3" /> Import
+          </Button>
+        </div>
+      )}
 
       {selecting ? (
         // D-061: the bulk-action bar replaces the search box while

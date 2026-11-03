@@ -994,6 +994,23 @@ leftovers, closed against the approved mockup (owner: "loved the design",
 - Deviation: values stay in their stored units (Scale 1.12, Opacity 0.85)
   where the mockup shows percentages; display units are B-366's pass.
 
+**Browser header (B-359 item 3).**
+- `SourcesPanel` takes a `variant`: `'browser'` (the Edit browser's Sources
+  tab) drops the "SOURCES · Select · + Import" row; `'panel'` (the Motion /
+  Colorist column) keeps it. The Edit grid gains that row's ~37 px.
+- `+ Import` sits on the browser's tab row (`EditBrowser.tabRowEnd`, injected
+  by `Root.tsx` as `SourcesImportButton`). The word shows only when the row is
+  at least 300 px wide (a container query on the row), so the eight tabs stay
+  readable at the 220 px minimum; the icon and its tooltip are always there.
+- The "All media" root row carries "N items" (what the grid is showing, so it
+  follows the bin and the search) and, in the browser variant, the Select
+  toggle (`aria-pressed`), beside New folder.
+- The selected bin moved to `useShellStore.sourcesActiveFolder` so the tab-row
+  Import imports into the bin on screen; both Imports run one hook
+  (`useSourcesImport`).
+- Deviation: the folder tree (D-436, built after the mockup) stays, so "All
+  media · N items" is the tree's root row rather than a separate crumb row.
+
 ## 7. Human + AI parity
 
 Every new GUI capability gets its MCP surface in the same phase (standing rule):
