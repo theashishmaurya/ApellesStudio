@@ -761,22 +761,22 @@ pub fn render_timeline(
     }
 }
 
-/// D-448 — every graded clip's grade, baked before the first frame. The
-/// preview's per-frame lookup (`grade_lut::lut_for_clip`) shows a clip ungraded
-/// when its bake fails, which is the right degrade on screen and the wrong one
-/// in a file: here a failed bake refuses the render, naming the clip, instead
-/// of exporting it without its grade. Memoised, so a timeline whose grades the
-/// export pre-flight (`chroma_timeline_grade_luts`) already baked costs a
-/// cache lookup per clip.
+/// D-448 / D-450 — every graded clip's grade, read before the first frame.
+/// The preview's per-frame lookup (`grade_pass::grade_for_clip`) shows a clip
+/// ungraded when its grade cannot be read, which is the right degrade on
+/// screen and the wrong one in a file: here such a grade refuses the render,
+/// naming the clip, instead of exporting it without its grade. Memoised, so a
+/// timeline the Export panel's pre-flight (`chroma_timeline_grade_luts`)
+/// already checked costs a cache lookup per clip.
 fn grade_preflight(timeline: &Timeline) -> Result<(), String> {
     for track in &timeline.tracks {
         if !matches!(track.kind, apelles_timeline::TrackKind::Video) {
             continue;
         }
         for clip in track.clips.iter().filter(|c| !c.is_generated()) {
-            super::grade_lut::resolve_clip_lut(&clip.id, None).map_err(|e| {
+            super::grade_pass::resolve_clip_grade(&clip.id).map_err(|e| {
                 format!(
-                    "clip {}'s Colorist grade could not be baked, so it was not exported: {e}",
+                    "clip {}'s Colorist grade could not be read, so it was not exported: {e}",
                     clip.name
                 )
             })?;

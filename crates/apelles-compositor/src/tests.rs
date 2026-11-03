@@ -7,7 +7,6 @@
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use apelles_types::Lut3d;
 use apelles_types::adjustment::AdjustmentOps;
 use image::{Pixel as _, Rgba, RgbaImage};
 
@@ -40,7 +39,6 @@ fn layer(src: RgbaImage) -> Layer {
     let (w, h) = src.dimensions();
     Layer {
         source: Source::Rgba(Arc::new(src)),
-        lut: None,
         crop: (0, 0, w, h),
         size: (w, h),
         origin: (0.0, 0.0),
@@ -104,10 +102,9 @@ fn a_translucent_plate_blends_as_the_image_crate_does() {
 }
 
 #[test]
-fn an_identity_grade_and_an_identity_adjustment_change_nothing() {
+fn an_identity_adjustment_changes_nothing() {
     let src = texture(40, 30, false);
-    let mut l = layer(src.clone());
-    l.lut = Some(Arc::new(Lut3d::identity(17).unwrap()));
+    let l = layer(src.clone());
     let out = engine()
         .render(&plan(
             40,
@@ -183,37 +180,146 @@ fn the_adjustment_matches_its_cpu_definition_on_every_rgb_value() {
     }
 }
 
+/// A picture already on the device (D-450: a clip the Colorist's shader
+/// graded), handed over as a padded-stride buffer, is copied exactly, and
+/// [`Engine::read_gpu_image`] reads it back exactly, padding stripped.
 #[test]
-fn the_grade_matches_the_lattice_within_one_code_value() {
-    // A non-trivial lattice: a channel swap with a gamma, so every corner and
-    // every fraction is exercised.
-    let n = 9u32;
-    let mut data = Vec::new();
-    for b in 0..n {
-        for g in 0..n {
-            for r in 0..n {
-                let f = |v: u32| (v as f32 / (n - 1) as f32).powf(0.8);
-                data.extend_from_slice(&[f(g), f(b), f(r)]);
-            }
-        }
+fn a_gpu_source_with_a_padded_stride_is_copied_exactly() {
+    let src = texture(37, 21, true);
+    let row_pixels = 64u32; // 256 bytes: a texture-to-buffer copy's row
+    let mut padded = vec![0u8; (row_pixels * 21 * 4) as usize];
+    for y in 0..21usize {
+        let from = &src.as_raw()[y * 37 * 4..(y + 1) * 37 * 4];
+        padded[y * 256..y * 256 + 37 * 4].copy_from_slice(from);
     }
-    let lut = Arc::new(Lut3d::new(n, data).unwrap());
-    let src = Arc::new(texture(64, 64, false));
-    let out = engine().grade(&src, &lut).unwrap();
-    let mut worst = 0i32;
-    for (x, y, px) in out.enumerate_pixels() {
-        let s = src.get_pixel(x, y);
-        let want = lut.apply_rgb8([s[0], s[1], s[2]]);
-        for c in 0..3 {
-            worst = worst.max((i32::from(px[c]) - i32::from(want[c])).abs());
-        }
-        assert_eq!(px[3], s[3]);
+    let buffer = {
+        use wgpu::util::DeviceExt as _;
+        let (device, _) = engine().device_and_queue();
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("test gpu image"),
+            contents: &padded,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        })
+    };
+    let image = crate::GpuImage {
+        buffer,
+        width: 37,
+        height: 21,
+        row_pixels,
+    };
+    assert_eq!(engine().read_gpu_image(&image).unwrap(), src);
+    // Painted 1:1 and opaque, so source-over is a plain replace and the canvas
+    // must equal the picture (the translucent blend's own ±1 is pinned by
+    // `a_translucent_plate_blends_as_the_image_crate_does`).
+    let opaque = RgbaImage::from_fn(37, 21, |x, y| {
+        let p = src.get_pixel(x, y);
+        Rgba([p[0], p[1], p[2], 255])
+    });
+    let mut bytes = vec![0u8; (row_pixels * 21 * 4) as usize];
+    for y in 0..21usize {
+        bytes[y * 256..y * 256 + 37 * 4]
+            .copy_from_slice(&opaque.as_raw()[y * 37 * 4..(y + 1) * 37 * 4]);
     }
-    assert!(worst <= 1, "worst channel difference {worst}");
+    let buffer = {
+        use wgpu::util::DeviceExt as _;
+        let (device, _) = engine().device_and_queue();
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("test gpu image, opaque"),
+            contents: &bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        })
+    };
+    let mut l = layer(RgbaImage::new(1, 1));
+    l.source = Source::Gpu(crate::GpuImage {
+        buffer,
+        width: 37,
+        height: 21,
+        row_pixels,
+    });
+    l.crop = (0, 0, 37, 21);
+    l.size = (37, 21);
+    let out = engine()
+        .render(&plan(37, 21, vec![Step::Paint(l)]))
+        .unwrap();
+    assert_eq!(out, opaque);
+}
+
+/// The grade shader's input, filled on the GPU, is bit-identical to what the
+/// Colorist fills it with on the CPU (`image`'s `to_rgba32f`, then
+/// `half::f16::from_f32`), for every 8-bit value of every channel.
+#[test]
+fn the_half_float_input_matches_the_colorists_own_conversion() {
+    let (device, queue) = engine().device_and_queue();
+    let img = RgbaImage::from_fn(256, 4, |x, y| {
+        let v = x as u8;
+        Rgba([v, 255 - v, v ^ (y as u8 * 37), if y == 3 { v } else { 255 }])
+    });
+    let target = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("test f16"),
+        size: wgpu::Extent3d {
+            width: 256,
+            height: 4,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    for source in [
+        Source::Rgba(Arc::new(img.clone())),
+        Source::Rgb(Arc::new(
+            image::DynamicImage::ImageRgba8(img.clone()).to_rgb8(),
+        )),
+    ] {
+        let rgba = match &source {
+            Source::Rgb(rgb) => image::DynamicImage::ImageRgb8(rgb.as_ref().clone()).to_rgba8(),
+            _ => img.clone(),
+        };
+        engine().write_f16_texture(&source, &target).unwrap();
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("test f16 read"),
+            size: 256 * 4 * 8,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut enc = device.create_command_encoder(&Default::default());
+        enc.copy_texture_to_buffer(
+            target.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(256 * 8),
+                    rows_per_image: Some(4),
+                },
+            },
+            target.size(),
+        );
+        queue.submit(Some(enc.finish()));
+        let slice = staging.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(std::time::Duration::from_secs(20)),
+            })
+            .unwrap();
+        let got: Vec<u16> = bytemuck::cast_slice(&slice.get_mapped_range()).to_vec();
+        let want: Vec<u16> = image::DynamicImage::ImageRgba8(rgba)
+            .to_rgba32f()
+            .into_raw()
+            .into_iter()
+            .map(|f| half::f16::from_f32(f).to_bits())
+            .collect();
+        assert_eq!(got, want);
+    }
 }
 
 /// CLAUDE.md's render-path invariant on this engine: one plan exercising every
-/// kernel (grade, fused magnify with rounded corners, minify, rotation,
+/// kernel (fused magnify with rounded corners, minify, rotation,
 /// translucency, an adjustment), drawn repeatedly, gives identical bytes.
 #[test]
 fn a_frame_renders_to_the_same_bytes_every_time() {
@@ -222,7 +328,6 @@ fn a_frame_renders_to_the_same_bytes_every_time() {
     let mut back = layer(base);
     back.size = (640, 360);
     back.corner_radius = 24.0;
-    back.lut = Some(Arc::new(Lut3d::identity(17).unwrap()));
     let mut small = layer(pip.clone());
     small.crop = (20, 10, 380, 290);
     small.size = (200, 140);

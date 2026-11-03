@@ -26,20 +26,15 @@
 //! What it does NOT do: no `wgpu` — this module never opens a GPU device, and
 //!   the editor preview stays independent of the Colorist's `AppState`/GPU
 //!   render path. Still no transcript cut / OTIO export.
-//!   **"No colour grade" is no longer true, as of D-256**, and the way it stopped
-//!   being true is the point: a clip's saved Colorist grade
-//!   (`<project>/grades/<clip.id>.grade.json`) reaches this compositor as a
-//!   baked `apelles_types::Lut3d` — 3×33³ numbers that `chroma::grade_lut`
-//!   produced by running an identity lattice through the Colorist's own wgpu
-//!   pipeline once, memoised on the grade file's (mtime, len). So the grade
-//!   maths still has exactly one implementation (the shader), this module still
-//!   holds no GPU handle, and the ffmpeg exporter applies the very same lattice
-//!   via `lut3d`. `composite_video_frame` applies it to each clip's decoded
-//!   pixels before geometry; the single-layer fast path declines itself when a
-//!   clip is graded, the same way D-132 made it decline a real transform. A 3D
-//!   LUT is per-pixel, so the **spatial** half of a grade (masks/local layers,
-//!   the Colorist crop, relight) is not carried — stripped at bake time with a
-//!   logged warning, never silently.
+//!   **The colour grade** (D-256, D-450): a clip's saved Colorist grade
+//!   (`<project>/grades/<clip.id>.grade.json`) is run per frame by the
+//!   Colorist's own grade shader on the GPU render engine's device
+//!   (`chroma::grade_pass`), before any geometry, so the grade maths has exactly
+//!   one implementation and the Edit tab shows the Colorist's picture. This
+//!   module holds no GPU handle of its own; the single-layer fast path declines
+//!   itself when a clip is graded, the same way D-132 made it decline a real
+//!   transform. Masks, the Colorist crop / geometry and relight are not carried
+//!   yet (named in the grade's warnings, D-450).
 //!   **Transitions ARE here as of D-226** (roadmap item 27,
 //!   `docs/notes/transitions.md`): a `apelles_timeline::Transition` bridges a cut
 //!   without the two clips ever overlapping, so
@@ -103,7 +98,7 @@ use super::highlight_draw::apply_highlights_to_rgba;
 use super::highlight_draw::highlighted_picture;
 use super::state;
 use super::video::VideoInfo;
-use super::{caption_render, decode_pipe, grade_lut, project, text};
+use super::{caption_render, decode_pipe, grade_pass, project, text};
 
 // --------------------------------------------------------------------------- //
 // per-clip probe cache — moved out of this file into `apelles-media` (D-146,
@@ -1616,12 +1611,12 @@ pub(crate) fn render_timeline_frame_deferred(
                 // reason: the grade is a real transform of this clip's pixels
                 // that a raw decode cannot express, so a fast path that ignored
                 // it would show the ungraded picture while the document says the
-                // clip is graded. An UNGRADED clip (no grade file, or one that
-                // bakes to the identity — the overwhelmingly common case) still
+                // clip is graded. An UNGRADED clip (no grade file, or a grade
+                // that changes nothing — the overwhelmingly common case) still
                 // takes it, byte-identically to before, because
-                // `lut_for_clip` returns `None` for both and answers from its
-                // memo after the first frame.
-                && grade_lut::lut_for_clip(&clip.id).is_none()
+                // `grade_for_clip` returns `None` for both and answers from its
+                // memo after the first frame (D-450).
+                && grade_pass::grade_for_clip(&clip.id).is_none()
                 // D-396 — nor does a clip carrying highlights: they are drawn by
                 // the compositor on the decoded picture, which a plain decode
                 // does not run.
@@ -1770,7 +1765,6 @@ fn caption_steps(
             let layer = caption_render::render_caption_layer(cap.cue, &cap.style, w, h, time)?;
             Ok(apelles_compositor::Step::Paint(apelles_compositor::Layer {
                 source: apelles_compositor::Source::Rgba(layer),
-                lut: None,
                 crop: (0, 0, w, h),
                 size: (w, h),
                 origin: (0.0, 0.0),
@@ -2720,11 +2714,6 @@ fn composite_video_frame(
             /// uploading it every frame; a decoded video frame is owned
             /// outright and uploaded once.
             img: apelles_compositor::Source,
-            /// D-256 — the clip's baked Colorist grade, applied by the engine
-            /// to the layer's own pixels before any geometry. `None` for an
-            /// ungraded clip, and for a clip whose grade was already applied
-            /// because its highlights are drawn on the graded picture.
-            lut: Option<Arc<apelles_types::Lut3d>>,
             transform: ClipTransform,
             /// This layer's full-frame footprint on the canvas at
             /// `scale == 1.0`, in canvas pixels — its source size mapped
@@ -2761,7 +2750,6 @@ fn composite_video_frame(
                     height: canvas_h,
                     rgba: [r, g, b, 255],
                 },
-                lut: None,
                 transform: plate_transform(layer.alpha),
                 natural: (canvas_w as f64, canvas_h as f64),
             }));
@@ -2800,7 +2788,6 @@ fn composite_video_frame(
                 img: apelles_compositor::Source::Rgba(text::render_text_layer(
                     text_layer, canvas_w, canvas_h,
                 )?),
-                lut: None,
                 // No `scaled_to_render` (D-344): a text clip's radius is pinned
                 // to zero by `resolve_text_clip_transform`, and zero is
                 // scale-invariant — stating the conversion here would only
@@ -2829,37 +2816,39 @@ fn composite_video_frame(
             (*source_frame).max(0) as u64,
             max_long_edge,
         )?;
-        // D-256 — **the Colorist grade.** On this clip's own decoded pixels,
+        // D-450 — **the Colorist grade.** On this clip's own decoded pixels,
         // before any geometry, because that is what a grade is: a property of
-        // the clip's picture, not of where it sits in the composition. Since
-        // D-449 the GPU engine applies it as the first thing it does to the
-        // layer (`Step::Paint::lut`), from the lattice the Colorist's own shader
-        // baked.
+        // the clip's picture, not of where it sits in the composition. Run by
+        // the Colorist's own shader on the engine's device (`grade_pass`), so
+        // the layer the engine paints is the picture the Colorist shows, and it
+        // never leaves the GPU.
         //
         // Costs a memo lookup + one `metadata()` stat per layer per frame for
-        // an ungraded clip, and nothing else — `lut_for_clip` returns `None`
+        // an ungraded clip, and nothing else — `grade_for_clip` returns `None`
         // before touching the GPU when there is no grade file, which is every
         // clip in every project that has never been near the Colorist tab.
-        let mut lut = grade_lut::lut_for_clip(&clip.id);
-        // D-396 — **the clip's highlighter strokes**, drawn on the decoded
-        // picture after the grade and before any geometry, so they follow every
-        // crop, push-in and rotation. Strokes are drawn on the CPU (they are
-        // rasterised like a title), so a highlighted clip is graded first, on
-        // the GPU, and handed to the paint walk already graded. A clip with no
-        // highlights costs one empty-slice check.
+        if let Some(grade) = grade_pass::grade_for_clip(&clip.id) {
+            img = grade_pass::grade_source(&img, &grade)?;
+        }
+        // D-396 — **the clip's highlighter strokes**, drawn on the graded
+        // picture before any geometry, so they follow every crop, push-in and
+        // rotation. Strokes are drawn on the CPU (they are rasterised like a
+        // title), so a graded clip with highlights is the one case that reads
+        // its graded picture back. A clip with no highlights costs one
+        // empty-slice check.
         if !clip.highlights.is_empty() {
             let mut rgba = match img {
                 apelles_compositor::Source::Rgba(a) => a,
                 apelles_compositor::Source::Rgb(rgb) => {
                     Arc::new(DynamicImage::ImageRgb8(Arc::unwrap_or_clone(rgb)).into_rgba8())
                 }
+                apelles_compositor::Source::Gpu(g) => Arc::new(super::gpu_compositor::settle(
+                    super::gpu_compositor::engine()?.read_gpu_image(&g),
+                )?),
                 apelles_compositor::Source::Solid { .. } => {
                     unreachable!("a decoded clip is never a plate")
                 }
             };
-            if let Some(l) = lut.take() {
-                rgba = Arc::new(super::gpu_compositor::grade(&rgba, &l)?);
-            }
             highlighted_picture(&clip.id, &mut rgba, &clip.highlights, *source_frame);
             img = apelles_compositor::Source::Rgba(rgba);
         }
@@ -2884,7 +2873,6 @@ fn composite_video_frame(
         );
         Ok(Some(Step::Paint {
             img,
-            lut,
             // D-344 — `corner_radius` is the one geometry field authored in
             // OUTPUT pixels rather than as a ratio, so it is the one that has
             // to ride `render_scale` explicitly; see
@@ -2966,11 +2954,9 @@ fn composite_video_frame(
         .filter_map(|step| match step {
             Step::Paint {
                 img,
-                lut,
                 transform,
                 natural,
-            } => paint_layer(img, lut, &transform, natural, canvas)
-                .map(apelles_compositor::Step::Paint),
+            } => paint_layer(img, &transform, natural, canvas).map(apelles_compositor::Step::Paint),
             Step::Adjust(ops) => Some(apelles_compositor::Step::Adjust(ops)),
         })
         .collect();
@@ -2999,7 +2985,6 @@ fn composite_video_frame(
 /// cropped away entirely.
 fn paint_layer(
     source: apelles_compositor::Source,
-    lut: Option<Arc<apelles_types::Lut3d>>,
     t: &ClipTransform,
     natural: (f64, f64),
     canvas: (u32, u32),
@@ -3015,7 +3000,6 @@ fn paint_layer(
     let (cw, ch) = canvas;
     Some(apelles_compositor::Layer {
         source,
-        lut,
         crop,
         size,
         origin: (t.position_x * cw as f64, t.position_y * ch as f64),
@@ -3154,7 +3138,7 @@ pub(super) fn composite_layer_onto(
     natural: (f64, f64),
 ) -> Result<(), String> {
     let (cw, ch) = canvas.dimensions();
-    let Some(layer) = paint_layer(layer, None, t, natural, (cw, ch)) else {
+    let Some(layer) = paint_layer(layer, t, natural, (cw, ch)) else {
         return Ok(()); // fully transparent or cropped away: nothing to paint
     };
     let plan = apelles_compositor::FramePlan {
@@ -7279,7 +7263,8 @@ mod preview_adjustment_tests {
     }
 }
 
-/// **D-256 — the Colorist grade really reaches the Edit preview.**
+/// **D-256 / D-450 — the Colorist grade really reaches the Edit preview** (since
+/// D-450 through the Colorist's own shader, run per frame by `grade_pass`).
 ///
 /// The claim this decision makes is a pixel claim, so it is checked as one: the
 /// same clip, at the same timeline position, through the real `timeline_frame`
@@ -7294,8 +7279,8 @@ mod preview_adjustment_tests {
 /// 2. **An identity grade changes NOTHING, byte for byte** — the control, and
 ///    the reason assertion 1 is a measurement of the *grade* rather than of the
 ///    mere presence of a grade file flipping the compositor onto a different
-///    code path (which it does: see `single_plain`). A build that applied any
-///    lattice, identity included, fails here.
+///    code path (which it does: see `single_plain`). A build that ran any
+///    no-op grade through the shader fails here.
 /// 3. **The same document renders the same bytes twice** — CLAUDE.md's
 ///    render-path invariant, on the new path.
 /// 4. **A grade belongs to its own clip id only** — the D-070 link, checked
@@ -7308,7 +7293,7 @@ mod grade_bridge_tests {
     use apelles_timeline::{Clip, Timeline, Track, TrackKind};
 
     use super::super::PROJECT_STATE_LOCK;
-    use super::grade_lut;
+    use super::grade_pass;
 
     const W: u32 = 320;
     const H: u32 = 180;
@@ -7401,7 +7386,7 @@ mod grade_bridge_tests {
 
     /// Write clip `A`'s grade document, exactly as `chroma_save_grade` would.
     fn write_grade(project_dir: &std::path::Path, adjustments: serde_json::Value) {
-        let path = grade_lut::grade_file_for(project_dir, "A");
+        let path = grade_pass::grade_file_for(project_dir, "A");
         std::fs::write(
             &path,
             serde_json::to_string(&serde_json::json!({
@@ -7415,7 +7400,7 @@ mod grade_bridge_tests {
         .expect("write grade");
         // The memo is keyed on (mtime, len); two writes inside one filesystem
         // timestamp tick could otherwise look unchanged. Explicit, not hopeful.
-        grade_lut::clear_cache();
+        grade_pass::clear_cache();
     }
 
     fn project_dir() -> std::path::PathBuf {
@@ -7461,11 +7446,11 @@ mod grade_bridge_tests {
             return;
         }
         if !have_gpu() {
-            eprintln!("skip: no GPU adapter, cannot bake a grade");
+            eprintln!("skip: no GPU adapter, cannot run a grade");
             return;
         }
         let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        grade_lut::clear_cache();
+        grade_pass::clear_cache();
 
         let tmp = tempfile::tempdir().expect("tempdir");
         let clip = tmp.path().join("grey.mp4");
@@ -7481,17 +7466,17 @@ mod grade_bridge_tests {
         );
 
         // --- 2. the CONTROL: an identity grade must change nothing ---------
-        // Byte-identical, not merely close: an identity grade resolves to NO
-        // lattice at all (`Lut3d::is_identity`), so the frame must take the very
-        // same code path and produce the very same bytes as having no grade file
-        // at all. This is what makes assertion 3 a measurement of the grade
+        // Byte-identical, not merely close: a grade that changes nothing
+        // resolves to no grade at all (`grade_pass::resolve`), so the frame must
+        // take the very same code path and produce the very same bytes as having
+        // no grade file at all. This is what makes assertion 3 a measurement of the grade
         // rather than of the compositor path having changed underneath it.
         write_grade(&dir, serde_json::json!({}));
         let (identity_px, identity) = preview(12);
         assert_eq!(
             (identity_px, identity),
             (plain_px, plain),
-            "an identity grade changed the preview — the bridge applied a lattice \
+            "an identity grade changed the preview — the grade pass ran a grade \
              it should have recognised as a no-op"
         );
 
@@ -7537,11 +7522,11 @@ mod grade_bridge_tests {
             return;
         }
         if !have_gpu() {
-            eprintln!("skip: no GPU adapter, cannot bake a grade");
+            eprintln!("skip: no GPU adapter, cannot run a grade");
             return;
         }
         let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        grade_lut::clear_cache();
+        grade_pass::clear_cache();
 
         let tmp = tempfile::tempdir().expect("tempdir");
         let clip = tmp.path().join("grey.mp4");
@@ -7551,7 +7536,7 @@ mod grade_bridge_tests {
 
         let plain = preview(12);
         std::fs::write(
-            grade_lut::grade_file_for(&dir, "SOME-OTHER-CLIP"),
+            grade_pass::grade_file_for(&dir, "SOME-OTHER-CLIP"),
             serde_json::to_string(&serde_json::json!({
                 "schema": "chroma.grade/1",
                 "adjustments": { "exposure": 1.5 },
@@ -7559,7 +7544,7 @@ mod grade_bridge_tests {
             .expect("serialise"),
         )
         .expect("write grade");
-        grade_lut::clear_cache();
+        grade_pass::clear_cache();
 
         assert_eq!(
             preview(12),
@@ -7576,11 +7561,11 @@ mod grade_bridge_tests {
     #[test]
     fn the_export_grade_check_lists_only_really_graded_clips() {
         if !have_gpu() {
-            eprintln!("skip: no GPU adapter, cannot bake a grade");
+            eprintln!("skip: no GPU adapter, cannot run a grade");
             return;
         }
         let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        grade_lut::clear_cache();
+        grade_pass::clear_cache();
 
         let tmp = tempfile::tempdir().expect("tempdir");
         let clip = tmp.path().join("grey.mp4");
@@ -7590,18 +7575,18 @@ mod grade_bridge_tests {
         let dir = project_dir();
         let ids = vec!["A".to_string()];
 
-        let none = grade_lut::check_clip_grades(&ids).expect("check (ungraded)");
+        let none = grade_pass::check_clip_grades(&ids).expect("check (ungraded)");
         assert!(none.graded.is_empty() && none.warnings.is_empty());
 
         write_grade(&dir, serde_json::json!({}));
-        let identity = grade_lut::check_clip_grades(&ids).expect("check (identity)");
+        let identity = grade_pass::check_clip_grades(&ids).expect("check (identity)");
         assert!(
             identity.graded.is_empty(),
             "an identity grade grades nothing"
         );
 
         write_grade(&dir, serde_json::json!({ "exposure": 1.5 }));
-        let graded = grade_lut::check_clip_grades(&ids).expect("check (graded)");
+        let graded = grade_pass::check_clip_grades(&ids).expect("check (graded)");
         assert_eq!(graded.graded, ids);
         assert!(
             !dir.join("cache").join("grade-luts").exists(),
@@ -7617,11 +7602,11 @@ mod grade_bridge_tests {
     #[test]
     fn a_masked_grade_exports_its_primary_and_warns() {
         if !have_gpu() {
-            eprintln!("skip: no GPU adapter, cannot bake a grade");
+            eprintln!("skip: no GPU adapter, cannot run a grade");
             return;
         }
         let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        grade_lut::clear_cache();
+        grade_pass::clear_cache();
 
         let tmp = tempfile::tempdir().expect("tempdir");
         let clip = tmp.path().join("grey.mp4");
@@ -7636,7 +7621,7 @@ mod grade_bridge_tests {
                 "masks": [{ "visible": true, "adjustments": { "exposure": -2.0 } }],
             }),
         );
-        let baked = grade_lut::check_clip_grades(&["A".to_string()]).expect("bake");
+        let baked = grade_pass::check_clip_grades(&["A".to_string()]).expect("bake");
         assert!(
             baked.graded.iter().any(|c| c == "A"),
             "the primary must still export"
@@ -7645,7 +7630,7 @@ mod grade_bridge_tests {
             baked
                 .warnings
                 .iter()
-                .any(|w| w.contains("clip A") && w.contains("mask layer")),
+                .any(|w| w.contains("clip A") && w.contains("masked / local layer")),
             "a dropped mask must be reported to the user, not only logged: {:?}",
             baked.warnings
         );

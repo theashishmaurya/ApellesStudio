@@ -63,8 +63,8 @@ import {
 // D-236 — a clip's own persisted speed ramp, which clashes with a transition
 // for exactly the reason an export-time flat override does.
 import { hasSpeedRamp } from './speedRamp';
-// D-256 — each graded clip's Colorist grade: baked (and any part a LUT cannot
-// carry named) before the export is queued.
+// D-256 / D-450 — each graded clip's Colorist grade: read (and any part not
+// carried yet named) before the export is queued.
 import { warmGradeLuts } from './gradeLuts';
 // B-208/D-353 — the composition size every clip's source footprint is
 // normalised against, warmed the same way the three caches above are.
@@ -486,8 +486,8 @@ export async function prepareEditorExport(
   // answer has to be in memory before it runs. Keyed by the timeline being
   // exported.
   const comp = await warmCompositionSize(resolved.timelineId);
-  // D-256 — and each graded clip's baked Colorist grade, for the identical
-  // reason. Throws on a bake failure rather than exporting an ungraded file;
+  // D-256 — and each graded clip's Colorist grade, for the identical
+  // reason. Throws on an unreadable grade rather than exporting an ungraded file;
   // caught here so an MCP `editor_export` gets a real message instead of an
   // unhandled rejection.
   let gradeWarnings: string[];

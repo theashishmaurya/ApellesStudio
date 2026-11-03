@@ -246,8 +246,9 @@ layers (z-order, keyframes, fades, transitions, crop and placement in pixels —
 as a **binary IPC payload**, not base64 (D-217). The same engine paints the export's frames
 and the Colorist's framed clip, so preview and export are one picture, the way Final Cut
 Pro, Resolve and Premiere run one engine for both. There is no CPU compositor and no
-fallback. A clip's Colorist grade reaches it as the baked lattice (D-256), not as the
-Colorist's per-frame shader; the two tabs still run separate grade passes.
+fallback. A clip's Colorist grade is run by the Colorist's own shader on the engine's
+device, per frame, before the clip's geometry (D-450), so a graded clip in the Edit tab is
+the Colorist's picture bit for bit.
 
 **How that frame reaches the screen is still the old way, and its replacement is prototyped
 (D-451).** Today the engine's frame is read back to the CPU, JPEG-encoded, sent over IPC and
@@ -371,21 +372,17 @@ through the same top-wins resolver (`resolve_active_clip_index` / `top_wins_clip
 didn't appear in the Colorist at all — and the investigation found a **four**-way identity
 split, not the two-list one it looked like (`docs/notes/unified-clip-model.md`).
 
-The two **render paths** are still two engines — Edit composites on the CPU, Colorist grades
-on the GPU — but as of **D-256 they are no longer disconnected**: a clip's saved Colorist
-grade is baked once into a 33³ 3D LUT (an identity lattice run through the Colorist's own
-wgpu pipeline) and that lattice is applied by the Edit preview's CPU compositor *and* by the
-ffmpeg export's `lut3d` filter, so a grade you set in Colorist shows on the Edit timeline and
-lands in the exported file. Measured equal, not approximately: the same clip renders the same
-graded pixel through both engines. The grade maths still has exactly one implementation (the
-shader) — what crosses the boundary is numbers, not code.
+The **grade crosses into the Edit tab as the shader itself** (D-450; D-256 first did it as
+a baked 33³ lattice, which could not carry anything that reads a pixel's neighbours). The
+engine and the Colorist's `GpuProcessor` share one wgpu device; `chroma::grade_pass` runs a
+graded clip's decoded frame through the shader on the GPU and hands its output to the engine
+as a `Source::Gpu` buffer, so the preview and the export paint the Colorist's own picture,
+with one implementation of the grade maths.
 
-The limit is the one a 3D LUT inherently has: it carries the **global** grade only. The
-spatial half — mask/local layers, the Colorist crop, depth relight — is not representable and
-is dropped with a warning (surfaced in the Export dialog and by `editor_get_grade_status`),
-never silently. Carrying that half means running the grade shader itself inside the GPU
-engine (`apelles-grade` rendering into `apelles-compositor`'s device, D-449 §15.7), which is
-what remains of roadmap item 8.
+Not carried yet: mask/local layers and depth relight (they read the process-global current
+frame, which the parallel export and the preview cannot share), and the Colorist crop /
+rotation. They are named per clip in the Export dialog and by `editor_get_grade_status`,
+never silently dropped; carrying them is the next step (`docs/notes/native-grade-pass.md`).
 
 ### `grade.json` (D-025)
 
@@ -529,8 +526,8 @@ real headline gaps as of 2026-09-08, in rough order of how much they shape the a
 
 1. ~~**`apelles-compositor` — the GPU compositor.**~~ **Built 2026-11-03 as D-449**: the one
    GPU engine for the preview and the export, no CPU fallback (`docs/notes/
-   export-gpu-compositor.md` §15). What it still lacks is the grade shader running inside it
-   (the grade arrives as a baked lattice; §15.7).
+   export-gpu-compositor.md` §15). The grade shader runs on its device since D-450; masks,
+   the Colorist crop and relight are not carried yet.
 2. **Motion's missing MCP wrappers.** 18 real ops, zero reachable tools — see above.
 3. **`apelles-grade`** — the grade renderer is still `app/`-side, so `apelles-app` cannot go
    thin and the fork cannot shrink to "grade shader + mask raster" the way D-039 intends.

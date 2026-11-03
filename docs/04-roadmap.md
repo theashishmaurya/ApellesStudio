@@ -1024,7 +1024,9 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    render path, and the practical consequence was that a grade set in
    Colorist had literally no effect on that same clip in Edit — the Edit
    compositor never read a grade at all (`chroma/edit.rs` had zero
-   references to one). Fixed by **baking, not by a second renderer**: an
+   references to one). *(The lattice below was replaced on 2026-11-04 by
+   D-450: the Colorist's own shader runs per frame in the GPU engine.)*
+   Fixed by **baking, not by a second renderer**: an
    identity 33³ RGB lattice is run through the Colorist's own wgpu pipeline
    once per grade change (`chroma::grade_lut`, memoised on the grade file's
    mtime), and that lattice is applied by the Edit preview's CPU compositor

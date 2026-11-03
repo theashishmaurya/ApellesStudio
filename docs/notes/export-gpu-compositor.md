@@ -1539,6 +1539,10 @@ upload copy (40.4 GB / 960 frames ≈ 42 MB, inside the 17 ms of record + upload
 
 ## 15.7 Grading
 
+**Superseded 2026-11-04 by D-450** (`docs/notes/native-grade-pass.md`): the Colorist's own shader now runs
+per frame on the engine's device and the lattice path below is deleted; a graded engine frame is the
+Colorist's render bit for bit. This section records what was measured before.
+
 The Colorist grade reaches the engine as the 33³ lattice the Colorist's own shader baked (D-256), applied
 on the GPU with `apply_rgb8`'s arithmetic. Measured on a graded 1280×720 frame (exposure, contrast,
 highlights, shadows, saturation, temperature, tint):

@@ -228,6 +228,30 @@ pub fn adjust_tables(ops: &AdjustmentOps) -> AdjustTables {
     AdjustTables { stage1, stage2 }
 }
 
+/// For each 8-bit value `v`, the half-float nearest to `v / 255` (rounded to
+/// nearest even), as an `f32` that holds it exactly: the value the Colorist
+/// fills its grade shader's input with (`image`'s `to_rgba32f`, then
+/// `half::f16::from_f32`). `to_f16.wgsl` looks these up rather than relying on
+/// the GPU's own float-to-half store, which truncates on Apple silicon.
+///
+/// Every non-zero `v / 255` is at least 1/255, inside half's normal range, so
+/// rounding the f32 to 10 mantissa bits (half's precision) with
+/// round-half-to-even on the bit pattern is exact.
+pub fn half_of_u8() -> [f32; 256] {
+    let mut out = [0f32; 256];
+    for (v, slot) in out.iter_mut().enumerate() {
+        let x = v as f32 / 255.0;
+        if x == 0.0 {
+            continue;
+        }
+        let bits = x.to_bits();
+        let lsb = (bits >> 13) & 1;
+        let rounded = (bits + 0xFFF + lsb) & !0x1FFF;
+        *slot = f32::from_bits(rounded);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,13 +264,21 @@ mod tests {
                 height: crop.3,
                 rgba: [0, 0, 0, 255],
             },
-            lut: None,
             crop,
             size,
             origin,
             opacity: 1.0,
             corner_radius: 0.0,
             rotation_deg: 0.0,
+        }
+    }
+
+    #[test]
+    fn half_of_u8_is_the_colorists_own_f16_conversion() {
+        let table = half_of_u8();
+        for v in 0..256u32 {
+            let want = half::f16::from_f32(v as f32 / 255.0).to_f32();
+            assert_eq!(table[v as usize].to_bits(), want.to_bits(), "v = {v}");
         }
     }
 

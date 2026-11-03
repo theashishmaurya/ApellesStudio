@@ -10,8 +10,7 @@
 //! **What it does:** takes a [`FramePlan`] — a canvas and an ordered list of
 //! picture layers and adjustment operators, already resolved for one frame in
 //! canvas pixels — and returns the finished RGBA8 frame. Per layer, in the CPU
-//! compositor's order (which it replaces, D-449): the clip's baked Colorist
-//! grade (a [`apelles_types::Lut3d`], D-256) → crop → resample into the
+//! compositor's order (which it replaces, D-449): crop → resample into the
 //! placement box (bilinear when magnifying, the `image` crate's separable
 //! Triangle filter when minifying) → rounded corners (D-344) → rotation about
 //! the box's centre → opacity → source-over. Adjustment clips (D-230) apply to
@@ -20,19 +19,21 @@
 //! **What it does NOT do:** decode video, rasterise titles or captions, resolve
 //! a timeline, keyframes, fades or transitions (the caller, `app/src-tauri`'s
 //! `chroma::edit`, owns all of that and the geometry maths, so it keeps one
-//! implementation), or run the Colorist's full grade shader per frame (the
-//! grade arrives as the lattice that shader baked, D-256). There is no CPU
-//! fallback: a GPU problem is an error (D-449).
+//! implementation), or grade a clip: the Colorist's own grade shader does
+//! that on the same device first (D-450), and its result arrives as a
+//! [`Source::Gpu`] with no CPU read-back; [`Engine::write_f16_texture`] fills
+//! that shader's input. There is no CPU fallback: a GPU problem is an error
+//! (D-449).
 //!
 //! **Layer:** L1. Depends on `apelles-gpu` (the device) and `apelles-types`
-//! (`Lut3d`, `AdjustmentOps`) only — no timeline, no media, no app types.
+//! (`AdjustmentOps`) only — no timeline, no media, no app types.
 
 mod engine;
 mod plan;
 pub mod tables;
 
 pub use engine::{ComposeError, Engine, EngineStats, GPU_TIMEOUT, PendingFrame};
-pub use plan::{Background, FramePlan, Layer, Source, Step};
+pub use plan::{Background, FramePlan, GpuImage, Layer, Source, Step};
 
 #[cfg(test)]
 mod tests;

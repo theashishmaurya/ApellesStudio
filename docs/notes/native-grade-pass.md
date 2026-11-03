@@ -1,7 +1,8 @@
 # The Colorist grade as a native pass of the GPU render engine (D-450, B-381)
 
-**Status (2026-11-04):** part 1 (the grade shader made faster, bit-identical) is built; part 2 (the
-grade run natively on the engine's device, the LUT path deleted) is in progress on the same branch.
+**Status (2026-11-04):** both parts built: the grade shader made faster, bit-identical (part 1), and the
+grade run natively on the engine's device with the LUT path deleted (part 2). A faster large-radius blur
+(d) is held for the owner. Masks, the Colorist crop / geometry and relight are the next step.
 **Decision:** `docs/08-decisions.md` D-450. **Bug:** B-381. **Engine:** D-449
 (`docs/notes/export-gpu-compositor.md` §15).
 
@@ -81,3 +82,84 @@ Every remaining large term changes pixels: a separable Gaussian with weights com
 tap, a downsampled blur for radii past a few tens of pixels, or the hardware-filtered two-taps-per-fetch
 trick. Each would change the look of every existing grade that uses structure, glow or dehaze, in the
 Colorist too, so it is held for the owner with its measured gain and pixel tolerance.
+
+What (d) would buy, from the part 2 measurements below: a neighbourhood grade costs 416 ms a frame at 4K
+against 195 ms for a local-tone one, so the clarity and structure blurs are about 220 ms of it; a downsampled
+large blur would take most of that. Its pixel tolerance has not been measured (it needs the prototype), so
+it is quoted here as an upper bound on the gain only.
+
+## Part 2 — the grade as a native pass of the engine
+
+**One device.** `gpu_compositor::RenderDevice` opens the Colorist's `GpuContext` and builds the engine on
+the same `wgpu::Device` (`Engine::with_device`), so the grade shader's output never leaves the GPU.
+
+**Per graded clip and frame** (`grade_pass::grade_source`, called from `edit::step_for` before any
+geometry):
+
+1. `Engine::write_f16_texture` writes the decoded frame into the shader's `Rgba16Float` input on the GPU.
+   The Colorist converts u8 → f32 → f16 on the CPU with round-to-nearest-even; Metal's `textureStore`
+   truncates, so the kernel looks the value up in a 256-entry table computed on the CPU with the same
+   rounding (`tables::half_of_u8`). Tested bit-identical for all 256 values against the `half` crate.
+2. `GpuProcessor::run(.., skip_cpu_readback, output_to_display)` runs the shader into its
+   `working_texture`.
+3. One `copy_texture_to_buffer` into a fresh buffer (rows padded to 256 bytes), handed to the plan as
+   `Source::Gpu(GpuImage { buffer, width, height, row_pixels })` and painted like any other layer.
+
+The processor is kept on the device behind a lock and rebuilt only when a larger frame arrives (sizes
+rounded up to 256); the last three input textures are kept by size. A clip with highlighter strokes is the
+one case that reads its graded picture back (`Engine::read_gpu_image`), because strokes are drawn on the
+CPU.
+
+**What the grade is.** `grade_pass::resolve` reads the grade document through
+`apelles_grade_model::load_grade`, strips masks and relight lights, parses the applied `.cube`, and
+resolves `AllAdjustments` exactly as the Colorist does. A grade whose adjustments equal an empty
+document's and has no `.cube` is no grade at all, so an ungraded or reset clip keeps the plain-decode fast
+path, byte-identical to having no grade file. Memoised on the grade file's (mtime, len), so a frame of an
+ungraded clip costs one `metadata()` call.
+
+**Deleted:** the engine's LUT step and the `prepare` kernel's trilinear lookup, `Layer::lut`,
+`grade_lut`'s per-clip cache, `lut_for_clip`, `resolve_clip_lut` and its pre-flight (now
+`grade_pass::check_clip_grades`, behind the same `chroma_timeline_grade_luts` command), and their tests.
+`grade_lut` keeps the Colorist's "bake this grade to a `.cube`" export.
+
+### Measured
+
+`a_natively_graded_frame_is_the_colorist_render`: the four reference grades at 1920×1080, 3840×2160 and
+1283×721, through `grade_source` and an engine frame, against `GpuProcessor`'s own Colorist render of the
+same picture: **0 pixels differ in all twelve cases** (PSNR ∞, SSIM 1). For comparison the lattice measured
+49.2 dB, max 20 on a 720p graded frame (D-449 §15.7) and about 20 dB on real footage (B-381).
+
+`a_graded_frame_hashes_the_same_every_time`: a graded base, a graded rounded, minified, rotated PIP and a
+translucent title, drawn five times: identical bytes (hash `1561c0e1b632adf5` on this machine).
+
+`measure_a_natively_graded_frame` (ignored; best of 10, upload of the decoded frame and read-back of the
+finished frame included, which is what an export pays; load average about 14–35):
+
+| grade | 1080p | 4K |
+|---|---|---|
+| exposure only | 34.2 ms | 179 ms |
+| local tone | 38.6 ms | 195 ms |
+| neighbourhood | 60.1 ms | 416 ms |
+| everything | 89.6 ms | 453 ms |
+
+So a graded 4K clip does not fit a 33 ms real-time budget, and a graded 1080p clip is close only for a
+simple grade. The lattice frame cost 7 / 23 ms but was not the Colorist's picture. The preview draws at its
+own, smaller size, where the shader's cost falls with the pixel count. The remaining large terms are the
+main pass and the structure blur: (d) above, and the main pass itself, are where further speed is.
+
+**The warm cast** (B-381) came from the lattice. The native frame is the Colorist's render bit for bit, so
+it cannot recur on this path. Not re-checked on the owner's real footage: this wave used synthetic
+pictures only.
+
+## Next: masks, the Colorist crop and geometry, relight
+
+Not carried yet; the Export panel and `editor_get_grade_status` name them per clip (`not_carried`).
+
+- **Masks and relight** read process-global current-frame state: `chroma::state::current_video().frame`,
+  set by `set_current_frame`, picks a tracked mask's keyframe and the relight depth map. The parallel
+  export segments and the live preview cannot share one global frame. The change they need: the frame
+  index (and the depth map for that frame) passed in as part of the clip's grade inputs, and the mask
+  bitmaps rasterised per frame from the grade document, so `grade_source` takes `(source, grade, frame)`.
+- **The Colorist crop, rotation and flips** are a framing, not a colour: applying them inside the grade
+  would change the clip's framing on the timeline. They need a decision on how a Colorist crop composes with
+  the Edit transform before they are carried.
