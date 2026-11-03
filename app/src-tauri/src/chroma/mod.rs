@@ -184,6 +184,7 @@ pub mod filmstrip;
 pub mod gpu_compositor;
 pub mod grade;
 pub mod grade_lut;
+pub mod grade_pass;
 pub mod highlight_draw;
 pub mod keyframes;
 pub mod load;

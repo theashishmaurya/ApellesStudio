@@ -703,12 +703,104 @@ pub struct GpuProcessor {
     pub working_texture_view: wgpu::TextureView,
     pub output_texture: wgpu::Texture,
     pub output_texture_view: wgpu::TextureView,
+
+    /// The tile edge this processor's tile textures were sized for
+    /// ([`tile_size_for`]); `run` must walk tiles of exactly this size.
+    tile_size: u32,
 }
 
 const FLARE_MAP_SIZE: u32 = 512;
 
+/// D-450 — which of the four blurs the main pass will actually read for this
+/// grade. A blur nobody reads is not run; the main pass then reads the dummy
+/// texture in its place and discards the value, so the output is the same bit
+/// for bit (`chroma::grade_pass`'s reference test holds it to that).
+///
+/// Each condition is the exact guard of the operators that read that blur in
+/// `shaders/shader.wgsl`, applied to the totals they are guarded on. With no
+/// mask those totals are the global values; a mask adds its own amounts to
+/// every total, so any mask runs all four (the mask defocus reads the
+/// structure blur too).
+///
+/// | blur | read by | guard in the shader |
+/// |---|---|---|
+/// | sharpness | `apply_sharpen` | `abs(sharpness) >= 0.0005` |
+/// | tonal | `apply_sharpen`, the shadows / blacks lift of `apply_tonal_adjustments`, `apply_highlights_adjustment` | that guard; `shadows != 0 \|\| blacks != 0`; `highlights != 0` |
+/// | clarity | clarity (`apply_local_contrast`), `apply_centre_local_contrast`, `apply_halation` | `!= 0`; `centre != 0`; `halation > 0` |
+/// | structure | structure (`apply_local_contrast`), `apply_dehaze`, `apply_glow_bloom` | `!= 0`; `!= 0`; `glow > 0` |
+///
+/// Contrast and whites read no blur at all.
+struct BlursNeeded {
+    sharpness: bool,
+    tonal: bool,
+    clarity: bool,
+    structure: bool,
+}
+
+impl BlursNeeded {
+    fn for_adjustments(a: &crate::image_processing::AllAdjustments) -> Self {
+        if a.mask_count > 0 {
+            return Self {
+                sharpness: true,
+                tonal: true,
+                clarity: true,
+                structure: true,
+            };
+        }
+        let g = &a.global;
+        let sharpen = g.sharpness.abs() >= 0.0005;
+        Self {
+            sharpness: sharpen,
+            tonal: sharpen || g.shadows != 0.0 || g.blacks != 0.0 || g.highlights != 0.0,
+            clarity: g.clarity != 0.0 || g.centré != 0.0 || g.halation_amount > 0.0,
+            structure: g.structure != 0.0 || g.dehaze != 0.0 || g.glow_amount > 0.0,
+        }
+    }
+}
+
+/// How far a tile's input extends past its own edges, so every blur and
+/// neighbourhood read near a seam sees the same pixels it would in one pass
+/// (the largest blur radius, the structure blur's 40 × min(w, h) / 1080, is 80
+/// at 4K).
+const TILE_OVERLAP: u32 = 128;
+
+/// The tile edge a processor sized for `max_width` × `max_height` works in.
+///
+/// D-450 — a frame that fits 4096 × 4096 (every video frame up to UHD, which
+/// is everything the Edit tab and its export grade) is one tile: the same
+/// passes over the frame once, where 2048-px tiles made a 4K frame four
+/// overlapping 2304-px tiles, about 2.5× the pixels through every blur and the
+/// main pass. Larger images (a big still in the Colorist) keep 2048-px tiles
+/// and the texture memory they always had. The output is the same either way:
+/// the overlap is larger than any blur radius at these sizes, and the
+/// reference test (`chroma::grade_pass`) holds the two to bit-identical.
+fn tile_size_for(max_width: u32, max_height: u32) -> u32 {
+    if max_width <= 4096 && max_height <= 4096 {
+        4096
+    } else {
+        2048
+    }
+}
+
 impl GpuProcessor {
     pub fn new(context: GpuContext, max_width: u32, max_height: u32) -> Result<Self, String> {
+        Self::new_with_tile_size(
+            context,
+            max_width,
+            max_height,
+            tile_size_for(max_width, max_height),
+        )
+    }
+
+    /// [`Self::new`] with the tile edge given rather than chosen: the
+    /// before/after measurement of D-450's single-tile change builds both
+    /// tilings side by side on one device.
+    pub(crate) fn new_with_tile_size(
+        context: GpuContext,
+        max_width: u32,
+        max_height: u32,
+        tile_size: u32,
+    ) -> Result<Self, String> {
         let device = &context.device;
         const MAX_MASK_BINDINGS: u32 = 1;
 
@@ -1103,11 +1195,8 @@ impl GpuProcessor {
         let dummy_lut_view = dummy_lut_texture.create_view(&Default::default());
         let dummy_lut_sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
 
-        const TILE_SIZE: u32 = 2048;
-        const TILE_OVERLAP: u32 = 128;
-
-        let clamped_tile_width = max_width.min(TILE_SIZE + TILE_OVERLAP * 2);
-        let clamped_tile_height = max_height.min(TILE_SIZE + TILE_OVERLAP * 2);
+        let clamped_tile_width = max_width.min(tile_size + TILE_OVERLAP * 2);
+        let clamped_tile_height = max_height.min(tile_size + TILE_OVERLAP * 2);
 
         let clamped_tile_size = wgpu::Extent3d {
             width: clamped_tile_width,
@@ -1236,6 +1325,7 @@ impl GpuProcessor {
             working_texture_view,
             output_texture,
             output_texture_view,
+            tile_size,
         })
     }
 
@@ -1442,8 +1532,7 @@ impl GpuProcessor {
             queue.submit(Some(encoder.finish()));
         }
 
-        const TILE_SIZE: u32 = 2048;
-        const TILE_OVERLAP: u32 = 128;
+        let tile_size = self.tile_size;
 
         let mut final_pixels = vec![
             0u8;
@@ -1454,22 +1543,22 @@ impl GpuProcessor {
             }
         ];
 
-        let start_tile_x = bounds.x / TILE_SIZE;
-        let start_tile_y = bounds.y / TILE_SIZE;
-        let end_tile_x = (bounds.x + bounds.width).div_ceil(TILE_SIZE);
-        let end_tile_y = (bounds.y + bounds.height).div_ceil(TILE_SIZE);
+        let start_tile_x = bounds.x / tile_size;
+        let start_tile_y = bounds.y / tile_size;
+        let end_tile_x = (bounds.x + bounds.width).div_ceil(tile_size);
+        let end_tile_y = (bounds.y + bounds.height).div_ceil(tile_size);
 
         for tile_y in start_tile_y..end_tile_y {
             for tile_x in start_tile_x..end_tile_x {
-                let x_start_unclamped = tile_x * TILE_SIZE;
-                let y_start_unclamped = tile_y * TILE_SIZE;
+                let x_start_unclamped = tile_x * tile_size;
+                let y_start_unclamped = tile_y * tile_size;
 
                 let x_start = x_start_unclamped.max(bounds.x);
                 let y_start = y_start_unclamped.max(bounds.y);
-                let x_end = (x_start_unclamped + TILE_SIZE)
+                let x_end = (x_start_unclamped + tile_size)
                     .min(bounds.x + bounds.width)
                     .min(width);
-                let y_end = (y_start_unclamped + TILE_SIZE)
+                let y_end = (y_start_unclamped + tile_size)
                     .min(bounds.y + bounds.height)
                     .min(height);
 
@@ -1558,17 +1647,25 @@ impl GpuProcessor {
                         let mut cpass = blur_encoder.begin_compute_pass(&Default::default());
                         cpass.set_pipeline(&self.v_blur_pipeline);
                         cpass.set_bind_group(0, &v_blur_bg, &[]);
-                        cpass.dispatch_workgroups(input_width, input_height.div_ceil(256), 1);
+                        cpass.dispatch_workgroups(
+                            input_width.div_ceil(16),
+                            input_height.div_ceil(16),
+                            1,
+                        );
                     }
 
                     queue.submit(Some(blur_encoder.finish()));
                     true
                 };
 
-                let did_create_sharpness_blur = run_blur(1.0, &self.sharpness_blur_view);
-                let did_create_tonal_blur = run_blur(3.5, &self.tonal_blur_view);
-                let did_create_clarity_blur = run_blur(8.0, &self.clarity_blur_view);
-                let did_create_structure_blur = run_blur(40.0, &self.structure_blur_view);
+                let needed = BlursNeeded::for_adjustments(&adjustments);
+                let did_create_sharpness_blur =
+                    needed.sharpness && run_blur(1.0, &self.sharpness_blur_view);
+                let did_create_tonal_blur = needed.tonal && run_blur(3.5, &self.tonal_blur_view);
+                let did_create_clarity_blur =
+                    needed.clarity && run_blur(8.0, &self.clarity_blur_view);
+                let did_create_structure_blur =
+                    needed.structure && run_blur(40.0, &self.structure_blur_view);
 
                 let mut main_encoder = device.create_command_encoder(&Default::default());
 
