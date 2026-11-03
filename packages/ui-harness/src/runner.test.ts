@@ -16,7 +16,7 @@ import { checkBudget, DEFAULT_PERF_BUDGET, type PerfReport } from './budgets.ts'
 import { ControlClient, HARNESS_SOURCE, type OpClient } from './client.ts';
 import { mediaArgs, type ScratchProject } from './fixture.ts';
 import { renderReport } from './report.ts';
-import { resolveTargetRef, ScenarioRunner, substituteIds } from './runner.ts';
+import { moveLostKeyWindow, resolveTargetRef, ScenarioRunner, substituteIds } from './runner.ts';
 import { EDIT_TOOL_SCENARIOS } from './scenarios/editTools.ts';
 import { THREE_CLIPS } from './scenarios/common.ts';
 import { SCENARIOS } from './scenarios/index.ts';
@@ -401,6 +401,35 @@ describe('delivery checks (H5, H8)', () => {
     const result = await run({ mode: 'native', targets: aimed, observed: { counts: {} }, native: { windowKey: false, madeKeyForMove: true } }, 'move');
     expect(result.status).toBe('SKIP');
     expect(result.reason).toMatch(/hover needs a key window.*making it key for the move did not help/);
+  });
+
+  it('H18 (B-371): a move DELIVERED to a non-key window re-activates Apelles, replays once, and skips if still not key', async () => {
+    const app = new CannedPointer({ mode: 'native', targets: aimed, observed: { counts: { pointermove: 3 } }, native: { windowKey: false } });
+    const calls: string[] = [];
+    const op = app.op.bind(app);
+    app.op = async <T,>(name: string, args: Record<string, unknown> = {}): Promise<T> => {
+      calls.push(name);
+      if (name === 'debug_activate_app') return { previous: null, now: { pid: 1 }, active: true, windowKey: true } as T;
+      return op<T>(name, args);
+    };
+    const result = await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp' }).run({
+      id: 'x',
+      title: 'x',
+      area: 'x',
+      reference: 'x',
+      steps: [{ pointer: { action: 'move', target: { x: 400, y: 200 } } }],
+    });
+    const pointerCalls = calls.filter((c) => c === 'debug_pointer' || c === 'debug_activate_app');
+    expect(pointerCalls).toEqual(['debug_pointer', 'debug_activate_app', 'debug_pointer']);
+    expect(result.status).toBe('SKIP');
+    expect(result.reason).toMatch(/the move arrived but an inactive window applies no :hover/);
+  });
+
+  it('H18 (B-371): a move to a key window is not replayed', () => {
+    expect(moveLostKeyWindow('move', { native: { windowKey: true } })).toBe(false);
+    expect(moveLostKeyWindow('move', { native: { windowKey: false } })).toBe(true);
+    expect(moveLostKeyWindow('drag', { native: { windowKey: false } })).toBe(false);
+    expect(moveLostKeyWindow('move', { mode: 'synthetic' })).toBe(false);
   });
 
   it('H5: the same missing move in a KEY window is still a FAIL (the input really never arrived)', async () => {

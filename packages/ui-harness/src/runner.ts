@@ -26,6 +26,7 @@ import { evaluate, resolveValue, rootsOf, type Assertion, type Scope, type Verdi
 import { EDIT_PERF_PREFIX } from '@apelles/editor/src/editPerfNames.ts';
 
 import { checkBudget, DEFAULT_PERF_BUDGET, PLAYBACK_PAINT_MIN_FPS, PLAYBACK_RAF_MIN_FPS, type PerfReport } from './budgets.ts';
+import { activateApp } from './activation.ts';
 import type { OpClient } from './client.ts';
 import { buildFixture, teardownFixture, type BuiltFixture, type ScratchProject } from './fixture.ts';
 import type { FrameOffset, FrameTarget, Scenario, Step, TargetRef } from './scenario.ts';
@@ -35,6 +36,14 @@ import { framesToPx, pointAtFrame, timelineSnapshot, VIEW_QUERY, viewSnapshot, t
 import { assertVisible, clampAtToVisible, OutsideVisibleArea, zoomToShowFrame, type At, type Rect } from './visibility.ts';
 
 export type Status = 'PASS' | 'FAIL' | 'SKIP' | 'ERROR';
+
+/** H18 (B-371): a native `move` injected while Apelles' window was not key (the
+ *  native report's `windowKey` is read before the move is sent). Hover state
+ *  needs an active window, so the runner re-activates and replays such a move. */
+export function moveLostKeyWindow(action: string, reply: Record<string, unknown>): boolean {
+  const native = reply.native as { windowKey?: boolean } | undefined;
+  return action === 'move' && native?.windowKey === false;
+}
 
 export interface PerfEntry {
   label: string;
@@ -292,6 +301,15 @@ export class ScenarioRunner {
         let reply: Record<string, unknown>;
         try {
           reply = await this.client.op<Record<string, unknown>>(opName, args, INPUT_OP_TIMEOUT_MS);
+          if ('pointer' in step && moveLostKeyWindow(step.pointer.action, reply)) {
+            // H18 (B-371) — the front moved to another app mid-run (the window
+            // was not key when the move was injected). WebKit's testing SPI
+            // still delivers the pointermove, but an inactive window applies no
+            // `:hover`, so a hover-reveal check would fail on the desktop's
+            // state, not the app's. Bring Apelles back and replay the move once.
+            await activateApp(this.client);
+            reply = await this.client.op<Record<string, unknown>>(opName, args, INPUT_OP_TIMEOUT_MS);
+          }
         } catch (e) {
           // A target the app cannot find is a finding about the app (the part
           // is not on screen), not a harness failure.
@@ -394,11 +412,16 @@ export class ScenarioRunner {
         return;
       }
       const want = action === 'wheel' ? 'wheel' : action === 'pinch' ? null : action === 'move' ? 'pointermove' : 'pointerdown';
-      if (action === 'move' && !(counts.pointermove > 0) && native?.windowKey === false) {
+      if (action === 'move' && native?.windowKey === false) {
         // H5 — WebKit drops a buttonless move while the window is not key. That
         // says nothing about the app, so skip rather than fail the hover check.
+        // H18 (B-371) — and when the testing SPI DID deliver the move (the page
+        // counted a pointermove), an inactive window still applies no `:hover`,
+        // so a delivered move in a non-key window is the same skip: the runner
+        // has already re-activated the app and replayed it once by now.
+        const dropped = !(counts.pointermove > 0);
         throw new SkipScenario(
-          `hover needs a key window: WebKit dropped the buttonless move (the window was not key${native.madeKeyForMove ? ', and making it key for the move did not help' : ''}); bring Apelles to the front and rerun`,
+          `hover needs a key window: ${dropped ? 'WebKit dropped the buttonless move' : 'the move arrived but an inactive window applies no :hover'} (the window was not key${native.madeKeyForMove ? ', and making it key for the move did not help' : ''}, even after re-activating Apelles); bring Apelles to the front and rerun`,
         );
       }
       if (want && action !== 'up' && !(counts[want] > 0)) {

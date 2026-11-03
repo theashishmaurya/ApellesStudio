@@ -4,6 +4,14 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-371 — the UI harness failed hover checks when another app took the front mid-run (`track-header-quiet`)
+
+status: **fixed 2026-11-03 (harness)** · severity: minor (false FAIL) · area: `packages/ui-harness/src/runner.ts`
+
+- **found:** 2026-11-03 full run (`scratch/ui-harness/runs/2026-11-03T07-47-03-065Z`): "hovering the header reveals it: lockHover.rect.width = 0". Not the app: the scenario passes 3/3 alone and after its predecessor with Apelles frontmost, and the next run two minutes later found Apelles behind another app.
+- **cause:** H5 skipped a hover check only when WebKit DROPPED the move. With `_simulateMouseMove:` the pointermove is delivered even to a non-key window, but an inactive window applies no `:hover` (the track-header toggles are `group-hover` CSS), so the check failed on the desktop's state.
+- **fix (H18):** a native `move` whose report says the window was not key re-activates Apelles (`debug_activate_app`) and is replayed once; still not key → SKIP with the reason, delivered or not. Tests in `runner.test.ts` (H18).
+
 ## B-368 — placing a Motion render on the timeline adds a linked audio clip, though the render has no sound (it carries a silent AAC track)
 
 status: fixed (2026-11-03; the Rust probe tests are written but were not run, see Fixed) · severity: medium (every Motion card adds a junk audio clip, clutters the audio tracks, and its silent "audio" can trigger ducking or loudness logic) · area: `packages/motion-engine/scripts/render.mts` (`renderMedia` options), the media probe's `hasAudio` (D-129), `linkedClipsFromDraggedMedia`
