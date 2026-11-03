@@ -38,6 +38,20 @@ export interface RunAnalysis {
   wire: AnalyzeWire;
   provisional: boolean;
   at: number;
+  /** D-443 — each analysed source's file path, by the index a resolved range
+   *  names (`ResolvedRange.source`): where a short's poster frame is read. */
+  sourcePaths: string[];
+}
+
+/** D-443 — what the Clipper's surface in the viewer area shows: nothing (the
+ *  viewer), the New shorts form, or the active run (its reading / waiting state,
+ *  or the review of the selected short). */
+export type ClipperSurface = 'closed' | 'setup' | 'run';
+
+/** A sentence for the person: an error, or what an action did. */
+export interface ClipperNotice {
+  ok: boolean;
+  message: string;
 }
 
 interface ClipperState {
@@ -46,6 +60,19 @@ interface ClipperState {
   loadErrors: Array<{ file: string; error: string }>;
   activeRunId: string | null;
   analyses: Record<string, RunAnalysis>;
+  /** D-443 — the viewer-area surface, and the short under review. UI state:
+   *  never persisted, dropped with the project. */
+  surface: ClipperSurface;
+  selectedProposalId: string | null;
+  /** Show `surface` in the viewer area (`'run'` also makes `runId` active). */
+  openSurface(surface: Exclude<ClipperSurface, 'closed'>, runId?: string): void;
+  closeSurface(): void;
+  /** Review one short of the active run (opens the run surface). */
+  selectProposal(id: string | null): void;
+  /** D-443 — the last outcome worth saying (an error, a build result), shown
+   *  by the list and the surface alike; `null` once dismissed. */
+  notice: ClipperNotice | null;
+  setNotice(n: ClipperNotice | null): void;
   /** Write a run (file first, then memory). */
   saveRun(run: ClipRun): Promise<{ ok: true } | { error: string }>;
   /** Read every run of the open project. */
@@ -63,6 +90,9 @@ export const useClipperStore = createSharedStore<ClipperState>('edit.clipper', (
   loadErrors: [],
   activeRunId: null,
   analyses: {},
+  surface: 'closed',
+  selectedProposalId: null,
+  notice: null,
 
   saveRun: async (run) => {
     try {
@@ -108,16 +138,34 @@ export const useClipperStore = createSharedStore<ClipperState>('edit.clipper', (
     set((s) => {
       const { [id]: _run, ...runs } = s.runs;
       const { [id]: _analysis, ...analyses } = s.analyses;
-      return { runs, analyses, activeRunId: s.activeRunId === id ? null : s.activeRunId };
+      const wasActive = s.activeRunId === id;
+      return {
+        runs,
+        analyses,
+        activeRunId: wasActive ? null : s.activeRunId,
+        ...(wasActive ? { selectedProposalId: null, surface: 'closed' as const } : {}),
+      };
     });
     return { ok: true };
   },
 
-  setActiveRun: (id) => set({ activeRunId: id }),
+  setActiveRun: (id) => set((s) => (s.activeRunId === id ? s : { activeRunId: id, selectedProposalId: null })),
+
+  openSurface: (surface, runId) =>
+    set((s) => ({
+      surface,
+      ...(runId && runId !== s.activeRunId ? { activeRunId: runId, selectedProposalId: null } : {}),
+    })),
+
+  closeSurface: () => set({ surface: 'closed' }),
+
+  setNotice: (notice) => set({ notice }),
+
+  selectProposal: (id) => set(id === null ? { selectedProposalId: null } : { selectedProposalId: id, surface: 'run' }),
 
   setAnalysis: (runId, analysis) => set((s) => ({ analyses: { ...s.analyses, [runId]: analysis } })),
 
-  clear: () => set({ runs: {}, loadErrors: [], activeRunId: null, analyses: {} }),
+  clear: () => set({ runs: {}, loadErrors: [], activeRunId: null, analyses: {}, surface: 'closed', selectedProposalId: null, notice: null }),
 }));
 
 // Runs belong to the open project: a switch drops them (the panel reloads).

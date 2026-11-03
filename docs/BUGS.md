@@ -193,7 +193,7 @@ status: **fixed 2026-11-03 (worktree), D-442** (owner, 2026-11-01: "this needs a
 
 ## B-363 — the Clipper panel is not intuitive: developer jargon, unlabelled controls, and the whole review flow squeezed into the browser column
 
-status: open (owner, 2026-11-01: "clipper UI is not intuitive at all") · severity: medium (UX; the Clipper is a headline feature) · area: `packages/editor/src/clipper/ClipperPanel.tsx` and its sections; the D-432 redesign language
+status: **fixed 2026-11-03 (worktree), D-443** (owner, 2026-11-01: "clipper UI is not intuitive at all") · severity: medium (UX; the Clipper is a headline feature) · area: `packages/editor/src/clipper/ClipperPanel.tsx` and its sections; the D-432 redesign language
 
 - **Seen:** the owner's screenshots `scratch/bug-refs/2026-11-01-clipper-not-intuitive.png` and `…-clipper-horizontal-scroll.png` (the latter is B-362).
 - **What reads as broken or confusing (from the screenshot):**
@@ -208,6 +208,7 @@ status: open (owner, 2026-11-01: "clipper UI is not intuitive at all") · severi
   - A Clipper review surface sized for the job (likely the viewer area or its own view, not the browser column): a card per short with a 9:16 thumbnail or preview, the hook line and payoff line, length, a virality/fit reason in plain words, and Approve / Reject / Trim.
   - Plain language throughout; the pipeline state behind an "Details" disclosure.
   - Then a mockup for owner approval before building, as D-432 did. Human + AI parity is unchanged: the same proposal store and the same `editor_*` clip tools.
+- **Fixed (D-443):** the approved mockup built. The Shorts tab lists one card per short (9:16 poster, length, title, opening line, clean-cut chip, status) under "Shorts from <source> · <date>" and a one-line state, with "Make N shorts" (the approved ones) or why it is disabled; selecting a short fills the viewer area with the review (opening frame and line, rename, length against the target, where it comes from, "Opens with" / "Why your agent picked it", the check in words with what to try, the transcript with what is in and out, Start / End Earlier · Later, Skip (X) / Approve (A), ↑ / ↓); New shorts and the reading / waiting states are in the same area; pipeline numbers and candidates moved behind "Details" and "Other moments". The player is the opening frame until a short is made (deviation, D-443).
 - **Queue:** after v0.3.0 (not a release blocker), as its own redesign item next to the Motion/Colorist follow-up (00b).
 
 ## B-362 — the Clipper panel scrolls horizontally inside the media browser; its content is wider than the column

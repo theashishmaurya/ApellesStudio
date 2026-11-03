@@ -751,3 +751,25 @@ The owner approved revision 2 ("Looks good the UI you gave :)") and answered:
   lane, and suggestions are not hatched on the lane (the lane renderer is being changed by
   another pass; the ruler band is the same range); the breath button is also under the maker.
   Reasons in D-442.
+
+## As built: Clipper (D-443, B-363)
+
+- **List** `packages/editor/src/clipper/ClipperPanel.tsx` (the Shorts tab): the set picker
+  ("Shorts from <source> · <date>") with ＋, the state line, one card per short (9:16 poster
+  with its length, title, opening line, clean-cut chip, status, Open on a made short), the
+  count line, "Approve the rest", "Make N shorts" (the approved ones only) or its reason.
+  With no run: earlier runs and New shorts.
+- **Surface** `ClipperSurface.tsx`, laid over the viewer by `EditorTab` while the Shorts tab is
+  showing (× or Esc brings the viewer back): New shorts (with More options), Reading / Ready
+  for your AI agent (steps, the request to copy), and the review (the poster with the opening
+  line as caption, Show in source / Open, rename, length vs target, source span, check chip,
+  "Opens with" / "Why your agent picked it", the warnings with what to try, "What's in it",
+  Start / End ‹ Earlier · Later ›, Other moments, Details, Skip (X) / Approve (A), ↑ / ↓).
+- **Words** `clipperView.ts` (pure); **actions and keys** `clipperReview.ts`; **posters**
+  `clipperPoster.ts` (the shared `clipThumbs` cache); **state** `clipperStore` (surface,
+  selection, notice; the analysis keeps its source paths).
+- **MCP**: no new tool; rename, status, trims, More options and Make map to
+  `editor_set_clip_proposal` / `editor_auto_clip` / `editor_build_clips(ids)`.
+- **Deviations from the mockup**: the player is the short's opening frame until it is made
+  (there is no timeline to play before the build; Show in source plays it on the long
+  timeline); "Suggest as a short" not built. Reasons in D-443.
