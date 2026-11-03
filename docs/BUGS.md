@@ -362,7 +362,7 @@ status: **fixed 2026-10-31** (the docstring now states that `delta` moves the ed
 
 ## B-336 — a short built from a voice-over TIMELINE has no picture and no captions
 
-status: **open** · severity: **major** · area: Automatic Clipper build (`packages/editor/src/clipper/clipBuild.ts`, D-411)
+status: **fixed 2026-11-03** · severity: **major** · area: Automatic Clipper build (`packages/editor/src/clipper/clipBuild.ts`, D-411)
 
 - **found:** 2026-10-30, Nemotron shorts. `editor_auto_clip {timeline_id: "Voiceover v2", track: 7}`, where track 7 is the cleaned voice-over (an unlinked audio clip) and the picture is on Video 1/2 with demo sound, SFX and a music bed on other tracks: the usual shape of an edited explainer. All four proposed shorts built "ok" with the warning "the source has no picture: the short is sound only (and has no captions; captions follow video clips)".
 - **what happens:**
@@ -370,6 +370,9 @@ status: **open** · severity: **major** · area: Automatic Clipper build (`packa
   - Captions are skipped because `hasPicture` is false, although `captionsForTimeline` reads unlinked voice on audio tracks since D-420. A voice-only short could still be captioned.
 - **expected:** a timeline source builds each range across ALL of the source timeline's tracks, the same way a multi-track ripple would (picture with its keyframes and highlights, linked sound, titles), reframed for the short's aspect, and captioned from the stitched transcript including audio-track voice. At least: caption a voice-only build, and say up front that a timeline source with its dialogue on an audio track loses the picture.
 - **worked around (content only, no code):** each short was made by duplicating the source timeline, ripple-deleting outside the chosen sentence ranges and reframing the clips by hand. Those timelines are not linked to the Clipper run, so they are not in the Clipper panel.
+- **root cause:** `buildShortBody` built every short from the range's source FILE (one video clip plus its linked audio per range). For a timeline source that file was the analysed track's clip (the voice-over), so every other track of the long edit was never read, and captions were gated on `hasPicture`, which that file did not have.
+- **fix:** with a timeline source the build cuts each kept stretch of each range as a window of the long timeline across ALL tracks (`clipper/timelineSourceSlice.ts`: the reducer's own `split`, so linked pairs, keyframes and speed ramps follow), laid back to back. Picture clips (footage, stills, Motion renders) get the Clipper's 9:16 cover transform and lose the long edit's 16:9 layout keyframes; a clip the editor laid out by hand (scale, position, crop) keeps its layout and is reported; titles, adjustment layers, music and demo sound come along unchanged. Tightening cuts are the gaps between stretches, so they work on every track (no ripple refusal on a clip it cannot split). Source captions are not copied: the short's are generated from its own transcript, including voice on an audio track, and a voice-only build is captioned too. The Clipper passes the source timeline from `clipperOps.buildOne`. A source timeline at a different frame rate than the short is refused with a message.
+- **tests:** `clipBuild.timelineSource.test.ts` (a six-track fixture: picture with linked demo sound, voice, music, title, Motion card: all present, reframed, captioned; tightening across tracks; hand layout kept; voice-only captioned; rate mismatch refused), `clipBuild.test.ts` (sound-only file source now captioned), the clipper e2e suites.
 
 ## B-335 — a second `editor_export` while one runs reports the FIRST job's result as its own
 
