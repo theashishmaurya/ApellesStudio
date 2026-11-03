@@ -8,21 +8,25 @@
  * the same store `editor_set_timeline_view` writes and `editor_get_state`
  * reports, so the GUI and the agent are two views of one setting.
  *
+ * v0.3.0 (B-354) — `TimelineZoomSlider`: the toolbar's 96 px zoom slider
+ * (FCP's, between the two magnifiers), the same logarithmic mapping the
+ * popover's slider uses, so both read and write one `pxPerSec`.
+ *
  * What it does NOT do: anchor a zoom (the popover's slider sets `pxPerSec`
- * directly, as the MCP tool does; the toolbar's +/- buttons and the wheel
- * anchor on the playhead / cursor in `TimelinePane`), or decide anything a
- * setting means (snapping is read by the gestures, skimming by the pane, the
- * appearance by `clipAnatomy`).
+ * directly, as the MCP tool does; the toolbar's slider, its +/- buttons and
+ * the wheel anchor on the playhead / cursor in `TimelinePane`), or decide
+ * anything a setting means (snapping is read by the gestures, skimming by the
+ * pane, the appearance by `clipAnatomy`).
  */
 
 import type { ReactNode } from 'react';
 import { HandSwipeRightIcon, MagnetIcon, SlidersHorizontalIcon } from '@phosphor-icons/react';
 import {
   Button,
+  InlineSlider,
   Popover,
   PopoverContent,
   PopoverTrigger,
-  Slider,
   Switch,
   Tooltip,
   TooltipContent,
@@ -155,7 +159,49 @@ function Segmented<T extends string | number>({
  *  zoom, as the +/- buttons' fixed factor does. */
 const LOG_MIN = Math.log(MIN_PX_PER_SEC);
 const LOG_MAX = Math.log(MAX_PX_PER_SEC);
-const ZOOM_SLIDER_STEPS = 1000;
+export const ZOOM_SLIDER_STEPS = 1000;
+
+/** `pxPerSec` → the slider's 0..`ZOOM_SLIDER_STEPS` position. */
+export function zoomSliderPosition(pxPerSec: number): number {
+  return Math.round(((Math.log(pxPerSec) - LOG_MIN) / (LOG_MAX - LOG_MIN)) * ZOOM_SLIDER_STEPS);
+}
+
+/** The slider's position → `pxPerSec` (the inverse of `zoomSliderPosition`). */
+export function pxPerSecAtSliderPosition(position: number): number {
+  return Math.exp(LOG_MIN + (position / ZOOM_SLIDER_STEPS) * (LOG_MAX - LOG_MIN));
+}
+
+/** One zoom slider (the toolbar's and the Clip Appearance popover's): the
+ *  current zoom in, a new `pxPerSec` out; the percent is its accessible value
+ *  and its tooltip (§4.9: "zoom % shows in the slider's tooltip"). */
+export function TimelineZoomSlider({
+  pxPerSec,
+  onZoom,
+  testId,
+  className,
+}: {
+  pxPerSec: number;
+  onZoom: (pxPerSec: number) => void;
+  testId: string;
+  className?: string;
+}) {
+  const pct = timelineZoomPct(pxPerSec);
+  return (
+    <div className={className} title={`Zoom ${pct}%`}>
+      <InlineSlider
+        value={zoomSliderPosition(pxPerSec)}
+        min={0}
+        max={ZOOM_SLIDER_STEPS}
+        step={1}
+        largeStep={50}
+        aria-label="Timeline zoom"
+        getAriaValueText={() => `${pct}%`}
+        data-testid={testId}
+        onValueChange={(n) => onZoom(pxPerSecAtSliderPosition(n))}
+      />
+    </div>
+  );
+}
 
 /** The Clip Appearance popover (FCP's): zoom, waveform / filmstrip balance,
  *  clip height, names and badges. */
@@ -166,7 +212,6 @@ export function ClipAppearanceButton() {
   const showNames = useTimelineViewStore((s) => s.showNames);
   const showBadges = useTimelineViewStore((s) => s.showBadges);
   const setView = useTimelineViewStore((s) => s.setView);
-  const zoomSlider = Math.round(((Math.log(pxPerSec) - LOG_MIN) / (LOG_MAX - LOG_MIN)) * ZOOM_SLIDER_STEPS);
   return (
     <Popover>
       <Tooltip>
@@ -195,17 +240,10 @@ export function ClipAppearanceButton() {
             <span className="flex items-center justify-between text-text-secondary">
               Zoom <span className="font-mono text-text-tertiary">{timelineZoomPct(pxPerSec)}%</span>
             </span>
-            <Slider
-              min={0}
-              max={ZOOM_SLIDER_STEPS}
-              value={[zoomSlider]}
-              aria-label="Timeline zoom"
-              data-testid={TIMELINE_TEST_IDS.zoomSlider}
-              onValueChange={(v: number | readonly number[]) => {
-                const n = Array.isArray(v) ? v[0] : v;
-                if (typeof n !== 'number') return;
-                setView({ pxPerSec: Math.exp(LOG_MIN + (n / ZOOM_SLIDER_STEPS) * (LOG_MAX - LOG_MIN)) });
-              }}
+            <TimelineZoomSlider
+              pxPerSec={pxPerSec}
+              testId={TIMELINE_TEST_IDS.zoomSlider}
+              onZoom={(px) => setView({ pxPerSec: px })}
             />
           </label>
           <div className="flex flex-col gap-1.5">

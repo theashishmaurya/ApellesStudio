@@ -103,7 +103,14 @@ export const TIMELINE_TEST_IDS = {
   removeGap: 'timeline-remove-gap',
   zoomIn: 'timeline-zoom-in',
   zoomOut: 'timeline-zoom-out',
-  zoomReadout: 'timeline-zoom-readout',
+  /** v0.3.0 (B-354) — the toolbar's zoom slider, which replaced the `20%`
+   *  readout between − and +. */
+  toolbarZoomSlider: 'timeline-toolbar-zoom-slider',
+  /** v0.3.0 — the Beat grid toggle and its popover (`TimelineBeatControl`),
+   *  which hold the tempo, beat snapping and "Snap cuts to beats". */
+  beatGrid: 'timeline-beat-grid',
+  beatGridPopover: 'timeline-beat-grid-popover',
+  snapCutsToBeats: 'timeline-snap-cuts-to-beats',
   addMarker: 'timeline-add-marker',
   /** D-432 P3 — the view toggles and the Clip Appearance popover
    *  (`TimelineViewControls.tsx`): Snapping (N), Skimming (S), the popover's

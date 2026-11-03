@@ -1011,6 +1011,39 @@ leftovers, closed against the approved mockup (owner: "loved the design",
 - Deviation: the folder tree (D-436, built after the mockup) stays, so "All
   media · N items" is the tree's root row rather than a separate crumb row.
 
+**Timeline toolbar (B-359 item 4, B-354).**
+- 36 px, a `minmax(0,1fr) auto minmax(0,1fr)` grid (the mockup's `.ttool`),
+  so the switcher and timecode sit at true centre; B-354's "about 20 px off
+  centre" is gone. Groups carry `data-chroma-toolbar-group` (left / center /
+  right).
+- Left: the six trim tools as ONE rounded segmented group (`TrimToolbar`:
+  `bg-secondary` track, 28 × 20 segments, `card-active` + accent for the
+  active tool), a divider, then Split, Add marker, Transitions, then the
+  contextual actions (trim-mode hint, drop error, Remove, Unlink, Link, Close
+  gap, Move to), each shown only when it applies. The left group clips rather
+  than pushing the centre.
+- Right: Snapping, Skimming, **Beat grid**, Clip Appearance, a divider, then
+  `MagnifyingGlassMinus`, a 96 px zoom slider and `MagnifyingGlassPlus`. The
+  `20%` readout is gone; the percent is the slider's `aria-valuetext` and its
+  tooltip. `=` / `-` and pinch are unchanged.
+- The zoom slider (`TimelineZoomSlider`, shared with the Clip Appearance
+  popover: one logarithmic mapping, `zoomSliderPosition` /
+  `pxPerSecAtSliderPosition`) goes through the pane's `zoomBy`, so it anchors
+  on the playhead like the buttons and writes the same per-timeline view store
+  `editor_set_timeline_view` writes.
+- Beat grid (`TimelineBeatControl.tsx`): one `Metronome` toggle, accent while
+  a track's beats are on, opening a popover with the tempo ("128 BPM",
+  "analysing beats…"), the beat-snapping switch, "Snap cuts to beats" and the
+  last snap's result. The loose "128 BPM" text and the two loose buttons are
+  gone from the row. With no beat track it says how to turn one on (the track
+  header's Show beats toggle).
+- Deviations: (1) Remove stays, as a contextual button, where §4.9 drops it:
+  the clip has no context menu yet, so the toolbar is the pointer's only way
+  to delete. (2) The mockup's Linked selection and Audio scrubbing toggles are
+  not added: linked selection is not a mode in this app (links are per clip,
+  Link / Unlink) and audio scrubbing's waveform toggle lives in the viewer
+  header; Skimming takes that slot.
+
 ## 7. Human + AI parity
 
 Every new GUI capability gets its MCP surface in the same phase (standing rule):
