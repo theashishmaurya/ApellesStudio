@@ -15,8 +15,9 @@
 # analysis for the Edit beat grid and Motion's soundtrack, and apelles-brand
 # (D-416), brand kits on disk, apelles-motion-runtime (D-417), Motion's
 # on-demand render runtime, and apelles-clipper (D-411), the Automatic
-# Clipper's sentences, candidates and clean-cut gate. Still future: apelles-grade,
-# apelles-compositor, apelles-agent. The live table and each crate's boundary
+# Clipper's sentences, candidates and clean-cut gate, and apelles-compositor
+# (D-449), the one GPU render engine for preview and export. Still future:
+# apelles-grade, apelles-agent. The live table and each crate's boundary
 # are in `crates/README.md`.
 
 [workspace]

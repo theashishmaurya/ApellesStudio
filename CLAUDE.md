@@ -220,8 +220,9 @@ chroma/
                           275 tools pass the parity harness against mcp/server.py; the
                           MIGRATION off Python is a separate, not-yet-made call, see
                           docs/notes/mcp-rust-port.md), + apelles-ui-input (D-434, the UI
-                          harness's native-input rules; debug tooling). Still future: apelles-grade,
-                          apelles-compositor, apelles-agent. Live table + per-crate
+                          harness's native-input rules; debug tooling), + apelles-compositor
+                          (D-449, the one GPU render engine for preview and export). Still
+                          future: apelles-grade, apelles-agent. Live table + per-crate
                           boundaries: crates/README.md
   packages/             ← Apelles' frontend workspace — @apelles/{tokens,ui,bridge,shell,
                           editor,motion,motion-engine,player,inspector,history,debug,
