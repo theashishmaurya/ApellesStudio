@@ -25,6 +25,13 @@
  *   tightened pause, styled by the run's choice (brand kit or preset) scaled
  *   for the frame ([`captionStyleForFrame`]).
  *
+ * - A **timeline source** (B-336) is cut across EVERY track of the long edit, not
+ *   only the track its words were read from: each kept stretch of each range is a
+ *   window of the source timeline (`timelineSourceSlice.ts`), so that stretch's
+ *   picture, demo sound, Motion renders and titles come along, the picture
+ *   reframed like a file source's. Tightening there is "the stretches either side
+ *   of a cut", not a ripple, which would refuse on a clip it cannot split.
+ *
  * **What it does NOT do.** Any I/O: creating the timeline, writing it,
  * copying grades and hashing its content are the op layer's
  * (`clipperOps.ts`). It never judges: the ranges are the client's, checked.
@@ -33,6 +40,7 @@ import { captionsForTimeline } from '../captionsFromTranscript';
 import type { CaptionStyle } from '../caption';
 import type { RecoveredWindow } from '../darkRegions';
 import type { Transcript } from '../mediaUnderstandingStore';
+import { spanToFrames } from '../recut';
 import {
   applyOp,
   applyRippleDeleteRanges,
@@ -50,6 +58,7 @@ import {
 } from '../timeline';
 import type { ClipperPiece, ClipperViewInput } from './clipperSource';
 import type { Resolved } from './clipperTypes';
+import { hasHandLayout, isPicture, reframeForShort, sliceTimelineWindow } from './timelineSourceSlice';
 
 /** A crop that magnifies the source more than this is reported (FCP Smart
  *  Conform's quality caveat, D-411 §3.3). */
@@ -112,6 +121,9 @@ export interface BuildInput {
   transcripts: Readonly<Record<string, Transcript>>;
   recoveries: Readonly<Record<string, readonly RecoveredWindow[]>>;
   origin: TimelineOrigin;
+  /** B-336 — the long timeline a timeline-sourced run reads from; absent for a
+   *  media-file source. With it, every track of each range is carried. */
+  sourceTimeline?: Timeline | null;
 }
 
 export interface BuildResult {
@@ -137,8 +149,8 @@ export function buildShortBody(input: BuildInput): BuildResult | { error: string
     if (!media) return { error: `the source of a range (${path ?? `source ${r.source}`}) is not a probed media file in this project` };
     facts.push(media);
   }
+  if (input.sourceTimeline) return buildFromTimeline(input, ranges, input.sourceTimeline, fps);
   const hasPicture = facts.some((m) => m.width > 0 && m.height > 0);
-  const hasSound = facts.some((m) => m.hasAudio);
   const video: Track = { kind: 'video', clips: [], gain: DEFAULT_TRACK_GAIN, sync_locked: DEFAULT_SYNC_LOCKED };
   const audio: Track = { kind: 'audio', clips: [], gain: DEFAULT_TRACK_GAIN, sync_locked: DEFAULT_SYNC_LOCKED };
   const gradePairs: Array<{ from: string; to: string }> = [];
@@ -197,7 +209,7 @@ export function buildShortBody(input: BuildInput): BuildResult | { error: string
       `the ${input.output.width}x${input.output.height} crop magnifies the source ${worstUpscale.toFixed(2)}x (above ${UPSCALE_WARN}x); a higher-resolution source would be sharper`,
     );
   }
-  if (!hasPicture) warnings.push('the source has no picture: the short is sound only (and has no captions — captions follow video clips)');
+  if (!hasPicture) warnings.push('the source has no picture: the short is sound only');
 
   const tracks: Track[] = [];
   if (hasPicture) tracks.push(video);
@@ -222,19 +234,140 @@ export function buildShortBody(input: BuildInput): BuildResult | { error: string
     if (refused.length > 0) warnings.push(`${refused.length} tightening cut(s) could not be made: ${refused[0].reason ?? 'refused'}`);
   }
 
-  let captions = 0;
-  if (input.captionStyle && hasPicture) {
-    const cues = captionsForTimeline(timeline, input.transcripts, input.recoveries);
-    if (cues.length > 0) {
-      timeline = applyOp(timeline, {
-        kind: 'import_subtitles',
-        cues,
-        style: captionStyleForFrame(input.captionStyle, input.output),
-      });
-      captions = cues.length;
-    } else {
-      warnings.push('no captions: the short has no transcribed words');
-    }
+  const captioned = captionShort(timeline, input, warnings);
+  return { timeline: captioned.timeline, tightened, gradePairs, captions: captioned.captions, warnings };
+}
+
+/** The short's captions, from its own transcript (D-411 Phase 0), styled for the
+ *  frame. Voice on an audio track is captioned too (B-336): a sound-only short
+ *  is no reason to leave it silent on screen. */
+function captionShort(
+  timeline: Timeline,
+  input: Pick<BuildInput, 'captionStyle' | 'transcripts' | 'recoveries' | 'output'>,
+  warnings: string[],
+): { timeline: Timeline; captions: number } {
+  if (!input.captionStyle) return { timeline, captions: 0 };
+  const cues = captionsForTimeline(timeline, input.transcripts, input.recoveries);
+  if (cues.length === 0) {
+    warnings.push('no captions: the short has no transcribed words');
+    return { timeline, captions: 0 };
   }
-  return { timeline, tightened, gradePairs, captions, warnings };
+  return {
+    timeline: applyOp(timeline, {
+      kind: 'import_subtitles',
+      cues,
+      style: captionStyleForFrame(input.captionStyle, input.output),
+    }),
+    captions: cues.length,
+  };
+}
+
+/** The original id of a clip a `split` cut out of `id`: splits append `·frame`,
+ *  so strip suffixes until a source clip's id is left (grades are keyed by it). */
+function originalClipId(id: string, sourceIds: ReadonlySet<string>): string {
+  let cur = id;
+  while (!sourceIds.has(cur) && cur.includes('·')) cur = cur.slice(0, cur.lastIndexOf('·'));
+  return cur;
+}
+
+/** B-336 — a timeline-sourced short: every kept stretch of every range is a window
+ *  of the long timeline across ALL its tracks, laid back to back. */
+function buildFromTimeline(
+  input: BuildInput,
+  ranges: Resolved['ranges'],
+  source: Timeline,
+  fps: number,
+): BuildResult | { error: string } {
+  const srcFps = timelineFps(source);
+  if (srcFps !== fps) {
+    return { error: `the source timeline runs at ${srcFps} fps and the short at ${fps}; build it on a timeline at the source rate` };
+  }
+  const warnings: string[] = [];
+  const stem = input.base.id.slice(0, 8);
+  const sourceIds = new Set(source.tracks.flatMap((t) => t.clips.map((c) => c.id)));
+  const outTracks = new Map<number, Track>();
+  const gradePairs: Array<{ from: string; to: string }> = [];
+  const tightened: RippleDeleteRangeResult[] = [];
+  let cursor = 0;
+  let stretch = 0;
+  let worstUpscale = 0;
+  let handLaidOut = 0;
+  let unprobed = 0;
+  let titles = 0;
+
+  ranges.forEach((r) => {
+    const clip = input.view.pieces[r.piece]?.clip?.c;
+    if (!clip) return;
+    // The keep stretches of the range: its source seconds minus the tightening cuts.
+    const cuts = r.cuts.filter((c) => c.end_secs > r.start_secs && c.start_secs < r.end_secs).sort((a, b) => a.start_secs - b.start_secs);
+    const keeps: Array<[number, number]> = [];
+    let from = r.start_secs;
+    for (const c of cuts) {
+      if (c.start_secs > from) keeps.push([from, c.start_secs]);
+      from = Math.max(from, c.end_secs);
+    }
+    if (from < r.end_secs) keeps.push([from, r.end_secs]);
+
+    keeps.forEach(([s, e], i) => {
+      const span = spanToFrames(clip, s, e, srcFps);
+      if (span.endFrame > span.startFrame) {
+        const prefix = `${stem}-s${stretch}-`;
+        stretch += 1;
+        for (const sliced of sliceTimelineWindow(source, span.startFrame, span.endFrame, srcFps)) {
+          if (sliced.track.clips.length === 0) continue;
+          let out = outTracks.get(sliced.sourceIndex);
+          if (!out) {
+            out = { ...sliced.track, clips: [], sync_locked: DEFAULT_SYNC_LOCKED, locked: false };
+            outTracks.set(sliced.sourceIndex, out);
+          }
+          for (const c of sliced.track.clips) {
+            let placed: Clip = {
+              ...c,
+              id: `${prefix}${c.id}`,
+              link_group: c.link_group ? `${prefix}${c.link_group}` : c.link_group,
+              start_frame: c.start_frame + cursor,
+            };
+            if (sliced.track.kind === 'video') {
+              if (c.text) titles += 1;
+              if (isPicture(c)) {
+                const m = input.mediaFor(c.source_path);
+                if (hasHandLayout(c)) handLaidOut += 1;
+                else if (m && m.width > 0 && m.height > 0) {
+                  const t = coverTransform({ width: m.width, height: m.height }, input.output);
+                  worstUpscale = Math.max(worstUpscale, t.scale);
+                  placed = reframeForShort(placed, t);
+                } else unprobed += 1;
+                gradePairs.push({ from: originalClipId(c.id, sourceIds), to: placed.id });
+              }
+            }
+            out.clips.push(placed);
+          }
+        }
+        cursor += span.endFrame - span.startFrame;
+      }
+      // A cut after this stretch: report it where it collapsed.
+      const next = keeps[i + 1];
+      if (next) {
+        const cutLen = spanToFrames(clip, e, next[0], srcFps);
+        const gone = cutLen.endFrame - cutLen.startFrame;
+        if (gone > 0) tightened.push({ start: cursor, end: cursor + gone, applied: true });
+      }
+    });
+  });
+
+  if (cursor === 0) return { error: 'every range of this proposal is empty after rounding to frames' };
+  const tracks = [...outTracks.entries()].sort((a, b) => a[0] - b[0]).map(([, t]) => t);
+  const hasPicture = tracks.some((t) => t.kind === 'video' && t.clips.length > 0);
+  if (!hasPicture) warnings.push('the source timeline has no picture in this range: the short is sound only');
+  if (worstUpscale > UPSCALE_WARN) {
+    warnings.push(
+      `the ${input.output.width}x${input.output.height} crop magnifies the source ${worstUpscale.toFixed(2)}x (above ${UPSCALE_WARN}x); a higher-resolution source would be sharper`,
+    );
+  }
+  if (handLaidOut > 0) warnings.push(`${handLaidOut} picture clip(s) the editor laid out by hand (scale, position, crop) keep their long-edit layout`);
+  if (unprobed > 0) warnings.push(`${unprobed} picture clip(s) are not probed media in this project, so they were not reframed`);
+  if (titles > 0) warnings.push(`${titles} title clip(s) keep their long-edit placement and size`);
+  const timeline: Timeline = { ...input.base, tracks, markers: [], output: { ...input.output }, origin: input.origin };
+  const captioned = captionShort(timeline, input, warnings);
+  return { timeline: captioned.timeline, tightened, gradePairs, captions: captioned.captions, warnings };
 }

@@ -130,7 +130,9 @@ describe('clip build', () => {
     const mp3: SourceMedia = { ...media, path: PATH, width: 0, height: 0, hasAudio: true };
     const out = buildShortBody(input({ mediaFor: () => mp3, captionStyle: { size: 0.07 } }));
     if ('error' in out) throw new Error(out.error);
-    expect(out.timeline.tracks.map((t) => t.kind)).toEqual(['audio']);
+    // B-336 — voice on an audio track is captioned too: a sound-only short still gets its words.
+    expect(out.timeline.tracks.map((t) => t.kind)).toEqual(['audio', 'subtitle']);
+    expect(out.captions).toBeGreaterThan(0);
     expect(out.warnings.some((w) => w.includes('sound only'))).toBe(true);
     const bad = buildShortBody(input({ mediaFor: () => null }));
     expect('error' in bad && bad.error).toContain('not a probed media file');

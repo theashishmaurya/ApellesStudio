@@ -4815,13 +4815,15 @@ EXPORT_POLL_INTERVAL_S = 2.0
 EXPORT_POLL_MAX_S = 2 * 60 * 60
 
 
-def _await_compositor_export(env: dict, out_path: str) -> dict:
-    """Poll `editor_export_status` until the render really settles (D-362).
+def _await_export_job(env: dict, out_path: str, job_id: str) -> dict:
+    """Poll `editor_export_status` for THIS call's job until it settles (D-362, B-335).
 
-    Called only when `editor_export`'s own call came back as a transport
-    failure — which, on a real export, is the expected outcome rather than a
-    real one. Returns an envelope shaped like the one it replaces, so a caller
-    cannot tell whether its export happened to fit inside the bridge's budget.
+    Called only when `editor_export`'s own call came back as a failure -- which,
+    on a real export, usually means the bridge's budget ran out while the job
+    kept going. The poll asks for `job_id`, the id this call gave the job, so it
+    can never settle on another export's result (B-335: it used to follow the
+    renderer's single "latest export" slot). Returns an envelope shaped like the
+    one it replaces.
     """
     import time
 
@@ -4829,17 +4831,18 @@ def _await_compositor_export(env: dict, out_path: str) -> dict:
     status: dict = {}
     while time.monotonic() < deadline:
         try:
-            status = _op("editor_export_status").get("result") or {}
+            polled = _op("editor_export_status", job_id=job_id)
         except RuntimeError:
-            # The app is genuinely unreachable — that IS the real failure, and
+            # The app is genuinely unreachable -- that IS the real failure, and
             # it is the one already in `env`.
             return env
-        state = status.get("state")
-        if state in (None, "idle"):
-            # Nothing is running and nothing ever ran: the render never
-            # started, so the original transport error is the honest answer.
+        if not polled.get("ok"):
+            # The app has no such job: the export was refused before it was
+            # queued (a bad argument, say), so the original answer is the honest one.
             return env
-        if state != "running":
+        status = polled.get("result") or {}
+        state = status.get("state")
+        if state not in ("queued", "running"):
             return {
                 "ok": state == "done",
                 "error": status.get("error"),
@@ -4849,10 +4852,10 @@ def _await_compositor_export(env: dict, out_path: str) -> dict:
     return {
         "ok": False,
         "error": (
-            f"the export was still rendering after {EXPORT_POLL_MAX_S / 3600:.0f}h — it has NOT "
-            "failed and has not been stopped; poll editor_export_status to follow it"
+            f"the export (job {job_id}) was still going after {EXPORT_POLL_MAX_S / 3600:.0f}h -- it has NOT "
+            f"failed and has not been stopped; poll editor_export_status(job_id=\"{job_id}\") to follow it"
         ),
-        "result": {"outPath": out_path, **status},
+        "result": {"outPath": out_path, "jobId": job_id, **status},
     }
 
 
@@ -4985,8 +4988,12 @@ def editor_export(
     EXPORT-TIME-ONLY knobs the live compositor has no notion of) and REFUSES
     rather than silently ignoring one."""
     import json
+    import uuid
 
-    args: dict = {"outPath": out_path}
+    # B-335 -- this call's own job id, made BEFORE the call so it can follow its
+    # own job even when the bridge times out first.
+    job_id = f"export-{uuid.uuid4().hex[:12]}"
+    args: dict = {"outPath": out_path, "jobId": job_id}
     if width is not None:
         args["width"] = width
     if height is not None:
@@ -5016,8 +5023,8 @@ def editor_export(
     # the false negative B-231 is half made of. The render itself publishes
     # real progress on the compositor path, so rather than hand the caller a
     # verdict that is simply wrong, poll for the true one.
-    if renderer == "compositor" and not env.get("ok"):
-        env = _await_compositor_export(env, out_path)
+    if not env.get("ok"):
+        env = _await_export_job(env, out_path, job_id)
     # B-091 — the compiled ffmpeg `args` (the FULL filter_complex, verbatim)
     # made this response grow with keyframe count/precision until it was
     # observed hitting an unreliable size boundary: the same general payload
@@ -5038,10 +5045,17 @@ def editor_export(
 
 
 @mcp.tool()
-def editor_export_status() -> str:
-    """Poll the running — or most recently finished — `editor_export` render
-    (D-362, fixes B-231). Takes no arguments, starts nothing, and is free to
-    call as often as you like.
+def editor_export_status(job_id: str | None = None) -> str:
+    """Poll an `editor_export` job (D-362, fixes B-231; B-335). Starts nothing and
+    is free to call as often as you like.
+
+    **`job_id` (B-335) follows one specific export.** Every `editor_export` is
+    its own job and its answer carries `jobId`; pass it here to read THAT job:
+    `queued` (waiting behind another export, with `queuePosition`), `running`,
+    `done` or `failed`, always with that job's own `outPath`. A second export
+    started while one runs is queued, never mistaken for it. Without `job_id`
+    this reads the compositor renderer's running — or most recently finished
+    — render, whichever job it belongs to.
 
     **Read `state` first.** `running` (still going; poll again), `done` (the
     file is written and finalised), `failed` (`error` says why), `stalled`
@@ -5071,7 +5085,10 @@ def editor_export_status() -> str:
     exits, so an export run that way is invisible here."""
     import json
 
-    return json.dumps(_op("editor_export_status"), indent=2, default=str)
+    args: dict = {}
+    if job_id is not None:
+        args["job_id"] = job_id
+    return json.dumps(_op("editor_export_status", **args), indent=2, default=str)
 
 
 @mcp.tool()

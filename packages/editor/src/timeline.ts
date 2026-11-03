@@ -3562,20 +3562,49 @@ function hasOverlap(tr: Track, fps: number): boolean {
   return false;
 }
 
-/** First unlocked audio track with room for `[startFrame, startFrame +
- *  duration)` (both timeline frames — B-077, unlike `Clip.duration` this is
- *  already a footprint on the timeline, e.g. `sourceFramesToTimeline`'s
- *  output) — mirrors `apelles-timeline::Timeline::audio_track_with_room`. */
+/** B-305 — names that mark an audio track as a SOUND-DESIGN lane (effects,
+ *  music beds, ambience): a clip's own linked sound is never filed there. */
+const RESERVED_AUDIO_TRACK_NAME =
+  /\b(sfx|fx|effects?|music|score|bgm|soundtrack|foley|ambien\w*|sound ?design|whooshes?|stings?|risers?)\b/i;
+/** B-305 — names that mark an audio track as the place a camera clip's own
+ *  sound belongs. */
+const DIALOGUE_AUDIO_TRACK_NAME = /\b(dialogue|dialog|voice\w*|vo|speech|interview|narrat\w*|camera|cam|production)\b/i;
+
+/** B-305 — how well an audio track suits a camera clip's linked sound half:
+ *  `0` a dialogue-named track, `1` a track that already carries A/V-linked
+ *  halves (the "partner" track), `2` any other track that is not a reserved
+ *  sound-design lane, `null` a reserved SFX / music lane, which is never used
+ *  (a new audio track is made instead). */
+export function linkedAudioTrackRank(t: Track): number | null {
+  const name = t.name?.trim() ?? '';
+  if (RESERVED_AUDIO_TRACK_NAME.test(name)) return null;
+  if (DIALOGUE_AUDIO_TRACK_NAME.test(name)) return 0;
+  return t.clips.some((c) => c.link_group) ? 1 : 2;
+}
+
+/** The unlocked audio track best suited to a camera clip's linked sound half
+ *  that has room for `[startFrame, startFrame + duration)` (both timeline
+ *  frames — B-077, unlike `Clip.duration` this is already a footprint on the
+ *  timeline, e.g. `sourceFramesToTimeline`'s output): the best
+ *  [`linkedAudioTrackRank`], the lowest index among equals; `null` when no
+ *  suitable track has room (B-305: never an SFX / music lane by name). The
+ *  Rust mirror (`apelles-timeline::Timeline::audio_track_with_room`) keeps the
+ *  first-with-room rule: only this reducer places a camera clip's sound. */
 export function audioTrackWithRoom(tl: Timeline, startFrame: number, duration: number): number | null {
   const end = startFrame + duration;
   const fps = timelineFps(tl);
-  const i = tl.tracks.findIndex(
-    (t) =>
-      t.kind === 'audio' &&
-      !t.locked &&
-      !t.clips.some((c) => startFrame < endFrame(c, fps) && end > c.start_frame),
-  );
-  return i >= 0 ? i : null;
+  let best = -1;
+  let bestRank = Number.POSITIVE_INFINITY;
+  tl.tracks.forEach((t, i) => {
+    if (t.kind !== 'audio' || t.locked) return;
+    if (t.clips.some((c) => startFrame < endFrame(c, fps) && end > c.start_frame)) return;
+    const rank = linkedAudioTrackRank(t);
+    if (rank !== null && rank < bestRank) {
+      best = i;
+      bestRank = rank;
+    }
+  });
+  return best >= 0 ? best : null;
 }
 
 /** [`audioTrackWithRoom`], appending a brand-new audio track when none has

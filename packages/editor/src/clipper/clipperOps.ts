@@ -798,7 +798,13 @@ async function buildOne(
     settings_hash: settingsHash,
   };
   const mu = useMediaUnderstandingStore.getState();
+  // B-336 — a timeline source is cut across all its tracks, so the build needs the timeline itself.
+  const sourceTimeline = run.source.kind === 'timeline' ? await timelineById(run.source.timeline_id) : null;
+  if (run.source.kind === 'timeline' && !sourceTimeline) {
+    return { id: p.id, ok: false, error: `timeline ${run.source.timeline_id} is not in the project` };
+  }
   const body = buildShortBody({
+    sourceTimeline,
     base: { id: target.id, name: target.name, rate: target.rate, tracks: [] },
     output,
     view: input,

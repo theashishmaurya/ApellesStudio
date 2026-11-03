@@ -46,6 +46,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -190,6 +191,20 @@ def cases_for(tool_name: str, schema: dict[str, Any]) -> list[tuple[str, dict[st
 # --------------------------------------------------------------------------- #
 
 
+# B-335 -- `editor_export` sends a fresh job id every call (so it can follow its OWN job),
+# which is random by design. The corpus pins its SHAPE, not its value; tests/parity.rs
+# applies the same rule to what the Rust server emits.
+EXPORT_JOB_ID = re.compile(r"export-[0-9a-f]{12}")
+EXPORT_JOB_ID_PLACEHOLDER = "export-<job id>"
+
+
+def _stable_args(op: str, args: dict[str, Any]) -> dict[str, Any]:
+    job = args.get("jobId")
+    if op == "editor_export" and isinstance(job, str) and EXPORT_JOB_ID.fullmatch(job):
+        return {**args, "jobId": EXPORT_JOB_ID_PLACEHOLDER}
+    return args
+
+
 def _content_blocks(result: Any) -> list[dict[str, Any]]:
     """Normalise an MCP tool result's content to the shape `tests/parity.rs` compares.
 
@@ -257,7 +272,7 @@ async def capture(out_path: Path) -> int:
                                 "requests": [
                                     {
                                         "op": ex["op"],
-                                        "args": ex["args"],
+                                        "args": _stable_args(ex["op"], ex["args"]),
                                         "timeout_ms": ex["timeout_ms"],
                                     }
                                     for ex in recorder.take()

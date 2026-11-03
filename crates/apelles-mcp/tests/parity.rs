@@ -57,6 +57,27 @@ use rmcp::model::{CallToolRequestParams, ContentBlock};
 use rmcp::{ServiceExt, service::RunningService};
 use serde_json::{Map, Value, json};
 
+/// B-335 -- `editor_export` sends a fresh job id every call (so it can follow its OWN job),
+/// random by design. The corpus pins its shape (`export-` and 12 hex digits), so the value is
+/// swapped for the placeholder `parity/capture.py` writes; any other shape is left as-is and
+/// fails the comparison.
+fn stable_args(op: &str, mut args: Value) -> Value {
+    if op == "editor_export"
+        && let Some(job) = args.get_mut("jobId")
+        && job.as_str().is_some_and(|id| {
+            id.strip_prefix("export-").is_some_and(|hex| {
+                hex.len() == 12
+                    && hex
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            })
+        })
+    {
+        *job = json!("export-<job id>");
+    }
+    args
+}
+
 const CORPUS: &str = include_str!("golden/corpus.json");
 const PORTED: &str = include_str!("golden/ported.json");
 const RESPONSES: &str = include_str!("../parity/responses.json");
@@ -563,7 +584,7 @@ async fn every_recorded_call_emits_the_same_ops_and_renders_the_same_content() {
             .recorder
             .take()
             .into_iter()
-            .map(|r| json!({ "op": r.op, "args": r.args, "timeout_ms": r.timeout_ms }))
+            .map(|r| json!({ "op": r.op, "args": stable_args(&r.op, r.args), "timeout_ms": r.timeout_ms }))
             .collect();
         let expected_requests = case["requests"].clone();
         assert_eq!(
