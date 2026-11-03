@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { manifestRendersAudio } from './renderAudio.mts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const runner = readFileSync(join(here, 'render.mts'), 'utf8');
@@ -31,5 +32,21 @@ describe('the renderer and remotion.config.ts agree', () => {
     const scale = /setScale\((\d+(?:\.\d+)?)\)/.exec(config)?.[1];
     expect(scale).toBeDefined();
     expect(runner).toContain(`const DEFAULT_VIDEO_SCALE = ${scale};`);
+  });
+});
+
+describe('a video render carries audio only when the manifest has a rendered soundtrack (B-368)', () => {
+  it('passes the audio decision to renderMedia as `muted`', () => {
+    expect(runner).toContain('muted: !manifestRendersAudio(inputProps)');
+  });
+
+  it('is muted with no soundtrack, or with one that is a timing reference only', () => {
+    expect(manifestRendersAudio({ scenes: [] })).toBe(false);
+    expect(manifestRendersAudio({ soundtrack: { src: 'sha256:x.mp3' } })).toBe(false);
+    expect(manifestRendersAudio({ soundtrack: { src: 'sha256:x.mp3', render: false } })).toBe(false);
+  });
+
+  it('keeps the audio when the soundtrack is rendered', () => {
+    expect(manifestRendersAudio({ soundtrack: { src: 'sha256:x.mp3', render: true } })).toBe(true);
   });
 });

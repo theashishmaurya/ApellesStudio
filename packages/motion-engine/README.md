@@ -59,6 +59,8 @@ scripts/
                          still|frames|video --serve-url=<bundle> --props=<manifest> …`, over
                          `@remotion/renderer` (the render settings `remotion.config.ts` held for
                          the CLI — ANGLE, JPEG video frames, 2x video scale — are its constants)
+  renderAudio.mts      ← B-368: whether a video render keeps an audio stream (only a manifest
+                         soundtrack with `render: true`; otherwise `renderMedia` is `muted`)
   build-pack.mts       ← `node scripts/build-pack.mts --out=<dir>`: the ENGINE PACK a release app
                          ships in Resources/motion-engine (prebuilt bundle, the two scripts, the
                          renderer's packages, TypeScript + the types the check reads, built-ins);

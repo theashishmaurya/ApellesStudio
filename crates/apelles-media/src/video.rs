@@ -11,7 +11,9 @@
 //! What it does: `probe()` reads stream metadata — video stream facts as before,
 //!   plus (D-049) whether the container has an audio stream and its sample
 //!   rate / channel count, so `audio.rs` can decide whether there is anything
-//!   to play without opening a second (symphonia) decode session just to ask;
+//!   to play without opening a second (symphonia) decode session just to ask
+//!   (B-368: a track that is digital silence, mean and peak under -80 dBFS,
+//!   reports `has_audio: false`, so no junk linked audio clip is built);
 //!   `decode_frame()` returns one video frame as an `image::DynamicImage`
 //!   (8-bit RGB) at a given time or frame index.
 //! What it does NOT do: playback, audio *decode* (that's `audio.rs`, via
@@ -231,7 +233,12 @@ pub fn probe(path: &Path) -> Result<VideoInfo> {
     };
     let frame_count = nb_frames.unwrap_or_else(|| (duration_secs * fps).round().max(0.0) as u64);
 
-    let (has_audio, audio_sample_rate, audio_channels) = probe_audio_stream(path);
+    let (mut has_audio, mut audio_sample_rate, mut audio_channels) = probe_audio_stream(path);
+    // B-368 — a track of digital silence is not audio: a Motion render used to
+    // carry one, and a screen recording made with no microphone still does.
+    if has_audio && audio_is_digital_silence(path, duration_secs) {
+        (has_audio, audio_sample_rate, audio_channels) = (false, 0, 0);
+    }
 
     Ok(VideoInfo {
         resolution: apelles_types::Resolution::new(width, height),
@@ -350,6 +357,61 @@ fn probe_audio_stream(path: &Path) -> (bool, u32, u16) {
     } else {
         (true, sample_rate, channels)
     }
+}
+
+/// B-368 — a source's audio counts as silence when both its mean and its peak
+/// level sit below this (dBFS). `volumedetect` floors digital zero at about
+/// -91 dB; real quiet room tone sits far above -80 dB.
+const SILENCE_FLOOR_DB: f64 = -80.0;
+
+/// B-368 — the longest source whose whole audio stream is scanned for silence.
+/// The scan decodes every audio sample (about a second per hour of speech), so
+/// a longer source is assumed to have audio: a silent recording that long is
+/// not a case worth a slow import for, and guessing "has audio" is the safe
+/// side (the cost of being wrong is one linked clip, not a lost track).
+const SILENCE_SCAN_MAX_SECS: f64 = 600.0;
+
+/// The `mean_volume` and `max_volume` (dB) in an `ffmpeg -af volumedetect`
+/// report, or `None` when either is missing (no audio decoded, or `-inf`).
+fn parse_volumedetect(stderr: &str) -> Option<(f64, f64)> {
+    let field = |name: &str| -> Option<f64> {
+        let rest = stderr.split(name).nth(1)?;
+        rest.trim_start()
+            .split_whitespace()
+            .next()?
+            .parse::<f64>()
+            .ok()
+    };
+    Some((field("mean_volume:")?, field("max_volume:")?))
+}
+
+/// B-368 — whether `path`'s first audio stream is digital silence (mean and
+/// peak both under [`SILENCE_FLOOR_DB`]), measured with ffmpeg's `volumedetect`
+/// over the whole stream. Any failure, an unknown duration, or a source over
+/// [`SILENCE_SCAN_MAX_SECS`] answers `false`: when in doubt the audio stays.
+/// Runs once per file; the answer is cached with the rest of the probe
+/// (`probe::probe_cached`).
+fn audio_is_digital_silence(path: &Path, duration_secs: f64) -> bool {
+    if !(duration_secs > 0.0 && duration_secs <= SILENCE_SCAN_MAX_SECS) {
+        return false;
+    }
+    let Ok(mut cmd) = ffmpeg_locate::ffmpeg() else {
+        return false;
+    };
+    let Ok(out) = cmd
+        .args(["-hide_banner", "-nostats", "-i"])
+        .arg(path)
+        .args(["-map", "0:a:0", "-vn", "-sn", "-dn"])
+        .args(["-af", "volumedetect", "-f", "null", "-"])
+        .output()
+    else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
+    }
+    parse_volumedetect(&String::from_utf8_lossy(&out.stderr))
+        .is_some_and(|(mean, max)| mean < SILENCE_FLOOR_DB && max < SILENCE_FLOOR_DB)
 }
 
 /// Decode exactly one frame to an 8-bit RGB `DynamicImage`.
@@ -1176,5 +1238,64 @@ mod tests {
         assert!(info.audio_sample_rate > 0);
 
         let _ = std::fs::remove_file(&path);
+    }
+    /// Build a 1 s 64x64 mp4 whose audio is `audio_filter` (a lavfi source).
+    fn clip_with_audio(dir: &Path, name: &str, audio_source: &str) -> std::path::PathBuf {
+        let path = dir.join(name);
+        let out = crate::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
+            .args(["-hide_banner", "-loglevel", "error", "-y"])
+            .args(["-f", "lavfi", "-i", "testsrc=size=64x64:rate=24:duration=1"])
+            .args(["-f", "lavfi", "-i", audio_source])
+            .args([
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-shortest",
+            ])
+            .arg(&path)
+            .output()
+            .expect("spawn ffmpeg");
+        assert!(
+            out.status.success(),
+            "ffmpeg fixture failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        path
+    }
+
+    /// **B-368.** A video whose only audio is a silent AAC track (what Motion
+    /// renders carried) probes as having NO audio, so no linked audio half is built;
+    /// the same video with a tone keeps its audio.
+    #[test]
+    fn a_silent_aac_track_probes_as_no_audio_and_a_tone_keeps_it() {
+        if crate::ffmpeg_locate::ffmpeg_path().is_err() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let silent = clip_with_audio(dir.path(), "silent.mp4", "anullsrc=r=48000:cl=stereo:d=1");
+        let tone = clip_with_audio(dir.path(), "tone.mp4", "sine=frequency=440:duration=1");
+
+        let silent_info = probe(&silent).expect("probe silent");
+        assert!(!silent_info.has_audio, "a silent track is not audio");
+        assert_eq!(silent_info.audio_sample_rate, 0);
+        assert_eq!(silent_info.audio_channels, 0);
+
+        let tone_info = probe(&tone).expect("probe tone");
+        assert!(tone_info.has_audio, "a real tone is audio");
+        assert!(tone_info.audio_sample_rate > 0);
+    }
+
+    #[test]
+    fn volumedetect_report_parses_mean_and_max() {
+        let report = "[Parsed_volumedetect_0 @ 0x1] n_samples: 96000\n\
+                      [Parsed_volumedetect_0 @ 0x1] mean_volume: -91.0 dB\n\
+                      [Parsed_volumedetect_0 @ 0x1] max_volume: -90.5 dB\n";
+        assert_eq!(parse_volumedetect(report), Some((-91.0, -90.5)));
+        assert_eq!(parse_volumedetect("no report"), None);
     }
 }

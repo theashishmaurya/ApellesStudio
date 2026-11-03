@@ -2336,6 +2336,9 @@ describe('linkedClipsFromDraggedMedia (D-129)', () => {
     expect(pair!.audio!.source_start).toBe(pair!.video.source_start);
   });
 
+  // B-368 — the probe reports a digital-silence audio track (a Motion render, a
+  // screen recording with no microphone) as `hasAudio: false`, so this is the
+  // placement a silent-track file gets: no junk linked audio clip.
   it('builds NO audio half, and leaves the video unlinked, for a silent source', () => {
     const pair = linkedClipsFromDraggedMedia({ ...media, hasAudio: false }, 24);
     expect(pair!.audio).toBeNull();

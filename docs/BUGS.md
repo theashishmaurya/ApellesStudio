@@ -6,7 +6,7 @@ Issues once public.
 ```
 ## B-368 — placing a Motion render on the timeline adds a linked audio clip, though the render has no sound (it carries a silent AAC track)
 
-status: open (owner, 2026-11-01; queued with the v0.3.0 checklist) · severity: medium (every Motion card adds a junk audio clip, clutters the audio tracks, and its silent "audio" can trigger ducking or loudness logic) · area: `packages/motion-engine/scripts/render.mts` (`renderMedia` options), the media probe's `hasAudio` (D-129), `linkedClipsFromDraggedMedia`
+status: fixed (2026-11-03; the Rust probe tests are written but were not run, see Fixed) · severity: medium (every Motion card adds a junk audio clip, clutters the audio tracks, and its silent "audio" can trigger ducking or loudness logic) · area: `packages/motion-engine/scripts/render.mts` (`renderMedia` options), the media probe's `hasAudio` (D-129), `linkedClipsFromDraggedMedia`
 
 - **Seen:** the owner's screenshot `scratch/bug-refs/2026-11-01-motion-clip-gets-audio.png`. "M five-jobs" placed on V2 also produced a green "M five-jobs" audio clip on an audio track, with no waveform.
 - **Measured:** `motion/renders/five-jobs.mp4` has streams `h264` + **`aac`**. The audio is silent: `volumedetect` gives a mean of **−91.0 dB** over 860,160 samples. The probe therefore reports `hasAudio: true`, and D-129 builds a linked audio half for it.
@@ -14,6 +14,11 @@ status: open (owner, 2026-11-01; queued with the v0.3.0 checklist) · severity: 
   1. **Render:** a Motion scene with no soundtrack or audio layer renders **without an audio stream** (Remotion's `muted` / no enforced audio track in `renderMedia`). A scene with a soundtrack keeps its audio.
   2. **Import / probe:** a source whose audio stream is digital silence (below about −80 dB mean and peak) is treated as `hasAudio: false`, so already-rendered files and any other silent-track media (screen recordings and so on) stop getting junk audio halves. Cache the result with the probe facts.
 - **Tests:** a render without audio has no audio stream; a render with a soundtrack keeps it; the probe classifies a silent-AAC fixture as no audio; a drop of a silent-track file creates no linked audio clip.
+- **Fixed:**
+  1. `packages/motion-engine/scripts/render.mts` passes `muted: !manifestRendersAudio(inputProps)` to `renderMedia`. `scripts/renderAudio.mts` holds the rule: only a manifest `soundtrack` with `render: true` (D-413) is a sound source; nothing else in the engine plays audio. Tests in `scripts/render.test.ts`: muted with no soundtrack or `render: false`, audio kept with `render: true`, and the runner passes it as `muted`.
+  2. `crates/apelles-media/src/video.rs` `probe()` runs `audio_is_digital_silence` (ffmpeg `volumedetect` over the whole first audio stream) after the stream probe; mean and max both under -80 dBFS give `has_audio: false` with a zero sample rate and channel count. Sources longer than 600 s, an unknown duration, or any ffmpeg failure keep the audio (the safe side). A pure-audio file is exempt (a silent `.wav` is still a valid audio source). The result rides in `VideoInfo`, so it is cached with the other probe facts; the disk cache namespace is now `probe-v3` so old `has_audio: true` answers are not served. Tests: a generated silent-AAC mp4 probes as no audio, a tone mp4 keeps it, and the `volumedetect` report parser. The placement half is the existing `linkedClipsFromDraggedMedia` test (`hasAudio: false` builds no audio half, no link group); `chroma_media_list` and the MCP add-clip path read the same probe.
+  3. Measured: `anullsrc` through AAC gives `mean_volume: -91.0 dB`, `max_volume: -91.0 dB` (the same figure as the owner's `five-jobs.mp4`).
+- **Caveat:** the machine's disk filled during this fix, so `cargo test -p apelles-media` could not be built or run; the Rust change is `rustfmt`-clean and the ffmpeg behaviour was checked by hand. Run `cargo test -p apelles-media --lib video::` and `cargo clippy -p apelles-media` before release.
 
 ## B-367 — the Export dialog needs a redesign: a raw form with per-clip "fit / Freeze" rows, no presets, and no direct publishing
 

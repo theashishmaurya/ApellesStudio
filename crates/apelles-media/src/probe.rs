@@ -52,8 +52,8 @@ static PROBE_CACHE: Lazy<Mutex<HashMap<PathBuf, (String, VideoInfo)>>> =
 /// The disk namespace. Bumped to `probe-v2` by B-298: v1 held a cover-art audio
 /// file's probe as a 90000-fps video, and an entry is only ever invalidated by
 /// the file changing — so the corrected probe needs a namespace the old answers
-/// are not in.
-const NS_PROBE: &str = "probe-v2";
+/// are not in. `probe-v3` is B-368's: v2 held a silent AAC track as `has_audio`.
+const NS_PROBE: &str = "probe-v3";
 
 /// `path`'s [`VideoInfo`], from memory, then disk, then a real `ffprobe` pass.
 ///
