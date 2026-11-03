@@ -4,6 +4,18 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-380 — exports are slower than real time (1080p ≈ 1.1× the video's length) and 4K export time has never been measured
+
+status: open (owner, 2026-11-03: "did we fix the export performance on 4K ones? Time taking and all?") · severity: medium-high (the owner's real footage is 4K) · area: `app/src-tauri/src/chroma/edit_render.rs` (segmented render), `crates/apelles-media/src/decode_pipe.rs`, D-350/D-351/D-360/D-373, `docs/notes/export-gpu-compositor.md`
+
+- **Measured so far (1080p fixture, best of 3):** 1 segment 1.81× runtime → 4 segments **1.10×** (D-360). Never under 1×.
+- **4K: unmeasured end to end.** The export notes say so (§10.5 caveat). B-340 (2026-11-03) only bounds memory; it does not change speed.
+- **Known levers, in order of cost:**
+  1. **Hardware encode** (`h264_videotoolbox` / `hevc_videotoolbox`) per segment instead of libx264. It frees the CPU for compositing and is close to a parameter change. Check the determinism contract first: the render's pixels must stay deterministic; whether the *encoded bitstream* must also be bit-identical needs a written decision.
+  2. **The serial `image::imageops::resize`** inside a frame.
+  3. **GPU compositing** (D-350's unfinished half): the largest unclaimed factor.
+- **First step:** measure a real 4K export end to end (the owner's footage, a copy) at 1/2/4/6 segments; record wall time ÷ video length and peak memory; then do lever 1 and re-measure. The numbers go into `docs/perf/README.md` as an export floor.
+
 ## B-376 — the move drag at 300 clips still spikes to 49–66 ms on some runs (before release)
 
 status: open (logged 2026-11-03 at the owner's request, "log them, we will get them back"; after v0.3.0) · severity: low–medium (performance) · baseline: `docs/perf/README.md`

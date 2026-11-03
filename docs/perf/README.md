@@ -46,6 +46,7 @@ The budget (`docs/notes/ui-harness.md`) is ≤ 50 ms for any single frame and �
 - **B-378:** the first preview frame after an app launch takes 1–2 s (ffmpeg/VideoToolbox decoder start-up, about 350–800 ms per new pipe).
 - **B-379:** the Inspector re-mounts for the newly selected clip a frame or two after the release: 10–20 ms, including a forced layout from a Base UI `scrollIntoViewIfNeeded`.
 - **B-375 follow-up:** pinch zoom at 300 clips was 66–109 ms worst frame before the proportional-pinch fix. It is not re-measured since.
+- **B-380:** export speed. 1080p is about 1.1× the video's length (never under 1×), and **4K has never been measured end to end**. Measure first; then hardware encode and GPU compositing.
 - **Live re-check owed:** the B-374 release numbers and the B-369 open numbers were measured in the agents' own bundles, not yet in the owner's dev app. Re-measure after the next restart and update this table.
 
 ## Keeping the floor
