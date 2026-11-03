@@ -174,8 +174,10 @@ export function useCanvasClipPick(container: HTMLElement | null, size: Compositi
     const onPointerDownCapture = (e: PointerEvent) => {
       if (e.button !== 0) return;
       const target = e.target instanceof Element ? e.target : null;
-      // Rule 2 — a corner grab is never a selection gesture.
-      if (target?.closest('[data-transform-handle]')) return;
+      // Rule 2 — a corner grab is never a selection gesture; nor is a crop
+      // edge grab (D-443, `CropOverlay`), whose hit band reaches past the
+      // picture onto whatever is under it.
+      if (target?.closest('[data-transform-handle], [data-crop-handle]')) return;
 
       const rect = container.getBoundingClientRect();
       const point = screenToFraction({ x: e.clientX - rect.left, y: e.clientY - rect.top }, contentBox);

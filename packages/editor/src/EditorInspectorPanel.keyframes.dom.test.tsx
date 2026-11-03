@@ -140,9 +140,27 @@ function button(label: string): HTMLButtonElement {
 function field(label: string): HTMLInputElement {
   const spans = [...(mounted?.container.querySelectorAll('span') ?? [])];
   const span = spans.find((s) => s.textContent === label);
-  const input = span?.parentElement?.querySelector('input');
+  // A slider row also holds the slider's range input; the number field wins.
+  const input =
+    span?.parentElement?.querySelector('[data-slot="number-scrubber"] input') ?? span?.parentElement?.querySelector('input');
   if (!input) throw new Error(`no field labelled "${label}"`);
   return input as HTMLInputElement;
+}
+
+/** One of the crop row's four fields (v0.3.0: `Crop left` … `Crop bottom`). */
+function cropField(edge: 'left' | 'right' | 'top' | 'bottom'): HTMLInputElement {
+  const input = mounted?.container.querySelector<HTMLInputElement>(`input[aria-label="Crop ${edge}"]`);
+  if (!input) throw new Error(`no crop ${edge} field`);
+  return input;
+}
+
+/** The "Key everything here" button (v0.3.0; it was "Key all properties"). */
+function keyAllButton(): HTMLButtonElement {
+  const b = [...(mounted?.container.querySelectorAll('button') ?? [])].find((el) =>
+    el.textContent?.includes('Key everything here'),
+  );
+  if (!b) throw new Error('no "Key everything here" button');
+  return b;
 }
 
 function click(el: HTMLElement) {
@@ -168,7 +186,9 @@ async function render() {
 describe('per-property keyframing (D-208)', () => {
   it('the diamond starts hollow for every property on an un-keyframed clip', async () => {
     await render();
-    for (const label of ['Opacity', 'Position', 'Scale', 'Rotation', 'Crop left', 'Crop top']) {
+    // v0.3.0 (D-443) — crop is one compact L · R · T · B row with no per-edge
+    // diamond (it keys through "Key everything here"), so only the rows.
+    for (const label of ['Opacity', 'Position', 'Scale', 'Rotation', 'Corner radius']) {
       expect(button(`Toggle ${label} keyframes`).getAttribute('aria-pressed')).toBe('false');
     }
     expect(keys()).toEqual([]);
@@ -188,14 +208,15 @@ describe('per-property keyframing (D-208)', () => {
     expect(animatedParams()).toEqual(['scale']);
     expect(button('Toggle Scale keyframes').getAttribute('aria-pressed')).toBe('true');
     // …and no other property became animated as a side effect.
-    for (const label of ['Opacity', 'Position', 'Rotation', 'Crop left']) {
+    for (const label of ['Opacity', 'Position', 'Rotation']) {
       expect(button(`Toggle ${label} keyframes`).getAttribute('aria-pressed')).toBe('false');
     }
 
     // 2. Move the playhead, 3. change Scale's value.
     actSync(() => useEditorTimelineStore.getState().setPlayhead(60));
     await waitFrames(1);
-    type(field('Scale'), 1.8);
+    // v0.3.0 (D-443) — Scale reads in %; the stored value stays a multiplier.
+    type(field('Scale'), 180);
     await waitFrames(1);
 
     // A NEW key at frame 60 — and it names `scale` and nothing else, which is
@@ -219,7 +240,7 @@ describe('per-property keyframing (D-208)', () => {
     await waitFrames(1);
     actSync(() => useEditorTimelineStore.getState().setPlayhead(60));
     await waitFrames(1);
-    type(field('Scale'), 2);
+    type(field('Scale'), 200);
     await waitFrames(1);
 
     // Opacity's diamond, at frame 60, where Scale already has a key: the two
@@ -240,13 +261,13 @@ describe('per-property keyframing (D-208)', () => {
     await waitFrames(1);
     actSync(() => useEditorTimelineStore.getState().setPlayhead(100));
     await waitFrames(1);
-    type(field('Scale'), 3);
+    type(field('Scale'), 300);
     await waitFrames(1);
 
     // Halfway between the frame-0 key (1) and the frame-100 key (3).
     actSync(() => useEditorTimelineStore.getState().setPlayhead(50));
     await waitFrames(1);
-    expect(field('Scale').value).toBe('2');
+    expect(field('Scale').value).toBe('200');
   });
 
   it('turning keyframing off removes only that property\'s keys and holds its current value', async () => {
@@ -255,7 +276,7 @@ describe('per-property keyframing (D-208)', () => {
     await waitFrames(1);
     actSync(() => useEditorTimelineStore.getState().setPlayhead(100));
     await waitFrames(1);
-    type(field('Scale'), 3);
+    type(field('Scale'), 300);
     await waitFrames(1);
     click(button('Toggle Opacity keyframes'));
     await waitFrames(1);
@@ -270,7 +291,7 @@ describe('per-property keyframing (D-208)', () => {
     // The value it had on screen is baked into the static field — no snap
     // back to the stale 1 (After Effects' stopwatch-off semantics).
     expect(currentClip().scale).toBe(2);
-    expect(field('Scale').value).toBe('2');
+    expect(field('Scale').value).toBe('200');
   });
 });
 
@@ -284,7 +305,7 @@ describe('per-property keyframe navigation (D-208)', () => {
     await waitFrames(1);
     actSync(() => useEditorTimelineStore.getState().setPlayhead(60));
     await waitFrames(1);
-    type(field('Scale'), 2);
+    type(field('Scale'), 200);
     await waitFrames(1);
 
     // At frame 60 (on Scale's later key): one behind, none ahead.
@@ -301,7 +322,7 @@ describe('per-property keyframe navigation (D-208)', () => {
     await waitFrames(1);
     actSync(() => useEditorTimelineStore.getState().setPlayhead(60));
     await waitFrames(1);
-    type(field('Scale'), 2);
+    type(field('Scale'), 200);
     await waitFrames(1);
 
     // On a key.
@@ -323,7 +344,7 @@ describe('per-property keyframe navigation (D-208)', () => {
     await waitFrames(1);
     actSync(() => useEditorTimelineStore.getState().setPlayhead(60));
     await waitFrames(1);
-    type(field('Scale'), 2);
+    type(field('Scale'), 200);
     await waitFrames(1);
 
     // From frame 60, Scale's previous key is frame 0 — NOT frame 30, which
@@ -341,7 +362,7 @@ describe('per-property keyframe navigation (D-208)', () => {
 describe('per-property reset (D-208)', () => {
   it('reverts only its own field, leaving every other one alone', async () => {
     await render();
-    type(field('Opacity'), 0.4);
+    type(field('Opacity'), 40);
     await waitFrames(1);
     type(field('Rotation'), 30);
     await waitFrames(1);
@@ -357,18 +378,21 @@ describe('per-property reset (D-208)', () => {
 
   it('resets each field to the documented default, including the crop insets', async () => {
     await render();
-    type(field('Scale'), 2.5);
+    type(field('Scale'), 250);
     await waitFrames(1);
-    type(field('Crop left'), 0.3);
+    // v0.3.0 (D-443) — the crop row's fields are named by edge and read in %.
+    type(cropField('left'), 30);
     await waitFrames(1);
+    expect(currentClip().crop_left).toBe(0.3);
 
+    // The crop's own reset (the header button), then Scale's.
+    click(button('Reset Crop'));
+    await waitFrames(1);
     click(button('Reset Scale'));
     await waitFrames(1);
-    click(button('Reset Crop left'));
-    await waitFrames(1);
 
-    expect(currentClip().scale).toBe(1);
     expect(currentClip().crop_left).toBe(0);
+    expect(currentClip().scale).toBe(1);
   });
 
   it('keys the default at the playhead for an ANIMATED property, rather than silently doing nothing', async () => {
@@ -377,9 +401,9 @@ describe('per-property reset (D-208)', () => {
     await waitFrames(1);
     actSync(() => useEditorTimelineStore.getState().setPlayhead(60));
     await waitFrames(1);
-    type(field('Scale'), 2);
+    type(field('Scale'), 200);
     await waitFrames(1);
-    expect(field('Scale').value).toBe('2');
+    expect(field('Scale').value).toBe('200');
 
     click(button('Reset Scale'));
     await waitFrames(1);
@@ -387,7 +411,7 @@ describe('per-property reset (D-208)', () => {
     // The animation survives (reset is not a destructive "delete my keys"),
     // and the value at the playhead really is the default now.
     expect(animatedParams()).toEqual(['scale']);
-    expect(field('Scale').value).toBe('1');
+    expect(field('Scale').value).toBe('100');
     expect(keys()).toEqual([
       { frame: 0, params: { scale: 1 } },
       { frame: 60, params: { scale: 1 } },
@@ -396,13 +420,9 @@ describe('per-property reset (D-208)', () => {
 });
 
 describe('the whole-clip Keyframes section (D-208 — kept, and now merging)', () => {
-  it('"Key all properties" lights up every diamond at once', async () => {
+  it('"Key everything here" lights up every diamond at once', async () => {
     await render();
-    const keyAll = [...(mounted?.container.querySelectorAll('button') ?? [])].find((b) =>
-      b.textContent?.includes('Key all properties'),
-    );
-    if (!keyAll) throw new Error('no "Key all properties" button');
-    click(keyAll);
+    click(keyAllButton());
     await waitFrames(1);
 
     expect(animatedParams()).toEqual([
@@ -422,7 +442,7 @@ describe('the whole-clip Keyframes section (D-208 — kept, and now merging)', (
       'rotation',
       'scale',
     ]);
-    for (const label of ['Opacity', 'Position', 'Scale', 'Rotation', 'Corner radius', 'Crop left', 'Crop bottom']) {
+    for (const label of ['Opacity', 'Position', 'Scale', 'Rotation', 'Corner radius']) {
       expect(button(`Toggle ${label} keyframes`).getAttribute('aria-pressed')).toBe('true');
     }
   });
@@ -434,14 +454,11 @@ describe('the whole-clip Keyframes section (D-208 — kept, and now merging)', (
     await render();
     click(button('Toggle Scale keyframes'));
     await waitFrames(1);
-    type(field('Scale'), 2.5);
+    type(field('Scale'), 250);
     await waitFrames(1);
     expect(keys()).toEqual([{ frame: 0, params: { scale: 2.5 } }]);
 
-    const keyAll = [...(mounted?.container.querySelectorAll('button') ?? [])].find((b) =>
-      b.textContent?.includes('Key all properties'),
-    );
-    click(keyAll as HTMLElement);
+    click(keyAllButton());
     await waitFrames(1);
 
     expect(keys()).toHaveLength(1);
@@ -462,18 +479,20 @@ describe('per-clip audio rows (D-223)', () => {
 
   it('renders a Volume and a Pan row, at unity and centre, both un-keyframed', async () => {
     await render();
-    expect(field('Volume').value).toBe('1');
-    expect(field('Pan').value).toBe('0');
+    // v0.3.0 (D-442) — Volume reads in dB (unity = 0.0 dB), Pan in words.
+    expect(field('Volume').value).toBe('0.0');
+    expect(field('Pan').value).toBe('Center');
     expect(button('Toggle Volume keyframes').getAttribute('aria-pressed')).toBe('false');
     expect(button('Toggle Pan keyframes').getAttribute('aria-pressed')).toBe('false');
   });
 
   it('typing a Volume writes the clip’s OWN volume — not the track gain, not a transform', async () => {
     await render();
-    type(field('Volume'), 0.5);
+    type(field('Volume'), -6);
     await waitFrames(1);
 
-    expect(currentClip().volume).toBe(0.5);
+    // −6 dB is a ×0.501 multiplier, stored as the multiplier.
+    expect(currentClip().volume).toBeCloseTo(0.501187, 5);
     // The track's own fader is untouched — the two are independent stages that
     // multiply, which is the whole reason this field exists (D-223).
     const tl = useEditorTimelineStore.getState().timeline;
@@ -485,14 +504,14 @@ describe('per-clip audio rows (D-223)', () => {
 
   it('a pan past hard left is clamped on the way into the model, not stored raw', async () => {
     await render();
-    type(field('Pan'), -3);
+    type(field('Pan'), -300);
     await waitFrames(1);
     expect(currentClip().pan).toBe(-1);
   });
 
   it('the reset button puts Volume back to unity', async () => {
     await render();
-    type(field('Volume'), 0.2);
+    type(field('Volume'), -14);
     await waitFrames(1);
     click(button('Reset Volume'));
     await waitFrames(1);
@@ -509,23 +528,24 @@ describe('per-clip audio rows (D-223)', () => {
 
     actSync(() => useEditorTimelineStore.getState().setPlayhead(60));
     await waitFrames(1);
-    type(field('Volume'), 0.25);
+    type(field('Volume'), -12);
     await waitFrames(1);
 
     // A real automation ramp: two keys, naming `volume` alone. `volume` is the
     // name `chroma::audio::level_for_clip` (live) and `clipAudioParam`
     // (export) both look for, so a typo here would silently animate nothing.
-    expect(keys()).toEqual([
-      { frame: 0, params: { volume: 1 } },
-      { frame: 60, params: { volume: 0.25 } },
-    ]);
+    expect(keys()).toHaveLength(2);
+    expect(keys()[0]).toEqual({ frame: 0, params: { volume: 1 } });
+    expect(keys()[1].frame).toBe(60);
+    expect(Object.keys(keys()[1].params)).toEqual(['volume']);
+    expect(keys()[1].params.volume as number).toBeCloseTo(0.251189, 5);
     expect(animatedParams()).toEqual(['volume']);
     // The static field is deliberately NOT rewritten while animated — the key
     // is what the mixer reads.
     expect(currentClip().volume).toBeUndefined();
   });
 
-  it('"Key all properties" deliberately does NOT key volume/pan', async () => {
+  it('"Key everything here" deliberately does NOT key volume/pan', async () => {
     await render();
     click(button('Toggle Volume keyframes')); // one real audio key first
     await waitFrames(1);
@@ -540,10 +560,7 @@ describe('per-clip audio rows (D-223)', () => {
       useEditorTimelineStore.setState({ inspectorTab: 'video' });
     });
     await waitFrames(1);
-    const keyAll = [...(mounted?.container.querySelectorAll('button') ?? [])].find((b) =>
-      b.textContent?.includes('Key all properties'),
-    );
-    click(keyAll as HTMLElement);
+    click(keyAllButton());
     await waitFrames(1);
 
     // The batch merged the nine transform/crop properties into the SAME frame

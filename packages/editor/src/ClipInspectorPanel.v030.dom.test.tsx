@@ -219,16 +219,17 @@ describe('rows (B-359 item 2)', () => {
     expect(after).not.toContain('position_y');
   });
 
-  it('Scale, Rotation and Opacity have an inline slider; Corner radius does not', async () => {
+  it('Scale, Rotation, Opacity and Corner radius have an inline slider with a detent at the default', async () => {
     await render();
     const rowOf = (label: string) =>
       [...(mounted?.container.querySelectorAll('[data-slot="inspector-row"]') ?? [])].find(
         (r) => r.querySelector('[data-slot="inspector-label"]')?.textContent === label,
       ) as HTMLElement;
-    for (const label of ['Scale', 'Rotation', 'Opacity']) {
+    // v0.3.0 (D-443) — the approved mockup gives Corner radius a slider too.
+    for (const label of ['Scale', 'Rotation', 'Opacity', 'Corner radius']) {
       expect(rowOf(label).querySelector('[data-slot="inline-slider"]'), label).toBeTruthy();
+      expect(rowOf(label).querySelector('[data-slot="inline-slider-detent"]'), label).toBeTruthy();
     }
-    expect(rowOf('Corner radius').querySelector('[data-slot="inline-slider"]')).toBeNull();
   });
 
   it('a slider drag is ONE undo entry, and one undo restores the start', async () => {

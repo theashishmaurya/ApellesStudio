@@ -188,6 +188,7 @@ import { createShuttle } from './shuttle';
 import { timelineDuration, timelineFps } from './timeline';
 import { TransformOverlay } from './TransformOverlay';
 import { DynamicZoomOverlay } from './DynamicZoomOverlay';
+import { CropOverlay } from './CropOverlay';
 import { HighlightOverlay } from './HighlightOverlay';
 import { CaptionTransformOverlay } from './CaptionTransformOverlay';
 import { CanvasBoundary } from './CanvasBoundary';
@@ -1137,6 +1138,10 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
                   which mode is active. */}
               <TransformOverlay container={surfaceEl} />
               <DynamicZoomOverlay container={surfaceEl} />
+              {/* D-443 — the crop mode's edge handles (Final Cut's Trim
+                  crop), drawn only for the clip the Inspector armed it for;
+                  `TransformOverlay` stands aside for that clip. */}
+              <CropOverlay container={surfaceEl} />
               {/* D-396 — the clip's highlight boxes, only while the Inspector's
                   "Edit boxes" is on for it; draws nothing otherwise. */}
               <HighlightOverlay container={surfaceEl} />

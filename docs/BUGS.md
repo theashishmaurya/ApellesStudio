@@ -143,7 +143,7 @@ status: open (owner, 2026-11-01) · severity: medium (UX; the last step of every
 
 ## B-366 — the contents of every Inspector Video-tab section need the same intuitive pass (Transform, Compositing, Crop, Dynamic zoom, Highlights, Speed, Fade, Keyframes)
 
-status: open (owner, 2026-11-01: "all the things inside this as well") · severity: medium (UX) · area: `packages/editor/src/ClipInspectorPanel.tsx` and every section component it renders; `@apelles/ui`'s `InspectorRow` / `NumberScrubber`
+status: **fixed 2026-11-03 (D-443)** (owner, 2026-11-01: "all the things inside this as well"; redesign approved 2026-11-03) · severity: medium (UX) · area: `packages/editor/src/ClipInspectorPanel.tsx` and every section component it renders; `@apelles/ui`'s `InspectorRow` / `NumberScrubber`
 
 - **Seen:** the owner's screenshot `scratch/bug-refs/2026-11-01-inspector-video-sections.png`: the Video tab with all 8 sections collapsed (by design since 2026-11-01).
 - **Scope:** an audit of every section's contents with the same yardstick as B-363/B-364/B-365:
@@ -157,10 +157,11 @@ status: open (owner, 2026-11-01: "all the things inside this as well") · severi
   - a one-line header summary when a section is collapsed (e.g. Speed "100%", Fade "0:12 in · 0:00 out", as in the mockup), so users don't have to open it to see its state.
 - ~~**Also from B-359:** the Inspector header gets the clip duration on the right, and the icon tabs (Video / Audio / Speed / Info) are decided in the same pass.~~ Done 2026-11-03 with B-359 (as are the paired Position row and the Scale / Rotation / Opacity sliders); the rest of this list stays open.
 - **Direction:** part of roadmap 00c's research → mockup → build UX pass. References: DaVinci Resolve's Inspector, FCP's Video Inspector, Premiere's Effect Controls. Human + AI parity is unchanged: the same `editor_*` ops.
+- **Fixed (D-443, `docs/notes/panel-redesign.md` "As built"):** every collapsed header carries its value; display units through one module (`displayUnits.ts`: Position in px from the frame's centre, Scale / Opacity in %, Rotation in °, fades and highlights in seconds), converted at the row's edge so the stored units and the MCP tools do not change; sliders with a detent at the default (Scale, Rotation, Opacity, Corner radius); crop is one L · R · T · B row plus a crop button that puts the viewer in crop mode (`CropOverlay`, Final Cut's model), and a crop from either keeps the picture in place (`cropInPlace.ts`); Dynamic zoom previews its start / end boxes; Highlights are one row each (colour dot that cycles, start, length, strength) with Add / Suggest / Show boxes as header icons; fades in seconds with plain curve names; Keyframes gain previous / next; the hint paragraphs became tooltips. An Inspector Scale edit now keeps the box's centre. Tests: `displayUnits.test.ts`, `cropInPlace.test.ts`, `CropOverlay.dom.test.tsx`, `ClipInspectorPanel.panelRedesign.dom.test.tsx`, the UI-harness scenario `inspector-crop-in-viewer`.
 
 ## B-365 — the Inspector's Audio tab (Audio + EQ) is not intuitive: raw ids, no units, an unlabelled graph and a tall list of 12 numeric fields
 
-status: open (owner, 2026-11-01: "EQ and audio as well") · severity: medium (UX) · area: the clip Inspector's Audio tab (`ClipInspectorPanel`'s audio and EQ sections, the EQ graph component)
+status: **fixed 2026-11-03 (D-442)** (owner, 2026-11-01: "EQ and audio as well"; redesign approved 2026-11-03) · severity: medium (UX) · area: the clip Inspector's Audio tab (`ClipInspectorPanel`'s audio and EQ sections, the EQ graph component)
 
 - **Seen:** the owner's screenshot `scratch/bug-refs/2026-11-01-eq-audio-not-intuitive.png`.
 - **What reads as broken or confusing:**
@@ -171,6 +172,7 @@ status: open (owner, 2026-11-01: "EQ and audio as well") · severity: medium (UX
   5. **No per-band bypass** is visible in this view.
   6. **The "Audio" section** (collapsed in the shot) is part of the same tab and gets the same review: volume in dB with a fader/meter, pan, fades, ducking state.
 - **Direction:** part of the same research → mockup → build UX pass (roadmap 00c). References: DaVinci Resolve's Fairlight / Inspector EQ, Premiere's Parametric EQ, FCP's Channel EQ. P4's `NumberScrubber` units already exist, so use them (Hz, dB). Human + AI parity is unchanged: the same `editor_set_clip_eq`.
+- **Fixed (D-442, `docs/notes/panel-redesign.md` "As built"):** the Audio tab is Level (Volume in dB with a detent at 0 dB, a live level meter, Pan as L / Center / R), Fades and Ducking summary rows, and the EQ. The EQ graph is the control: dB and Hz axes, numbered dots that are the bands (drag = frequency + gain as one undo step, scroll = Q, double-click = 0 dB, a click selects), a preset dropdown, and ONE row for the selected band (power · `N · Shape ▾` · Hz · dB · Q, shape names as words with tooltips). Presets come from one table (`EQ_PRESETS`) that `editor_set_clip_eq`'s new `preset` reads too; the store op gained `bands`, so a preset is one undo step. Tests: the rewritten `ClipInspectorPanel.eq.dom.test.tsx`, `EqResponseGraph.dom.test.tsx`, `linkedAvOps.e2e.dom.test.tsx` (MCP preset), `timeline.test.ts`, the UI-harness scenario `inspector-eq-dot-drag`.
 
 ## B-364 — the Music Edits panel is not intuitive: unitless fades in a reversed order, jargon choices, unclear In/Out buttons and actions
 

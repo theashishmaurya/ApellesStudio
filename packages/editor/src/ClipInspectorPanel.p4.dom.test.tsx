@@ -134,13 +134,13 @@ describe('rows: full labels in a fixed label column', () => {
       'Rotation',
       'Corner radius',
       'Opacity',
-      'Crop left',
-      'Crop right',
-      'Crop top',
-      'Crop bottom',
     ]) {
       expect(labels).toContain(want);
     }
+    // v0.3.0 (D-443) — crop is one compact L · R · T · B row; each field
+    // carries its full name as its accessible name.
+    const crop = [...(mounted?.container.querySelectorAll('[data-chroma-crop-row] input') ?? [])];
+    expect(crop.map((i) => i.getAttribute('aria-label'))).toEqual(['Crop left', 'Crop right', 'Crop top', 'Crop bottom']);
   });
 
   it('every label fits the 92 px column at the 11 px label size, and carries its full text as a tooltip', async () => {
@@ -213,19 +213,20 @@ describe('collapsible sections', () => {
 
   it('open on the header, mount the rows, and remember it in the store', async () => {
     await render();
-    expect(rows().map(labelOf)).not.toContain('Crop left');
+    const cropRow = () => mounted?.container.querySelector('[data-chroma-crop-row]') ?? null;
+    expect(cropRow()).toBeNull();
 
     actSync(() => sectionButton('crop').click());
     await waitFrames(2);
     expect(sectionButton('crop').getAttribute('aria-expanded')).toBe('true');
-    expect(rows().map(labelOf)).toContain('Crop left');
+    expect(cropRow()).not.toBeNull();
     expect(useEditorTimelineStore.getState().inspectorSections.crop).toBe(true);
     // Only the opened section opened.
     expect(sectionButton('transform').getAttribute('aria-expanded')).toBe('false');
 
     actSync(() => sectionButton('crop').click());
     await waitFrames(2);
-    expect(rows().map(labelOf)).not.toContain('Crop left');
+    expect(cropRow()).toBeNull();
     expect(mounted?.container.querySelector('#inspector-section-crop')).toBeNull();
     expect(useEditorTimelineStore.getState().inspectorSections.crop).toBe(false);
   });
@@ -266,7 +267,10 @@ describe('linked Width / Height', () => {
 
   it('linked: editing Width moves Height in the same ratio', async () => {
     await render();
-    expect((pair().querySelectorAll('input')[0] as HTMLInputElement).value).toBe('1920');
+    // v0.3.0 — with no override the size follows Scale and reads "Auto"; the
+    // field still scrubs / takes a typed size from the real 1920 px.
+    expect((pair().querySelectorAll('input')[0] as HTMLInputElement).value).toBe('Auto');
+    expect((pair().querySelectorAll('input')[0] as HTMLInputElement).getAttribute('aria-valuenow')).toBe('1920');
     typeNumber(pair().querySelectorAll('input')[0] as HTMLInputElement, 960);
     await waitFrames(2);
     expect(clip().box_width).toBeCloseTo(0.5, 6);

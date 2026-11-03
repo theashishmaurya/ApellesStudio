@@ -1,6 +1,10 @@
 # Panel redesigns: Clipper, Music edits, Inspector Audio + EQ, Inspector Video sections, Export
 
-**Status: mockups ready for owner approval (2026-11-03). No app code yet.** This is the
+**Status: approved by the owner (2026-11-03, "Looks good the UI you gave :)", revision 2).
+Built so far: the Inspector Audio + EQ (§3, B-365, D-442) and the Inspector Video sections
+(§4, B-366, D-443): see "As built" at the end. Clipper, Music edits and Export are built
+separately.** Original status:
+mockups ready for owner approval (2026-11-03). This is the
 research → mockup step of the D-432 flow for the five panels the owner called unintuitive
 on 2026-11-01: B-363 (Clipper), B-364 (Music edits), B-365 (Inspector Audio + EQ), B-366
 (Inspector Video sections) and B-367 (Export). Roadmap 00r (v0.3.0) item (b): "panel research
@@ -569,3 +573,110 @@ The owner reviewed the first mockup: "this is very cluttered" (Music edits), "cl
 - **Highlights.** Add, Suggest and Show boxes are icons in the section header. Each highlight is one row: colour dot (click to cycle) · start · length · strength, with remove on hover.
 - **Export.** The presets are compact chips (name + one tag: 1080p, 4K, Vertical, 1:1, As edited, −16 LUFS). The "Preset" and "Save as" labels are gone. The summary is one line (`1920 × 1080 · 30 fps · −14 LUFS … ≈ 840 MB`), with the colour warning as an icon and tooltip. The Publish destinations are dimmed under "Publish · soon", with no badges and no footnote. The footer is Cancel · Export.
 - Also removed: the Level, Transform and Fade explanatory hints, and the Dynamic zoom description. The Dynamic zoom warning is shortened to one line with the detail in a tooltip.
+
+## As built: Inspector Audio + EQ (B-365, D-442) and Video sections (B-366, D-443), 2026-11-03
+
+Built from revision 2 (it overrides revision 1 wherever they differ) and the owner's
+defaults: Position measured from the centre, Speed keeps its own tab, Fades stay on Video
+(the Audio tab shows their summary), four EQ bands. Screenshots of the real app (a debug
+bundle on a synthetic project): `scratch/ui-compare/inspector-v030/`.
+
+**Shared pieces.**
+- `packages/editor/src/displayUnits.ts`: the one conversion module (fraction ↔ %, gain ↔ dB
+  with a −96 dB floor, frames ↔ s, pan ↔ `L 40 / Center / R 40`, Hz ↔ an octave scale for
+  the frequency field, top-left `position_*` ↔ px from the frame's centre, the plain
+  ease names, the header summaries). `PropertyRow` takes a `units` mapping and converts at
+  the field's edge; step, bounds, slider and detent are in display units. The model, the
+  ops and the MCP tools keep their stored units; `editor_get_capabilities` has a new
+  `compositing.gui_display_units` entry naming the GUI's units.
+- `@apelles/ui`: `NumberScrubber` gains `format` / `parse` (display text such as `L 40` or
+  `3.5 kHz`, read back when typed); `InlineSlider` / `SliderField` gain `detent` (a tick at
+  the default, and a drag within 2 % of the span snaps onto it). Extensions of the shared
+  components, not forks.
+- Every collapsed header carries a value (`EditorSection`'s `meta`): Transform
+  `110% · 0° · 48 px up`, Compositing `80% · 24 px corners`, Crop `L 12% · R 12%`,
+  Dynamic zoom `Off` / `Push in` / `Pull out` / `Pan`, Highlights a count, Fade
+  `In 0.40 s · Out none`, Keyframes `6 on this clip`, Level `−3.0 dB · Center`, EQ
+  `Voice clarity · 3 of 4 bands on` (or `Off`).
+- No explanatory paragraphs: the Level, Transform (scaling override), Fade, Dynamic zoom
+  and Highlights hints are tooltips now. The only text lines left are action feedback
+  (the Suggest result) and the one-line dynamic-zoom warning.
+
+**Video tab.**
+- Transform: Position as one X / Y row in px from the centre (0, 0 = a centred box; a
+  Scale edit on a clip whose position is not keyframed keeps the box's centre, so the
+  readout does not move), Scale in % (slider 0–400 %, detent 100 %), Rotation in °
+  (slider ±180°, detent 0°), Size W / H reading "Auto" until an override exists, Scaling.
+  A header reset.
+- Compositing: Opacity in % (slider, detent 100 %) and Corner radius in px (slider
+  0–200 px, detent 0, per the mockup).
+- Crop: one L · R · T · B row in %, and the header's crop button (Phosphor `Crop`) for the
+  viewer's crop mode (`CropOverlay`, `timelineStore.cropEdit`): the kept picture with four
+  edge handles, the outside dimmed, the whole source dashed, "Drag the edges to crop ·
+  Esc or ⏎ when done". A crop from either place keeps the kept picture where it was
+  (`cropInPlace.ts`, see D-443): one `set_clip_transform` with the insets and the matching
+  scale and position. A keyframed crop is keyed at the playhead; a keyframed position /
+  scale or a rotated clip gets the insets alone. The per-edge keyframe diamonds went with
+  the four rows (the mockup's compact row); "Key everything here" still keys the crop.
+- Dynamic zoom (`ClipDynamicZoomSection`): a preview of the Start (green) and End (red)
+  boxes on the clip's frame, Speed curve in plain words with the swap beside it, "Edit
+  boxes in the viewer", a one-line warning with the detail in its tooltip.
+- Highlights: Add / Suggest / Show boxes as icon buttons in the header; one row per sweep:
+  colour dot (click cycles `HIGHLIGHT_COLOR_CYCLE`: the highlighter default, then marker
+  green, cyan, pink, red) · start (s) · length (s) · strength (%), remove on hover.
+- Fade: in / out in seconds, each with its curve on the same row (Even, Slow start, Slow
+  end, Slow start and end; "Custom (set by your agent)" for an MCP curve).
+- Keyframes: ‹ previous · Key everything here · next › (any property's key) · Delete here ·
+  Clear all.
+
+**Audio tab** (`ClipAudioTab`, `ClipEqSection`).
+- Level: Volume in dB (slider −60…+12 dB, detent 0 dB; the field takes −96…+24), a live
+  "Level now" meter (peak of `chroma_audio_level`, polled only while the section is open and
+  playback runs: the whole mix, said in its tooltip), Pan as `L 40 / Center / R 40`. A
+  header reset for both.
+- Fades: a summary row; a click opens the Video tab's Fade section.
+- Ducking: a summary row (`Ducks under A1 · 12 dB`, `A3 ducks under A1`, `Off`), the
+  per-track setting explained in its tooltip.
+- EQ: the preset dropdown (`EQ_PRESETS` in `eq.ts`: Flat, Voice clarity, Warm voice, Cut
+  rumble, Reduce mud, Tame harshness, Music under voice; "Custom" once edited), the graph
+  with dB and Hz axes whose numbered dots are the bands (drag = frequency + gain, one undo
+  step on release; scroll = Q; double-click = 0 dB; a click selects without writing; a
+  `3.5 kHz · +3.0 dB` tip while dragging; the selected dot filled), and ONE row for the
+  selected band: power · `N · Shape ▾` · frequency (Hz / kHz, an octave-scaled scrub,
+  typed `3.5k` works) · gain (dB, a dash for a pass filter) · Q. The shape names are
+  sentence case (`EQ_BAND_KIND_LABELS`: Low shelf, Bell, High shelf, High-pass, Low-pass)
+  with one-line descriptions as tooltips.
+
+**MCP.** `editor_set_clip_eq` gains `preset` (one of the seven names; it replaces all four
+bands in one op through the same table, and is refused alongside band fields), in both
+`mcp/server.py` and the Rust port; the store op `set_clip_eq` gains `bands` (replace the
+strip). `editor_get_capabilities` gains `compositing.gui_display_units`. Tool counts are
+unchanged (272 debug / 253 release); the parity corpus was re-captured.
+
+**Tests.** `displayUnits.test.ts`, `cropInPlace.test.ts`, `CropOverlay.dom.test.tsx`,
+`ClipInspectorPanel.panelRedesign.dom.test.tsx`, the rewritten
+`ClipInspectorPanel.eq.dom.test.tsx`, new cases in `EqResponseGraph.dom.test.tsx`,
+`SliderField.dom.test.tsx`, `NumberScrubber.dom.test.tsx`, `ClipHighlightsSection.dom.test.tsx`,
+`timeline.test.ts` and `linkedAvOps.e2e.dom.test.tsx`; the older Inspector suites moved to
+the display units. UI harness: `inspector-crop-in-viewer` and `inspector-eq-dot-drag`
+(`packages/ui-harness/src/scenarios/panelRedesign.ts`).
+
+**Deviations from the mockup, and why.**
+- The viewer's crop mode cannot show the trimmed-away pixels ghosted, as Final Cut does:
+  the preview renders the persisted crop, and there is no uncropped pass. Outside the kept
+  rectangle you see what is under the clip, dimmed.
+- The Level section keeps the id `audio` (its title is "Level") so remembered open state
+  and `debug_set_inspector_section`'s documented ids do not change.
+- Position's two fields carry no `px` suffix: at the default 320 px Inspector each is
+  about 50 px wide and the suffix pushed `-48` out of view (seen live). The unit is in the
+  row's tooltip and in the Transform header's summary (`48 px up`).
+- Also fixed after the first live look: a long collapsed summary truncated the section
+  title ("Transf…") — the summary now gives way (`@apelles/inspector`); the Dynamic zoom
+  preview draws the frame inset so a box reaching past it keeps its label; the Keyframes
+  row wraps instead of overflowing; the EQ shape menu fits "1 · High-pass".
+- The crop drag measured live (UI harness, three runs): move p95 22–23 ms, within budget,
+  after the outside-dimming moved from four bands to one clip-path layer (the four-band
+  version dropped 8–12 % of the drag's frames).
+- The level meter is the whole mix's output, not the clip's own level: that is what
+  `chroma_audio_level` measures, and a per-clip meter would need a new tap in the mixer.
+

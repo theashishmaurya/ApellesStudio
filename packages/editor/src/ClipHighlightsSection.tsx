@@ -1,35 +1,41 @@
 /**
- * @apelles/editor — the Inspector's "Highlights" section (D-396/D-397).
+ * @apelles/editor — the Inspector's "Highlights" section (D-396/D-397;
+ * v0.3.0 panel redesign, B-366, D-443).
  *
  * What it is: the human half of `editor_set_clip_highlights` /
- * `editor_suggest_clip_highlights`. A list of the selected clip's highlighter
- * sweeps, each editable (start frame, length in frames, colour, opacity,
- * remove), an "Add at playhead" button, "Suggest from transcript" (the same
- * `suggestClipHighlights` the MCP tool calls), and a toggle that shows the
- * boxes in the viewer so they can be dragged (`HighlightOverlay`).
+ * `editor_suggest_clip_highlights`. Revision 2 of the approved mockup (the
+ * owner on revision 1: "very cluttered"): the three actions are icons in the
+ * section header — Add at the playhead (+), Suggest from the narration (✦),
+ * Show the boxes in the viewer (eye, pressed while on) — and each highlight is
+ * ONE row: a colour dot (click cycles `HIGHLIGHT_COLOR_CYCLE`) · start ·
+ * length · strength, with remove on hover. Start and length are in seconds of
+ * the clip's source, strength in %; the stored values stay source frames and
+ * a 0–1 opacity (`displayUnits.ts`). The header's summary is the count.
  *
  * What it does NOT do: own any state worth persisting. Every edit is ONE
- * `set_clip_highlights` op carrying the whole list, so it is one undo step and
- * the same store action an agent's call lands on. The only local state is the
- * suggestion's status line.
+ * `set_clip_highlights` op carrying the whole list, so it is one undo step
+ * (a scrub folds into one too, `InspectorNumber`) and the same store action
+ * an agent's call lands on. The only local state is the suggestion's status,
+ * shown only after Suggest says something (no standing footnote).
  *
  * **Pattern.** Resolve and Premiere give a clip effect an Inspector section
- * with a row per item plus on-canvas handles for the geometry (Crop, Transform,
- * Dynamic Zoom; this tab's own `DynamicZoomOverlay`), and Apple Motion's
- * Inspector adds/removes a keyframe at the playhead from a button. This
- * follows that: rows for the numbers, an arm toggle for the viewer boxes, an
- * add-at-playhead button. Research notes in D-396.
+ * with a row per item plus on-canvas handles for the geometry; Final Cut puts
+ * a section's actions in its header on hover. Research notes in D-396.
  */
 import { useState } from 'react';
-import { PlusIcon, XIcon, SparkleIcon } from '@phosphor-icons/react';
-import { Button, ScrubbableNumberInput } from '@apelles/ui';
+import { EyeIcon, PlusIcon, SparkleIcon, XIcon } from '@phosphor-icons/react';
+import { Button } from '@apelles/ui';
+
 import { EditorSection } from './EditorSection';
+import { InspectorNumber } from './InspectorNumber';
 import {
   DEFAULT_HIGHLIGHT_COLOR,
   DEFAULT_HIGHLIGHT_OPACITY,
   DEFAULT_HIGHLIGHT_SWEEP_SECONDS,
+  nextHighlightColor,
   type ClipHighlight,
 } from './clipHighlights';
+import { framesFromSeconds, secondsFromFrames } from './displayUnits';
 import { useHighlightEditStore } from './highlightEditStore';
 import { suggestClipHighlights } from './highlightSuggestOp';
 import { liveSuggestDeps } from './highlightSuggestLive';
@@ -42,8 +48,10 @@ import { useEditorTimelineStore } from './timelineStore';
  *  something to grab and drag onto the words. */
 const NEW_HIGHLIGHT_BOX: ClipHighlight['box'] = [0.1, 0.45, 0.9, 0.55];
 
-const row = 'flex items-center gap-1.5';
-const numInput = 'h-7 w-14 text-xs';
+/** Seconds fields step by a hundredth (scrub 1 px = 0.01 s). */
+const SECONDS_STEP = 0.01;
+
+const HEADER_ICON = 'size-5';
 
 export function ClipHighlightsSection() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
@@ -69,6 +77,8 @@ export function ClipHighlightsSection() {
 
   const highlights = clip.highlights ?? [];
   const fps = timelineFps(timeline);
+  // Highlight frames are the clip's SOURCE frames, so seconds are at its rate.
+  const rate = clip.source_fps && clip.source_fps > 0 ? clip.source_fps : fps;
   const armed = armedClipId === clip.id;
 
   const write = (next: ClipHighlight[]) =>
@@ -77,12 +87,8 @@ export function ClipHighlightsSection() {
     write(highlights.map((h, k) => (k === i ? { ...h, ...change } : h)));
 
   const addAtPlayhead = () => {
-    const rate = clip.source_fps && clip.source_fps > 0 ? clip.source_fps : fps;
     const at = Math.round(clipSourceFrame(clip, useEditorTimelineStore.getState().playhead, fps));
-    write([
-      ...highlights,
-      { box: NEW_HIGHLIGHT_BOX, at, dur: Math.round(DEFAULT_HIGHLIGHT_SWEEP_SECONDS * rate) },
-    ]);
+    write([...highlights, { box: NEW_HIGHLIGHT_BOX, at, dur: Math.round(DEFAULT_HIGHLIGHT_SWEEP_SECONDS * rate) }]);
     arm(clip.id);
     select(highlights.length);
   };
@@ -112,97 +118,115 @@ export function ClipHighlightsSection() {
   };
 
   return (
-    <EditorSection id="highlights" label="Highlights">
-      <div className="flex flex-wrap items-center gap-1.5 pb-1">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-7 px-2 text-xs"
-          disabled={trackLocked}
-          onClick={addAtPlayhead}
-          data-highlight-add
-        >
-          <PlusIcon className="size-3.5" /> Add at playhead
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-7 px-2 text-xs"
-          disabled={trackLocked || busy}
-          onClick={suggest}
-          title="Read the picture's text and the narration over it, and sweep each spoken phrase"
-          data-highlight-suggest
-        >
-          <SparkleIcon className="size-3.5" /> Suggest from transcript
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant={armed ? 'default' : 'outline'}
-          className="h-7 px-2 text-xs"
-          disabled={highlights.length === 0}
-          aria-pressed={armed}
-          onClick={() => arm(armed ? null : clip.id)}
-          data-highlight-arm
-        >
-          {armed ? 'Boxes on' : 'Edit boxes'}
-        </Button>
-      </div>
-
+    <EditorSection
+      id="highlights"
+      label="Highlights"
+      meta={highlights.length === 0 ? 'None' : String(highlights.length)}
+      actions={
+        <div className="flex items-center gap-0.5">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className={HEADER_ICON}
+            disabled={trackLocked}
+            onClick={addAtPlayhead}
+            title="Add a highlight at the playhead"
+            aria-label="Add a highlight at the playhead"
+            data-highlight-add
+          >
+            <PlusIcon size={12} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className={HEADER_ICON}
+            disabled={trackLocked || busy}
+            onClick={suggest}
+            title="Suggest highlights from the narration: sweeps each spoken phrase that appears in the picture"
+            aria-label="Suggest highlights from the narration"
+            data-highlight-suggest
+          >
+            <SparkleIcon size={12} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className={`${HEADER_ICON} ${armed ? 'text-accent-text' : ''}`}
+            disabled={highlights.length === 0}
+            aria-pressed={armed}
+            onClick={() => arm(armed ? null : clip.id)}
+            title={armed ? 'Hide the boxes in the viewer' : 'Show the boxes in the viewer (drag them to place)'}
+            aria-label="Show the boxes in the viewer"
+            data-highlight-arm
+          >
+            <EyeIcon size={12} weight={armed ? 'fill' : 'regular'} />
+          </Button>
+        </div>
+      }
+    >
       {highlights.map((h, i) => (
         <div
           key={i}
-          className={`${row} rounded px-1 py-0.5 ${selected === i && armed ? 'bg-accent/15' : ''}`}
+          className={`group flex min-h-[26px] items-center gap-1.5 rounded-sm px-0.5 ${selected === i && armed ? 'bg-card-active' : ''}`}
           onClick={() => select(i)}
           data-highlight-row={i}
         >
-          <span className="text-text-secondary w-4 text-center text-[11px]">{i + 1}</span>
-          <label className="flex items-center gap-1 text-[10px] text-text-secondary">
-            Start
-            <ScrubbableNumberInput
-              step={1}
-              min={0}
-              disabled={trackLocked}
-              className={numInput}
-              value={h.at}
-              onValueChange={(v) => v != null && patch(i, { at: Math.max(0, Math.round(v)) })}
-            />
-          </label>
-          <label className="flex items-center gap-1 text-[10px] text-text-secondary">
-            Len
-            <ScrubbableNumberInput
-              step={1}
-              min={0}
-              disabled={trackLocked}
-              className={numInput}
-              value={h.dur}
-              onValueChange={(v) => v != null && patch(i, { dur: Math.max(0, Math.round(v)) })}
-            />
-          </label>
-          <input
-            type="color"
-            aria-label={`Highlight ${i + 1} colour`}
+          <button
+            type="button"
+            className="size-3 shrink-0 rounded-full disabled:opacity-50"
+            style={{ backgroundColor: h.color ?? DEFAULT_HIGHLIGHT_COLOR }}
             disabled={trackLocked}
-            className="h-6 w-6 shrink-0 cursor-pointer rounded border border-border-color bg-transparent p-0"
-            value={(h.color ?? DEFAULT_HIGHLIGHT_COLOR).toLowerCase()}
-            onChange={(e) => patch(i, { color: e.target.value })}
+            aria-label={`Highlight ${i + 1} colour (click for the next)`}
+            title="Click for the next colour"
+            onClick={(e) => {
+              e.stopPropagation();
+              patch(i, { color: nextHighlightColor(h.color) });
+            }}
+            data-highlight-color={i}
           />
-          <ScrubbableNumberInput
-            step={0.05}
+          <InspectorNumber
+            aria-label={`Highlight ${i + 1} start`}
+            title="Start, in seconds of this clip's source"
+            className="min-w-0 flex-1"
+            value={secondsFromFrames(h.at, rate)}
+            step={SECONDS_STEP}
             min={0}
-            max={1}
+            unit="s"
+            precision={2}
             disabled={trackLocked}
-            className={numInput}
-            value={h.opacity ?? DEFAULT_HIGHLIGHT_OPACITY}
-            onValueChange={(v) => v != null && patch(i, { opacity: Math.min(1, Math.max(0, v)) })}
+            onChange={(s) => patch(i, { at: framesFromSeconds(s, rate) })}
+          />
+          <InspectorNumber
+            aria-label={`Highlight ${i + 1} length`}
+            title="How long the sweep takes, in seconds"
+            className="w-[64px] shrink-0"
+            value={secondsFromFrames(h.dur, rate)}
+            step={SECONDS_STEP}
+            min={0}
+            unit="s"
+            precision={2}
+            disabled={trackLocked}
+            onChange={(s) => patch(i, { dur: framesFromSeconds(s, rate) })}
+          />
+          <InspectorNumber
+            aria-label={`Highlight ${i + 1} strength`}
+            title="Strength (how opaque the highlighter is)"
+            className="w-[56px] shrink-0"
+            value={Math.round((h.opacity ?? DEFAULT_HIGHLIGHT_OPACITY) * 100)}
+            step={1}
+            min={0}
+            max={100}
+            unit="%"
+            disabled={trackLocked}
+            onChange={(pct) => patch(i, { opacity: Math.min(1, Math.max(0, pct / 100)) })}
           />
           <Button
             type="button"
             variant="ghost"
             size="icon-xs"
+            className="size-5 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
             aria-label={`Remove highlight ${i + 1}`}
+            title="Remove this highlight"
             disabled={trackLocked}
             onClick={(e) => {
               e.stopPropagation();
@@ -210,17 +234,15 @@ export function ClipHighlightsSection() {
               write(highlights.filter((_, k) => k !== i));
             }}
           >
-            <XIcon className="size-3.5" />
+            <XIcon size={11} />
           </Button>
         </div>
       ))}
-
-      <p className="text-text-secondary/60 pt-1 text-[10px] leading-snug">
-        {status ??
-          (highlights.length === 0
-            ? 'A highlighter pen that sweeps over words in this clip’s picture while they are spoken. Add one, drag its box in the viewer, or let the transcript place them.'
-            : 'Start and Len are in this clip’s source frames. Turn on Edit boxes to drag them in the viewer.')}
-      </p>
+      {status && (
+        <p className="text-text-secondary pt-1 text-2xs leading-snug" data-highlight-status>
+          {status}
+        </p>
+      )}
     </EditorSection>
   );
 }

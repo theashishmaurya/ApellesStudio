@@ -47,6 +47,8 @@ const { useEditorTimelineStore } = await import('./timelineStore');
 const { useHighlightEditStore } = await import('./highlightEditStore');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
 import type { Clip, Timeline } from './timeline';
+import { HIGHLIGHT_COLOR_CYCLE } from './clipHighlights';
+import { typeNumber } from './testUtils/numberField';
 
 const CLIP_ID = 'page';
 
@@ -177,5 +179,55 @@ describe('the Inspector Highlights section (D-396)', () => {
     });
     await render();
     expect(mounted?.container.querySelector('[data-highlight-add]')).toBeNull();
+  });
+
+  // v0.3.0 panel redesign (B-366, D-443): one row per highlight.
+  it('each highlight is one row: colour dot · start (s) · length (s) · strength (%), and the header counts them', async () => {
+    setup(true);
+    await render();
+    const row = mounted?.container.querySelector('[data-highlight-row="0"]') as HTMLElement;
+    const fields = [...row.querySelectorAll('[data-slot="number-scrubber"] input')] as HTMLInputElement[];
+    expect(fields.map((f) => f.getAttribute('aria-label'))).toEqual([
+      'Highlight 1 start',
+      'Highlight 1 length',
+      'Highlight 1 strength',
+    ]);
+    // 10 and 12 source frames at 24 fps; the default 0.45 opacity.
+    expect(fields.map((f) => f.value)).toEqual(['0.42', '0.50', '45']);
+    const meta = mounted?.container.querySelector('[data-chroma-section="highlights"] button[aria-expanded] > span:nth-of-type(2)');
+    expect(meta?.textContent).toBe('1');
+  });
+
+  it('typing seconds and % writes source frames and a 0–1 opacity', async () => {
+    setup(true);
+    await render();
+    typeNumber(mounted?.container.querySelector('input[aria-label="Highlight 1 start"]') as HTMLInputElement, 1);
+    typeNumber(mounted?.container.querySelector('input[aria-label="Highlight 1 strength"]') as HTMLInputElement, 80);
+    expect(currentClip().highlights?.[0].at).toBe(24);
+    expect(currentClip().highlights?.[0].opacity).toBe(0.8);
+  });
+
+  it('clicking the colour dot cycles the colour, one op per click', async () => {
+    setup(true);
+    await render();
+    const dot = () => button('[data-highlight-color="0"]');
+    click(dot());
+    expect(currentClip().highlights?.[0].color).toBe(HIGHLIGHT_COLOR_CYCLE[1]);
+    click(dot());
+    expect(currentClip().highlights?.[0].color).toBe(HIGHLIGHT_COLOR_CYCLE[2]);
+  });
+
+  it('the header holds Add, Suggest and Show boxes as icon buttons with names', async () => {
+    setup(true);
+    await render();
+    const header = mounted?.container.querySelector('[data-chroma-section="highlights"] > div') as HTMLElement;
+    for (const sel of ['[data-highlight-add]', '[data-highlight-suggest]', '[data-highlight-arm]']) {
+      const b = header.querySelector(sel) as HTMLButtonElement;
+      expect(b, sel).toBeTruthy();
+      expect(b.getAttribute('aria-label')).toBeTruthy();
+      expect(b.textContent).toBe('');
+    }
+    click(header.querySelector('[data-highlight-arm]') as HTMLElement);
+    expect(useHighlightEditStore.getState().armedClipId).toBe(CLIP_ID);
   });
 });

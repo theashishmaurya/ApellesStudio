@@ -174,10 +174,12 @@ const SELECTIONS = [
 describe.each(SELECTIONS)('with $name selected (B-334)', ({ track, id }) => {
   it('the Audio tab shows the audible level, pan and keyframe — never the picture half’s stray 10.6', async () => {
     await render(track, id, 'Audio');
-    expect(field('Volume').value).toBe(String(AUDIO_VOLUME));
-    expect(field('Volume').value).not.toBe(String(STRAY_VIDEO_VOLUME));
-    // The audio partner's own pan, not the picture half's -0.9.
-    expect(field('Pan').value).toBe('0.25');
+    // v0.3.0 (D-442) — Volume reads in dB: 0.55 is −5.2 dB, the stray 10.6
+    // would read +20.5 dB.
+    expect(field('Volume').value).toBe('-5.2');
+    expect(field('Volume').value).not.toBe('20.5');
+    // The audio partner's own pan (R 25), not the picture half's -0.9 (L 90).
+    expect(field('Pan').value).toBe('R 25');
     // Volume is keyframed on the audio half, and the row says so.
     expect(keyframeToggle('Volume').getAttribute('aria-pressed')).toBe('true');
     expect(keyframeToggle('Pan').getAttribute('aria-pressed')).toBe('false');
@@ -185,7 +187,7 @@ describe.each(SELECTIONS)('with $name selected (B-334)', ({ track, id }) => {
 
   it('editing the Audio tab writes the audio partner and leaves the picture half untouched', async () => {
     await render(track, id, 'Audio');
-    type(field('Pan'), -0.5);
+    type(field('Pan'), -50);
     await waitFrames(2);
     expect(clipAt(1).pan).toBe(-0.5);
     // The picture half keeps its legacy stray fields exactly as they were.
@@ -194,16 +196,17 @@ describe.each(SELECTIONS)('with $name selected (B-334)', ({ track, id }) => {
 
     // An animated property's edit lands on ITS keyframe at the playhead — on
     // the audio half's own key list.
-    type(field('Volume'), 0.8);
+    // −1.9382 dB is a ×0.8 multiplier.
+    type(field('Volume'), -1.93820026);
     await waitFrames(2);
-    expect(clipAt(1).chroma_keyframes?.find((k) => k.frame === 0)?.params.volume).toBe(0.8);
+    expect(clipAt(1).chroma_keyframes?.find((k) => k.frame === 0)?.params.volume as number).toBeCloseTo(0.8, 6);
     expect(clipAt(0).chroma_keyframes ?? []).toEqual([]);
   });
 
   it('the EQ edits the audio partner’s bands', async () => {
     await render(track, id, 'Audio');
-    // Band 1's Gain is the first "Gain" row.
-    const gain = fieldByLabel(mounted?.container, 'Gain') as HTMLInputElement;
+    // v0.3.0 (D-442) — the one band row shows band 1 first.
+    const gain = mounted?.container.querySelector('input[aria-label="Band 1 gain"]') as HTMLInputElement;
     type(gain, 6);
     await waitFrames(2);
     expect(clipAt(1).eq_bands?.[0]?.gain_db).toBe(6);
@@ -212,9 +215,11 @@ describe.each(SELECTIONS)('with $name selected (B-334)', ({ track, id }) => {
 
   it('the Video tab shows the picture half’s transform and writes it there', async () => {
     await render(track, id, 'Video');
-    expect(field('Scale').value).toBe('1.5');
-    expect(field('Position X').value).toBe('0.2');
-    type(field('Scale'), 2);
+    // v0.3.0 (D-443) — Scale in %, Position in px from the frame's centre:
+    // a 1.5 × 1 box at x 0.2 is centred 0.45 of 1920 px right of centre.
+    expect(field('Scale').value).toBe('150');
+    expect(field('Position X').value).toBe('864');
+    type(field('Scale'), 200);
     await waitFrames(2);
     expect(clipAt(0).scale).toBe(2);
     // The audio half never grows a transform it would never draw.
@@ -225,7 +230,7 @@ describe.each(SELECTIONS)('with $name selected (B-334)', ({ track, id }) => {
     await render(track, id, 'Video');
     const headings = sectionTitles(mounted?.container);
     expect(headings).toContain('Transform');
-    expect(headings).not.toContain('Audio');
+    expect(headings).not.toContain('Level');
     expect(headings).not.toContain('EQ');
   });
 });
@@ -251,6 +256,6 @@ describe('an unlinked clip is unchanged', () => {
     tl.tracks[1].clips = [];
     actSync(() => useEditorTimelineStore.setState({ timeline: tl }));
     await render(0, VIDEO_ID, 'Audio');
-    expect(field('Volume').value).toBe(String(STRAY_VIDEO_VOLUME));
+    expect(field('Volume').value).toBe('20.5');
   });
 });

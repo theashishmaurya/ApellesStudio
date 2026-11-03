@@ -190,6 +190,9 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
   // D-234 — while dynamic zoom is armed for this clip, `DynamicZoomOverlay`
   // owns the picture and this overlay draws nothing (see this module's doc).
   const dynamicZoom = useEditorTimelineStore((s) => s.dynamicZoom);
+  // D-443 — in crop mode `CropOverlay` owns the picture's edges, so the move /
+  // scale box stands aside for that clip, as it does for dynamic zoom.
+  const cropEdit = useEditorTimelineStore((s) => s.cropEdit);
 
   // Same Phase-1 multi-select fallback `EditorInspectorPanel.tsx` already
   // uses: a selection that isn't exactly one clip draws nothing.
@@ -428,6 +431,7 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
   // drawing the start/end pair over this picture, so this single box stands
   // aside rather than adding a third stroke to the same rectangle.
   if (dynamicZoom && clip.id === dynamicZoom.clipId) return null;
+  if (cropEdit && clip.id === cropEdit.clipId) return null;
 
   const natural = { width: geometry.naturalWidth, height: geometry.naturalHeight };
   // D-193 — while a drag is live the box follows the natural*scale formula

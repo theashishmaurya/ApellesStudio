@@ -365,3 +365,37 @@ export function dragCornerReposition(
     y: startPosition.y - (natural.height * delta) / 2,
   };
 }
+
+/** The rectangle a clip actually paints (composition fractions) for a
+ *  resolved transform — `resolvedBoxSize`'s size (override, crop) at
+ *  `clipBoxAnchor` / `clipBoxOrigin`'s placement. The one function behind the
+ *  Inspector's centre-relative Position readout and `CropOverlay`'s edges
+ *  (v0.3.0, D-443), so both measure the box `TransformOverlay` draws. */
+export function paintedClipBox(
+  clip: Pick<Clip, 'text' | 'scaling'>,
+  natural: { width: number; height: number },
+  t: {
+    position_x: number;
+    position_y: number;
+    scale: number;
+    box_width: number | null;
+    box_height: number | null;
+    crop_left: number;
+    crop_top: number;
+    crop_right: number;
+    crop_bottom: number;
+  },
+): FractionBox {
+  const override = { width: t.box_width, height: t.box_height };
+  const size = resolvedBoxSize(natural, t.scale, override, {
+    left: t.crop_left,
+    top: t.crop_top,
+    right: t.crop_right,
+    bottom: t.crop_bottom,
+  });
+  if (clipBoxAnchor(clip) === 'composition-centre') {
+    return { left: 0.5 - size.width / 2 + t.position_x, top: 0.5 - size.height / 2 + t.position_y, ...size };
+  }
+  const origin = clipBoxOrigin(clip, natural, override);
+  return { left: t.position_x + origin.x, top: t.position_y + origin.y, ...size };
+}

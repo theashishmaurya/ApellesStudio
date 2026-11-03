@@ -186,13 +186,13 @@ describe('clip Inspector tab chrome (B-124 / D-254)', () => {
     // as the real webview does, it must be inert, because that is the single
     // signal the hiding rule above depends on.
     for (const p of panels()) {
-      const isAudio = sectionTitles(p).includes('Audio');
+      const isAudio = sectionTitles(p).includes('Level');
       if (!isAudio) expect(p.hasAttribute('inert')).toBe(true);
     }
     // Whatever is NOT inert is the audio panel, and there is exactly one.
     const live = panels().filter((p) => !p.hasAttribute('inert'));
     expect(live).toHaveLength(1);
-    expect(sectionTitles(live[0])).toContain('Audio');
+    expect(sectionTitles(live[0])).toContain('Level');
   });
 
   it('separates sections with a real rule, on BOTH tabs (each section owns its bottom border)', async () => {
@@ -212,6 +212,12 @@ describe('clip Inspector tab chrome (B-124 / D-254)', () => {
 
     await clickTab('Audio');
     const audioPanel = panels().filter((p) => !p.hasAttribute('inert'))[0];
-    expect([...audioPanel.children].map((c) => c.getAttribute('data-chroma-section'))).toEqual(['audio', 'eq']);
+    // v0.3.0 (D-442) — Level, the Fades and Ducking summary rows, EQ: every
+    // child owns its bottom rule.
+    const audioChildren = [...audioPanel.children] as HTMLElement[];
+    expect(
+      audioChildren.map((c) => c.getAttribute('data-chroma-section') ?? c.getAttribute('data-chroma-summary-row')),
+    ).toEqual(['audio', 'Fades', 'Ducking', 'eq']);
+    for (const c of audioChildren) expect(c.className).toContain('border-b');
   });
 });

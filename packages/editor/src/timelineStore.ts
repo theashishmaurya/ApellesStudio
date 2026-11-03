@@ -440,6 +440,16 @@ interface EditorTimelineState {
    *  clip: the baked keys ARE the curve (see `dynamicZoom.ts`'s module doc),
    *  so re-arming the mode always starts at `linear`. */
   dynamicZoom: { clipId: string; curve: EaseCurve } | null;
+  /** v0.3.0 (B-366, D-443) — the viewer's CROP MODE (Final Cut's Crop
+   *  button): the clip whose four edges the viewer shows as draggable
+   *  handles, with the outside dimmed. UI state for `dynamicZoom`'s exact
+   *  reasons (an authoring mode, two surfaces: the Inspector's Crop header
+   *  button and `PreviewPane`'s `CropOverlay`), never persisted, never
+   *  undoable; the crop insets it writes are. By clip id, like `dynamicZoom`:
+   *  selecting another clip hides the handles, and coming back to this one
+   *  shows them again. Esc / Enter in the viewer or the button again ends
+   *  it. */
+  cropEdit: { clipId: string } | null;
   /** D-252 — which popovers/dialogs from `panelRegistry.ts`'s `PANEL_IDS` are
    *  currently open, keyed by panel id. A panel with no entry reads as closed
    *  via `usePanelOpen`'s `?? false`, so this map only ever needs writing,
@@ -605,6 +615,8 @@ interface EditorTimelineState {
    *  and `editor_set_dynamic_zoom`'s own arming. Writes no keyframes: a bake
    *  is always an explicit `applyOp` by whoever committed a box. */
   setDynamicZoom: (mode: { clipId: string; curve: EaseCurve } | null) => void;
+  /** v0.3.0 (D-443) — enter / leave the viewer's crop mode. Writes nothing. */
+  setCropEdit: (mode: { clipId: string } | null) => void;
   /** D-252 — open/close one registered popover/dialog by id. The one writer
    *  for both that popover's own trigger and `debug_set_popover_open`. */
   setPanelOpen: (id: string, open: boolean) => void;
@@ -908,6 +920,8 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   markerSort: 'newest',
   // D-234 — disarmed by default; the viewer shows the ordinary transform box.
   dynamicZoom: null,
+  // D-443 — no crop mode by default.
+  cropEdit: null,
   // D-252 — nothing open by default; see the field's own doc.
   openPanels: {},
   // D-263 — the shared media pool, which is what this column showed before
@@ -979,6 +993,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
       // goes with it rather than leaving two boxes over a picture that has
       // nothing to do with them.
       dynamicZoom: null,
+      cropEdit: null,
       // D-280 — a shuttle rate is set to skim ONE take, not as a viewing
       // preference (which is the argument `previewView` above makes for
       // itself). Opening a different project already playing at 4x, with no
@@ -1156,6 +1171,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
   setMarkerSort: (markerSort) => set({ markerSort }),
 
   setDynamicZoom: (mode) => set({ dynamicZoom: mode }),
+  setCropEdit: (mode) => set({ cropEdit: mode }),
 
   setPanelOpen: (id, open) => set((s) => ({ openPanels: { ...s.openPanels, [id]: open } })),
 
@@ -1534,7 +1550,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
       await invoke('chroma_timeline_delete', { id });
       if (wasActive) {
         await Promise.all([get().load(), get().loadList()]);
-        set({ playhead: 0, inPoint: null, outPoint: null, selection: [], selectedGap: null, curveEditor: null, dynamicZoom: null });
+        set({ playhead: 0, inPoint: null, outPoint: null, selection: [], selectedGap: null, curveEditor: null, dynamicZoom: null, cropEdit: null });
       } else {
         await get().loadList();
       }

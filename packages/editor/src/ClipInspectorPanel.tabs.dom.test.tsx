@@ -65,9 +65,11 @@ const TEXT_CLIP_ID = 'title-1';
  *  two tabs has to be exactly this, or the reorganisation dropped something. */
 // v0.3.0 (B-359 item 1) — Speed moved to its own tab; Info is a read-only
 // page with no sections.
-const ALL_SECTIONS = ['Transform', 'Compositing', 'Crop', 'Dynamic zoom', 'Highlights', 'Speed', 'Fade', 'Keyframes', 'Audio', 'EQ'];
+// v0.3.0 (D-442) — the Audio tab's level section is titled "Level"; its Fades
+// and Ducking rows are summaries, not collapsible sections.
+const ALL_SECTIONS = ['Transform', 'Compositing', 'Crop', 'Dynamic zoom', 'Highlights', 'Speed', 'Fade', 'Keyframes', 'Level', 'EQ'];
 const VIDEO_SECTIONS = ['Transform', 'Compositing', 'Crop', 'Dynamic zoom', 'Highlights', 'Fade', 'Keyframes'];
-const AUDIO_SECTIONS = ['Audio', 'EQ'];
+const AUDIO_SECTIONS = ['Level', 'EQ'];
 const SPEED_SECTIONS = ['Speed'];
 
 function fixture(): Timeline {
@@ -191,8 +193,8 @@ describe('the clip Inspector’s Video / Audio tabs (D-246)', () => {
     expect(sections()).toEqual(AUDIO_SECTIONS);
     expect(tab('Audio').getAttribute('aria-selected')).toBe('true');
     // The rows themselves came with it, not just the headings.
-    expect(field('Volume').value).toBe('1');
-    expect(field('Pan').value).toBe('0');
+    expect(field('Volume').value).toBe('0.0');
+    expect(field('Pan').value).toBe('Center');
   });
 
   it('every section the old single scroll had is still reachable, on exactly one tab', async () => {
@@ -261,20 +263,21 @@ describe('the clip Inspector’s Video / Audio tabs (D-246)', () => {
 
   it('switching tabs does not throw away an edit, on either side of the trip', async () => {
     await render();
-    type(field('Opacity'), 0.5);
+    // v0.3.0 (D-443) — Opacity reads in %, Volume in dB.
+    type(field('Opacity'), 50);
     await waitFrames(1);
     expect(currentClip().opacity).toBe(0.5);
 
     await clickTab('Audio');
-    type(field('Volume'), 0.25);
+    type(field('Volume'), -12);
     await waitFrames(1);
 
     await clickTab('Video');
     // The transform edit survived the round trip, in the store AND on screen…
     expect(currentClip().opacity).toBe(0.5);
-    expect(field('Opacity').value).toBe('0.5');
+    expect(field('Opacity').value).toBe('50');
     // …and so did the audio edit made while it was hidden.
-    expect(currentClip().volume).toBe(0.25);
+    expect(currentClip().volume).toBeCloseTo(0.251189, 5);
   });
 
   it('the panel’s own local UI state survives a tab round trip', async () => {

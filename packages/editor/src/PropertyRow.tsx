@@ -53,6 +53,14 @@
  * diamond animates or stops both, ‹ › walk the union of their keys, ↺
  * resets both, each multi-op action one undo step.
  *
+ * **v0.3.0 panel redesign (B-366, D-443): display units at the edge.** A row
+ * given `units` (a `displayUnits.ts` `UnitMapping`) shows and edits the value
+ * in the person's unit — Scale and Opacity in %, Volume in dB, Position in px
+ * from the centre — and converts back before `onChange`, so the stored value,
+ * the ops and the MCP tools never change unit. `step` / `min` / `max` /
+ * `slider` / `detent` are then in DISPLAY units. A slider row may carry a
+ * `detent` (the default value: a tick and a snap point).
+ *
  * Pure presentation, like the panel it came from: no store access beyond the
  * undo bracket (`InspectorNumber`, and the paired row's two-op actions), no
  * `Clip` knowledge, nothing beyond the props below.
@@ -68,6 +76,7 @@ import { InspectorRow } from '@apelles/ui';
 
 import { beginHistoryGroup, endHistoryGroup } from './timelineStore';
 import { InspectorNumber, InspectorSliderField } from './InspectorNumber';
+import type { UnitMapping } from './displayUnits';
 
 /** One keyframe-slot button: 16 px, so ‹ ◇ › ∿ ↺ fit the 80 px slot. */
 const SLOT_BUTTON =
@@ -98,23 +107,6 @@ export interface PropertyState {
    *  Timeline frames, ready to hand straight to `setPlayhead`. */
   prevFrame: number | null;
   nextFrame: number | null;
-}
-
-/** A [`PropertyState`] for a property this app deliberately does NOT keyframe
- *  — D-224's EQ band fields, whose static-only-ness is a stated design call
- *  (ffmpeg's biquad filters parse their parameters once, so an animated EQ is
- *  not expressible in the export at all, and a preview that did what the
- *  export cannot is the defect class this repo keeps closing). The value, and
- *  every keyframe flag at rest.
- *
- *  Paired with **omitting** `onKeyframeToggle`/`onKeyframeNav`, which is what
- *  makes the row render with no diamond and no nav arrows rather than with
- *  three dead ones. A static row still wants everything else this component
- *  already gets right — the label/field layout, the disabled handling, and its
- *  own reset — which is precisely why it reuses this row instead of growing a
- *  second near-identical one, this file's own reason for existing. */
-export function staticPropertyState(value: number): PropertyState {
-  return { value, animated: false, keyedHere: false, prevFrame: null, nextFrame: null };
 }
 
 /** One Transform/Crop-shaped row: label, value, and a fixed keyframe slot
@@ -254,6 +246,11 @@ export function PropertyRow<TParam extends string>({
   max,
   unit,
   slider,
+  detent,
+  units,
+  format,
+  parse,
+  precision,
   disabled,
   onChange,
   onKeyframeToggle,
@@ -272,6 +269,15 @@ export function PropertyRow<TParam extends string>({
   unit?: string;
   /** v0.3.0 — draw an inline slider over this span beside the field. */
   slider?: SliderSpan;
+  /** The slider's detent (default value), in display units. */
+  detent?: number;
+  /** Stored ↔ display conversion (D-443); omitted = the stored unit. */
+  units?: UnitMapping;
+  /** Display text in place of the number (Pan's `L 40`), and its reader. */
+  format?: (shown: number) => { text: string; unit?: string };
+  parse?: (text: string) => number | null;
+  /** Fixed decimals for the field (Volume `−3.0`). */
+  precision?: number;
   disabled: boolean;
   onChange: (value: number) => void;
   onKeyframeToggle?: (param: TParam) => void;
@@ -305,18 +311,22 @@ export function PropertyRow<TParam extends string>({
     />
   );
 
+  const shown = units ? units.toDisplay(state.value) : state.value;
   const fieldProps = {
     'aria-label': label,
-    value: state.value,
+    value: shown,
     step,
     min,
     max,
     unit,
+    format,
+    parse,
+    precision,
     disabled,
-    // The field rounds what it SHOWS; the exact stored value is one
-    // hover (or one click into the field) away.
-    title: `${label}: ${state.value}`,
-    onChange,
+    // The field rounds what it SHOWS; the exact value is one hover (or one
+    // click into the field) away.
+    title: `${label}: ${format ? format(shown).text : shown}${format ? '' : (unit ?? '')}`,
+    onChange: (v: number) => onChange(units ? units.fromDisplay(v) : v),
   };
 
   return (
@@ -326,6 +336,7 @@ export function PropertyRow<TParam extends string>({
           {...fieldProps}
           sliderMin={slider.min}
           sliderMax={slider.max}
+          detent={detent}
           onReset={() => onReset(param)}
         />
       ) : (
@@ -372,6 +383,9 @@ export function PairedPropertyRow<TParam extends string>({
   min,
   max,
   unit,
+  units,
+  precision,
+  labelTitle,
   disabled,
   onChange,
   onKeyframeToggle,
@@ -389,6 +403,11 @@ export function PairedPropertyRow<TParam extends string>({
   min?: number;
   max?: number;
   unit?: string;
+  /** Per-field stored ↔ display conversion (Position in px from the centre). */
+  units?: readonly [UnitMapping, UnitMapping];
+  precision?: number;
+  /** The label's tooltip (the unit, when the fields have no room for it). */
+  labelTitle?: string;
   disabled: boolean;
   onChange: (param: TParam, value: number) => void;
   /** Receives BOTH params at once, so the caller writes them as one keyframe
@@ -435,23 +454,28 @@ export function PairedPropertyRow<TParam extends string>({
   );
 
   return (
-    <InspectorRow label={label} disabled={disabled} slot={slot}>
-      {params.map((p, i) => (
-        <InspectorNumber
-          key={p}
-          aria-label={`${label} ${prefixes[i]}`}
-          prefix={prefixes[i]}
-          className="min-w-0 flex-1"
-          value={states[i].value}
-          step={step}
-          min={min}
-          max={max}
-          unit={unit}
-          disabled={disabled}
-          title={`${label} ${prefixes[i]}: ${states[i].value}`}
-          onChange={(v) => onChange(p, v)}
-        />
-      ))}
+    <InspectorRow label={label} labelTitle={labelTitle} disabled={disabled} slot={slot}>
+      {params.map((p, i) => {
+        const map = units?.[i];
+        const shown = map ? map.toDisplay(states[i].value) : states[i].value;
+        return (
+          <InspectorNumber
+            key={p}
+            aria-label={`${label} ${prefixes[i]}`}
+            prefix={prefixes[i]}
+            className="min-w-0 flex-1"
+            value={shown}
+            step={step}
+            min={min}
+            max={max}
+            unit={unit}
+            precision={precision}
+            disabled={disabled}
+            title={`${labelTitle ?? label} ${prefixes[i]}: ${shown}${unit ?? ''}`}
+            onChange={(v) => onChange(p, map ? map.fromDisplay(v) : v)}
+          />
+        );
+      })}
     </InspectorRow>
   );
 }

@@ -47,15 +47,26 @@ export const EQ_BAND_KINDS: readonly EqBandKind[] = [
   'low_pass',
 ];
 
-/** The label the Inspector shows for each kind. Not derived from the stored
- *  string: "Low Shelf" is the term the reference NLE uses, and a mechanical
- *  un-snake_case would give "Low shelf" / "High pass". */
+/** The shape name the Inspector shows for each kind (and `describeEqBand`
+ *  prints). Not derived from the stored string: `peak` reads "Bell", the word
+ *  Resolve's and Logic's EQs use; v0.3.0 (B-365) puts them in the app's
+ *  sentence case, as the approved mockup does. */
 export const EQ_BAND_KIND_LABELS: Readonly<Record<EqBandKind, string>> = {
-  low_shelf: 'Low Shelf',
+  low_shelf: 'Low shelf',
   peak: 'Bell',
-  high_shelf: 'High Shelf',
-  high_pass: 'High Pass',
-  low_pass: 'Low Pass',
+  high_shelf: 'High shelf',
+  high_pass: 'High-pass',
+  low_pass: 'Low-pass',
+};
+
+/** What each shape does, in one line: the shape menu's tooltip (v0.3.0 rule:
+ *  the control is the explanation, the description lives in a tooltip). */
+export const EQ_BAND_KIND_DESCRIPTIONS: Readonly<Record<EqBandKind, string>> = {
+  low_shelf: 'Lifts or cuts everything below the frequency.',
+  peak: 'Lifts or cuts a band around the frequency.',
+  high_shelf: 'Lifts or cuts everything above the frequency.',
+  high_pass: 'Removes everything below the frequency (rumble, wind).',
+  low_pass: 'Removes everything above the frequency (hiss).',
 };
 
 /** Does this kind use `gain_db`? `false` for the two pass filters, whose depth
@@ -330,4 +341,111 @@ export function describeEqBand(band: EqBand): string {
   const gain = eqKindUsesGain(band.kind) ? ` ${band.gain_db > 0 ? '+' : ''}${band.gain_db} dB` : '';
   const off = band.enabled ? '' : ' (off)';
   return `${EQ_BAND_KIND_LABELS[band.kind]} ${hz}${gain} Q ${band.q}${off}`;
+}
+
+// --------------------------------------------------------------------------- //
+// presets — one table for the Inspector and `editor_set_clip_eq preset`
+// --------------------------------------------------------------------------- //
+
+/** A named starting point for the whole strip (v0.3.0, B-365, D-442): the
+ *  Inspector's EQ preset dropdown and `editor_set_clip_eq`'s `preset` both
+ *  resolve a name through THIS table, so a person and an agent picking "Voice
+ *  clarity" write the same four bands. A preset is nothing but band values:
+ *  once written it is an ordinary EQ, and editing any band makes it "Custom".
+ *
+ *  The set and the numbers are the approved mockup's
+ *  (`docs/notes/panel-redesign.md` §3): Final Cut's Equalization menu and
+ *  Premiere's Parametric EQ presets for the idea, the Fairlight dialogue-EQ
+ *  guide for the frequency areas (rumble under 80–90 Hz, mud 300–400 Hz,
+ *  presence 3–3.5 kHz, harshness around 4 kHz). Each is four bands in the
+ *  default strip's slots; a band a preset does not use is turned off, so it
+ *  keeps a sensible setting but does nothing. */
+export interface EqPreset {
+  name: string;
+  bands: readonly EqBand[];
+}
+
+function eqPreset(name: string, bands: Array<[EqBandKind, number, number, number, boolean]>): EqPreset {
+  return Object.freeze({
+    name,
+    bands: Object.freeze(
+      bands.map(([kind, freq_hz, gain_db, q, enabled]) => Object.freeze<EqBand>({ kind, freq_hz, gain_db, q, enabled })),
+    ),
+  });
+}
+
+/** The shelves' and pass filters' Q in the presets: Butterworth, rounded the
+ *  way a person reads it. */
+const PRESET_SHELF_Q = 0.71;
+
+export const EQ_PRESETS: readonly EqPreset[] = Object.freeze([
+  eqPreset('Flat', [
+    ['low_shelf', 120, 0, PRESET_SHELF_Q, true],
+    ['peak', 500, 0, 1, true],
+    ['peak', 2_500, 0, 1, true],
+    ['high_shelf', 8_000, 0, PRESET_SHELF_Q, true],
+  ]),
+  eqPreset('Voice clarity', [
+    ['high_pass', 80, 0, PRESET_SHELF_Q, true],
+    ['peak', 300, -2, 1.2, true],
+    ['peak', 3_500, 3, 1, true],
+    ['high_shelf', 10_000, 0, PRESET_SHELF_Q, false],
+  ]),
+  eqPreset('Warm voice', [
+    ['high_pass', 70, 0, PRESET_SHELF_Q, true],
+    ['peak', 180, 3, 1, true],
+    ['peak', 3_000, 1.5, 1, true],
+    ['high_shelf', 9_000, -1, PRESET_SHELF_Q, true],
+  ]),
+  eqPreset('Cut rumble', [
+    ['high_pass', 90, 0, PRESET_SHELF_Q, true],
+    ['peak', 500, 0, 1, false],
+    ['peak', 2_500, 0, 1, false],
+    ['high_shelf', 8_000, 0, PRESET_SHELF_Q, false],
+  ]),
+  eqPreset('Reduce mud', [
+    ['low_shelf', 120, 0, PRESET_SHELF_Q, false],
+    ['peak', 400, -4, 1.4, true],
+    ['peak', 2_500, 0, 1, false],
+    ['high_shelf', 8_000, 0, PRESET_SHELF_Q, false],
+  ]),
+  eqPreset('Tame harshness', [
+    ['low_shelf', 120, 0, PRESET_SHELF_Q, false],
+    ['peak', 500, 0, 1, false],
+    ['peak', 4_000, -3, 2, true],
+    ['high_shelf', 8_000, -1.5, PRESET_SHELF_Q, true],
+  ]),
+  eqPreset('Music under voice', [
+    ['low_shelf', 120, 0, PRESET_SHELF_Q, false],
+    ['peak', 2_500, -4, 0.8, true],
+    ['peak', 5_000, 0, 1, false],
+    ['high_shelf', 8_000, 0, PRESET_SHELF_Q, false],
+  ]),
+]);
+
+/** Every preset name, in menu order (the MCP tool documents the same list). */
+export const EQ_PRESET_NAMES: readonly string[] = EQ_PRESETS.map((p) => p.name);
+
+/** A preset's bands by name — case-, space-, `_`- and `-`-insensitive
+ *  (`"voice_clarity"`) — as fresh mutable copies, or `null`. */
+export function resolveEqPreset(name: unknown): EqBand[] | null {
+  if (typeof name !== 'string') return null;
+  const key = name.trim().toLowerCase().replace(/[\s_-]+/g, ' ');
+  const hit = EQ_PRESETS.find((p) => p.name.toLowerCase() === key);
+  return hit ? hit.bands.map((b) => ({ ...b })) : null;
+}
+
+/** Which preset these bands are exactly (compared after the reducer's
+ *  clamps), or `null` for a custom strip. A clip with no EQ reads as "Flat":
+ *  that is what it sounds like, and what the dropdown should say. */
+export function matchEqPreset(bands: readonly EqBand[] | undefined | null): string | null {
+  if (!bands || bands.length === 0) return EQ_PRESETS[0].name;
+  const shown = bands.map(clampEqBand);
+  const same = (a: EqBand, b: EqBand) =>
+    a.kind === b.kind && a.freq_hz === b.freq_hz && a.gain_db === b.gain_db && a.q === b.q && a.enabled === b.enabled;
+  for (const p of EQ_PRESETS) {
+    const pb = p.bands.map(clampEqBand);
+    if (pb.length === shown.length && pb.every((b, i) => same(b, shown[i]))) return p.name;
+  }
+  return null;
 }

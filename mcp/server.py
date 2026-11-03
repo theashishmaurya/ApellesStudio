@@ -888,6 +888,29 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "`position_x`) was preview-only and exports completely "
             "differently."
         ),
+        "gui_display_units": (
+            "The Inspector SHOWS values in a person's units while every tool "
+            "keeps the stored units above (v0.3.0, D-442/D-443) — so when you "
+            "describe a value to the person, use the Inspector's words: "
+            "Position in PIXELS FROM THE FRAME'S CENTRE (0, 0 = a centred "
+            "picture; y grows downward, so -48 is '48 px up'; stored "
+            "position_x/position_y stay the box's top-left fraction), Scale "
+            "and Opacity in % (scale 1.1 shows 110 %), Rotation in degrees, "
+            "Corner radius in px, Crop as L / R / T / B in % of the source, "
+            "fades and highlight start/length in SECONDS (stored frames: "
+            "timeline frames for fades, the clip's source frames for "
+            "highlights), highlight strength in %, Volume in dB "
+            "(20*log10(volume); -96 dB = silent), Pan as 'L 40' / 'Center' / "
+            "'R 40' (pan -0.4 / 0 / 0.4), EQ frequency in Hz/kHz and gain in "
+            "dB, ease curves as Even / Slow start / Slow end / Slow start and "
+            "end. Two GUI-only gestures compose ordinary writes you can make "
+            "yourself: an Inspector or viewer CROP keeps the kept picture where "
+            "it was by also writing scale/position (or box_width/box_height) "
+            "in the same editor_set_clip_transform — crop alone grows the "
+            "kept part to the box's width (see position_and_crop_units) — and "
+            "an Inspector SCALE edit on a clip whose position is not "
+            "keyframed moves position so the box's centre stays put."
+        ),
         "corner_radius": (
             "corner_radius (D-344) rounds a clip's placement box, and is the "
             "one geometry field measured in OUTPUT-CANVAS PIXELS rather than "
@@ -4464,10 +4487,12 @@ def editor_set_clip_eq(
     gain_db: float | None = None,
     q: float | None = None,
     enabled: bool | None = None,
+    preset: str | None = None,
     clear: bool = False,
 ) -> str:
-    """Set ONE BAND of one clip's parametric EQ (D-224). `track` and `clip` are
-    the 0-based indices from get_timeline; `band` is 0..3.
+    """Set ONE BAND of one clip's parametric EQ (D-224), or all four from a
+    named `preset`. `track` and `clip` are the 0-based indices from
+    get_timeline; `band` is 0..3.
 
     This is the tool for shaping a clip's TONE, as distinct from its LEVEL
     (editor_set_clip_audio) and its track's fader (editor_set_track_gain). The
@@ -4499,6 +4524,13 @@ def editor_set_clip_eq(
     `enabled` -- per-band bypass. False keeps the band's settings but takes it
       out of the chain -- the only way to bypass a pass filter, which has no
       gain to zero.
+    `preset` -- one of "Flat", "Voice clarity", "Warm voice", "Cut rumble",
+      "Reduce mud", "Tame harshness", "Music under voice": writes ALL FOUR
+      bands at once (one undo step), from the same table the Inspector's EQ
+      preset menu uses (D-442). Pass it alone, with no `band` and no band
+      field; adjust a band afterwards with a second call. What it writes is
+      an ordinary EQ: the Inspector names the preset until a band changes,
+      then shows "Custom".
     `clear=True` -- remove the clip's EQ entirely, back to unfiltered. Ignores
       every other field.
 
@@ -4553,6 +4585,8 @@ def editor_set_clip_eq(
             args[key] = val
     if enabled is not None:
         args["enabled"] = enabled
+    if preset is not None:
+        args["preset"] = preset
     return json.dumps(_op("editor_set_clip_eq", **args), indent=2, default=str)
 
 

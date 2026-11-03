@@ -47,6 +47,21 @@ export const HIGHLIGHT_TIP_ROUNDING = 0.25;
  *  highlight when nothing says how long the phrase is spoken for. */
 export const DEFAULT_HIGHLIGHT_SWEEP_SECONDS = 0.6;
 
+/** The colours the Inspector's highlight dot cycles through on click (v0.3.0,
+ *  B-366): the highlighter default, then four marker-palette hues
+ *  (`MARKER_COLORS` green, cyan, pink, red — document data, D-222). A colour
+ *  an agent set outside this list starts the cycle at its first entry. Any
+ *  `#RRGGBB` stays valid; this is only the click order. */
+export const HIGHLIGHT_COLOR_CYCLE: readonly string[] = [DEFAULT_HIGHLIGHT_COLOR, '#4CAF50', '#3FC7D4', '#E255A6', '#D9434E'];
+
+/** The colour after `current` in [`HIGHLIGHT_COLOR_CYCLE`] (case-insensitive;
+ *  absent reads as the default). */
+export function nextHighlightColor(current: string | undefined): string {
+  const now = (current ?? DEFAULT_HIGHLIGHT_COLOR).toUpperCase();
+  const i = HIGHLIGHT_COLOR_CYCLE.findIndex((c) => c.toUpperCase() === now);
+  return HIGHLIGHT_COLOR_CYCLE[(i + 1) % HIGHLIGHT_COLOR_CYCLE.length];
+}
+
 const HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 /** Whether `s` is a colour the renderers accept (`#RGB` or `#RRGGBB`). */
