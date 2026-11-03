@@ -23,8 +23,7 @@ use crate::args::WireArgs;
 use crate::render;
 use crate::schemas::{
     CaptionScope, ClipHighlightSpec, ClipKeyframe, ClipSelector, CurveSpec, DynamicZoomFraming,
-    ExportEncoder, ExportFormat, FitMode, GapSelector, LoudnessPreset, PresetLoudness,
-    SpeedRampPoint,
+    ExportFormat, FitMode, GapSelector, LoudnessPreset, PresetLoudness, SpeedRampPoint,
 };
 use crate::server::ApellesMcp;
 
@@ -1120,9 +1119,6 @@ pub struct EditorExportArgs {
     /// D-441 — `"h264"` or `"prores_hq"`.
     #[serde(default)]
     pub format: Option<ExportFormat>,
-    /// D-446 — `"hardware"` (VideoToolbox, the default) or `"software"`.
-    #[serde(default)]
-    pub encoder: Option<ExportEncoder>,
     /// D-411 Phase 0 — optional now: omitted (with `height`), the export is
     /// written at the timeline's own frame size.
     #[serde(default)]
@@ -5445,7 +5441,7 @@ impl ApellesMcp {
         name = "editor_export",
         description = r#"Render the open project's ENTIRE multi-track timeline — every visible
     video track/clip, composited in z-order (track 0 on top), cropped,
-    keyframed and speed-adjusted — to a single output file via ffmpeg. This
+    keyframed and speed-adjusted — to a single output file. This
     is the only Edit-tab tool that produces a real output file;
     `editor_get_timeline` and every `editor_set_*`/`editor_add_*` tool above
     only change in-memory state.
@@ -5458,16 +5454,15 @@ impl ApellesMcp {
     rate, loudness and format; any of those you ALSO pass explicitly wins over
     the preset's value. **`format`** is `"h264"` (default; an .mp4) or
     `"prores_hq"` (Apple ProRes 422 HQ, 10-bit 4:2:2, 24-bit PCM audio — the
-    master; `out_path` must then end in `.mov`). **`encoder`** (D-446) is
-    `"hardware"` (default: Apple's VideoToolbox media engine -- H.264 at a
-    constant quality measured equal to libx264 CRF 18, or ProRes 422 HQ -- 4-6x
-    faster and it leaves the CPU to compositing) or `"software"` (libx264 /
-    prores_ks on the CPU, the pre-D-446 output, much slower at 4K). **`out_path` is optional**:
+    master; `out_path` must then end in `.mov`). The picture is
+    encoded in the app on Apple's VideoToolbox media engine (D-452: H.264 at a
+    constant quality measured equal to libx264 CRF 18, or ProRes 422 HQ); there
+    is no encoder choice. **`out_path` is optional**:
     omitted, the file goes where the Export panel's pre-filled "Save as" puts it,
     `~/Movies/<project>/<timeline name>.mp4` (or `.mov`), never over an existing
     file. The answer carries `outPath`. **A running export can be stopped** with
-    `editor_cancel_export(job_id)` — its encoders are killed and the partial
-    file removed; `editor_export_status` then reads `cancelled`.
+    `editor_cancel_export(job_id)` — its render stops and the partial
+    file is removed; `editor_export_status` then reads `cancelled`.
 
     `width`/`height` are the output composition's pixel size (every clip's
     `position_x`/`position_y`/`scale` from `editor_set_clip_transform` are
@@ -5577,7 +5572,6 @@ impl ApellesMcp {
             .put("outPath", p.out_path)
             .put("preset", p.preset)
             .put("format", p.format)
-            .put("encoder", p.encoder)
             .put("width", p.width)
             .put("height", p.height)
             .put("timelineId", p.timeline_id)
@@ -5629,7 +5623,7 @@ impl ApellesMcp {
 
     **`stalled` is a real, named failure and it matters.** It means a render
     worker wrote no frame at all for `stallTimeoutSecs`, so the export was
-    declared hung, its encoder killed, and the render abandoned. **The output
+    declared hung, stopped, and the render abandoned. **The output
     file is incomplete and was never finalised — it will not play, and it must
     not be used or shipped.** Re-run the export. Before D-362 this state
     reported nothing whatsoever: the file simply stopped growing and every
@@ -5665,7 +5659,7 @@ impl ApellesMcp {
     the Export queue's Cancel button in the top bar.
 
     A job still `queued` (waiting behind another export) leaves the queue at
-    once. A `running` one is stopped for real: its segment encoders and the concat step are killed and the partial output file
+    once. A `running` one is stopped for real: its segments stop rendering, the concat step is killed and the partial output file
     (and any loudness-pass scratch file) is removed; `editor_export_status(
     job_id)` reads `cancelled` once the run has unwound (usually well under a
     second; a cancel during the short loudness pass is honoured when that pass

@@ -20,7 +20,7 @@ import type { Clip, Timeline } from './timeline';
 import { endFrame, transitionWindow, transitionsOf } from './timeline';
 import { resolveCaptionStyle } from './caption';
 import { rampOutputSourceFrames, resolveSpeedSegments } from './speedRamp';
-import type { ExportEncoder, ExportFormat } from './exportFormat';
+import type { ExportFormat } from './exportFormat';
 
 export interface TimelineExportOptions {
   /** The export's frame rate. */
@@ -38,9 +38,6 @@ export interface TimelineExportOptions {
   audioChannelsOverrides?: Record<string, number>;
   /** D-441 — the file format; `h264` when absent. */
   format?: ExportFormat;
-  /** D-446 — the encoder; `software` when absent (only the panel's and
-   *  `editor_export`'s compile default to hardware). */
-  encoder?: ExportEncoder;
 }
 
 /** How many of a clip's own source frames it plays, after its speed ramp. */

@@ -140,7 +140,7 @@ describe('editor_export preset, default output and cancel (D-441)', () => {
     });
     const job = useExportQueueStore.getState().jobs[0];
     expect(job).toMatchObject({ id: 'job-master', outPath: '/Users/me/Movies/Five Levels/Long-form.mov', format: 'prores_hq', preset: 'Master' });
-    expect(job.args.join(' ')).toContain('prores_videotoolbox'); // D-446 — hardware by default
+    expect(job.render.format).toBe('prores_hq'); // D-452: encoded in process; the argv only remuxes
     finish(true);
     expect(await done).toMatchObject({ jobId: 'job-master', ok: true });
   });

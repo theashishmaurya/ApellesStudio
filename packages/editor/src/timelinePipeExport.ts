@@ -1,34 +1,28 @@
 /**
- * @apelles/editor — **the D-350 render-path export compiler.**
+ * @apelles/editor — **the render-path export compiler** (D-350; the remux
+ * only since D-452).
  *
- * What it is: the ffmpeg argv for an export whose PICTURE arrives as one raw
- * RGBA stream on stdin — composited by the app's own live-preview compositor
- * (`app/src-tauri/src/chroma/edit_render.rs`, which spawns this argv and writes
- * the frames) instead of by an ffmpeg `-filter_complex` graph.
+ * What it is: the ffmpeg argv that turns the app's rendered picture into the
+ * finished file — the concat demuxer over the video-only segments the app's
+ * own GPU engine and VideoToolbox encoder wrote (`chroma::edit_render`), plus
+ * the whole timeline's **audio mix**, `-c:v copy`, the output. And the typed
+ * plan that tells the renderer what to draw: size, frame count, rate, format
+ * and the document itself.
  *
- * What it does NOT do, and this is the whole point: it emits **no video filter
- * graph at all**. No `overlay`, no per-clip `crop`/`scale`/`setpts`, no `geq`
- * corner mask, no `drawtext`, no `lut3d`. Every one of those is a second,
- * hand-synchronised implementation of compositing maths the Rust compositor
- * already owns — the named cause of this project's whole preview-vs-export
- * parity-bug lineage (B-201/B-208/B-218/B-223) and, via the per-clip `-i` and
- * per-filter-instance thread pools they imply, of B-228/B-229/B-230's measured
- * resource blowups. Here the encoder has exactly ONE video input, a pipe,
- * whatever the clip count.
+ * What it does NOT do, and this is the whole point: compile a picture. No
+ * video filter graph, no video encoder. The picture is drawn by the one GPU
+ * render engine the Edit preview uses (D-449) and compressed in process
+ * (D-452); a second, hand-synchronised implementation of compositing maths in
+ * ffmpeg filters was the named cause of the preview-vs-export parity-bug
+ * lineage (B-201/B-208/B-218/B-223) and of B-228/B-229/B-230's resource
+ * blowups.
  *
- * What it DOES still compile: the **audio mix**, reusing
- * `timelineExportAudio.ts`'s per-source construction (D-197) completely
- * unchanged — gain, fades, ducking, EQ, speed ramps, the `amix normalize=0` +
- * `asoftclip=tanh` topology. D-350 explicitly scoped audio out: it already
- * works, is well tested, and was never part of the resource pathology.
- *
- * **The one structural difference from `timelineExport.ts`'s audio walk.** There,
- * a video clip's embedded audio rides the `-i` that clip's PICTURE already
- * opened, and a transition has widened that input into its handle media, so the
- * audio is `atrim`med back to the clip's own window afterwards. Here the picture
- * opens no inputs at all, so embedded audio gets its own `-i` at exactly the
- * clip's own `[source_start, +duration)` window — which is the same audio, by a
- * shorter route, with no `atrim` needed. `docs/notes/export-gpu-compositor.md` §4.
+ * What it DOES compile: the **audio mix**, reusing `timelineExportAudio.ts`'s
+ * per-source construction (D-197) completely unchanged — gain, fades,
+ * ducking, EQ, speed ramps, the `amix normalize=0` + `asoftclip=tanh`
+ * topology. Each video clip's embedded audio gets its own `-i` at exactly the
+ * clip's own `[source_start, +duration)` window
+ * (`docs/notes/export-gpu-compositor.md` §4).
  *
  * The export-time Clip exceptions (`speedOverrides` / `fitOverrides` /
  * `freezeOverrides`) never reach this compiler: `clipExceptions.ts` writes them
@@ -38,7 +32,7 @@
 import type { Clip, Timeline } from './timeline';
 import { resolveSpeedSegments } from './speedRamp';
 import type { TimelineExportOptions } from './exportTimeline';
-import { audioCodecArgs, pipeVideoCodecArgs } from './exportFormat';
+import { audioCodecArgs, type ExportFormat } from './exportFormat';
 import {
   audioRefBracket,
   audioRefMapArg,
@@ -47,39 +41,9 @@ import {
   type AudioRef,
 } from './timelineExportAudio';
 
-/** The raw-video input the compositor's frames arrive on. Its Rust twin is
- *  `chroma::edit_render::pipe_input_args`; `timelinePipeExport.test.ts` and
- *  `edit_render.rs`'s own `pipe_input_args_declare_rgba_at_the_render_size`
- *  are the cross-engine pair that keeps them agreeing, the same pattern
- *  D-338/B-201 established for placement.
- *
- *  `rgba`, not `rgb24`: the compositor's canvas IS an `image::RgbaImage`, so
- *  this is the one pixel format it can hand over with no conversion pass at
- *  all. The 33% extra pipe traffic is a memcpy through a kernel buffer; a
- *  per-frame full-buffer RGBA→RGB conversion is a pass over every pixel in
- *  userspace. Measured in `docs/notes/export-gpu-compositor.md` §6. */
-export function pipeVideoInputArgs(width: number, height: number, fps: number): string[] {
-  return [
-    '-y',
-    '-hide_banner',
-    '-loglevel',
-    'error',
-    '-f',
-    'rawvideo',
-    '-pixel_format',
-    'rgba',
-    '-video_size',
-    `${width}x${height}`,
-    '-framerate',
-    String(fps),
-    '-i',
-    '-',
-  ];
-}
-
-/** The video input's index in the compiled argv — always 0, since the pipe is
+/** The concat list's input index in the remux argv — always 0, since it is
  *  always the first `-i`. Audio inputs therefore start at 1. */
-const PIPE_VIDEO_INPUT_IDX = 0;
+const MUX_VIDEO_INPUT_IDX = 0;
 
 /** One clip's own trim window as an `-ss`/`-t` input pair, in OUTPUT seconds at
  *  the clip's own native rate (B-075: `source_start`/`duration` are SOURCE
@@ -120,7 +84,7 @@ function buildPipeAudioGraph(timeline: Timeline, opts: TimelineExportOptions): A
   const inputs: string[] = [];
   const filterSteps: string[] = [];
   const audioRefs: AudioRef[] = [];
-  let inputIdx = PIPE_VIDEO_INPUT_IDX + 1;
+  let inputIdx = MUX_VIDEO_INPUT_IDX + 1;
   let labelSeq = 0;
 
   const duckCache = new Map<number, ReturnType<typeof resolveDuckForTrack>>();
@@ -188,50 +152,24 @@ function buildPipeAudioGraph(timeline: Timeline, opts: TimelineExportOptions): A
   return { inputs, filterSteps, mapArg: '[outa]' };
 }
 
-/** The output codec tail for this export's format (D-441, `exportFormat.ts`):
- *  h.264/`yuv420p` by default — the same default `chroma::export`'s
- *  single-clip renderer uses — or ProRes 422 HQ for the master, on the encoder
- *  the caller chose (D-446; absent = `software`, the pre-D-446 tail). */
-function videoCodecArgs(opts: TimelineExportOptions): string[] {
-  return pipeVideoCodecArgs(opts.format ?? 'h264', opts.encoder ?? 'software');
-}
-
-/** D-360 — the placeholder the Rust side replaces with a segment's own output
- *  file, and the one it replaces with the concat list. Whole-argument tokens,
- *  substituted exactly once each; their Rust twins are `SEGMENT_OUT_TOKEN` /
- *  `CONCAT_LIST_TOKEN` in `chroma::edit_render`.
+/** D-360 — the placeholder the Rust side replaces with the concat list of
+ *  the rendered segments. A whole-argument token, substituted exactly once;
+ *  its Rust twin is `CONCAT_LIST_TOKEN` in `chroma::edit_render`.
  *
  *  A placeholder rather than the real path because the renderer is the only
  *  side that knows where its temporary directory is — and a token is the
  *  smallest hole to leave in "the caller compiles the whole argv", which is
- *  D-350's split and is what keeps the encode settings, the mapping and the
- *  audio graph compiled in exactly one place. */
-export const SEGMENT_OUT_TOKEN = '{{APELLES_SEGMENT_OUT}}';
+ *  D-350's split and is what keeps the mapping and the audio graph compiled in
+ *  exactly one place. */
 export const CONCAT_LIST_TOKEN = '{{APELLES_CONCAT_LIST}}';
 
-/** D-360 — the two extra argvs a contiguous-segment render needs. */
-export interface PipeExportSegments {
-  /** One segment's own encode: the raw-video input, and a VIDEO-ONLY output.
-   *  No audio, and no `-t`: a segment's length is however many frames the
-   *  compositor writes before closing the pipe. */
-  segmentArgs: string[];
-  /** The concat demuxer over the finished segments, plus the whole timeline's
-   *  audio mix. Video is `-c:v copy`: every segment came out of the same
-   *  encoder with the same settings at the same size, so the concat demuxer's
-   *  own precondition holds and re-encoding the picture a second time would
-   *  cost a full generation of quality for nothing. */
-  concatArgs: string[];
-}
-
 /**
- * What `chroma_render_timeline_export` needs beyond the argv — the typed
- * restatement of the geometry that argv declares, plus D-360's segment argvs.
+ * What `chroma_render_timeline_export` needs beyond the argv: what to draw and
+ * how to compress it (D-452: the encoder is in process, so these are typed).
  *
  * One exported type rather than the same inline object literal in
  * `editorExport.ts`'s compile result, its `runCompiledExport` parameter and
- * `exportQueueStore`'s frozen job: they are three views of one payload, and
- * D-360 adding a field to three hand-copied shapes is exactly how the fourth
- * one gets missed.
+ * `exportQueueStore`'s frozen job: they are three views of one payload.
  *
  * Mirrors `chroma::edit_render::TimelineRenderRequest` minus `args`.
  */
@@ -239,9 +177,11 @@ export interface TimelineRenderPlan {
   width: number;
   height: number;
   frames: number;
-  /** D-360. Absent on a job frozen before D-360 existed, which then renders
-   *  as a single stream exactly as it was queued to. */
-  segments?: PipeExportSegments;
+  /** The export's frame rate (the encoder's clock; the Rust side snaps an
+   *  NTSC rate to n·1000/1001). */
+  fps: number;
+  /** D-441 — what the picture is compressed as. */
+  format: ExportFormat;
   /** D-448 — the document the compositor draws: the timeline this plan's sound
    *  was compiled from, Clip exceptions applied. Frozen into a queued job with
    *  the argv, so the picture and the sound come from one copy. */
@@ -249,24 +189,21 @@ export interface TimelineRenderPlan {
 }
 
 export interface PipeExportPlan {
-  /** The complete ffmpeg argv — `chroma_render_timeline_export` spawns it. */
+  /** The remux argv: the rendered segments' concat list (as
+   *  {@link CONCAT_LIST_TOKEN}), the audio mix, `-c:v copy`, the output. */
   args: string[];
-  /** How many frames the compositor must write into the pipe. */
+  /** How many frames the renderer draws. */
   frames: number;
   width: number;
   height: number;
-  /** D-360. Always compiled; whether it is USED is the renderer's call, since
-   *  only it knows the core count — see `plan_segment_count`. */
-  segments: PipeExportSegments;
 }
 
 /**
- * Compile `timeline` into the D-350 render path's plan: the ffmpeg argv, and
- * the frame count the compositor must feed it.
+ * Compile `timeline` into the render path's plan: the remux argv, and the
+ * frame count the renderer must draw.
  *
- * `frames` is `round(totalDurationSec * fps)` over the same duration the old
- * path puts in its output `-t` — imported from `timelineExport.ts` rather than
- * recomputed, so the two paths cannot disagree about an export's length.
+ * `frames` is `round(totalDurationSec * fps)` over the same duration the remux
+ * puts in its `-t`, so the picture's length and the file's cannot disagree.
  */
 export function buildPipeExportPlan(
   timeline: Timeline,
@@ -275,66 +212,16 @@ export function buildPipeExportPlan(
   totalDurationSec: number,
 ): PipeExportPlan {
   const audio = buildPipeAudioGraph(timeline, opts);
-  const args = [
-    ...pipeVideoInputArgs(opts.width, opts.height, opts.fps),
-    ...audio.inputs,
-  ];
-  if (audio.filterSteps.length > 0) {
-    // B-229's cap is kept even though this graph is now audio-only and tiny:
-    // the flag costs nothing, and an audio graph on a heavily-cut project can
-    // still carry a few hundred filter instances.
-    args.push('-filter_complex_threads', '2', '-filter_complex', audio.filterSteps.join(';'));
-  }
-  args.push('-map', `${PIPE_VIDEO_INPUT_IDX}:v`);
-  if (audio.mapArg) args.push('-map', audio.mapArg, ...audioCodecArgs(opts.format ?? 'h264'));
-  args.push(...videoCodecArgs(opts));
-  // `-r`/`-t` for the same reason the old path carries them: the pipe is a raw
-  // stream with no container timing of its own, and the audio inputs must not
-  // be allowed to run the output past the picture.
-  args.push('-r', String(opts.fps), '-t', String(totalDurationSec), outPath);
   return {
-    args,
+    args: buildMuxArgs(audio, outPath, opts, totalDurationSec),
     frames: Math.max(0, Math.round(totalDurationSec * opts.fps)),
     width: opts.width,
     height: opts.height,
-    segments: {
-      segmentArgs: buildSegmentArgs(opts),
-      concatArgs: buildConcatArgs(audio, outPath, opts, totalDurationSec),
-    },
   };
 }
 
 /**
- * D-360 — one segment's encode.
- *
- * The same raw-video input and the same codec tail as the single-stream argv,
- * so every segment is byte-comparable with every other and the concat
- * demuxer's "identical codec and parameters" precondition holds by
- * construction rather than by inspection.
- *
- * **What it deliberately does NOT carry**, and both matter:
- * - **no audio.** The mix is compiled for the whole timeline — `amix`, the
- *   ducking envelopes, `asoftclip` — and has no notion of a frame range to be
- *   cut at. It is muxed once, at the concat step, over the finished picture.
- * - **no `-t`.** The single-stream argv bounds its output by duration because
- *   its audio inputs would otherwise run past the picture. A segment has no
- *   audio, and its length is exactly the frames the compositor writes before
- *   closing the pipe — a duration bound here could only disagree with that.
- */
-function buildSegmentArgs(opts: TimelineExportOptions): string[] {
-  return [
-    ...pipeVideoInputArgs(opts.width, opts.height, opts.fps),
-    '-map',
-    `${PIPE_VIDEO_INPUT_IDX}:v`,
-    ...videoCodecArgs(opts),
-    '-r',
-    String(opts.fps),
-    SEGMENT_OUT_TOKEN,
-  ];
-}
-
-/**
- * D-360 — stitch the segments and mux the sound.
+ * D-360/D-452 — stitch the segments and mux the sound.
  *
  * The concat demuxer is input 0, exactly where the pipe was, so **every audio
  * input keeps the index `buildPipeAudioGraph` already gave it** and the audio
@@ -346,7 +233,7 @@ function buildSegmentArgs(opts: TimelineExportOptions): string[] {
  * Keeping it the same expression is also what makes the two paths agree about
  * an export's length rather than agreeing by coincidence.
  */
-function buildConcatArgs(
+function buildMuxArgs(
   audio: AudioGraph,
   outPath: string,
   opts: TimelineExportOptions,
@@ -370,7 +257,7 @@ function buildConcatArgs(
   if (audio.filterSteps.length > 0) {
     args.push('-filter_complex_threads', '2', '-filter_complex', audio.filterSteps.join(';'));
   }
-  args.push('-map', `${PIPE_VIDEO_INPUT_IDX}:v`);
+  args.push('-map', `${MUX_VIDEO_INPUT_IDX}:v`);
   if (audio.mapArg) args.push('-map', audio.mapArg, ...audioCodecArgs(opts.format ?? 'h264'));
   args.push('-c:v', 'copy');
   args.push('-t', String(totalDurationSec), outPath);

@@ -321,26 +321,21 @@ describe('cancel, retry and the ProRes format (D-441)', () => {
     expect(useExportQueueStore.getState().retry(jobs[1].id)).toEqual({ error: expect.stringContaining('only a failed or cancelled') });
   });
 
-  it('the ProRes master compiles prores_ks 422 HQ with PCM sound into a .mov, and refuses an .mp4', () => {
+  it('the ProRes master is a .mov with PCM sound, an .mp4 is refused, and D-446\'s encoder is refused by name', () => {
     const ok = useExportQueueStore.getState().enqueue('master', { ...validArgs, outPath: '/tmp/master.mov', format: 'prores_hq' });
     expect('id' in ok).toBe(true);
     const job = useExportQueueStore.getState().jobs[0];
     expect(job.format).toBe('prores_hq');
+    expect(job.render?.format).toBe('prores_hq');
     const argv = job.args.join(' ');
-    // D-446 — hardware (VideoToolbox) by default; `encoder: 'software'` is prores_ks.
-    expect(argv).toContain('-c:v prores_videotoolbox -profile:v 3 -pix_fmt bgra');
+    // D-452 — the remux copies the picture the app encoded; no ffmpeg encoder.
+    expect(argv).toContain('-c:v copy');
+    expect(argv).not.toContain('prores_ks');
     expect(job.args[job.args.length - 1]).toBe('/tmp/master.mov');
     const sw = useExportQueueStore
       .getState()
       .enqueue('master sw', { ...validArgs, outPath: '/tmp/master2.mov', format: 'prores_hq', encoder: 'software' });
-    expect('id' in sw).toBe(true);
-    expect(useExportQueueStore.getState().jobs[1].args.join(' ')).toContain(
-      '-c:v prores_ks -profile:v 3 -vendor apl0 -pix_fmt yuv422p10le',
-    );
-    const badEncoder = useExportQueueStore
-      .getState()
-      .enqueue('master bad', { ...validArgs, outPath: '/tmp/master3.mov', format: 'prores_hq', encoder: 'gpu' });
-    expect(badEncoder).toMatchObject({ error: expect.stringContaining('encoder must be') });
+    expect(sw).toMatchObject({ error: expect.stringContaining('encoder was removed') });
     const bad = useExportQueueStore.getState().enqueue('master', { ...validArgs, outPath: '/tmp/master.mp4', format: 'prores_hq' });
     expect(bad).toEqual({ error: expect.stringContaining('.mov') });
   });

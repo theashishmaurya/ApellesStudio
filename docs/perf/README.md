@@ -120,6 +120,28 @@ left. Per-stage detail, the segment sweep, the parity table and what is not done
 in `docs/notes/export-gpu-compositor.md` §15. **B-380 stays open** for the decode term (the largest at 4K now) and
 the grade (B-381); the 4K target itself is met.
 
+### After D-452: VideoToolbox decode and encode in process (2026-11-04)
+
+Decoded frames stay in IOSurfaces from VideoToolbox through the engine to the VideoToolbox encoder; ffmpeg only
+remuxes the segments with the sound. Same fixture, back to back on the same machine (load average 8–12), the
+planner's 2 segments, best of 2 for the after:
+
+| Hardware H.264 | 1080p before → after | 4K before → after |
+|---|---|---|
+| × real time | 0.17× → **0.13×** | 0.64× → **0.49×** |
+| render wall | 9.6 s → 7.6 s | 37.7 s → 28.3 s |
+| workers' decode + set-up (summed) | 13.2 s → 0.4 s | 57.7 s → 1.7 s |
+| bytes to / from the GPU | 10.1 / 8.0 GB → 0.1 / 0 GB | 40.4 / 31.9 GB → 0.2 / 0 GB |
+| CPU (of 10 cores) / GPU busy | 68% / 28% → 5% / 68% | 71% / 28% → 4% / 60% |
+| peak memory over the host | +1.9 GB → +0.12 GB | +4.6 GB → +0.14 GB |
+| one track's decode floor (60 s) | 6.0 s → 3.4 s | 19.3 s → 5.5 s |
+| frames · A/V offset · loudness | 1800 · 0 · −14.00 LUFS, both | 1800 · 0 · −14.00 LUFS, both |
+| PSNR against the engine's own frames | 33.4 → 34.9 dB | 34.4 → 36.0 dB |
+
+An earlier pair, on a busier machine (load 20–45), read 0.26× → 0.13× and 1.07× → 0.50×. The export is now bound by
+the media engine's H.264 encoder (the writers spend the render in it; 1–6 segments all measure 0.49–0.50× at 4K),
+so the planner's ceiling is 2 segments (D-452). Details: `docs/notes/export-gpu-compositor.md` §16.
+
 ## Keeping the floor
 
 Before a release, and after any change to the timeline, the player or the open path: run `perf-300` and compare with this table. A number worse than its floor gets a `B-NNN` and blocks the release unless the owner explicitly accepts it. Roadmap: make the harness compare against this table automatically and fail on a regression (roadmap 00r, "perf floor in CI").

@@ -60,7 +60,7 @@ use shared_child::SharedChild;
 use super::export_job::CancelHandle;
 
 /// **How long a segment may write no frame at all before the export is
-/// declared hung, its encoder killed, and a real error reported.**
+/// declared hung, stopped, and a real error reported.**
 ///
 /// B-231 facet 2: a render task stopped making progress while the `apelles`
 /// process stayed healthy, and nothing ever reported it — the `ffmpeg` child
@@ -201,10 +201,6 @@ struct SegmentTrack {
     /// still watched from the moment it began.
     last_ms: AtomicU64,
     done: AtomicBool,
-    /// This segment's encoder, while it has one. The watchdog kills it to
-    /// unblock a writer wedged in `write_all` — nothing else can, since a
-    /// blocking pipe write has no timeout.
-    encoder: Mutex<Option<Arc<SharedChild>>>,
 }
 
 /// One render's whole progress. Held by the renderer for the duration and left
@@ -282,21 +278,10 @@ impl ExportJob {
         }
     }
 
-    /// Hand the watchdog this segment's encoder, so a wedged write can be
-    /// unblocked by killing it.
-    pub fn attach_encoder(&self, segment: usize, child: Arc<SharedChild>) {
-        self.attach_aux(&child);
-        if let Some(s) = self.segments.get(segment) {
-            *s.encoder.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
-        }
-    }
-
-    /// This segment is finished (or has given up): stop watching it, and stop
-    /// holding its child.
+    /// This segment is finished (or has given up): stop watching it.
     pub fn segment_finished(&self, segment: usize) {
         if let Some(s) = self.segments.get(segment) {
             s.done.store(true, Ordering::Relaxed);
-            *s.encoder.lock().unwrap_or_else(|e| e.into_inner()) = None;
         }
     }
 
@@ -395,7 +380,6 @@ pub fn begin(
                 written: AtomicU64::new(0),
                 last_ms: AtomicU64::new(0),
                 done: AtomicBool::new(false),
-                encoder: Mutex::new(None),
             })
             .collect(),
         phase: Mutex::new(Phase::Rendering),
@@ -417,15 +401,14 @@ pub fn begin(
 ///
 /// One thread per render. Every [`WATCHDOG_TICK`] it asks each unfinished
 /// segment how long since it last wrote a frame; the first one past the job's
-/// stall threshold is recorded by name, has its encoder killed, and aborts the
-/// whole render.
+/// stall threshold is recorded by name, and the whole render is aborted.
 ///
-/// **Killing the encoder is the only thing that can unblock the stall it is
-/// catching.** The wedged thread is inside `write_all` on a pipe whose reader
-/// has stopped reading; a blocking pipe write has no timeout and no interrupt,
-/// so the reader has to go away. `SharedChild` is what makes that safe from
-/// another thread — killing a `std::process::Child` needs `&mut`, and doing it
-/// by raw pid races with the renderer's own `wait` reaping it.
+/// Until D-452 it also killed the segment's `ffmpeg` encoder, the only way to
+/// unblock a writer wedged in a pipe write. The encoder is in process now and
+/// every wait in it is bounded (the GPU wait, `vt_encode`'s append and finish
+/// timeouts), so a wedged segment returns an error by itself; the watchdog's
+/// job is the verdict — naming the cause rather than the symptom — and
+/// stopping the siblings.
 fn spawn_watchdog(job: Arc<ExportJob>) {
     std::thread::Builder::new()
         .name("apelles-export-watchdog".into())
@@ -453,7 +436,7 @@ fn spawn_watchdog(job: Arc<ExportJob>) {
                     }
                     let reason = format!(
                         "the export stalled: segment {} of {} (frames {}..{}) wrote no frame for \
-                         {:.0}s, having written {} of its {}. Its encoder was killed and the \
+                         {:.0}s, having written {} of its {}. The render was stopped and the \
                          export abandoned — the output file is incomplete and was never \
                          finalised, so do not use it. This is a hung render task in a process \
                          that is otherwise healthy (B-231); the known trigger is severe system \
@@ -468,22 +451,13 @@ fn spawn_watchdog(job: Arc<ExportJob>) {
                     );
                     log::error!("[chroma::export_status] {reason}");
                     *job.stalled.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason);
-                    // Order matters: abort first, so a sibling that is still
-                    // making progress stops at its next frame rather than
-                    // running on after this one's encoder dies.
+                    // Every segment stops at its next frame. D-452 — there is
+                    // no encoder process to kill any more: the in-process
+                    // encoder's own waits are bounded (`GPU_TIMEOUT`,
+                    // `vt_encode`'s append and finish timeouts), so a wedged
+                    // segment returns its error by itself and the verdict
+                    // recorded here names the cause.
                     job.abort.store(true, Ordering::Relaxed);
-                    for other in job.segments.iter() {
-                        let child = other
-                            .encoder
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .take();
-                        if let Some(child) = child
-                            && let Err(e) = child.kill()
-                        {
-                            log::warn!("[chroma::export_status] killing a stalled encoder: {e}");
-                        }
-                    }
                     return;
                 }
             }
@@ -751,9 +725,9 @@ mod tests {
     }
 
     /// **The watchdog fires on a worker that goes silent, names it, and aborts
-    /// the render** — the unit-level half of B-231 facet 2 (the end-to-end
-    /// half, against a real ffmpeg that really stops reading, is
-    /// `edit_render`'s `a_stalled_encoder_is_killed_and_reported`).
+    /// the render** — B-231 facet 2. (Its end-to-end twin, against a real
+    /// ffmpeg encoder that stopped reading, went with the ffmpeg encoder in
+    /// D-452: the in-process encoder's waits are bounded instead.)
     #[test]
     fn the_watchdog_fires_on_a_silent_segment() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -781,9 +755,9 @@ mod tests {
         assert_eq!(snapshot().state, ExportState::Stalled);
     }
 
-    /// D-441 — a cancel kills the job's encoders through its bound
-    /// registration, stops the per-frame loop, and the slot reads `cancelled`
-    /// (not `failed`) once the render has settled.
+    /// D-441 — a cancel stops the per-frame loop, kills the job's child
+    /// processes (the remux, since D-452) through its bound registration, and
+    /// the slot reads `cancelled` (not `failed`) once the render has settled.
     #[test]
     fn a_cancelled_render_stops_its_loop_kills_its_encoder_and_reads_cancelled() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -794,7 +768,7 @@ mod tests {
         let mut cmd = std::process::Command::new("sleep");
         cmd.arg("30");
         let encoder = Arc::new(SharedChild::spawn(&mut cmd).expect("spawn"));
-        job.attach_encoder(0, encoder.clone());
+        job.attach_aux(&encoder);
         assert!(!job.should_stop());
 
         super::super::export_job::cancel("status-cancel");
@@ -804,7 +778,7 @@ mod tests {
                 .wait_timeout(Duration::from_secs(5))
                 .expect("wait")
                 .is_some(),
-            "the encoder must be killed"
+            "the remux must be killed"
         );
         assert_eq!(snapshot().state, ExportState::Running, "not settled yet");
         job.finish_cancelled();

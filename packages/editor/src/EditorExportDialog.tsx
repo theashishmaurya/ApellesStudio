@@ -20,8 +20,8 @@
  *   (`~/Movies/<project>/<timeline>.<ext>`, never over an existing file), one
  *   summary line with the size estimate and a warning icon when the export will
  *   differ from the preview, and "More settings": size, frame rate, loudness,
- *   loudest peak, format (H.264 MP4 or the ProRes 422 HQ master), encoder
- *   (hardware VideoToolbox by default, or software — D-446), Save as preset,
+ *   loudest peak, format (H.264 MP4 or the ProRes 422 HQ master; both encoded on the
+ *   media engine, D-452 removed D-446's encoder choice), Save as preset,
  *   and "Clip exceptions" (per clip "Stretch to fill" / "Hold last frame", the
  *   export-time `fitOverrides` / `freezeOverrides`). Footer: Cancel · Export.
  *
@@ -96,14 +96,10 @@ import {
   type LoudnessReport,
 } from './loudness';
 import {
-  DEFAULT_EXPORT_ENCODER,
-  EXPORT_ENCODER_LABEL,
-  EXPORT_ENCODERS,
   EXPORT_FORMAT_INFO,
   EXPORT_FORMATS,
   estimateExportBytes,
   fmtApproxSize,
-  type ExportEncoder,
   type ExportFormat,
 } from './exportFormat';
 import {
@@ -481,7 +477,6 @@ function ExportSheet({ onClose }: { onClose: () => void }) {
   const [outPath, setOutPath] = useState<string>('');
   /** D-446 — not part of a preset: it changes how fast the file is made, not
    *  what the file is, so picking it leaves the chosen preset selected. */
-  const [encoder, setEncoder] = useState<ExportEncoder>(DEFAULT_EXPORT_ENCODER);
   /** Set once the person picks a folder or edits the name: a format change then
    *  only swaps the extension instead of re-deriving the default. */
   const pathTouched = useRef(false);
@@ -664,7 +659,6 @@ function ExportSheet({ onClose }: { onClose: () => void }) {
         loudness: loudnessOf(values),
         format: values.format,
       }),
-      encoder,
       fitOverrides: Object.keys(fitOverrides).length > 0 ? fitOverrides : undefined,
       freezeOverrides: Object.values(freezeOverrides).some(Boolean) ? freezeOverrides : undefined,
     };
@@ -955,20 +949,6 @@ function ExportSheet({ onClose }: { onClose: () => void }) {
                       {EXPORT_FORMATS.map((f) => (
                         <SelectItem key={f} value={f}>
                           {f === 'h264' ? 'H.264 MP4, high quality' : 'ProRes 422 HQ master (.mov)'}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field label="Encoder" full>
-                  <Select value={encoder} onValueChange={(v) => v && setEncoder(v as ExportEncoder)}>
-                    <SelectTrigger className="data-[size=default]:h-7 w-full text-sm" aria-label="Encoder" data-chroma-export-encoder>
-                      <SelectValue>{EXPORT_ENCODER_LABEL[encoder]}</SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {EXPORT_ENCODERS.map((e) => (
-                        <SelectItem key={e} value={e}>
-                          {EXPORT_ENCODER_LABEL[e]}
                         </SelectItem>
                       ))}
                     </SelectContent>

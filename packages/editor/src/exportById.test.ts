@@ -106,11 +106,11 @@ describe('editor_export(timeline_id) — D-411 Phase 0', () => {
   it('draws the named timeline’s clips, not the open one’s (D-448: the document rides in the request)', async () => {
     const result = await runEditorExport({ outPath: '/tmp/short.mp4', timelineId: 'short' });
     if (!('ok' in result)) throw new Error(result.error);
-    const req = lastCall('chroma_render_timeline_export')?.args?.req as { args: string[]; timeline: Timeline };
+    const req = lastCall('chroma_render_timeline_export')?.args?.req as { args: string[]; width: number; height: number; timeline: Timeline };
     const drawn = JSON.stringify(req.timeline);
     expect(drawn).toContain('/media/short-source.mov');
     expect(drawn).not.toContain('/media/long-source.mov');
-    expect(req.args.join(' ')).toContain('1080x1920');
+    expect([req.width, req.height]).toEqual([1080, 1920]);
   });
 
   it('still exports the open timeline when no id is given, and an explicit size still wins', async () => {

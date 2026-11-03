@@ -1,9 +1,8 @@
 // @apelles/editor — **the TypeScript half of the export benchmark (B-380).**
 //
-// What it is: the compiled ffmpeg argvs for one realistic timeline, at 1080p
-// and at 4K, on the export's one renderer (the compositor pipe, D-448) and
-// both encoders (D-446: VideoToolbox `hardware`, libx264 `software`),
-// frozen into `app/src-tauri/tests/fixtures/export-bench.json`. The Rust half,
+// What it is: the compiled remux argv for one realistic timeline, at 1080p and
+// at 4K, on the export's one renderer (the GPU engine, encoded in process on
+// VideoToolbox since D-452), frozen into `app/src-tauri/tests/fixtures/export-bench.json`. The Rust half,
 // `chroma::export_bench::measure_export_benchmark`, generates the media, runs
 // every configuration and reports the time per stage. Same "two languages, one
 // committed file" shape as `exportParityFixture.test.ts` (D-350 §5): the argv
@@ -21,7 +20,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { ExportEncoder } from './exportFormat';
 import { exportTotalDurationSec, type TimelineExportOptions } from './exportTimeline';
 import { buildPipeExportPlan } from './timelinePipeExport';
 import type { Clip, ClipKeyframe, Timeline, Track } from './timeline';
@@ -179,9 +177,8 @@ export function benchTimeline(): Timeline {
 const SIZES = { '1080p': [1920, 1080], '4k': [3840, 2160] } as const;
 type SizeKey = keyof typeof SIZES;
 
-/** The export options for one size and encoder. Only the A-roll carries
- *  sound. */
-function benchOpts(size: SizeKey, encoder: ExportEncoder): TimelineExportOptions {
+/** The export options for one size. Only the A-roll carries sound. */
+function benchOpts(size: SizeKey): TimelineExportOptions {
   const [width, height] = SIZES[size];
   const tl = benchTimeline();
   const videoClips = tl.tracks.filter((t) => t.kind === 'video').flatMap((t) => t.clips);
@@ -189,7 +186,6 @@ function benchOpts(size: SizeKey, encoder: ExportEncoder): TimelineExportOptions
     fps: FPS,
     width,
     height,
-    encoder,
     // Only the A-roll carries sound; the other picture sources are silent.
     hasAudioOverrides: Object.fromEntries(videoClips.map((c) => [c.id, c.source_path === MEDIA.aroll])),
   };
@@ -198,11 +194,10 @@ function benchOpts(size: SizeKey, encoder: ExportEncoder): TimelineExportOptions
 interface BenchCase {
   width: number;
   height: number;
-  encoder: ExportEncoder;
-  pipeArgs: string[];
+  /** D-452 — the remux: the rendered segments' concat list, the sound,
+   *  `-c:v copy`. */
+  muxArgs: string[];
   pipeFrames: number;
-  segmentArgs: string[];
-  concatArgs: string[];
 }
 
 interface BenchFixture {
@@ -212,7 +207,7 @@ interface BenchFixture {
   media: typeof MEDIA;
   sourceFrames: typeof SOURCE_FRAMES;
   timeline: Timeline;
-  /** Keyed `<size>-<encoder>`, e.g. `4k-hardware`. */
+  /** Keyed by size: `1080p`, `4k`. */
   cases: Record<string, BenchCase>;
 }
 
@@ -220,20 +215,15 @@ function buildFixture(): BenchFixture {
   const timeline = benchTimeline();
   const cases: Record<string, BenchCase> = {};
   for (const size of Object.keys(SIZES) as SizeKey[]) {
-    for (const encoder of ['software', 'hardware'] as const) {
-      const opts = benchOpts(size, encoder);
-      const durationSec = exportTotalDurationSec(timeline, opts);
-      const plan = buildPipeExportPlan(timeline, 'OUT', opts, durationSec);
-      cases[`${size}-${encoder}`] = {
-        width: opts.width,
-        height: opts.height,
-        encoder,
-        pipeArgs: plan.args,
-        pipeFrames: plan.frames,
-        segmentArgs: plan.segments.segmentArgs,
-        concatArgs: plan.segments.concatArgs,
-      };
-    }
+    const opts = benchOpts(size);
+    const durationSec = exportTotalDurationSec(timeline, opts);
+    const plan = buildPipeExportPlan(timeline, 'OUT', opts, durationSec);
+    cases[size] = {
+      width: opts.width,
+      height: opts.height,
+      muxArgs: plan.args,
+      pipeFrames: plan.frames,
+    };
   }
   return {
     note:
@@ -259,22 +249,11 @@ describe('B-380 — the export benchmark fixture the Rust harness runs', () => {
     expect(JSON.parse(readFileSync(FIXTURE_PATH, 'utf8'))).toEqual(built);
   });
 
-  it('every case is the whole timeline, and the encoders differ only in the codec tail', () => {
+  it('every case is the whole timeline, and the picture is only stream-copied', () => {
     const { cases } = buildFixture();
-    for (const c of Object.values(cases)) expect(c.pipeFrames).toBe(FRAMES);
-    const strip = (args: string[]) => {
-      const i = args.indexOf('-c:v');
-      if (i < 0) return args;
-      const end = args.indexOf('yuv420p', i) + 1;
-      return [...args.slice(0, i), ...args.slice(end)];
-    };
-    for (const size of Object.keys(SIZES)) {
-      const sw = cases[`${size}-software`];
-      const hw = cases[`${size}-hardware`];
-      expect(strip(hw.pipeArgs)).toEqual(strip(sw.pipeArgs));
-      expect(strip(hw.segmentArgs)).toEqual(strip(sw.segmentArgs));
-      expect(hw.pipeArgs).toContain('h264_videotoolbox');
-      expect(sw.pipeArgs).toContain('libx264');
+    for (const c of Object.values(cases)) {
+      expect(c.pipeFrames).toBe(FRAMES);
+      expect(c.muxArgs.slice(c.muxArgs.indexOf('-c:v'), c.muxArgs.indexOf('-c:v') + 2)).toEqual(['-c:v', 'copy']);
     }
   });
 });

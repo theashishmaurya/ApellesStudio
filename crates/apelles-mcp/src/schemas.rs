@@ -368,17 +368,6 @@ pub enum ExportFormat {
     ProresHq,
 }
 
-/// `editor_export`'s `encoder` (D-446): Apple's VideoToolbox media engine or
-/// the CPU encoders (libx264 / prores_ks). Mirrors `mcp/schemas.py`'s
-/// `ExportEncoder`.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
-pub enum ExportEncoder {
-    #[serde(rename = "hardware")]
-    Hardware,
-    #[serde(rename = "software")]
-    Software,
-}
-
 /// `editor_save_export_preset`'s `loudness` (D-441). Mirrors `mcp/schemas.py`'s
 /// `PresetLoudness`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]

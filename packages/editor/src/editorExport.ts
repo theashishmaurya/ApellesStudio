@@ -53,11 +53,8 @@ import { applyHoldLastFrame, applySpeedAndStretch } from './clipExceptions';
 import { resolveLoudnessTarget, type LoudnessReport, type LoudnessTarget } from './loudness';
 // D-441 — the file format (H.264 delivery or the ProRes master).
 import {
-  DEFAULT_EXPORT_ENCODER,
   formatPathMismatch,
-  isExportEncoder,
   isExportFormat,
-  type ExportEncoder,
   type ExportFormat,
 } from './exportFormat';
 // D-236 — a clip's own persisted speed ramp, which clashes with a transition
@@ -91,10 +88,8 @@ export interface CompiledExport {
    *  off: the export is not post-processed at all. Frozen into a queued job
    *  alongside `args`, for the same reason. */
   loudness?: LoudnessTarget;
-  /** D-441 — the file format the argv writes. */
+  /** D-441 — the file format the export writes. */
   format: ExportFormat;
-  /** D-446 — the encoder the argv compresses the picture with. */
-  encoder: ExportEncoder;
 }
 
 export interface CompileError {
@@ -279,7 +274,7 @@ export function compileEditorExportArgs(
   truePeakDbtp?: unknown;
   /** D-441 — `"h264"` (default) or `"prores_hq"` (`exportFormat.ts`). */
   format?: unknown;
-  /** D-446 — `"hardware"` (default, VideoToolbox) or `"software"`. */
+  /** D-446's `encoder`, removed by D-452: refused with a message saying so. */
   encoder?: unknown;
   },
   timeline?: Timeline,
@@ -301,11 +296,15 @@ export function compileEditorExportArgs(
   const format: ExportFormat = isExportFormat(a?.format) ? a.format : 'h264';
   const mismatch = formatPathMismatch(format, outPath);
   if (mismatch) return { error: mismatch };
-  // D-446 — the encoder: VideoToolbox unless the caller asks for software.
-  if (a?.encoder !== undefined && !isExportEncoder(a.encoder)) {
-    return { error: 'encoder must be "hardware" (VideoToolbox, the default) or "software" (libx264 / prores_ks)' };
+  // D-452 — there is no encoder choice any more: every export is compressed in
+  // process on the media engine. Said, rather than silently ignored, so a
+  // caller that asked for libx264 knows it is not getting it.
+  if (a?.encoder !== undefined && a?.encoder !== null) {
+    return {
+      error:
+        'encoder was removed (D-452): every export is encoded in process on Apple’s VideoToolbox media engine, at the quality D-446 measured equal to libx264 CRF 18 — drop the argument',
+    };
   }
-  const encoder: ExportEncoder = isExportEncoder(a?.encoder) ? a.encoder : DEFAULT_EXPORT_ENCODER;
   // D-411 Phase 0 — omitted sizes default to this timeline's own composition.
   const warmedComp = compositionSizeSnapshot(snapshotId);
   const sizeGiven = a?.width !== undefined && a?.width !== null && a?.height !== undefined && a?.height !== null;
@@ -404,7 +403,6 @@ export function compileEditorExportArgs(
     hasAudioOverrides: resolveHasAudioOverrides(tl),
     audioChannelsOverrides: resolveAudioChannelsOverrides(tl),
     format,
-    encoder,
   };
   // D-448 — the Clip exceptions are written into a copy of the timeline as
   // ordinary clip data (a one-run speed ramp, `stretch`, `hold_until_frame`),
@@ -427,12 +425,12 @@ export function compileEditorExportArgs(
       width: plan.width,
       height: plan.height,
       frames: plan.frames,
-      segments: plan.segments,
+      fps,
+      format,
       timeline: drawn,
     },
     loudness,
     format,
-    encoder,
   };
 }
 
@@ -594,16 +592,14 @@ interface TimelineRenderOutcome {
   cancelled: boolean;
 }
 
-/** Run an ALREADY-COMPILED export's argv (from [`compileEditorExportArgs`])
- *  — what the export queue calls once a job reaches the front. Never
- *  re-reads the (possibly since-edited) timeline — the argv was frozen at
- *  enqueue time.
+/** Run an ALREADY-COMPILED export (from [`compileEditorExportArgs`]) — what
+ *  the export queue calls once a job reaches the front. Never re-reads the
+ *  (possibly since-edited) timeline: the plan and the remux argv were frozen
+ *  at enqueue time.
  *
- *  D-350 — `render` present routes to `chroma_render_timeline_export`, which
- *  spawns the SAME argv but writes the picture into its stdin from the app's
- *  own compositor instead of letting ffmpeg build it. The queue stores `render`
- *  alongside `args` in a job, so a job frozen for the render path still runs on
- *  it minutes later. */
+ *  `chroma_render_timeline_export` draws `render` with the app's GPU engine,
+ *  encodes it in process (D-452), and runs `args` — the remux that joins the
+ *  segments and adds the sound. */
 export async function runCompiledExport(
   args: string[],
   render: TimelineRenderPlan,
@@ -639,9 +635,9 @@ export async function runCompiledExport(
         width: render.width,
         height: render.height,
         frames: render.frames,
-        // D-360 — the per-segment + concat argv. The renderer decides whether
-        // to use it; a job frozen before D-360 simply has none.
-        segments: render.segments ?? null,
+        // D-452 — the encoder's clock and codec: compressed in process.
+        fps: render.fps,
+        format: render.format,
         // D-362 — a label for the status readout, so a caller polling
         // `editor_export_status` is told WHICH file is being written. The
         // path is already inside `args`; the renderer deliberately does not
