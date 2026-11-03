@@ -34,7 +34,7 @@ use apelles_compositor::{GpuImage, Source};
 use once_cell::sync::Lazy;
 use serde_json::Value;
 
-use crate::gpu_processing::{GpuProcessor, RenderRequest};
+use crate::gpu_processing::{GpuProcessor, RenderRequest, TileOutput};
 use crate::image_processing::{AllAdjustments, get_all_adjustments_from_json};
 
 use super::{gpu_compositor, state};
@@ -243,13 +243,22 @@ const KEPT_INPUTS: usize = 3;
 /// graded picture as a [`Source::Gpu`] for the engine to paint.
 ///
 /// One frame at a time on the device: the shader reuses its textures, so the
-/// whole of it — the input write, the shader, and the copy out of its output
-/// texture into a buffer this frame owns — runs under the grader's lock. The
-/// copy is submitted before the lock is released, so the next frame's grade,
-/// queued later on the same queue, cannot overwrite what this frame's engine
-/// pass will read.
+/// whole of it — the input write, and the shader copying each finished tile
+/// into a buffer this frame owns (`TileOutput::Buffer`) — runs under the
+/// grader's lock. It is all submitted before the lock is released, so the
+/// next frame's grade, queued later on the same queue, cannot overwrite what
+/// this frame's engine pass will read.
 pub(crate) fn grade_source(source: &Source, grade: &ClipGrade) -> Result<Source, String> {
     let device = gpu_compositor::device()?;
+    grade_on(&device, source, grade)
+}
+
+/// [`grade_source`] on a given device.
+fn grade_on(
+    device: &gpu_compositor::RenderDevice,
+    source: &Source,
+    grade: &ClipGrade,
+) -> Result<Source, String> {
     let (w, h) = source.dimensions();
     let mut slot = device.grader.lock().unwrap_or_else(|e| e.into_inner());
     let rebuild = match slot.as_ref() {
@@ -277,6 +286,19 @@ pub(crate) fn grade_source(source: &Source, grade: &ClipGrade) -> Result<Source,
     let input = grader.input(&device.ctx.device, (w, h));
     gpu_compositor::settle(device.engine.write_f16_texture(source, &input))?;
     let view = input.create_view(&wgpu::TextureViewDescriptor::default());
+    // The engine reads the graded frame from a buffer of packed RGBA8 rows,
+    // padded to 256 bytes (its row stride); the shader copies each finished
+    // tile straight into it.
+    let row_bytes =
+        (w * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let buffer = device.ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("graded clip frame"),
+        size: u64::from(row_bytes) * u64::from(h),
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
     grader
         .processor
         .run(
@@ -290,50 +312,12 @@ pub(crate) fn grade_source(source: &Source, grade: &ClipGrade) -> Result<Source,
                 roi: None,
             },
             true,
-            true,
+            TileOutput::Buffer {
+                buffer: &buffer,
+                row_bytes,
+            },
         )
         .inspect_err(|e| gpu_compositor::forget_device(e))?;
-    // The shader's output is its RGBA8 `working_texture`; a texture-to-buffer
-    // copy pads each row to 256 bytes, which the engine reads as the row
-    // stride.
-    let row_bytes =
-        (w * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-    let buffer = device.ctx.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("graded clip frame"),
-        size: u64::from(row_bytes) * u64::from(h),
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_DST
-            | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-    let mut encoder = device
-        .ctx
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("graded clip frame copy"),
-        });
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture: &grader.processor.working_texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &buffer,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(row_bytes),
-                rows_per_image: Some(h),
-            },
-        },
-        wgpu::Extent3d {
-            width: w,
-            height: h,
-            depth_or_array_layers: 1,
-        },
-    );
-    device.ctx.queue.submit(Some(encoder.finish()));
     Ok(Source::Gpu(GpuImage {
         buffer,
         width: w,
@@ -418,7 +402,7 @@ mod tests {
     use image::{DynamicImage, Rgba, RgbaImage};
     use serde_json::{Value, json};
 
-    use crate::gpu_processing::RenderRequest;
+    use crate::gpu_processing::{RenderRequest, TileOutput};
     use crate::image_processing::get_all_adjustments_from_json;
     use crate::render_core::{self, OwnedRenderCaches};
 
@@ -443,7 +427,8 @@ mod tests {
 
     /// The grades the reference covers: the plain global grade, the local tone
     /// operators (the tonal blur), every neighbourhood / position effect the
-    /// D-256 bake had to strip, and all of them at once.
+    /// D-256 bake had to strip, the colour panels (curves, HSL, colour wheels,
+    /// calibration), and the tone and neighbourhood operators at once.
     pub(super) fn grades() -> Vec<(&'static str, Value)> {
         vec![
             ("exposure-only", json!({ "exposure": 0.3 })),
@@ -460,6 +445,26 @@ mod tests {
                         "halationAmount": 15.0 }),
             ),
             (
+                "colour",
+                json!({ "exposure": 0.1, "vibrance": 15.0, "hue": 4.0,
+                        "curves": {
+                            "luma": [{"x": 0.0, "y": 8.0}, {"x": 64.0, "y": 50.0}, {"x": 128.0, "y": 132.0},
+                                     {"x": 192.0, "y": 210.0}, {"x": 255.0, "y": 245.0}],
+                            "red": [{"x": 0.0, "y": 0.0}, {"x": 120.0, "y": 135.0}, {"x": 255.0, "y": 255.0}],
+                            "green": [{"x": 0.0, "y": 4.0}, {"x": 255.0, "y": 250.0}],
+                            "blue": [{"x": 0.0, "y": 12.0}, {"x": 90.0, "y": 80.0}, {"x": 200.0, "y": 205.0},
+                                     {"x": 255.0, "y": 240.0}] },
+                        "hsl": { "reds": { "hue": 10.0, "saturation": 20.0, "luminance": -5.0 },
+                                 "blues": { "hue": -15.0, "saturation": -30.0, "luminance": 10.0 },
+                                 "greens": { "saturation": 25.0 } },
+                        "colorGrading": { "shadows": { "hue": 210.0, "saturation": 30.0, "luminance": -5.0 },
+                                          "midtones": { "hue": 40.0, "saturation": 10.0, "luminance": 0.0 },
+                                          "highlights": { "hue": 50.0, "saturation": 20.0, "luminance": 5.0 },
+                                          "blending": 60.0, "balance": 10.0 },
+                        "colorCalibration": { "shadowsTint": 10.0, "redHue": 5.0, "redSaturation": 10.0,
+                                              "greenHue": -5.0, "blueSaturation": -10.0 } }),
+            ),
+            (
                 "everything",
                 json!({ "exposure": 0.2, "contrast": 12.0, "highlights": -30.0, "shadows": 25.0,
                         "whites": 5.0, "blacks": -8.0, "saturation": -10.0, "vibrance": 20.0,
@@ -472,6 +477,43 @@ mod tests {
 
     pub(super) const SIZES: [(u32, u32); 3] = [(1920, 1080), (3840, 2160), (1283, 721)];
 
+    /// A grade with two mask layers whose own adjustments use the per-mask
+    /// paths of the shader (curves, HSL, colour wheels, tone), for the
+    /// Colorist-only reference case (masks are not carried into the Edit tab
+    /// yet, D-450).
+    fn masked_grade() -> Value {
+        let mask = |id: &str, adjustments: Value| {
+            json!({ "id": id, "name": id, "visible": true, "invert": false,
+                    "adjustments": adjustments, "subMasks": [] })
+        };
+        json!({
+            "exposure": 0.1, "contrast": 8.0,
+            "masks": [
+                mask("a", json!({ "exposure": 0.4, "saturation": 20.0,
+                    "curves": { "luma": [{"x": 0.0, "y": 0.0}, {"x": 100.0, "y": 130.0}, {"x": 255.0, "y": 255.0}],
+                                "red": [{"x": 0.0, "y": 10.0}, {"x": 255.0, "y": 240.0}] },
+                    "hsl": { "oranges": { "hue": 8.0, "saturation": 15.0, "luminance": 5.0 } },
+                    "colorGrading": { "midtones": { "hue": 30.0, "saturation": 20.0, "luminance": 0.0 } } })),
+                mask("b", json!({ "highlights": -30.0, "temperature": -10.0,
+                    "curves": { "blue": [{"x": 0.0, "y": 20.0}, {"x": 128.0, "y": 120.0}, {"x": 255.0, "y": 250.0}] } })),
+            ],
+        })
+    }
+
+    /// The two mask bitmaps for [`masked_grade`]: a horizontal ramp and a soft
+    /// disc.
+    fn mask_bitmaps(w: u32, h: u32) -> Vec<image::GrayImage> {
+        let ramp =
+            image::GrayImage::from_fn(w, h, |x, _| image::Luma([(x * 255 / w.max(1)) as u8]));
+        let disc = image::GrayImage::from_fn(w, h, |x, y| {
+            let dx = x as f32 / w as f32 - 0.5;
+            let dy = y as f32 / h as f32 - 0.5;
+            let d = (dx * dx + dy * dy).sqrt();
+            image::Luma([((0.4 - d).clamp(0.0, 0.2) * 5.0 * 255.0) as u8])
+        });
+        vec![ramp, disc]
+    }
+
     /// The Colorist's own render of `img` under `grade` (`render_core::render`,
     /// read back), as RGBA8.
     pub(super) fn colorist_render(
@@ -480,6 +522,17 @@ mod tests {
         img: &RgbaImage,
         grade: &Value,
     ) -> RgbaImage {
+        colorist_render_masked(ctx, caches, img, grade, &[])
+    }
+
+    /// [`colorist_render`] with mask bitmaps, for the masked reference case.
+    fn colorist_render_masked(
+        ctx: &crate::image_processing::GpuContext,
+        caches: &OwnedRenderCaches,
+        img: &RgbaImage,
+        grade: &Value,
+        masks: &[image::GrayImage],
+    ) -> RgbaImage {
         render_core::render(
             ctx,
             caches.as_ref(),
@@ -487,7 +540,7 @@ mod tests {
             0,
             RenderRequest {
                 adjustments: get_all_adjustments_from_json(grade, false, None),
-                mask_bitmaps: &[],
+                mask_bitmaps: masks,
                 lut: None,
                 roi: None,
             },
@@ -640,10 +693,255 @@ mod tests {
         }
     }
 
+    /// A render device of its own with GPU timestamp queries, for the
+    /// per-stage measurement. `None` when the adapter has none.
+    fn timestamp_device() -> Option<super::gpu_compositor::RenderDevice> {
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            ..Default::default()
+        }))
+        .ok()?;
+        let mut features = wgpu::Features::TIMESTAMP_QUERY;
+        if !adapter.features().contains(features) {
+            return None;
+        }
+        features |= adapter.features() & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+        let limits = adapter.limits();
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("grade stage measurement"),
+            required_features: features,
+            required_limits: limits.clone(),
+            experimental_features: wgpu::ExperimentalFeatures::default(),
+            memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
+        }))
+        .ok()?;
+        Some(super::super::gpu_compositor::RenderDevice::on(
+            crate::image_processing::GpuContext {
+                device: std::sync::Arc::new(device),
+                queue: std::sync::Arc::new(queue),
+                limits,
+                display: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            },
+        ))
+    }
+
+    /// **Where a graded frame's time goes** (D-450), stage by stage, best and
+    /// median of 10: the decoded frame's upload and half-float conversion, the
+    /// engine buffer's allocation, the shader's CPU side (`run` recording and
+    /// submitting), the shader on the GPU with its tile copy into that buffer
+    /// and each of its compute passes by GPU timestamp, the engine's paint
+    /// with the read-back of the finished frame, and that read-back alone. Every stage is waited for
+    /// before the next starts, so the wall-clock stages add up to the frame.
+    /// `cargo test -p apelles --lib measure_where_a_graded_frame_spends -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "a timing measurement, not a pass/fail fact"]
+    fn measure_where_a_graded_frame_spends() {
+        use apelles_compositor::{Background, FramePlan, Layer, Source, Step};
+        use std::collections::BTreeMap;
+        use std::time::Instant;
+        let Some(device) = timestamp_device() else {
+            eprintln!("skip: no adapter with timestamp queries");
+            return;
+        };
+        let wait = || {
+            device
+                .ctx
+                .device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("poll");
+        };
+        let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
+        for (w, h) in [(1920u32, 1080u32), (3840, 2160)] {
+            let rgb = std::sync::Arc::new(DynamicImage::ImageRgba8(picture(w, h, 7)).to_rgb8());
+            let source = Source::Rgb(rgb);
+            for (name, grade) in grades() {
+                let g = super::resolve(&grade).expect("resolve").expect("graded");
+                // Build the grader (and warm every pipeline) once.
+                let _ = super::grade_on(&device, &source, &g).expect("warm");
+                wait();
+                let mut slot = device.grader.lock().unwrap_or_else(|e| e.into_inner());
+                let grader = slot.as_mut().expect("grader");
+                grader.processor.pass_timer = Some(
+                    crate::gpu_processing::pass_timer::PassTimer::new(&device.ctx.device),
+                );
+                let mut stages: BTreeMap<String, Vec<f64>> = BTreeMap::new();
+                let mut order: Vec<String> = Vec::new();
+                let mut add = |stages: &mut BTreeMap<String, Vec<f64>>, k: &str, v: f64| {
+                    if !order.iter().any(|o| o == k) {
+                        order.push(k.to_string());
+                    }
+                    stages.entry(k.to_string()).or_default().push(v);
+                };
+                for _ in 0..10 {
+                    let frame = Instant::now();
+                    let input = grader.input(&device.ctx.device, (w, h));
+                    let t = Instant::now();
+                    device
+                        .engine
+                        .write_f16_texture(&source, &input)
+                        .expect("f16");
+                    wait();
+                    add(&mut stages, "1 upload + to_f16 (wall)", ms(t));
+                    let view = input.create_view(&wgpu::TextureViewDescriptor::default());
+                    let row_bytes = (w * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+                        * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+                    let t = Instant::now();
+                    let buffer = device.ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: None,
+                        size: u64::from(row_bytes) * u64::from(h),
+                        usage: wgpu::BufferUsages::STORAGE
+                            | wgpu::BufferUsages::COPY_DST
+                            | wgpu::BufferUsages::COPY_SRC,
+                        mapped_at_creation: false,
+                    });
+                    add(&mut stages, "2 the engine buffer's allocation", ms(t));
+                    let t = Instant::now();
+                    grader
+                        .processor
+                        .run(
+                            &view,
+                            w,
+                            h,
+                            RenderRequest {
+                                adjustments: g.adjustments,
+                                mask_bitmaps: &[],
+                                lut: g.lut.clone(),
+                                roi: None,
+                            },
+                            true,
+                            TileOutput::Buffer {
+                                buffer: &buffer,
+                                row_bytes,
+                            },
+                        )
+                        .expect("run");
+                    add(&mut stages, "3 shader: CPU record + submit", ms(t));
+                    let t = Instant::now();
+                    wait();
+                    add(
+                        &mut stages,
+                        "4 shader + tile copy to the buffer: GPU (wall)",
+                        ms(t),
+                    );
+                    let timer = grader.processor.pass_timer.as_ref().expect("timer");
+                    for (label, v) in timer
+                        .take(&device.ctx.device, &device.ctx.queue)
+                        .expect("timestamps")
+                    {
+                        add(&mut stages, &format!("4. gpu: {label}"), v);
+                    }
+                    let image = apelles_compositor::GpuImage {
+                        buffer,
+                        width: w,
+                        height: h,
+                        row_pixels: row_bytes / 4,
+                    };
+                    let t = Instant::now();
+                    let _ = device.engine.read_gpu_image(&image).expect("read back");
+                    add(&mut stages, "6 read-back of a frame alone (wall)", ms(t));
+                    let t = Instant::now();
+                    let _ = device
+                        .engine
+                        .render(&FramePlan {
+                            width: w,
+                            height: h,
+                            background: Background::Solid([0, 0, 0, 255]),
+                            steps: vec![Step::Paint(Layer {
+                                source: Source::Gpu(image),
+                                crop: (0, 0, w, h),
+                                size: (w, h),
+                                origin: (0.0, 0.0),
+                                opacity: 1.0,
+                                corner_radius: 0.0,
+                                rotation_deg: 0.0,
+                            })],
+                        })
+                        .expect("paint");
+                    add(&mut stages, "5 engine paint + read-back (wall)", ms(t));
+                    add(&mut stages, "0 whole frame (wall)", ms(frame));
+                }
+                grader.processor.pass_timer = None;
+                drop(slot);
+                eprintln!("--- {w}x{h} {name}");
+                let mut keys: Vec<&String> = stages.keys().collect();
+                keys.sort();
+                for k in keys {
+                    let mut v = stages[k].clone();
+                    v.sort_by(f64::total_cmp);
+                    eprintln!(
+                        "  {k:<40} best {:7.2}  median {:7.2} ms",
+                        v[0],
+                        v[v.len() / 2]
+                    );
+                }
+            }
+        }
+    }
+
+    /// **The preview grades at its own size** (D-450): the Edit preview decodes
+    /// a clip at a 960-px long edge (`PreviewPane.tsx`'s `PREVIEW_LONG_EDGE`)
+    /// and the grade runs on that frame. That is not bit-identical to grading
+    /// the full-size frame and then scaling it down (the operators do not
+    /// commute with resampling), so this measures by how much, per grade: a
+    /// 4K picture graded and then scaled to 960x540, against the same picture
+    /// scaled first and then graded (both scalings the `image` crate's
+    /// Triangle filter), as PSNR and the largest channel difference. It also
+    /// times a graded preview-size engine frame. A measurement:
+    /// `cargo test -p apelles --lib measure_the_preview_size_grade -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "a measurement for the docs, not a pass/fail fact"]
+    fn measure_the_preview_size_grade() {
+        use image::imageops::{FilterType, resize};
+        let ctx = render_core::init_gpu_context().expect("Colorist GPU context");
+        let caches = OwnedRenderCaches::default();
+        let full = picture(3840, 2160, 7);
+        let small = resize(&full, 960, 540, FilterType::Triangle);
+        for (name, grade) in grades() {
+            let graded_then_scaled = resize(
+                &colorist_render(&ctx, &caches, &full, &grade),
+                960,
+                540,
+                FilterType::Triangle,
+            );
+            let scaled_then_graded = colorist_render(&ctx, &caches, &small, &grade);
+            let (mut sq, mut max, mut n) = (0f64, 0u8, 0f64);
+            for (p, q) in graded_then_scaled.pixels().zip(scaled_then_graded.pixels()) {
+                for c in 0..3 {
+                    let d = p[c].abs_diff(q[c]);
+                    max = max.max(d);
+                    sq += f64::from(d) * f64::from(d);
+                    n += 1.0;
+                }
+            }
+            let psnr = if sq == 0.0 {
+                f64::INFINITY
+            } else {
+                10.0 * (255.0f64 * 255.0 / (sq / n)).log10()
+            };
+            let _ = native_frame(&small, &grade);
+            let best = (0..10)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    let _ = native_frame(&small, &grade);
+                    t.elapsed().as_secs_f64() * 1000.0
+                })
+                .fold(f64::INFINITY, f64::min);
+            eprintln!(
+                "{name:<14} preview-size grade vs full grade scaled: {psnr:6.2} dB, max {max:3}; graded 960x540 engine frame {best:5.2} ms"
+            );
+        }
+    }
+
     /// What a graded clip costs per frame on the engine path (D-450): the
-    /// decoded frame written to the shader's input, the shader, the copy into
-    /// the engine's buffer, and an engine frame painting it, waited for. Best
-    /// of 10, for each reference grade. A measurement:
+    /// decoded frame written to the shader's input, the shader writing its
+    /// tiles into the engine's buffer, and an engine frame painting it and
+    /// reading it back, one after the other and waited for (a frame's latency;
+    /// an export overlaps the next frame's decode with this one's GPU work). Best
+    /// and median of 10, for each reference grade. A measurement:
     /// `cargo test -p apelles --lib measure_a_natively_graded_frame -- --ignored --nocapture`.
     #[test]
     #[ignore = "a timing measurement, not a pass/fail fact"]
@@ -652,14 +950,18 @@ mod tests {
             let img = picture(w, h, 7);
             let _ = native_frame(&img, &grades()[1].1);
             for (name, grade) in grades() {
-                let best = (0..10)
+                let mut times: Vec<f64> = (0..10)
                     .map(|_| {
                         let t = std::time::Instant::now();
                         let _ = native_frame(&img, &grade);
                         t.elapsed().as_secs_f64() * 1000.0
                     })
-                    .fold(f64::INFINITY, f64::min);
-                eprintln!("{w}x{h} {name:<14} graded engine frame {best:7.1} ms");
+                    .collect();
+                times.sort_by(f64::total_cmp);
+                eprintln!(
+                    "{w}x{h} {name:<14} graded engine frame best {:7.1}  median {:7.1} ms",
+                    times[0], times[5]
+                );
             }
         }
     }
@@ -725,12 +1027,14 @@ mod tests {
                 let (mut a, mut b) = (f64::INFINITY, f64::INFINITY);
                 for _ in 0..15 {
                     let t = std::time::Instant::now();
-                    tiled.run(&view, w, h, request(), true, true).expect("run");
+                    tiled
+                        .run(&view, w, h, request(), true, TileOutput::Display)
+                        .expect("run");
                     wait();
                     a = a.min(t.elapsed().as_secs_f64() * 1000.0);
                     let t = std::time::Instant::now();
                     current
-                        .run(&view, w, h, request(), true, true)
+                        .run(&view, w, h, request(), true, TileOutput::Display)
                         .expect("run");
                     wait();
                     b = b.min(t.elapsed().as_secs_f64() * 1000.0);
@@ -757,10 +1061,19 @@ mod tests {
         let ctx = render_core::init_gpu_context().expect("Colorist GPU context");
         let caches = OwnedRenderCaches::default();
         let mut failures = Vec::new();
+        assert_eq!(
+            get_all_adjustments_from_json(&masked_grade(), false, None).mask_count,
+            2,
+            "the masked reference grade must really have two masks"
+        );
         for (w, h) in SIZES {
             let img = picture(w, h, 7);
-            for (name, grade) in grades() {
-                let out = colorist_render(&ctx, &caches, &img, &grade);
+            let masks = mask_bitmaps(w, h);
+            let mut cases: Vec<(&str, Value, &[image::GrayImage])> =
+                grades().into_iter().map(|(n, g)| (n, g, &[][..])).collect();
+            cases.push(("masked", masked_grade(), &masks[..]));
+            for (name, grade, bitmaps) in cases {
+                let out = colorist_render_masked(&ctx, &caches, &img, &grade, bitmaps);
                 let path = dir.join(format!("{name}-{w}x{h}.png"));
                 match mode.as_str() {
                     "write" => out.save(&path).expect("save reference"),

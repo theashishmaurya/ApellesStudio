@@ -1,8 +1,10 @@
 # The Colorist grade as a native pass of the GPU render engine (D-450, B-381)
 
-**Status (2026-11-04):** both parts built: the grade shader made faster, bit-identical (part 1), and the
-grade run natively on the engine's device with the LUT path deleted (part 2). A faster large-radius blur
-(d) is held for the owner. Masks, the Colorist crop / geometry and relight are the next step.
+**Status (2026-11-04):** three parts built: the grade shader made faster, bit-identical (part 1); the
+grade run natively on the engine's device with the LUT path deleted (part 2); and the structural costs a
+per-stage breakdown found, removed with every pixel unchanged (part 3, the current numbers). A faster
+large-radius blur (d) is held for the owner. Masks, the Colorist crop / geometry and relight are the next
+step.
 **Decision:** `docs/08-decisions.md` D-450. **Bug:** B-381. **Engine:** D-449
 (`docs/notes/export-gpu-compositor.md` §15).
 
@@ -133,7 +135,8 @@ same picture: **0 pixels differ in all twelve cases** (PSNR ∞, SSIM 1). For co
 translucent title, drawn five times: identical bytes (hash `1561c0e1b632adf5` on this machine).
 
 `measure_a_natively_graded_frame` (ignored; best of 10, upload of the decoded frame and read-back of the
-finished frame included, which is what an export pays; load average about 14–35):
+finished frame included, which is what an export pays; load average about 14–35). **Superseded by part 3
+below**, which found most of this was one structural cost in the main pass:
 
 | grade | 1080p | 4K |
 |---|---|---|
@@ -150,6 +153,104 @@ main pass and the structure blur: (d) above, and the main pass itself, are where
 **The warm cast** (B-381) came from the lattice. The native frame is the Colorist's render bit for bit, so
 it cannot recur on this path. Not re-checked on the owner's real footage: this wave used synthetic
 pictures only.
+
+## Part 3 — where a graded frame's time went
+
+Asked after part 2, because an exposure-only grade costing 179 ms at 4K could not be the blurs.
+
+`measure_where_a_graded_frame_spends` (ignored) runs one graded frame stage by stage on a device of its own
+opened with `TIMESTAMP_QUERY`, waiting for each stage before the next, best and median of 10: the upload
+and half-float conversion, the shader's CPU side, every compute pass of the shader by GPU timestamp (a
+test-only `gpu_processing::pass_timer`, compiled out of every other build), the copy into the engine's
+buffer, the engine's paint with the read-back, and the read-back alone. No tiling is left at 4K (one tile
+up to 4096 px, part 1).
+
+**Before** (load average about 4–7; best of 10, ms):
+
+| stage | 1080p exposure | 4K exposure | 4K local tone | 4K everything |
+|---|---|---|---|---|
+| upload + `to_f16` | 2.1 | 5.5 | 5.4 | 5.4 |
+| shader, CPU side | 0.5 | 1.5 | 1.6 | 1.9 |
+| main pass (GPU) | 25.7 | 110.1 | 112.8 | 127.1 |
+| blurs (GPU) | — | — | 5.3 | 75.0 |
+| copy into `Source::Gpu` | 1.4 | 3.0 | 1.6 | 3.1 |
+| engine paint + read-back | 1.8 | 5.5 | 4.0 | 5.5 |
+
+So the main pass was nearly all of it. Stubbing one operator at a time (an experiment, never committed)
+found the curves were 104 of its 110 ms at 4K: `apply_curve` copied its 16-point array into a local
+`var` and the four curves were passed by value, so every pixel copied 512 bytes of curve data into
+per-thread memory and indexed it there, for the default identity curve too.
+
+### What changed, each step bit-identical
+
+The reference test gained a **colour** grade (non-default luma and RGB curves, three HSL bands, colour
+wheels, calibration) and a **masked** grade (two mask layers with their own curves, HSL, wheels and tone,
+over a ramp and a disc bitmap), so the paths being changed are covered: six grades at three sizes, 18
+renders, all 0 pixels different from the committed shader after every change.
+
+1. **Curves read in place.** A curve is named by its owner (`GLOBAL_CURVES`, or a mask index) and channel,
+   and `curve_point` / `curve_count` read it from the uniform. Same arithmetic; the one index that wrapped
+   out of range for the first segment (`max(0u, i - 1u)` at `i == 0`, whose point is never used there)
+   reads point 0 instead. Main pass 110 → 14 ms at 4K, 26 → 3.6 ms at 1080p.
+2. **The empty mask array built once.** `run` allocated, zero-filled on the CPU and uploaded two
+   frame-sized mask layers on every call (16.6 MB at 4K). With no mask bitmaps it now binds a zeroed array
+   the processor's size, built once; every read is a `textureLoad` inside the image, so it reads the same.
+   The shader's CPU side 1.5 → 0.07 ms at 4K.
+3. **Tiles straight into the engine's buffer.** `run` takes a `TileOutput` (nothing, the display's
+   `working_texture`, or a caller's buffer); the native pass passes the engine's buffer, so each finished
+   tile is copied once, at its offset, instead of tile → `working_texture` → buffer.
+4. **The half-float source buffer reused** between frames (`queue.write_buffer` is ordered after the
+   previous frame's conversion), instead of a fresh 25 MB mapped buffer per 4K frame. A steadier upload
+   (5.3–5.9 ms at 4K), not a large one.
+
+**Tried and reverted: blurs staged in workgroup memory.** Exact (0 pixels), once WGSL's default zero-fill
+of workgroup memory was switched off (it made the vertical pass 0.9 s), but no faster: the vertical pass
+went from 2.7 to 4.3 ms (tonal) and 23 to 38 ms (structure) at 4K, the horizontal one barely moved. Apple's
+texture cache already serves the direct loop; the blur's cost is its per-tap arithmetic.
+
+**Kept, and why.**
+- *The f16 conversion* already runs on the GPU (`to_f16.wgsl`, part 2). Its 1 KB table holds the CPU's
+  correctly rounded `v / 255` in half precision. WGSL's `/` is accurate to 2.5 ulp, so computing `v / 255`
+  in the kernel and rounding it there is not guaranteed to match the Colorist's own CPU conversion.
+- *Operators at their defaults.* After the curves fix, stubbing each in turn: the curves are still about
+  6 ms and the HSL panel about 4.5 ms of the 14-ms 4K main pass. Neither is an exact identity at its
+  default (a default curve is evaluated through the Hermite segment and divided by 255; the HSL panel
+  round-trips through HSV), so skipping them would change pixels.
+
+### Measured after (load average about 8, GPU about 22% busy)
+
+A frame's latency on the real path (`measure_a_natively_graded_frame`: upload, shader into the engine's
+buffer, engine paint, read-back, one after the other), best / median of 10:
+
+| grade | 1080p | 4K |
+|---|---|---|
+| exposure only | 7.4 / 7.6 ms | 24.8 / 26.5 ms |
+| local tone | 9.1 / 9.2 ms | 32.3 / 33.9 ms |
+| colour panels | 9.0 / 9.1 ms | 32.9 / 34.4 ms |
+| neighbourhood | 21.5 / 22.9 ms | 117 / 118 ms |
+| everything | 21.3 / 22.8 ms | 117 / 123 ms |
+
+Per stage at 4K, best: exposure only is upload 5.6, shader 15.2 (main 14.1), paint and read-back 5.5 ms;
+local tone is upload 5.4, shader 22.7 (main 15.2, tonal blur 5.6), paint and read-back 5.9 ms. An export
+overlaps a frame's decode and upload with the previous frame's GPU work and reads frames back on its
+writer thread, so what it pays per frame is the GPU's share, about 21 ms (exposure) and 26 ms (local
+tone). Against the targets: exposure only and local tone are well under 16 ms at 1080p; at 4K exposure
+only is inside 33 ms in latency and local tone is at it (inside it as GPU time).
+
+**Where neighbourhood and everything land** (the honest base for (d)): 106 ms of GPU passes for a 4K
+frame, of which the structure blur (radius 80) is 50 ms, the main pass 32 ms, the clarity blur 11 ms,
+the tonal and sharpness blurs 9 ms. At 1080p, 18 ms: main 8, structure blur 6.5.
+
+### The preview's size
+
+The Edit preview decodes a clip at a 960-px long edge (`PREVIEW_LONG_EDGE`) and grades that frame, so a
+graded preview frame costs 2.0 (exposure) to 6.3 ms (neighbourhood). This is not exact against grading
+the full-size frame and scaling it down, and cannot be made so: the grade works in linear light and on
+neighbourhoods, and neither commutes with resampling. `measure_the_preview_size_grade` on the 4K
+reference picture: exposure only 39.7 dB (max 26), local tone 30.6 dB (max 99), colour 30.9 dB (max 101),
+neighbourhood 36.4 dB (max 62), everything 33.1 dB (max 71). The reference picture has hard synthetic
+edges, the worst case for this; real footage is smoother. This is how the preview has always graded (the
+lattice was applied to the same 960-px decode); the export grades every frame at full size.
 
 ## Next: masks, the Colorist crop and geometry, relight
 

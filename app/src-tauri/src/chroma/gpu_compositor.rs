@@ -37,6 +37,18 @@ pub(crate) struct RenderDevice {
     pub(crate) grader: Mutex<Option<super::grade_pass::Grader>>,
 }
 
+impl RenderDevice {
+    /// The engine and the grade shader's slot, on `ctx`'s device.
+    pub(crate) fn on(ctx: crate::image_processing::GpuContext) -> Self {
+        let engine = Arc::new(Engine::with_device(ctx.device.clone(), ctx.queue.clone()));
+        Self {
+            ctx,
+            engine,
+            grader: Mutex::new(None),
+        }
+    }
+}
+
 static DEVICE: Mutex<Option<Arc<RenderDevice>>> = Mutex::new(None);
 
 /// The render device, opened on first use.
@@ -47,12 +59,7 @@ pub(crate) fn device() -> Result<Arc<RenderDevice>, String> {
     }
     let ctx =
         crate::render_core::init_gpu_context().map_err(|e| describe(ComposeError::NoDevice(e)))?;
-    let engine = Arc::new(Engine::with_device(ctx.device.clone(), ctx.queue.clone()));
-    let device = Arc::new(RenderDevice {
-        ctx,
-        engine,
-        grader: Mutex::new(None),
-    });
+    let device = Arc::new(RenderDevice::on(ctx));
     *slot = Some(device.clone());
     Ok(device)
 }

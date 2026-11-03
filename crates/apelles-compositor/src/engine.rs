@@ -116,6 +116,12 @@ pub struct Engine {
     dummy: wgpu::Buffer,
     /// `tables::half_of_u8`, for `to_f16.wgsl`.
     half_of_u8: wgpu::Buffer,
+    /// `write_f16_texture`'s source buffer, kept for the next frame of the same
+    /// size or smaller. Reusing it is safe because `queue.write_buffer` is
+    /// ordered after every submission already on the queue (the previous
+    /// frame's conversion reads it first), and it spares a fresh 25 MB
+    /// mapped allocation per 4K frame.
+    f16_source: Mutex<Option<wgpu::Buffer>>,
     counters: Counters,
 }
 
@@ -416,6 +422,7 @@ impl Engine {
             shared: Mutex::new(SharedCache::default()),
             dummy,
             half_of_u8,
+            f16_source: Mutex::new(None),
             counters: Counters::default(),
         }
     }
@@ -976,15 +983,30 @@ impl Engine {
             }
         };
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        // Its own buffer rather than a pooled one: wgpu keeps it alive until
-        // the submission that reads it has run, and nothing waits for that.
-        let src = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("apelles-compositor to_f16 source"),
-                contents: bytes,
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+        let need = (bytes.len() as u64).div_ceil(4).max(1) * 4;
+        let src = {
+            let mut slot = self.f16_source.lock().unwrap_or_else(|e| e.into_inner());
+            match slot.as_ref() {
+                Some(b) if b.size() >= need => b.clone(),
+                _ => {
+                    if need > self.max_binding {
+                        return Err(ComposeError::TooLarge(format!(
+                            "a {need}-byte frame is over this device's {}-byte limit",
+                            self.max_binding
+                        )));
+                    }
+                    let b = self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("apelles-compositor to_f16 source"),
+                        size: need,
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                    *slot = Some(b.clone());
+                    b
+                }
+            }
+        };
+        write_padded(&self.queue, &src, bytes);
         self.count_upload(bytes.len());
         let p = ToF16Params {
             src_w: w,

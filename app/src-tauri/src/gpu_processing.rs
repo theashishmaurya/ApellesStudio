@@ -21,6 +21,23 @@ pub struct Roi {
     pub height: u32,
 }
 
+/// D-450 — where [`GpuProcessor::run`] puts each finished tile on the GPU.
+pub enum TileOutput<'a> {
+    /// Nowhere (a caller that only wants the CPU read-back).
+    None,
+    /// The processor's own `working_texture`, which the display and the
+    /// Colorist's final passes read.
+    Display,
+    /// A caller's buffer of packed RGBA8 rows, `row_bytes` apart (a multiple
+    /// of `wgpu::COPY_BYTES_PER_ROW_ALIGNMENT`), with `COPY_DST` usage: the GPU
+    /// render engine's input for a graded clip (`chroma::grade_pass`), written
+    /// with no intermediate full-frame texture.
+    Buffer {
+        buffer: &'a wgpu::Buffer,
+        row_bytes: u32,
+    },
+}
+
 pub struct RenderRequest<'a> {
     pub adjustments: AllAdjustments,
     pub mask_bitmaps: &'a [ImageBuffer<Luma<u8>, Vec<u8>>],
@@ -689,6 +706,10 @@ pub struct GpuProcessor {
     main_pipeline: wgpu::ComputePipeline,
     adjustments_buffer: wgpu::Buffer,
     dummy_blur_view: wgpu::TextureView,
+    /// D-450 — the mask array `run` binds when a request has no mask bitmaps:
+    /// two zero layers at the processor's maximum size, built once. (It used
+    /// to be allocated, zero-filled on the CPU and uploaded on every frame.)
+    empty_masks_view: wgpu::TextureView,
     dummy_lut_view: wgpu::TextureView,
     dummy_lut_sampler: wgpu::Sampler,
     ping_pong_view: wgpu::TextureView,
@@ -707,6 +728,12 @@ pub struct GpuProcessor {
     /// The tile edge this processor's tile textures were sized for
     /// ([`tile_size_for`]); `run` must walk tiles of exactly this size.
     tile_size: u32,
+
+    /// D-450 — GPU timestamps around each compute pass, for the grade's
+    /// per-stage measurement. Test builds only; `None` unless a measurement
+    /// installs one on a device opened with `TIMESTAMP_QUERY`.
+    #[cfg(test)]
+    pub(crate) pass_timer: Option<pass_timer::PassTimer>,
 }
 
 const FLARE_MAP_SIZE: u32 = 512;
@@ -1293,6 +1320,27 @@ impl GpuProcessor {
         });
         let output_texture_view = output_texture.create_view(&Default::default());
 
+        // Zero-initialised by wgpu on first use, which is the "no mask" value.
+        let empty_masks_view = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("Empty Mask Texture Array"),
+                size: wgpu::Extent3d {
+                    width: max_width,
+                    height: max_height,
+                    depth_or_array_layers: 2,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
+
         Ok(Self {
             context,
             blur_bgl,
@@ -1312,6 +1360,7 @@ impl GpuProcessor {
             main_pipeline,
             adjustments_buffer,
             dummy_blur_view,
+            empty_masks_view,
             dummy_lut_view,
             dummy_lut_sampler,
             ping_pong_view,
@@ -1326,7 +1375,22 @@ impl GpuProcessor {
             output_texture,
             output_texture_view,
             tile_size,
+            #[cfg(test)]
+            pass_timer: None,
         })
+    }
+
+    /// A compute pass's descriptor: the default, or (in a test build with a
+    /// [`pass_timer::PassTimer`] installed) one that times the pass.
+    fn pass_descriptor(&self, label: &'static str) -> wgpu::ComputePassDescriptor<'_> {
+        #[cfg(test)]
+        if let Some(t) = &self.pass_timer {
+            return t.pass(label);
+        }
+        wgpu::ComputePassDescriptor {
+            label: Some(label),
+            timestamp_writes: None,
+        }
     }
 
     pub fn run(
@@ -1336,7 +1400,7 @@ impl GpuProcessor {
         height: u32,
         request: RenderRequest,
         skip_cpu_readback: bool,
-        output_to_display: bool,
+        output: TileOutput,
     ) -> Result<(Vec<u8>, u32, u32, u32, u32), String> {
         let device = &self.context.device;
         let queue = &self.context.queue;
@@ -1351,43 +1415,48 @@ impl GpuProcessor {
         });
         let out_width = bounds.width;
         let out_height = bounds.height;
-        let mask_layer_count = request.mask_bitmaps.len().clamp(2, MAX_MASKS) as u32;
-        let full_texture_size = wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: mask_layer_count,
-        };
-        let buffer_size = (width as usize) * (height as usize) * (mask_layer_count as usize);
-        let mut mask_texture_data = Vec::with_capacity(buffer_size);
-        if request.mask_bitmaps.is_empty() {
-            mask_texture_data.resize(buffer_size, 0);
+        // A request with no mask bitmaps binds the processor's zeroed array;
+        // every read of it is a `textureLoad` inside the image, so a larger
+        // all-zero array reads exactly as a frame-sized one did.
+        let built_masks;
+        let mask_texture_view = if request.mask_bitmaps.is_empty() {
+            &self.empty_masks_view
         } else {
+            let mask_layer_count = request.mask_bitmaps.len().clamp(2, MAX_MASKS) as u32;
+            let full_texture_size = wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: mask_layer_count,
+            };
+            let buffer_size = (width as usize) * (height as usize) * (mask_layer_count as usize);
+            let mut mask_texture_data = Vec::with_capacity(buffer_size);
             for mask_bitmap in request.mask_bitmaps.iter().take(MAX_MASKS) {
                 mask_texture_data.extend_from_slice(mask_bitmap.as_raw());
             }
             if mask_texture_data.len() < buffer_size {
                 mask_texture_data.resize(buffer_size, 0);
             }
-        }
-        let mask_texture = device.create_texture_with_data(
-            queue,
-            &wgpu::TextureDescriptor {
-                label: Some("Full Mask Texture Array"),
-                size: full_texture_size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::R8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            },
-            TextureDataOrder::MipMajor,
-            &mask_texture_data,
-        );
-        let mask_texture_view = mask_texture.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
+            let mask_texture = device.create_texture_with_data(
+                queue,
+                &wgpu::TextureDescriptor {
+                    label: Some("Full Mask Texture Array"),
+                    size: full_texture_size,
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::R8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                },
+                TextureDataOrder::MipMajor,
+                &mask_texture_data,
+            );
+            built_masks = mask_texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
+            &built_masks
+        };
 
         let (lut_texture_view, lut_sampler) = if let Some(lut_arc) = &request.lut {
             let lut_data = &lut_arc.data;
@@ -1477,7 +1546,8 @@ impl GpuProcessor {
             });
 
             {
-                let mut cpass = encoder.begin_compute_pass(&Default::default());
+                let mut cpass =
+                    encoder.begin_compute_pass(&self.pass_descriptor("flare threshold"));
                 cpass.set_pipeline(&self.flare_threshold_pipeline);
                 cpass.set_bind_group(0, &bg0, &[]);
                 cpass.dispatch_workgroups(FLARE_MAP_SIZE / 16, FLARE_MAP_SIZE / 16, 1);
@@ -1522,7 +1592,7 @@ impl GpuProcessor {
             });
 
             {
-                let mut cpass = encoder.begin_compute_pass(&Default::default());
+                let mut cpass = encoder.begin_compute_pass(&self.pass_descriptor("flare ghosts"));
                 cpass.set_pipeline(&self.flare_ghosts_pipeline);
                 cpass.set_bind_group(0, &bg0_ghosts, &[]);
                 cpass.set_bind_group(1, &bg1, &[]);
@@ -1578,7 +1648,10 @@ impl GpuProcessor {
                     depth_or_array_layers: 1,
                 };
 
-                let run_blur = |base_radius: f32, output_view: &wgpu::TextureView| -> bool {
+                let run_blur = |name: [&'static str; 2],
+                                base_radius: f32,
+                                output_view: &wgpu::TextureView|
+                 -> bool {
                     let radius = (base_radius * scale).ceil().max(1.0) as u32;
                     if radius == 0 {
                         return false;
@@ -1618,7 +1691,8 @@ impl GpuProcessor {
                     });
 
                     {
-                        let mut cpass = blur_encoder.begin_compute_pass(&Default::default());
+                        let mut cpass =
+                            blur_encoder.begin_compute_pass(&self.pass_descriptor(name[0]));
                         cpass.set_pipeline(&self.h_blur_pipeline);
                         cpass.set_bind_group(0, &h_blur_bg, &[]);
                         cpass.dispatch_workgroups(input_width.div_ceil(256), input_height, 1);
@@ -1644,7 +1718,8 @@ impl GpuProcessor {
                     });
 
                     {
-                        let mut cpass = blur_encoder.begin_compute_pass(&Default::default());
+                        let mut cpass =
+                            blur_encoder.begin_compute_pass(&self.pass_descriptor(name[1]));
                         cpass.set_pipeline(&self.v_blur_pipeline);
                         cpass.set_bind_group(0, &v_blur_bg, &[]);
                         cpass.dispatch_workgroups(
@@ -1659,13 +1734,26 @@ impl GpuProcessor {
                 };
 
                 let needed = BlursNeeded::for_adjustments(&adjustments);
-                let did_create_sharpness_blur =
-                    needed.sharpness && run_blur(1.0, &self.sharpness_blur_view);
-                let did_create_tonal_blur = needed.tonal && run_blur(3.5, &self.tonal_blur_view);
-                let did_create_clarity_blur =
-                    needed.clarity && run_blur(8.0, &self.clarity_blur_view);
-                let did_create_structure_blur =
-                    needed.structure && run_blur(40.0, &self.structure_blur_view);
+                let did_create_sharpness_blur = needed.sharpness
+                    && run_blur(
+                        ["sharpness blur h", "sharpness blur v"],
+                        1.0,
+                        &self.sharpness_blur_view,
+                    );
+                let did_create_tonal_blur = needed.tonal
+                    && run_blur(["tonal blur h", "tonal blur v"], 3.5, &self.tonal_blur_view);
+                let did_create_clarity_blur = needed.clarity
+                    && run_blur(
+                        ["clarity blur h", "clarity blur v"],
+                        8.0,
+                        &self.clarity_blur_view,
+                    );
+                let did_create_structure_blur = needed.structure
+                    && run_blur(
+                        ["structure blur h", "structure blur v"],
+                        40.0,
+                        &self.structure_blur_view,
+                    );
 
                 let mut main_encoder = device.create_command_encoder(&Default::default());
 
@@ -1696,7 +1784,7 @@ impl GpuProcessor {
                 ];
                 bind_group_entries.push(wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&mask_texture_view),
+                    resource: wgpu::BindingResource::TextureView(mask_texture_view),
                 });
                 bind_group_entries.push(wgpu::BindGroupEntry {
                     binding: 3 + MAX_MASK_BINDINGS,
@@ -1761,7 +1849,8 @@ impl GpuProcessor {
                 });
 
                 {
-                    let mut compute_pass = main_encoder.begin_compute_pass(&Default::default());
+                    let mut compute_pass =
+                        main_encoder.begin_compute_pass(&self.pass_descriptor("main"));
                     compute_pass.set_pipeline(&self.main_pipeline);
                     compute_pass.set_bind_group(0, &bind_group, &[]);
                     compute_pass.dispatch_workgroups(
@@ -1774,7 +1863,35 @@ impl GpuProcessor {
                 let crop_x_start = x_start - input_x_start;
                 let crop_y_start = y_start - input_y_start;
 
-                if output_to_display {
+                if let TileOutput::Buffer { buffer, row_bytes } = &output {
+                    main_encoder.copy_texture_to_buffer(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &self.tile_output_texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d {
+                                x: crop_x_start,
+                                y: crop_y_start,
+                                z: 0,
+                            },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::TexelCopyBufferInfo {
+                            buffer,
+                            layout: wgpu::TexelCopyBufferLayout {
+                                offset: u64::from(y_start - bounds.y) * u64::from(*row_bytes)
+                                    + u64::from(x_start - bounds.x) * 4,
+                                bytes_per_row: Some(*row_bytes),
+                                rows_per_image: None,
+                            },
+                        },
+                        wgpu::Extent3d {
+                            width: tile_width,
+                            height: tile_height,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                }
+                if matches!(output, TileOutput::Display) {
                     main_encoder.copy_texture_to_texture(
                         wgpu::TexelCopyTextureInfo {
                             texture: &self.tile_output_texture,
@@ -2033,7 +2150,11 @@ pub(crate) fn process_and_get_dynamic_image_inner(
         cache.height,
         request,
         skip_readback,
-        output_to_display,
+        if output_to_display {
+            TileOutput::Display
+        } else {
+            TileOutput::None
+        },
     )?;
 
     let mut final_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -2263,4 +2384,111 @@ pub(crate) fn process_and_get_dynamic_image_inner(
     let img_buf = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(out_w, out_h, processed_pixels)
         .ok_or("Failed to create image buffer from GPU data")?;
     Ok(DynamicImage::ImageRgba8(img_buf))
+}
+
+/// D-450 — GPU timestamps around `GpuProcessor`'s compute passes, read back as
+/// milliseconds per labelled pass. Measurement only: compiled into test
+/// builds alone, and installed by `chroma::grade_pass`'s per-stage measurement.
+#[cfg(test)]
+pub(crate) mod pass_timer {
+    use std::sync::Mutex;
+
+    /// How many passes one `run` can time (two per blur, flare, main).
+    const CAPACITY: u32 = 16;
+
+    pub(crate) struct PassTimer {
+        set: wgpu::QuerySet,
+        resolve: wgpu::Buffer,
+        read: wgpu::Buffer,
+        labels: Mutex<Vec<&'static str>>,
+    }
+
+    impl PassTimer {
+        /// Needs a device opened with `Features::TIMESTAMP_QUERY`.
+        pub(crate) fn new(device: &wgpu::Device) -> Self {
+            let bytes = u64::from(CAPACITY) * 2 * 8;
+            Self {
+                set: device.create_query_set(&wgpu::QuerySetDescriptor {
+                    label: Some("grade pass timer"),
+                    ty: wgpu::QueryType::Timestamp,
+                    count: CAPACITY * 2,
+                }),
+                resolve: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("grade pass timer resolve"),
+                    size: bytes,
+                    usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                }),
+                read: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("grade pass timer read"),
+                    size: bytes,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
+                labels: Mutex::new(Vec::new()),
+            }
+        }
+
+        /// A pass descriptor that writes this pass's start and end times.
+        pub(crate) fn pass(&self, label: &'static str) -> wgpu::ComputePassDescriptor<'_> {
+            let mut labels = self.labels.lock().unwrap_or_else(|e| e.into_inner());
+            let i = labels.len() as u32;
+            if i >= CAPACITY {
+                return wgpu::ComputePassDescriptor::default();
+            }
+            labels.push(label);
+            wgpu::ComputePassDescriptor {
+                label: Some(label),
+                timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                    query_set: &self.set,
+                    beginning_of_pass_write_index: Some(i * 2),
+                    end_of_pass_write_index: Some(i * 2 + 1),
+                }),
+            }
+        }
+
+        /// Every timed pass since the last call, as (label, GPU ms), in order.
+        pub(crate) fn take(
+            &self,
+            device: &wgpu::Device,
+            queue: &wgpu::Queue,
+        ) -> Result<Vec<(&'static str, f64)>, String> {
+            let labels =
+                std::mem::take(&mut *self.labels.lock().unwrap_or_else(|e| e.into_inner()));
+            let n = labels.len() as u32;
+            if n == 0 {
+                return Ok(Vec::new());
+            }
+            let mut encoder = device.create_command_encoder(&Default::default());
+            encoder.resolve_query_set(&self.set, 0..n * 2, &self.resolve, 0);
+            encoder.copy_buffer_to_buffer(&self.resolve, 0, &self.read, 0, u64::from(n) * 16);
+            queue.submit(Some(encoder.finish()));
+            let slice = self.read.slice(..u64::from(n) * 16);
+            let (tx, rx) = std::sync::mpsc::channel();
+            slice.map_async(wgpu::MapMode::Read, move |r| {
+                let _ = tx.send(r);
+            });
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .map_err(|e| e.to_string())?;
+            rx.recv()
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+            let period = f64::from(queue.get_timestamp_period());
+            let out = {
+                let data = slice.get_mapped_range();
+                let ticks: &[u64] = bytemuck::cast_slice(&data);
+                labels
+                    .iter()
+                    .enumerate()
+                    .map(|(i, l)| {
+                        let d = ticks[i * 2 + 1].saturating_sub(ticks[i * 2]);
+                        (*l, d as f64 * period / 1.0e6)
+                    })
+                    .collect()
+            };
+            self.read.unmap();
+            Ok(out)
+        }
+    }
 }
