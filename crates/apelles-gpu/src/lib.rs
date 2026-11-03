@@ -41,6 +41,16 @@ use std::sync::Arc;
 /// present path — see the module doc for why they don't unify (D-144).
 #[derive(Clone)]
 pub struct GpuContext {
+    /// The instance the adapter and device came from. Kept (D-451) because a
+    /// window surface can only be configured with a device of the SAME
+    /// instance: the Edit preview's on-screen presenter
+    /// (`app/src-tauri`'s `chroma::preview_surface`) creates its
+    /// `CAMetalLayer` surface from this instance so that frames the GPU
+    /// engine draws on `device` can be shown without leaving the GPU.
+    pub instance: wgpu::Instance,
+    /// The adapter `device` was opened on (surface capabilities are asked of
+    /// it).
+    pub adapter: wgpu::Adapter,
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
     pub limits: wgpu::Limits,
@@ -89,6 +99,8 @@ pub fn init_gpu_context() -> Result<GpuContext, String> {
     }));
 
     Ok(GpuContext {
+        instance,
+        adapter,
         device: Arc::new(device),
         queue: Arc::new(queue),
         limits,

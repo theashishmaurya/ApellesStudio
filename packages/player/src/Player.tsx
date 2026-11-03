@@ -529,7 +529,9 @@ export function Player({
   const zoomLabel = zoom === undefined ? '' : zoom === 1 ? 'Fit' : `${Math.round(zoom * 100)}%`;
 
   return (
-    <div className={cn('flex min-h-0 flex-1 flex-col bg-bg-primary', className)}>
+    // `data-preview-hole`: a host that shows its picture on a native layer
+    // under the webview makes these two transparent (D-451).
+    <div data-preview-hole className={cn('flex min-h-0 flex-1 flex-col bg-bg-primary', className)}>
       {showHeader && (
         // A three-column grid so the title stays truly centred whatever the
         // two side groups hold; each side truncates rather than pushing it.
@@ -603,7 +605,9 @@ export function Player({
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black">{surface}</div>
+      <div data-preview-hole className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black">
+        {surface}
+      </div>
 
       <div className="flex shrink-0 flex-col border-t border-divider bg-surface text-text-primary">
         {/* D-232 — the waveform band sits between the picture and the scrub

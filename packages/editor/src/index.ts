@@ -221,6 +221,9 @@ export type {
   PreviewSpanChannel,
   SpanTimingReport,
 } from './previewTiming';
+/** D-451 — the native GPU preview surface prototype's switch, for
+ *  `@apelles/debug`'s `debug_native_preview` op (`nativePreview.ts`). */
+export { useNativePreviewStore } from './nativePreview';
 /** D-198 — the Edit tab's own Export button/dialog/queue. Exported for the
  *  same D-142 harness-mounting reason `TimelinePane` itself is, and for any
  *  call site that wants the button standalone. D-249 moved where the app

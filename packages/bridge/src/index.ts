@@ -70,3 +70,22 @@ export {
   watchMotionRuntime,
 } from './motionRuntime';
 export type { MotionRuntimeState, MotionRuntimeStatus } from './motionRuntime';
+
+export {
+  placePreviewSurface,
+  playPreviewSurface,
+  previewSurfaceStats,
+  showPreviewSurfaceFrame,
+  startPreviewSurface,
+  stopPreviewSurface,
+} from './previewSurface';
+export type {
+  PreviewSurfaceColor,
+  PreviewSurfacePlacement,
+  PreviewSurfaceRect,
+  PreviewSurfaceShowReport,
+  PreviewSurfaceSource,
+  PreviewSurfaceSpread,
+  PreviewSurfaceStats,
+  PreviewSurfaceTiming,
+} from './previewSurface';

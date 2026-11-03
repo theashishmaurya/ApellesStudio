@@ -184,6 +184,9 @@ objc2-app-kit = { version = "0.3", features = [
     "NSView",
     "NSWindow",
     "objc2-core-graphics",
+    # D-451 — the Edit preview's native GPU surface (`chroma::preview_surface`):
+    # `NSView::setLayer` takes a `CALayer`.
+    "objc2-quartz-core",
 ] }
 objc2-foundation = { version = "0.3", features = [
     "NSArray",
@@ -210,6 +213,21 @@ objc2-core-graphics = { version = "0.3", default-features = false, features = [
     "std",
     "CGEvent",
     "CGEventTypes",
+    # D-451 — the preview surface's colour tag (`CAMetalLayer.colorspace`).
+    "CGColorSpace",
+] }
+# D-451 — the Edit preview's native GPU surface (`chroma::preview_surface`): the
+# `CAMetalLayer` wgpu presents to, created by us so its colour space, opacity
+# and scale are ours to set. Already in the workspace lock as a dependency of
+# wgpu-hal's Metal backend (the same 0.3 line), so a direct edge, not a new crate.
+objc2-quartz-core = { version = "0.3", default-features = false, features = [
+    "std",
+    "CALayer",
+    "CAMetalLayer",
+    "CATransaction",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+    "objc2-metal",
 ] }
 
 [target.'cfg(target_os = "android")'.dependencies]

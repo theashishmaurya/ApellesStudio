@@ -2433,6 +2433,19 @@ pub fn run() {
             // D-434 — the UI harness's trusted native input, gated the same way.
             #[cfg(debug_assertions)]
             chroma::debug_input::chroma_debug_inject_input,
+            // D-451 — the preview GPU surface prototype, gated the same way.
+            #[cfg(all(debug_assertions, target_os = "macos"))]
+            chroma::preview_surface::commands::chroma_preview_surface_start,
+            #[cfg(all(debug_assertions, target_os = "macos"))]
+            chroma::preview_surface::commands::chroma_preview_surface_place,
+            #[cfg(all(debug_assertions, target_os = "macos"))]
+            chroma::preview_surface::commands::chroma_preview_surface_show,
+            #[cfg(all(debug_assertions, target_os = "macos"))]
+            chroma::preview_surface::commands::chroma_preview_surface_play,
+            #[cfg(all(debug_assertions, target_os = "macos"))]
+            chroma::preview_surface::commands::chroma_preview_surface_stats,
+            #[cfg(all(debug_assertions, target_os = "macos"))]
+            chroma::preview_surface::commands::chroma_preview_surface_stop,
             chroma::grade::chroma_save_grade,
             chroma::grade::chroma_load_grade,
             chroma::grade::chroma_load_grades,
