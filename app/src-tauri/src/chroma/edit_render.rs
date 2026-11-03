@@ -150,6 +150,56 @@ pub struct TimelineRenderOutcome {
     /// D-441 — the render was cancelled (`ok` is then `false` and the partial
     /// output has been removed).
     pub cancelled: bool,
+    /// B-380 — where this render's time went, stage by stage.
+    pub stages: RenderStages,
+}
+
+/// **B-380 — where a render's time went.**
+///
+/// Measured, not estimated: each field is an `Instant` pair around the stage it
+/// names, taken where that stage already runs. Two kinds of number, and the
+/// difference matters when reading them:
+///
+/// - **wall** (`render_ms`, `concat_ms`, `loudness_ms`): elapsed time of a phase
+///   of the export, as the person waits for it. They add up to `ms`, give or
+///   take set-up.
+/// - **summed over segments** (`frame_ms`, `resize_ms`, `handoff_wait_ms`): each
+///   segment worker's own time in that step, added across the workers. With N
+///   segments running at once these can total up to N × `render_ms`; their
+///   RATIO to each other is what says which step a worker spends its life in.
+///
+/// `handoff_wait_ms` is the compositor blocked on a full [`WRITE_AHEAD`]
+/// channel, i.e. waiting for the ENCODER: near zero means the encoder keeps up
+/// and the compositor is the bottleneck; large means the opposite. `frame_ms`
+/// is decode + composite (`render_timeline_frame` does both and they are not
+/// separable from here without instrumenting the compositor's inner loop; the
+/// benchmark measures decode on its own, `export_bench`).
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderStages {
+    pub frame_ms: u64,
+    pub resize_ms: u64,
+    pub handoff_wait_ms: u64,
+    pub render_ms: u64,
+    pub concat_ms: u64,
+    pub loudness_ms: u64,
+}
+
+impl RenderStages {
+    /// The summed-over-segments half, from each worker's outcome.
+    fn from_segments<'a>(parts: impl IntoIterator<Item = &'a SegmentOutcome>) -> Self {
+        let mut st = RenderStages::default();
+        for p in parts {
+            st.frame_ms += millis(p.frame_time);
+            st.resize_ms += millis(p.resize_time);
+            st.handoff_wait_ms += millis(p.handoff_wait);
+        }
+        st
+    }
+}
+
+fn millis(d: std::time::Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
 }
 
 /// How many finished frames may sit between the compositor and the encoder
@@ -611,14 +661,19 @@ pub fn render_timeline(
             &job,
             0,
         )
-        .map(|one| TimelineRenderOutcome {
-            ok: true,
-            frames: one.written,
-            segments: 1,
-            ms: started.elapsed().as_millis(),
-            stderr_tail: one.stderr_tail,
-            loudness: None,
-            cancelled: false,
+        .map(|one| {
+            let mut stages = RenderStages::from_segments([&one]);
+            stages.render_ms = millis(started.elapsed());
+            TimelineRenderOutcome {
+                ok: true,
+                frames: one.written,
+                segments: 1,
+                ms: started.elapsed().as_millis(),
+                stderr_tail: one.stderr_tail,
+                loudness: None,
+                cancelled: false,
+                stages,
+            }
         }),
     };
 
@@ -645,6 +700,12 @@ pub fn render_timeline(
                 Some(target) => match normalise_output(req, target, &job) {
                     Ok(_) if cancel.is_cancelled() => Ok(finish_cancelled(req, &job, started)),
                     Ok(report) => {
+                        // B-380 — the pass is the time since the render's
+                        // own `ms`, and the export's `ms` now includes it.
+                        let now = started.elapsed();
+                        o.stages.loudness_ms =
+                            millis(now).saturating_sub(u64::try_from(o.ms).unwrap_or(u64::MAX));
+                        o.ms = now.as_millis();
                         o.loudness = Some(report);
                         job.finish(Ok(()));
                         Ok(o)
@@ -674,6 +735,7 @@ fn cancelled_outcome(started: Instant) -> TimelineRenderOutcome {
         stderr_tail: export_job::CANCELLED_MESSAGE.to_string(),
         loudness: None,
         cancelled: true,
+        stages: RenderStages::default(),
     }
 }
 
@@ -741,6 +803,12 @@ fn wait_bounded(
 struct SegmentOutcome {
     written: u64,
     stderr_tail: String,
+    /// B-380 — this worker's time in `render_timeline_frame` (decode +
+    /// composite), in the final resize, and blocked handing frames to its
+    /// encoder. See [`RenderStages`].
+    frame_time: std::time::Duration,
+    resize_time: std::time::Duration,
+    handoff_wait: std::time::Duration,
 }
 
 /// **Render `range` of the timeline into the encoder `args` names, and nothing
@@ -828,6 +896,11 @@ fn render_range(
     };
 
     let mut render_err: Option<String> = None;
+    // B-380 — per-stage timing (`RenderStages`); an `Instant` pair per frame
+    // per stage, which is noise against a frame's milliseconds of work.
+    let mut frame_time = std::time::Duration::ZERO;
+    let mut resize_time = std::time::Duration::ZERO;
+    let mut handoff_wait = std::time::Duration::ZERO;
     for pos in range.clone() {
         // D-360 — a sibling segment has already failed, so this one's remaining
         // frames are work nobody will use. Checked per frame rather than not at
@@ -839,7 +912,8 @@ fn render_range(
             render_err = Some("another segment failed, or the export was cancelled".to_string());
             break;
         }
-        let frame = match edit::render_timeline_frame(
+        let frame_started = Instant::now();
+        let rendered = edit::render_timeline_frame(
             timeline,
             settings,
             pos,
@@ -861,16 +935,21 @@ fn render_range(
             // `docs/notes/export-gpu-compositor.md` §6.
             FrameIntent::Single,
             lane,
-        ) {
+        );
+        frame_time += frame_started.elapsed();
+        let frame = match rendered {
             Ok(Some(img)) => {
                 let rgba = img.to_rgba8();
                 if needs_resize || rgba.dimensions() != out {
-                    image::imageops::resize(
+                    let resize_started = Instant::now();
+                    let resized = image::imageops::resize(
                         &rgba,
                         out.0,
                         out.1,
                         image::imageops::FilterType::Triangle,
-                    )
+                    );
+                    resize_time += resize_started.elapsed();
+                    resized
                 } else {
                     rgba
                 }
@@ -881,7 +960,10 @@ fn render_range(
                 break;
             }
         };
-        if tx.send(frame.into_raw()).is_err() {
+        let handoff_started = Instant::now();
+        let sent = tx.send(frame.into_raw());
+        handoff_wait += handoff_started.elapsed();
+        if sent.is_err() {
             // The writer is gone, which only happens when its `write_all`
             // failed — its own error is the real one, so take that below
             // rather than reporting "the channel closed".
@@ -937,6 +1019,9 @@ fn render_range(
     Ok(SegmentOutcome {
         written,
         stderr_tail: tail(&stderr),
+        frame_time,
+        resize_time,
+        handoff_wait,
     })
 }
 
@@ -1028,19 +1113,24 @@ fn render_segmented(
             .collect()
     });
 
+    let render_ms = millis(started.elapsed());
     let mut written = 0u64;
     let mut stderr_tail = String::new();
+    let mut finished: Vec<SegmentOutcome> = Vec::with_capacity(results.len());
     for (i, result) in results.into_iter().enumerate() {
         match result {
             Ok(outcome) => {
                 written += outcome.written;
                 if !outcome.stderr_tail.is_empty() {
-                    stderr_tail = outcome.stderr_tail;
+                    stderr_tail = outcome.stderr_tail.clone();
                 }
+                finished.push(outcome);
             }
             Err(e) => return Err(format!("segment {i}: {e}")),
         }
     }
+    let mut stages = RenderStages::from_segments(&finished);
+    stages.render_ms = render_ms;
     if written != req.frames {
         return Err(format!(
             "the segments wrote {written} frames between them, not the {} asked for",
@@ -1052,6 +1142,7 @@ fn render_segmented(
     // mux. Said out loud so the last stretch of a long export reads as
     // `concatenating` rather than a stuck 100%.
     job.enter_concat();
+    let concat_started = Instant::now();
 
     let list = dir.path().join("segments.txt");
     let listing: String = files.iter().map(|f| concat_list_line(f)).collect();
@@ -1084,6 +1175,7 @@ fn render_segmented(
         ));
     }
 
+    stages.concat_ms = millis(concat_started.elapsed());
     Ok(TimelineRenderOutcome {
         ok: true,
         frames: written,
@@ -1092,6 +1184,7 @@ fn render_segmented(
         stderr_tail,
         loudness: None,
         cancelled: false,
+        stages,
     })
 }
 
@@ -1605,6 +1698,13 @@ mod tests {
 /// test is measuring today's old path, not a snapshot of it: the fixture cannot
 /// drift without that test failing first. See
 /// `docs/notes/export-gpu-compositor.md` §5.
+/// B-380 — the export benchmark (decode / composite / encode / mux / loudness,
+/// both paths, both encoders). A child of this module so it can drive
+/// [`render_segmented`] at a chosen segment count, as the D-360 sweep does.
+#[cfg(test)]
+#[path = "export_bench.rs"]
+mod export_bench;
+
 #[cfg(test)]
 mod parity_tests {
     use super::*;
@@ -1663,7 +1763,7 @@ mod parity_tests {
             .unwrap_or(false)
     }
 
-    fn ffmpeg_available() -> bool {
+    pub(super) fn ffmpeg_available() -> bool {
         ffmpeg_locate::ffmpeg_path().is_ok_and(have)
             && ffmpeg_locate::ffprobe_path().is_ok_and(have)
     }
@@ -2392,7 +2492,7 @@ mod parity_tests {
             .collect()
     }
 
-    fn localise_timeline(timeline: &Timeline, dir: &Path) -> Timeline {
+    pub(super) fn localise_timeline(timeline: &Timeline, dir: &Path) -> Timeline {
         let mut tl = timeline.clone();
         for track in &mut tl.tracks {
             for clip in &mut track.clips {
@@ -2404,7 +2504,7 @@ mod parity_tests {
         tl
     }
 
-    fn run_ffmpeg(args: &[String]) -> Result<(), String> {
+    pub(super) fn run_ffmpeg(args: &[String]) -> Result<(), String> {
         let out = ffmpeg_locate::ffmpeg()
             .map_err(|e| e.to_string())?
             .args(args)
@@ -2992,7 +3092,7 @@ mod parity_tests {
     /// (`MIN_SEGMENT_FRAMES` is 90), so these tests cannot get a split by
     /// asking [`render_timeline`] for one — but they must not skip the job
     /// either, or they would be exercising a path production no longer has.
-    fn render_at_segments(
+    pub(super) fn render_at_segments(
         timeline: &Timeline,
         settings: &ProjectSettings,
         req: &TimelineRenderRequest,
@@ -3044,7 +3144,7 @@ mod parity_tests {
     /// derived from a duration — the number a dropped or duplicated frame at a
     /// segment boundary changes, and the one the container's own metadata is
     /// least likely to be honest about.
-    fn frame_count(video: &Path) -> Result<u64, String> {
+    pub(super) fn frame_count(video: &Path) -> Result<u64, String> {
         let out = ffmpeg_locate::ffprobe()
             .map_err(|e| e.to_string())?
             .args([
@@ -3491,13 +3591,13 @@ mod parity_tests {
     }
 
     #[derive(Debug, Clone, Default)]
-    struct Sample {
-        peak_rss_mb: f64,
-        peak_threads: u64,
+    pub(super) struct Sample {
+        pub(super) peak_rss_mb: f64,
+        pub(super) peak_threads: u64,
         /// How many processes other than the root were in the tree — for the
         /// render path this is "the encoder plus every live decode pipe", the
         /// number D-350 claims is bounded by track count rather than clip count.
-        peak_children: usize,
+        pub(super) peak_children: usize,
     }
 
     /// One reading for `pid` and every descendant of it: summed resident memory
@@ -3510,7 +3610,7 @@ mod parity_tests {
     /// and `nlwp` are both "keyword not found"): the tree and its RSS come from
     /// one `ps -A`, and each process's thread count from `ps -M -p <pid>`, which
     /// prints one row per thread under a single header line.
-    fn sample_tree(root: u32) -> Option<Sample> {
+    pub(super) fn sample_tree(root: u32) -> Option<Sample> {
         let out = Command::new("ps")
             .args(["-Ao", "pid=,ppid=,rss="])
             .output()
