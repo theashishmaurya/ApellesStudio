@@ -31,9 +31,13 @@ import { DEFAULT_TRACK_HEIGHT } from './trackHeight';
  *  append" returns when that key does. */
 export const TIMELINE_EMPTY_LINE = 'Drag media here from the browser to start editing';
 
+/** The line and the action. The `@container` (for the Import button's word)
+ *  sits on the full-size overlay around this, never on this shrink-wrapped
+ *  box: an inline-size container has no intrinsic width, so the line would
+ *  collapse to one word per row. */
 function EmptyLine({ action }: { action?: ReactNode }) {
   return (
-    <div className="@container pointer-events-auto flex flex-col items-center gap-2 text-center">
+    <div className="pointer-events-auto flex max-w-md flex-col items-center gap-2 text-center">
       <p className="text-sm text-text-secondary">{TIMELINE_EMPTY_LINE}</p>
       {action}
     </div>
@@ -69,7 +73,7 @@ export function TimelineEmptyState({ action, dragOver }: { action?: ReactNode; d
           </div>
         ))}
       </div>
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-6">
+      <div className="@container pointer-events-none absolute inset-0 flex items-center justify-center px-6">
         <EmptyLine action={action} />
       </div>
     </div>
@@ -81,7 +85,7 @@ export function TimelineNoClipsHint({ action }: { action?: ReactNode }) {
   return (
     <div
       data-chroma-empty-state="no-clips"
-      className="pointer-events-none absolute inset-0 z-(--z-timeline-overlay) flex items-center justify-center px-6"
+      className="@container pointer-events-none absolute inset-0 z-(--z-timeline-overlay) flex items-center justify-center px-6"
     >
       <EmptyLine action={action} />
     </div>

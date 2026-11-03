@@ -742,7 +742,7 @@ export function ClipInspectorPanel({
                 value={id}
                 aria-label={CLIP_INSPECTOR_TAB_LABELS[id]}
                 title={CLIP_INSPECTOR_TAB_LABELS[id]}
-                className="text-text-secondary data-active:bg-bg-secondary data-active:text-accent-text h-[22px] w-7 flex-none rounded-sm px-0"
+                className="text-text-secondary group-data-[variant=line]/tabs-list:data-active:bg-bg-secondary data-active:text-accent-text h-[22px] w-7 flex-none rounded-sm px-0"
               >
                 {(() => {
                   const TabIcon = CLIP_INSPECTOR_TAB_ICONS[id];

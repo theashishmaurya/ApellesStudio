@@ -79,6 +79,12 @@ describe('empty states (§4.13)', () => {
     expect(root.querySelector('[data-testid="import"]')).toBeTruthy();
     expect(document.querySelector('.border-dashed')).toBeNull();
     expect(root.querySelector('.bg-lane-alt')).toBeTruthy();
+    // The container query sits on the full-size overlay, never on the
+    // shrink-wrapped line: an inline-size container has no intrinsic width and
+    // the line collapsed to one word per row (seen live, 2026-11-03).
+    const line = [...root.querySelectorAll('p')].find((p) => p.textContent === TIMELINE_EMPTY_LINE)!;
+    expect(line.parentElement!.className).not.toContain('@container');
+    expect(line.parentElement!.parentElement!.className).toContain('@container');
   });
 
   it('tracks with no clips: the line over the lanes, passing clicks through', async () => {
