@@ -305,6 +305,13 @@ describe('D-263 — every docked library is still a real drag source onto the ti
     // Captions are the one library with no drag: a preset creates a whole
     // subtitle TRACK, which has no meaningful drop target, so its gesture is
     // and always was a click (D-243). It has to keep working docked.
+    // B-361 — a plain click now captions from the transcript (this fixture has
+    // none, so it would start transcribing); the explicit "Preview with sample
+    // text" option keeps the instant placeholder, which is what proves the
+    // docked tile's click still reaches the preset action.
+    const sample = document.querySelector<HTMLElement>('[data-testid="caption-sample-toggle"]');
+    expect(sample, 'the sample-text option is docked too').not.toBeNull();
+    actSync(() => sample!.click());
     const tile = document.querySelector<HTMLElement>('[data-testid="caption-preset-caption-highlight"]');
     expect(tile, 'a preset tile is docked in the panel').not.toBeNull();
     actSync(() => tile!.click());

@@ -40,7 +40,7 @@
  * RENDER (the browser is a third rasteriser, and it is not asked to be exact),
  * but it is driven by the same `CaptionStyle` the two renderers read.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { FileArrowUpIcon } from '@phosphor-icons/react';
@@ -58,7 +58,8 @@ import {
 import { resolveCaptionStyle } from './caption';
 import { captionAnimationOf } from './captionAnim';
 import { captionPresetGroups, type CaptionPreset } from './captionPresets';
-import { applyCaptionPreset } from './captionPresetAction';
+import { captionWithPreset, type CaptionPresetMode, type CaptionWithPresetResult } from './captionPresetAction';
+import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
 import { useEditorTimelineStore } from './timelineStore';
 
 /** One cue as `chroma_import_subtitles` returns it — already parsed and on the
@@ -68,6 +69,27 @@ interface ImportedCaption {
   start_frame: number;
   duration: number;
   text: string;
+}
+
+/** A preset click that is waiting on a transcription (B-361). */
+interface PendingPreset {
+  presetId: string;
+  mode: CaptionPresetMode;
+  remaining: number;
+  total: number;
+}
+
+/** The panel's pending state after one `captionWithPreset` answer: still
+ *  waiting (progress updated, same object when nothing changed so React does
+ *  not re-render per store tick) or settled (`null`, on success or error). */
+function nextPending(
+  res: CaptionWithPresetResult,
+  wait: Pick<PendingPreset, 'presetId' | 'mode'>,
+  cur: PendingPreset | null,
+): PendingPreset | null {
+  if ('error' in res || res.outcome !== 'transcribing') return null;
+  if (cur && cur.remaining === res.pending && cur.total === res.total) return cur;
+  return { ...wait, remaining: res.pending, total: res.total };
 }
 
 /** The words a thumbnail shows. Three short words so a per-word preset has
@@ -238,13 +260,40 @@ export function CaptionLibrary() {
     applyOp({ kind: 'import_subtitles', cues: res.cues });
   };
 
+  // B-361 - a click captions the VIDEO. When that needs a transcription the
+  // panel waits (`pending`), shows it, and finishes when the transcript lands.
+  const [pending, setPending] = useState<PendingPreset | null>(null);
+  // The explicit "Preview with sample text" choice - never the default.
+  const [sampleText, setSampleText] = useState(false);
+
   const pick = (preset: CaptionPreset) => {
     setError(null);
-    // The SAME action `editor_add_caption_preset` calls — one path for the
+    const wait = { presetId: preset.id, mode: sampleText ? ('sample' as const) : ('auto' as const) };
+    // The SAME action `editor_add_caption_preset` calls - one path for the
     // human and the agent (CLAUDE.md).
-    const res = applyCaptionPreset({ presetId: preset.id, placeCaption: true });
+    const res = captionWithPreset({ ...wait, retry: true });
     if ('error' in res) setError(res.error);
+    setPending((cur) => nextPending(res, wait, cur));
   };
+
+  // While a preset waits on a transcription, finish (or fail) it whenever any
+  // transcription job changes state. `retry: false` so a failed transcript is
+  // reported once instead of being restarted by this very subscription.
+  const waitingPreset = pending?.presetId ?? null;
+  const waitingMode = pending?.mode ?? 'auto';
+  useEffect(() => {
+    if (!waitingPreset) return;
+    const wait = { presetId: waitingPreset, mode: waitingMode };
+    return useMediaUnderstandingStore.subscribe(() => {
+      const res = captionWithPreset({ ...wait, retry: false });
+      if ('error' in res) setError(res.error);
+      setPending((cur) => nextPending(res, wait, cur));
+    });
+  }, [waitingPreset, waitingMode]);
+
+  /** Stop waiting. The sidecar job itself is not killed (it has no cancel and
+   *  its transcript is cached for next time); nothing is added to the timeline. */
+  const cancelPending = () => setPending(null);
 
   return (
     // B-121 — the STYLES tab is what opens first, because the styled preset
@@ -272,6 +321,22 @@ export function CaptionLibrary() {
               viewport needs a fixed height for. */}
           <div className="h-full overflow-y-auto">
             <div className="space-y-3 p-2">
+              <div className="flex items-center justify-between gap-2 px-1">
+                <span className="text-[10px] text-text-secondary">
+                  {sampleText
+                    ? 'A click adds a sample caption.'
+                    : 'A click captions your video from its speech.'}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  aria-pressed={sampleText}
+                  onClick={() => setSampleText((v) => !v)}
+                  data-testid="caption-sample-toggle"
+                >
+                  Preview with sample text
+                </Button>
+              </div>
               {captionPresetGroups().map(({ group, presets }) => (
                 <div key={group}>
                   <div className="mb-1 px-1 text-[10px] font-medium uppercase tracking-wide text-text-secondary">
@@ -333,6 +398,22 @@ export function CaptionLibrary() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {pending && (
+        <div
+          role="status"
+          className="flex shrink-0 items-center justify-between gap-2 border-t border-border-color px-3 py-2 text-[11px] text-text-secondary"
+          data-testid="caption-pending"
+        >
+          <span>
+            Transcribing... captions will appear when it&apos;s done
+            {pending.total > 1 ? ` (${pending.total - pending.remaining} of ${pending.total} files)` : ''}.
+          </span>
+          <Button variant="ghost" size="xs" onClick={cancelPending} data-testid="caption-pending-cancel">
+            Cancel
+          </Button>
+        </div>
+      )}
 
       {error && (
         <div

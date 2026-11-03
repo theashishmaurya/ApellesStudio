@@ -125,7 +125,7 @@ import { useEditorTimelineStore, type Selection, type TimelineSummary } from './
 // shared verbatim with `CaptionLibrary.tsx` so the agent and the human cannot
 // drift apart.
 import { CAPTION_PRESETS } from './captionPresets';
-import { applyCaptionPreset } from './captionPresetAction';
+import { captionWithPreset, type CaptionPresetMode } from './captionPresetAction';
 import { resolveCaptionStyle } from './caption';
 import {
   captionAnimationOf,
@@ -3914,9 +3914,14 @@ export function useEditorControl(): void {
         })),
       }),
 
+      // B-361 - the preset click, not a placeholder: restyle the captions that
+      // are there, else caption the timeline's speech (starting the
+      // transcription if needed; answers `outcome: "transcribing"` until it
+      // lands), and drop the sample line only for `mode: "sample"` / `text`.
       editor_add_caption_preset: (a) =>
-        applyCaptionPreset({
+        captionWithPreset({
           presetId: String(a?.preset ?? ''),
+          mode: a?.mode === undefined || a.mode === null ? undefined : (String(a.mode) as CaptionPresetMode),
           track: a?.track !== undefined && a.track !== null ? Math.round(Number(a.track)) : undefined,
           text: typeof a?.text === 'string' ? a.text : undefined,
           startFrame:
@@ -3927,10 +3932,8 @@ export function useEditorControl(): void {
             a?.duration !== undefined && a.duration !== null
               ? Math.round(Number(a.duration))
               : undefined,
-          // An agent asking for a preset almost always wants to SEE it, the
-          // same as a click in the library does. `placeCaption: false` is the
-          // explicit way to restyle a track that already has cues on it.
-          placeCaption: a?.placeCaption !== undefined ? !!a.placeCaption : true,
+          // `placeCaption: false` is the explicit "style the track, add nothing".
+          placeCaption: a?.placeCaption !== undefined ? !!a.placeCaption : undefined,
         }),
 
       editor_set_caption_style: (a) => {

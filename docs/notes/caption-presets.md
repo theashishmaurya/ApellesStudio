@@ -248,3 +248,13 @@ Both are named on the roadmap, and neither is hidden from the user:
   weight, 3D parallax, camera moves, glyph morphing). Every one is named
   individually in D-243 with its specific blocker, so a follow-up needs no
   re-scraping and no re-deciding.
+
+
+## B-361 (2026-11-03): a preset click captions the video
+
+`captionWithPreset()` (`captionPresetAction.ts`) is the one path for the Captions library's tile click and MCP `editor_add_caption_preset`:
+- existing captions → restyled;
+- a transcript but no captions → captions generated from it in the preset's style;
+- no transcript → transcription starts, the panel shows a status bar with progress and Cancel, and captions are generated when it lands.
+
+The placeholder caption is now an explicit choice ("Preview with sample text" / `mode: "sample"`), and it steps past a caption already under the playhead.
