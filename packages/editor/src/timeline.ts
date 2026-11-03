@@ -640,6 +640,12 @@ export interface TextLayer {
 export const DEFAULT_TEXT_FONT = 'sans-bold';
 /** ~12% of the frame height — a real title size, not a placeholder. */
 export const DEFAULT_TEXT_SIZE = 0.12;
+/** B-383 — the range a title's `size` may take: 0.5% of the frame height (where
+ *  a title stops being legible) to the whole frame. The Inspector's field and
+ *  `editor_add_text_clip` / `editor_set_text_clip` share it; mirrors
+ *  `apelles_timeline::MIN_TEXT_SIZE` / `MAX_TEXT_SIZE`. */
+export const MIN_TEXT_SIZE = 0.005;
+export const MAX_TEXT_SIZE = 1;
 export const DEFAULT_TEXT_COLOR = '#FFFFFF';
 
 /** How long a freshly-added title runs, in SECONDS, before the user trims it.
@@ -815,8 +821,10 @@ export function newTextLayer(
     return { error: 'content must be a single line — multi-line titles are not supported yet (D-213)' };
   }
   const size = patch.size ?? from.size;
-  if (!Number.isFinite(size) || size <= 0) {
-    return { error: 'size must be a positive fraction of the composition height (e.g. 0.12)' };
+  if (!Number.isFinite(size) || size < MIN_TEXT_SIZE || size > MAX_TEXT_SIZE) {
+    return {
+      error: `size must be a fraction of the composition height between ${MIN_TEXT_SIZE} and ${MAX_TEXT_SIZE} (e.g. 0.12 is 12% of the frame), got ${size}`,
+    };
   }
   const color = patch.color ?? from.color;
   if (!/^#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)) {

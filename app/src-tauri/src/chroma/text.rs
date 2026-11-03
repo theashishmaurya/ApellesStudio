@@ -766,7 +766,14 @@ fn lay_out_text(layer: &TextLayer, px: u32) -> Result<Option<TextInk>, String> {
 /// canvas. One expression, named, because the box measurement below and the
 /// rasteriser must agree on it exactly.
 fn layer_px(layer: &TextLayer, canvas_h: u32) -> u32 {
-    (layer.size * canvas_h as f64).round().max(1.0) as u32
+    // B-383 — clamped, so an out-of-range size in a stored document renders
+    // at the nearest real size instead of overflowing the glyph rasteriser.
+    // `clamp` would pass a NaN through; `max`/`min` map it to the floor.
+    let size = layer
+        .size
+        .max(apelles_timeline::MIN_TEXT_SIZE)
+        .min(apelles_timeline::MAX_TEXT_SIZE);
+    (size * canvas_h as f64).round().max(1.0) as u32
 }
 
 /// **B-130 / D-262 — a title's real on-canvas footprint**: the width and
@@ -854,6 +861,23 @@ fn rasterise(layer: &TextLayer, key: &LayerKey) -> Result<RgbaImage, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// B-383 - a stored size far outside the range (a pixel size where a
+    /// fraction belongs) renders at the whole frame height instead of asking
+    /// the glyph rasteriser for a ~100,000 px title, which overflowed it.
+    #[test]
+    fn an_out_of_range_title_size_is_clamped_to_the_frame() {
+        let layer = |size: f64| TextLayer {
+            content: "A".to_string(),
+            font: apelles_timeline::DEFAULT_TEXT_FONT.to_string(),
+            size,
+            color: apelles_timeline::DEFAULT_TEXT_COLOR.to_string(),
+        };
+        assert_eq!(layer_px(&layer(96.0), 1080), 1080);
+        assert_eq!(layer_px(&layer(f64::NAN), 1080), 5);
+        assert_eq!(layer_px(&layer(0.0), 1080), 5);
+        assert_eq!(layer_px(&layer(0.12), 1080), 130);
+    }
 
     /// B-302 - Georgia (the `serif` faces) has no `U+2192`; the layout draws it
     /// from a fallback face, not Georgia's `.notdef` box.

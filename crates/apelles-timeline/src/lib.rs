@@ -923,6 +923,15 @@ pub const DEFAULT_TEXT_FONT: &str = "sans-bold";
 /// composition height is invariant under every render scale by construction.
 pub const DEFAULT_TEXT_SIZE: f64 = 0.12;
 
+/// B-383 — the range a title's `size` may take, as a fraction of the
+/// composition height: 0.5% (where a title stops being legible) to the whole
+/// frame. `@apelles/editor`'s `MIN_TEXT_SIZE` / `MAX_TEXT_SIZE` refuse a value
+/// outside it at the write; the renderer clamps to it, because a document
+/// written some other way (`chroma_timeline_set` stores what it is given) must
+/// still render rather than ask the glyph rasteriser for a 100,000 px title.
+pub const MIN_TEXT_SIZE: f64 = 0.005;
+pub const MAX_TEXT_SIZE: f64 = 1.0;
+
 /// D-211 — default fill colour, `#RRGGBB`. White: the only colour that reads
 /// on the widest range of footage, and what every reference NLE's own basic
 /// title generator starts at.

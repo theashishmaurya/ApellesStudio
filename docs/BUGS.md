@@ -4,6 +4,13 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-383 — a title with an out-of-range size crashed the preview and hung the export (debug builds)
+
+status: **fixed 2026-11-04** (found in the live check after D-448) · severity: low (only a size far outside the Inspector's 0.5–100% range triggers it, which the GUI cannot set; an agent passing pixels to `editor_add_text_clip`'s fractional `size` can) · area: `packages/editor/src/timeline.ts` (`newTextLayer`), `app/src-tauri/src/chroma/text.rs` (`layer_px`), `crates/apelles-timeline/src/lib.rs`
+
+- **Cause.** `newTextLayer` only refused a size ≤ 0, so `size: 96` (96× the frame height, a pixel size where a fraction belongs) was stored. The renderer then asked `ab_glyph` for a ~100,000 px title, and `ab_glyph_rasterizer`'s line accumulation overflowed (`raster.rs:167`, "attempt to add with overflow"). In a debug build every frame task panicked: the preview showed the panic, and the export wrote no frame until the stall watchdog killed it.
+- **Fix.** One range, `MIN_TEXT_SIZE`–`MAX_TEXT_SIZE` (0.005–1, the Inspector's own bounds), in TS and Rust. `newTextLayer` refuses a size outside it with a message naming the unit, for both `editor_add_text_clip` and `editor_set_text_clip`. The Inspector reads the same constants. The renderer clamps a stored out-of-range or NaN size, so a document written another way still renders. Tests: `rejects a size outside 0.5%–100% of the frame height` (textClip.test.ts), `an_out_of_range_title_size_is_clamped_to_the_frame` (text.rs).
+
 ## B-382 — a clip whose frame rate is not the timeline's showed the next source frame for half of each frame's screen time (preview and compositor export)
 
 status: **fixed 2026-11-03** (found by the real-project export parity check, D-448) · severity: medium (half a source frame ahead of its sound on every mixed-rate clip: a 24 fps camera on a 30 fps timeline, a 30 fps screen recording on a 24 fps one) · area: `crates/apelles-timeline/src/lib.rs` (`Clip::source_frame_at`), `packages/editor/src/timeline.ts` (`clipSourceFrameAt`, its twin)

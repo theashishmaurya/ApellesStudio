@@ -47,7 +47,7 @@ import {
 } from '@apelles/ui';
 import { InspectorSection } from '@apelles/inspector';
 
-import { findClip, newTextLayer, type TextLayer } from './timeline';
+import { findClip, MAX_TEXT_SIZE, MIN_TEXT_SIZE, newTextLayer, type TextLayer } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 import { baseFontFamilies, composeFontStyleKey, fontStyleOf, useTextFonts } from './textFonts';
 
@@ -57,11 +57,9 @@ import { baseFontFamilies, composeFontStyleKey, fontStyleOf, useTextFonts } from
  *  unit" split `ClipInspectorPanel`'s own Width/Height fields already use
  *  (canvas fractions stored, real pixels shown). */
 const SIZE_PERCENT = 100;
-/** 0.5%–100% of the frame height. The lower bound is where a title stops
- *  being legible at all rather than an arbitrary floor; the upper is the
- *  whole frame. */
-const MIN_SIZE_PERCENT = 0.5;
-const MAX_SIZE_PERCENT = 100;
+/** The shared title-size range (B-383), shown as a percentage. */
+const MIN_SIZE_PERCENT = MIN_TEXT_SIZE * SIZE_PERCENT;
+const MAX_SIZE_PERCENT = MAX_TEXT_SIZE * SIZE_PERCENT;
 
 const row = 'flex items-center justify-between gap-2';
 const numInput = 'h-7 w-20 text-right';

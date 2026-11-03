@@ -101,11 +101,15 @@ describe('newTextLayer', () => {
     }
   });
 
-  it('rejects a non-positive or non-finite size', () => {
-    for (const bad of [0, -0.1, NaN, Infinity]) {
+  it('rejects a size outside 0.5%–100% of the frame height, or non-finite (B-383)', () => {
+    // 96 is the B-383 case: a pixel size passed where a fraction is expected.
+    for (const bad of [0, -0.1, 0.004, 1.01, 96, NaN, Infinity]) {
       expect(newTextLayer({ content: 'A', size: bad })).toEqual({
-        error: expect.stringContaining('positive fraction'),
+        error: expect.stringContaining('fraction of the composition height between'),
       });
+    }
+    for (const ok of [0.005, 0.12, 1]) {
+      expect(newTextLayer({ content: 'A', size: ok })).toMatchObject({ size: ok });
     }
   });
 
