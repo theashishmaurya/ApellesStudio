@@ -776,3 +776,11 @@ The owner approved revision 2 ("Looks good the UI you gave :)") and answered:
 - **Deviations from the mockup**: the player is the short's opening frame until it is made
   (there is no timeline to play before the build; Show in source plays it on the long
   timeline); "Suggest as a short" not built. Reasons in D-443.
+
+## Screenshots of the build (2026-11-03)
+
+`scratch/ui-compare/panels-v030/` (main checkout; a debug bundle, `studio.apelles.perf4`, on a
+copy of a real project): `export-rest`, `export-master-more`, `export-1280x800-more` (the inset
+holds at 1280 × 800; the body scrolls), `music-empty`, `music-make`, `clipper-review`,
+`clipper-setup`. Compared with the mockup's states: layout, order and wording match; the
+deviations are the ones listed per panel above.
