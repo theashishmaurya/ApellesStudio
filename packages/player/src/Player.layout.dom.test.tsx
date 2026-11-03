@@ -103,6 +103,25 @@ describe('the transport row', () => {
     expect(rest).toEqual(['Playback rate', 'Mute', 'Fullscreen']);
   });
 
+  it('volume is a popover (B-354): mute, a keyboard slider and the level, the same callbacks', () => {
+    const onVolumeChange = vi.fn();
+    const onMuteToggle = vi.fn();
+    const { container } = render(player({ volume: 0.5, muted: false, onVolumeChange, onMuteToggle }));
+    const right = cells(container.querySelector('[data-player-transport]')!)[2];
+    // At rest the transport shows one button and no slider (no hover slide-out).
+    expect(right.querySelector('input[type="range"]')).toBeNull();
+    fireEvent.click(screen.getByLabelText('Volume'));
+    const pop = document.querySelector('[data-chroma-volume-popover]')!;
+    expect(pop).not.toBeNull();
+    expect(pop.textContent).toContain('50%');
+    const slider = pop.querySelector('input[aria-label="Volume level"]') as HTMLInputElement;
+    expect(slider.getAttribute('aria-valuetext')).toBe('50%');
+    fireEvent.keyDown(slider, { key: 'ArrowRight' });
+    expect(onVolumeChange).toHaveBeenCalledWith(0.51);
+    fireEvent.click(pop.querySelector('button[aria-label="Mute"]')!);
+    expect(onMuteToggle).toHaveBeenCalledOnce();
+  });
+
   it('wires each button', () => {
     const onStep = vi.fn();
     const onPlayPause = vi.fn();

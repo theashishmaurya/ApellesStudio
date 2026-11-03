@@ -1092,6 +1092,14 @@ leftovers, closed against the approved mockup (owner: "loved the design",
   not shown, because neither shortcut exists yet; the line names the drag
   instead, and the zone says media is referenced in place.
 
+**Volume popover (B-354).** The transport's `SpeakerHigh` button
+(`aria-label="Volume"`) opens a popover above it: the mute toggle, an
+`InlineSlider` (keyboard: arrows / Shift / Home / End; double-click back to
+100 %) and the level in percent, writing the same `onVolumeChange` /
+`onMuteToggle` (the Edit tab's monitor volume). It replaces the slider that
+slid out on hover and could not be reached from the keyboard. A `Player`
+given only `onMuteToggle` keeps a plain mute button.
+
 ## 7. Human + AI parity
 
 Every new GUI capability gets its MCP surface in the same phase (standing rule):
