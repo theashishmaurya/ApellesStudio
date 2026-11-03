@@ -20,6 +20,7 @@
  */
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
+import { runLongOp } from './longOp';
 import type { ComponentSpec } from '@apelles/motion-engine/src/custom/componentDef';
 import type { ValidationIssue } from '@apelles/motion-engine/src/engine/validate';
 import {
@@ -89,7 +90,7 @@ export async function writeComponent(spec: ComponentSpec, source: string, dryRun
 }
 
 export async function proveComponent(id: string, version: number, plan: ProofPlan): Promise<ComponentProofResult> {
-  return await invoke<ComponentProofResult>('chroma_motion_prove_component', { id, version, plan });
+  return await runLongOp<ComponentProofResult>(invoke<string>('chroma_motion_prove_component_start', { id, version, plan }));
 }
 
 export async function certifyComponent(id: string, version: number): Promise<unknown> {

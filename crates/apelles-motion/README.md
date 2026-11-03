@@ -49,6 +49,9 @@ tab (D-039 roadmap "Motion tab MVP", D-046).
   bundle from `still::ensure_bundle`, then runs Node synchronously (**blocks the
   calling thread**; the job worker runs it on its own thread), on its own port
   (B-278).
+- `longop::{start, poll}` — a slow one-shot operation (the component proof, a preview still) run on its
+  own thread behind an id and polled to `running | done | failed` (B-321): the webview never
+  holds one `invoke` pending for the whole render.
 - `MotionRuntime::developer(engine_dir)` — the developer's checkout and `node`
   (22.18+), what the tests and the certify example run with.
 

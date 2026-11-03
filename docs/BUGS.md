@@ -513,7 +513,7 @@ An agent reading the warning would assume the write did nothing. Expected: `prop
 
 ## B-321 — a slow `motion_check_component` / `motion_preview_frame` finishes on disk but its reply never reaches the MCP caller
 
-status: **open** · severity: **major** (each hit blocks the agent for the full 300 s / 180 s budget) · area: Motion MCP bridge · found 2026-10-28 (building "The Domino" reel)
+status: **fixed** (2026-11-03) · severity: **major** (each hit blocked the agent for the full 300 s / 180 s budget) · area: Motion MCP bridge · found 2026-10-28 (building "The Domino" reel)
 
 - **repro (seen twice, both early in a session):** `motion_check_component("domino-wave")` on a
   freshly written 3D draft — `meta.json` recorded a passing proof and `contact.png` 1 min after
@@ -541,6 +541,10 @@ status: **open** · severity: **major** (each hit blocks the agent for the full 
   7 s, so it is not only queueing behind proxy renders. Suspect the backend → frontend
   completion of long `invoke`s (the check, still and proxy commands) rather than the MCP
   bridge.
+
+- **cause:** `chroma_motion_prove_component` and `chroma_motion_preview_frame` were each ONE Tauri `invoke` pending for the whole render (minutes for a first bundle plus three proof passes). The reply to the MCP caller is sent by the frontend op only after that `invoke` settles; live the render completed on disk and the long `invoke` never settled in the webview (so `runProof` never reached `access.reload()`, which is also why certify refused). A job that reports through many instant calls does not depend on one long-lived promise.
+- **fix:** both are now `*_start` commands that return an operation id at once, running the render on its own thread in `apelles_motion::longop`; the webview's `runLongOp` (`packages/motion/src/longOp.ts`) polls the instant `chroma_motion_longop_poll` every 400 ms until `done` / `failed`. Every caller (the MCP ops, the Catalog's check button, the template preview, the canvas still) goes through the same two IO functions, so no MCP tool or its docstring changed. A failure (no runtime, render error, panic) comes back as the error, not a hang.
+- **tests:** `apelles-motion` `longop::tests` (returns before the work ends, reports once, failure, panic, unknown id, wire shape); `longOp.test.ts` (an operation of many polls resolves, failure rejects, a start failure rejects, and both `previewFrames` and `proveComponent` use start + polls). Not reproduced live (it never reproduced on demand); the structural cause is removed.
 
 ## B-325 — a clip bigger or smaller than the timeline frame sits at its native pixel footprint: a Motion scene render shows only its centre quarter, in the preview and in the export
 

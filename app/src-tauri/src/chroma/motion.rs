@@ -111,16 +111,22 @@ pub struct MotionPreviewResult {
 /// a temp file, so nothing here depends on the clock). The engine bundle is
 /// cached under `motion/cache/preview/` by content fingerprint, so only the first
 /// preview after an engine change pays for webpack.
+///
+/// B-321 — this STARTS the render and returns an operation id at once; the
+/// webview polls [`chroma_motion_longop_poll`] for the [`MotionPreviewResult`].
+/// One `invoke` pending for a whole first-bundle render was the call whose
+/// completion never reached the webview, so the bridge reply that awaited it
+/// timed out with the picture already on disk.
 #[tauri::command]
-pub async fn chroma_motion_preview_frame(
+pub fn chroma_motion_preview_frame_start(
     manifest: Value,
     frames: Vec<u32>,
     scale: f64,
     label: String,
-) -> Result<MotionPreviewResult, String> {
+) -> Result<String, String> {
     let dir = current_project_dir()?;
     let runtime = super::motion_runtime::require()?;
-    tokio::task::spawn_blocking(move || {
+    apelles_motion::longop::start(move || {
         let out_dir = dir.join("motion").join("previews");
         std::fs::create_dir_all(&out_dir)
             .map_err(|e| format!("create {}: {e}", out_dir.display()))?;
@@ -146,16 +152,23 @@ pub async fn chroma_motion_preview_frame(
             public_dir: Some(apelles_motion::assets::assets_dir(&dir)).filter(|d| d.is_dir()),
         };
         let outcome = apelles_motion::still::render_preview(&req).map_err(|e| e.to_string())?;
-        Ok(MotionPreviewResult {
+        serde_json::to_value(MotionPreviewResult {
             path: outcome.path.to_string_lossy().to_string(),
             width: outcome.width,
             height: outcome.height,
             columns: outcome.columns,
             rows: outcome.rows,
         })
+        .map_err(|e| e.to_string())
     })
-    .await
-    .map_err(|e| format!("preview task: {e}"))?
+}
+
+/// B-321 — the state of an operation a `*_start` command began
+/// (`apelles_motion::longop`): `running`, or `done` with its result, or `failed`
+/// with the error. A finished one is reported once. Instant; safe to call often.
+#[tauri::command]
+pub fn chroma_motion_longop_poll(id: String) -> Result<apelles_motion::longop::LongOpPoll, String> {
+    apelles_motion::longop::poll(&id)
 }
 
 /// D-404 — copy an image into the open project's asset folder, named by the

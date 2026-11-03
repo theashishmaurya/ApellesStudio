@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-03** — **B-321 fixed:** `motion_check_component` / `motion_preview_frame` no longer hold one long `invoke` open; the backend starts the render behind an operation id (`apelles_motion::longop`) and the webview polls it, so a finished proof or still always reaches the caller.
 - **2026-11-03** — **B-300 fixed:** a Motion video's default render scale is 2x only while the result stays within UHD (`scripts/renderScale.mts`), so a 3840x2160 manifest renders at 3840x2160, not 7680x4320; a 1080p manifest still comes out 4K.
 
 - **2026-11-03** — **B-361 fixed:** clicking a caption preset now captions the video. It restyles existing captions, or generates them from the transcript, or transcribes first (with progress and Cancel). The placeholder sample is an explicit option. MCP `editor_add_caption_preset` gains `mode` (auto / sample).

@@ -127,20 +127,29 @@ pub async fn chroma_motion_write_component(
 /// D-409 — render the certification proof for one version (recorded on a
 /// draft). Scratch renders and bundles live under
 /// `<app data>/motion/cache/components/`.
+///
+/// B-321 — this STARTS the proof and returns an operation id at once; the
+/// webview polls `chroma_motion_longop_poll` for the [`comps::ProofOutcome`]. A
+/// proof is 1-3 minutes of renders, and one `invoke` pending that long was the
+/// call whose completion never reached the webview, leaving the proof on disk
+/// and the check (and so the certify) waiting on a promise that never settled.
 #[tauri::command]
-pub async fn chroma_motion_prove_component(
+pub fn chroma_motion_prove_component_start(
     id: String,
     version: u32,
     plan: ProofPlan,
     app: AppHandle,
-) -> Result<comps::ProofOutcome, String> {
+) -> Result<String, String> {
     let dir = version_dir(&app, &id, version)?;
     let cache = app_data(&app)?
         .join("motion")
         .join("cache")
         .join("components");
     let runtime = super::motion_runtime::require()?;
-    blocking(move || comps::prove(&runtime, &cache, &dir, &plan).map_err(|e| e.to_string())).await
+    apelles_motion::longop::start(move || {
+        let outcome = comps::prove(&runtime, &cache, &dir, &plan).map_err(|e| e.to_string())?;
+        serde_json::to_value(outcome).map_err(|e| e.to_string())
+    })
 }
 
 /// D-409 — certify a proven draft in the user library (built-ins ship
