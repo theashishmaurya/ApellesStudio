@@ -509,7 +509,7 @@ Still real:
 
 ## B-322 — `motion_set_layer_field(key="props")` on a custom-component layer warns "not a known field"
 
-status: **open** · severity: **minor** · area: Motion MCP (D-409) · found 2026-10-28 (building "The Domino" reel)
+status: **fixed** (2026-11-03) · severity: **minor** · area: Motion MCP (D-409) · found 2026-10-28 (building "The Domino" reel)
 
 `props` is the one correct key for a custom layer's declared props (D-409), and the write
 works, but the reply carries `"props" is not a known field for use="custom" ... set anyway`.
@@ -517,10 +517,12 @@ An agent reading the warning would assume the write did nothing. Expected: `prop
 `props.<id>`) recognised for `use: "custom"` and checked against the embedded definition, like
 `motion_insert_layers` already does. Workaround used: ignore the warning, confirm with
 `motion_validate` (clean).
+- **fix:** `isCustomLayerKey` (`propCatalog.ts`) makes `props` and `component` known keys of `use: "custom"` for `motion_set_layer_field`. After a `props` write the reply carries `issues` for that layer from the same manifest-level pass `motion_validate` runs (the embedded definition's constraints), without blocking the write. A dotted `props.<id>` is warned about specifically (it would be stored as a literal key): set the whole `props` object.
+- **tests:** `customOps.e2e.test.ts` "B-322" (valid props: no warning or issues; `count: 9999` -> an issue at `...props.count`; dotted key warning; unknown key still warns).
 
 ## B-321 — a slow `motion_check_component` / `motion_preview_frame` finishes on disk but its reply never reaches the MCP caller
 
-status: **open** · severity: **major** (each hit blocks the agent for the full 300 s / 180 s budget) · area: Motion MCP bridge · found 2026-10-28 (building "The Domino" reel)
+status: **fixed** (2026-11-03) · severity: **major** (each hit blocked the agent for the full 300 s / 180 s budget) · area: Motion MCP bridge · found 2026-10-28 (building "The Domino" reel)
 
 - **repro (seen twice, both early in a session):** `motion_check_component("domino-wave")` on a
   freshly written 3D draft — `meta.json` recorded a passing proof and `contact.png` 1 min after
@@ -549,6 +551,10 @@ status: **open** · severity: **major** (each hit blocks the agent for the full 
   completion of long `invoke`s (the check, still and proxy commands) rather than the MCP
   bridge.
 
+- **cause:** `chroma_motion_prove_component` and `chroma_motion_preview_frame` were each ONE Tauri `invoke` pending for the whole render (minutes for a first bundle plus three proof passes). The reply to the MCP caller is sent by the frontend op only after that `invoke` settles; live the render completed on disk and the long `invoke` never settled in the webview (so `runProof` never reached `access.reload()`, which is also why certify refused). A job that reports through many instant calls does not depend on one long-lived promise.
+- **fix:** both are now `*_start` commands that return an operation id at once, running the render on its own thread in `apelles_motion::longop`; the webview's `runLongOp` (`packages/motion/src/longOp.ts`) polls the instant `chroma_motion_longop_poll` every 400 ms until `done` / `failed`. Every caller (the MCP ops, the Catalog's check button, the template preview, the canvas still) goes through the same two IO functions, so no MCP tool or its docstring changed. A failure (no runtime, render error, panic) comes back as the error, not a hang.
+- **tests:** `apelles-motion` `longop::tests` (returns before the work ends, reports once, failure, panic, unknown id, wire shape); `longOp.test.ts` (an operation of many polls resolves, failure rejects, a start failure rejects, and both `previewFrames` and `proveComponent` use start + polls). Not reproduced live (it never reproduced on demand); the structural cause is removed.
+
 ## B-325 — a clip bigger or smaller than the timeline frame sits at its native pixel footprint: a Motion scene render shows only its centre quarter, in the preview and in the export
 
 status: **fixed** (2026-10-28, **D-425**) · severity: **major** · area: clip sizing (`chroma::edit` compositor + `timelineExport.ts` footprints), `@apelles/editor` Inspector, MCP
@@ -560,7 +566,7 @@ status: **fixed** (2026-10-28, **D-425**) · severity: **major** · area: clip s
 
 ## B-324 — the `counter` primitive cannot zero-pad, so a timer cannot read `0:09.00`
 
-status: **open** · severity: **minor** · area: Motion primitives (`Counter.tsx`) · found 2026-10-28
+status: **fixed** (2026-11-03) · severity: **minor** · area: Motion primitives (`Counter.tsx`) · found 2026-10-28
 
 `counter` formats `decimals` and an optional thousands separator but has no minimum-integer-digits
 option, so a running timer shows `0:9.00`, not `0:09.00`. Expected: a `pad` (minimum integer
@@ -568,10 +574,12 @@ digits) field, formatted in `formatCount` with the same locale-independent arith
 Workaround used in "The Domino": the static `prefix` `"0:0"` for the scenes under ten seconds,
 and in the scene that crosses ten seconds two counters (`0:0` + 9→10, `0:` + 10→12) switched
 by opacity keys at the crossing.
+- **fix:** `counter` gains `pad` (schema `primitiveProps.ts`, `Counter.tsx` `formatCount(value, decimals, thousands, pad)`, Inspector field in `propCatalog.ts`; the MCP tools take it through the layer props like every field). The whole part is zero-filled before the thousands grouping, locale-free like the rest. Capped at 12 digits. A timer is prefix `"0:"`, `pad: 2`, `decimals: 2`.
+- **tests:** `engine/brand.test.ts` "zero-pads the integer part with `pad`" (09.00, 10.50, a longer number untouched, grouping, negative, default unchanged, the cap).
 
 ## B-320 — a `text` layer whose `dur` rounds to 0 frames passes `motion_validate` but crashes the render
 
-status: **open** · severity: **medium** · area: Motion engine (`primitives/Text.tsx` `inAt`) · found 2026-10-28
+status: **fixed** (2026-11-03) · severity: **medium** · area: Motion engine (`primitives/Text.tsx` `inAt`) · found 2026-10-28
 
 - **repro:** a `text` layer with `"preset": "fade-up", "at": 0, "dur": 0.01` (meant as "already
   visible") — `motion_insert_layers` and `motion_validate` accept it; `motion_preview_frame`
@@ -580,6 +588,9 @@ status: **open** · severity: **medium** · area: Motion engine (`primitives/Tex
 - **expected:** either the schema refuses a reveal shorter than one frame, or `inAt` clamps the
   range to at least one frame (a zero-length reveal = visible from `at`).
 - **workaround used:** `"at": -0.2, "dur": 0.1` (fully revealed before the scene starts).
+- **cause:** `Text` reveals through `inAt(frame, start, start + dur)`; a `dur` of 0.01 s rounds to 0 frames, so Remotion's `interpolate` got `[0, 0]` and threw `inputRange must be strictly monotonically increasing`, which took the whole scene down. `motion_validate` could not see it because the schema is right (`dur` is just a number).
+- **fix:** `lib/draw.ts` `inAt` / `outAt` treat a range with `to <= from` as a step (hidden before `from`, shown from it; the reverse for `outAt`), the "zero-length reveal = visible from `at`" the report asked for. Every primitive that reveals through them is covered, not only Text; no schema refusal, so existing documents with a tiny `dur` just render.
+- **tests:** `lib/draw.test.ts` (zero-length and reversed ranges for both, a normal range unchanged).
 
 ## B-319 — `new_project` (and `open_project`) still answer with the whole grade document
 
@@ -636,9 +647,12 @@ status: **fixed** (2026-10-29) · severity: **minor** · area: Edit Index panel 
 
 ## B-316 — placed Motion clips keep their old `sourceLen` after the scene is re-rendered shorter
 
-status: **open** · severity: **minor** · area: Edit ↔ Motion render placement
+status: **fixed** (2026-11-03) · severity: **minor** · area: Edit ↔ Motion render placement
 
 - **found:** 2026-10-28 by the agent doing the Five Levels pacing pass in the live app. The app then allows trimming past the end of the new render.
+- **cause (found by reading the path, not reproduced live):** the re-render already reaches the Edit timeline (`Root.tsx` `onMotionRendered` -> `refresh_media` -> `reclampToSource`), but the reducer skipped every locked track. The Five Levels pass had locked tracks (the B-315 workaround for sync lock), so their Motion clips kept the old `source_len`/duration and the app let the trim run past the new file's end.
+- **fix:** `refresh_media` no longer skips locked tracks: a lock guards edits, the length of the file a clip reads is a fact. Matched clips take the new `source_len`/`source_fps` and are clamped (duration shrunk, never grown) as before; a same-length re-render is still a no-op.
+- **tests:** `timelineRefreshMedia.test.ts` (a locked track is refreshed; a locked clip is clamped to a shorter render and stays locked).
 
 ## B-315 — no MCP tool to toggle a track's sync-lock (GUI only)
 
@@ -668,13 +682,16 @@ status: **fixed** (2026-10-28) · severity: **critical** · area: `editor_ripple
 
 ## B-309 — `motion_validate` does not flag text overflowing its container
 
-status: **open** · severity: **major** · area: `packages/motion-engine` validation (D-403)
+status: **fixed** (2026-11-03) · severity: **major** · area: `packages/motion-engine` validation (D-403)
 
 - **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. A 30 px IBM Plex Mono text 'thumbnails' centred in a 170 px-wide shape overflowed visibly (the owner caught it); validate returned `issues: []`. Repro: shape `{w:170,h:270}` + centred text `{size:30, font:'IBM Plex Mono', text:'thumbnails'}` inside it.
+- **cause:** `motion_validate` was a pure schema check; nothing compared a text's size with its box. The engine has no text measurement to reuse (Text.tsx leaves layout to CSS; `chatLayout.ts` only estimates for chat), so the check brings its own.
+- **fix:** `engine/textFit.ts` `textOverflowIssues`: for each `text` layer with `x` and `y`, builds its box the way `Text.tsx` places it (align, `maxWidth` wrap, line height 1.15, letter spacing) and compares it with the smallest sibling `shape` (rect, roundrect, ellipse bounds) holding its anchor, else the canvas. A `text_overflow` issue per layer names the sides and px, with a hint. Widths come from a canvas measurer on loaded fonts in the webview (`textMeasure.ts`); otherwise from the glyph advance (monospace exact at 0.6 em, other faces only flagged past 12% slack). Wired into `motion_validate` for a manifest, a scene, layers and the live document. Advisory: it sets `ok` false but no authoring op refuses on it; the tool docstring (both MCP servers, parity re-captured) says so.
+- **tests:** `engine/textFit.test.ts` (13: the exact repro, fits, wrap, height overflow, smallest container, canvas, estimate slack, measurer, groups); `motionOps.test.ts` "B-309" (layers / scene / manifest forms). Not run against the live app's fonts.
 
 ## B-308 — Motion has no time-varying stacking order (z-order is list order only)
 
-status: **open** · severity: **minor** · area: Motion engine layers
+status: **open (deferred to v0.4.0 as a feature, 2026-11-03: `docs/04-roadmap.md`)** · severity: **minor** · area: Motion engine layers
 
 - **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. A book pulled forward off a shelf needs to be on top only while raised; the workaround was moving it last for the whole scene.
 
@@ -722,9 +739,12 @@ status: **open** · severity: **minor** · area: text clip source length
 
 ## B-302 — the Edit 'serif-bold' font has no '→' glyph (renders a box)
 
-status: **open** · severity: **minor** · area: Edit text fonts
+status: **fixed** (2026-11-03) · severity: **minor** · area: Edit text fonts
 
 - **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. Found in the white-theme pass; the caption was reworded.
+- **cause:** the Edit text rasteriser (`chroma/text.rs` `lay_out_text`) drew every character from the one chosen face; Georgia (`serif`, `serif-bold`, ...) has no U+2192, so glyph id 0 (`.notdef`, a box) was drawn.
+- **fix:** a character the chosen face has no glyph for is drawn from the first face in `FALLBACK_FACES` that has it (Arial Unicode, Arial, DejaVu Sans), at the same visual size, with the pen advanced by the fallback glyph's own advance (kerning does not cross faces). Whitespace and control characters never fall back; a character no face has still gets the chosen face's own glyph. Titles measure and draw through the same layout, so the selection box includes the arrow. Not covered: the legacy ffmpeg `drawtext` export path (the compositor export uses this rasteriser) and caption words, which still use their single face.
+- **tests:** `chroma::text::tests::an_arrow_missing_from_the_serif_face_comes_from_a_fallback_face` (the fallback exists and is not used for a letter, a space or an unmapped code point; the arrow's ink is not the `.notdef` box's).
 
 ## B-301 — `editor_detect_beats` / `motion_get_state` return 40-68 KB every call
 
@@ -735,7 +755,11 @@ status: **fixed** (2026-10-28) · severity: **minor** · area: MCP answer shapes
 
 ## B-300 — Motion render of a 1920×1080 manifest is right, but a 3840×2160 manifest renders at 7680×4320 (2× scale applied on top of a 4K manifest)
 
-status: **open** · severity: **major** · area: `crates/apelles-motion` render scale (D-342 `setScale(2)`)
+status: **fixed** (2026-11-03) · severity: **major** · area: `packages/motion-engine/scripts/render.mts` render scale (D-342 `setScale(2)`)
+
+- **cause:** `render.mts` applied the D-342 default `scale = 2` to every video whatever the manifest's size, so a manifest already at UHD doubled to 8K.
+- **fix:** `scripts/renderScale.mts` `defaultVideoScale(width, height)`: 2x only while the long edge stays within 3840 px, else 1x (the output is the manifest's own size). A whole-number scale keeps the output an exact multiple of the manifest. An explicit `--scale` (preview stills) is unchanged.
+- **tests:** `scripts/render.test.ts` (1080p -> 2, 3840x2160 -> 1, vertical 1080x1920 -> 2 and 2160x3840 -> 1, 1252x1016 -> 2, 2560x1440 -> 1; the config/runner agreement test now pins `MAX_VIDEO_SCALE`). No 4K render was run (disk budget).
 
 - **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Five Levels edit: setting the Motion manifest to the project's 4K size produced 8K scene renders; the workaround was a 1920×1080 manifest. Expected: render at the manifest's own size (or a documented output-scale option).
 
@@ -755,9 +779,12 @@ status: **fixed** (2026-10-28) · severity: **major** · area: media probe (`edi
 
 ## B-297 — Motion scene renders come out one frame short; a layer's `dur` does not hide the layer; rendered scenes bring a silent linked-audio clip onto the timeline
 
-status: **open** · severity: **minor** · area: `apelles-motion` render length, engine layer lifetime, Edit placement of Motion renders
+status: **closed** (2026-11-03: the third symptom fixed by B-368, the second is by design and now labelled, the first did not reproduce) · severity: **minor** · area: `apelles-motion` render length, engine layer lifetime, Edit placement of Motion renders
 
 - **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Workarounds in the Five Levels edit: pad scenes by 0.05 s, opacity keyframes instead of `dur`, remove the silent audio partners.
+- **linked silent audio clip:** fixed as B-368 (no audio stream without a soundtrack; a digital-silence stream is not audio).
+- **one frame short:** not reproduced. A real render through `scripts/render.mts` of the second scene of a 30 fps, 1 s + 1.5 s manifest (`--frames=30-74`) gave exactly 45 frames / 1.500000 s by `ffprobe -count_frames`, and the window the app computes (`renderLoop.ts`: `start + sceneDurationFrames - 1`, inclusive) is right. Where a scene lands a frame short on the Edit timeline is the timeline's rate conversion (`sourceFramesToTimeline` rounds), most visibly while a new project's timeline was 24 fps with no way to set it (B-323, fixed): a 30 fps render on a 24 fps timeline shortens by up to half a frame per cut. If it still happens at matching rates, re-open with the scene's `dur`, fps and the clip's `duration` / `source_len`.
+- **a layer's `dur` does not hide the layer:** by design, not a defect. `dur` on a layer is the length of that layer's own reveal / animation (Text's fade-up, a shape's draw-on), and the layer holds its final state afterwards; making it a lifetime would hide every existing layer after its reveal. The Inspector field was labelled "Duration (s)", which invites the misreading, and is now "Reveal length (s)" (`propCatalog.ts`). To end a layer early use an `transform.keys` opacity key or an `active` schedule; a first-class lifetime / time-varying order belongs with B-308 (`docs/04-roadmap.md`).
 
 ## B-296 — `get_timeline`, `motion_get_state` and `save_project` answers can reach ~675K characters (save_project returns the whole grade + histogram)
 

@@ -7,21 +7,32 @@ import { DEFAULT_THEME, motion } from "../design";
 const cb = (c: readonly [number, number, number, number]) =>
   Easing.bezier(c[0], c[1], c[2], c[3]);
 
-/** 0→1 over [from,to] frames with the house "settle" ease, clamped. */
-export const inAt = (frame: number, from: number, to: number) =>
-  interpolate(frame, [from, to], [0, 1], {
+/**
+ * 0→1 over [from,to] frames with the house "settle" ease, clamped.
+ *
+ * B-320 — `interpolate` throws on an input range that is not strictly increasing,
+ * and a reveal `dur` that rounds to 0 frames (`"dur": 0.01` at 30 fps) makes
+ * `to === from`. A zero-length (or reversed) reveal is a step: hidden before
+ * `from`, fully shown from it.
+ */
+export const inAt = (frame: number, from: number, to: number) => {
+  if (to <= from) return frame >= from ? 1 : 0;
+  return interpolate(frame, [from, to], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: cb(motion.ease.out),
   });
+};
 
-/** 1→0 over [from,to] frames, clamped. */
-export const outAt = (frame: number, from: number, to: number) =>
-  interpolate(frame, [from, to], [1, 0], {
+/** 1→0 over [from,to] frames, clamped. A zero-length range is a step (B-320). */
+export const outAt = (frame: number, from: number, to: number) => {
+  if (to <= from) return frame >= from ? 0 : 1;
+  return interpolate(frame, [from, to], [1, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: cb(motion.ease.inOut),
   });
+};
 
 /** a value that eases in, holds, eases out — for a whole element's lifetime */
 export const lifetime = (

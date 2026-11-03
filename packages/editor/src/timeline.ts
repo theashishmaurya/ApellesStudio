@@ -4355,8 +4355,13 @@ export type EditOp =
    *  a re-render whose scene is the same length leaves every clip
    *  byte-identical, so this returns the original timeline, `applyOp` writes
    *  nothing and no undo entry is pushed. The picture still updates — the file
-   *  on disk changed, and the preview reads the file. Locked tracks are
-   *  skipped, same as every other per-clip op. */
+   *  on disk changed, and the preview reads the file.
+   *
+   *  **Locked tracks are refreshed too (B-316).** A lock protects a track from
+   *  EDITS; the length of the file a clip reads is a fact, not an edit. Skipping
+   *  locked tracks left a placed Motion clip with its old `source_len` (and a
+   *  duration past the end of the re-rendered, shorter file) whenever an agent
+   *  or person had locked the track, which the trim ceiling then trusted. */
   | {
       kind: 'refresh_media';
       media_id: string | null;
@@ -6566,7 +6571,6 @@ function applyOpCopy(tl: Timeline, op: EditOp): Timeline {
       op.media_id !== null && c.media_id ? c.media_id === op.media_id : c.source_path === op.source_path;
     let next: Timeline | null = null;
     tl.tracks.forEach((tr, ti) => {
-      if (tr.locked) return;
       tr.clips.forEach((c, ci) => {
         if (!matches(c)) return;
         // Clone at most once, and only if some clip genuinely changes — a

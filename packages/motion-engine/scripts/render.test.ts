@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { manifestRendersAudio } from './renderAudio.mts';
+import { defaultVideoScale, MAX_VIDEO_SCALE } from './renderScale.mts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const runner = readFileSync(join(here, 'render.mts'), 'utf8');
@@ -31,7 +32,8 @@ describe('the renderer and remotion.config.ts agree', () => {
   it('on the video scale (D-342)', () => {
     const scale = /setScale\((\d+(?:\.\d+)?)\)/.exec(config)?.[1];
     expect(scale).toBeDefined();
-    expect(runner).toContain(`const DEFAULT_VIDEO_SCALE = ${scale};`);
+    expect(MAX_VIDEO_SCALE).toBe(Number(scale));
+    expect(runner).toContain('defaultVideoScale(');
   });
 });
 
@@ -48,5 +50,25 @@ describe('a video render carries audio only when the manifest has a rendered sou
 
   it('keeps the audio when the soundtrack is rendered', () => {
     expect(manifestRendersAudio({ soundtrack: { src: 'sha256:x.mp3', render: true } })).toBe(true);
+  });
+});
+
+describe('the default video scale never exceeds UHD (B-300)', () => {
+  it('renders a 1080p manifest at 2x (3840x2160)', () => {
+    expect(defaultVideoScale(1920, 1080)).toBe(2);
+  });
+
+  it('renders a 4K manifest at its own size, not 8K', () => {
+    expect(defaultVideoScale(3840, 2160)).toBe(1);
+  });
+
+  it('keeps a vertical 1080x1920 at 2x and a vertical 4K at 1x', () => {
+    expect(defaultVideoScale(1080, 1920)).toBe(2);
+    expect(defaultVideoScale(2160, 3840)).toBe(1);
+  });
+
+  it('keeps D-348 panel canvases at 2x and a 2560x1440 manifest at 1x', () => {
+    expect(defaultVideoScale(1252, 1016)).toBe(2);
+    expect(defaultVideoScale(2560, 1440)).toBe(1);
   });
 });

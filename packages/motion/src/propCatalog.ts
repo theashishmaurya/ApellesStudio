@@ -90,7 +90,9 @@ export interface FieldSpec {
  *  shapes `Active` (`schema.ts`) allows. */
 const timingFields: FieldSpec[] = [
   { key: 'at', label: 'Start (s)', kind: 'number', group: 'timing' },
-  { key: 'dur', label: 'Duration (s)', kind: 'number', group: 'timing' },
+  // B-297 - `dur` is how long the layer's own reveal/animation takes, NOT how
+  // long the layer stays on screen; it holds its final state afterwards.
+  { key: 'dur', label: 'Reveal length (s)', kind: 'number', group: 'timing' },
   { key: 'active', label: 'Active (index or schedule)', kind: 'json', group: 'timing' },
   // D-405 — `anim` property tracks, any layer: absolute values over time for a
   // numeric or colour prop (one level into an object prop: "mask.w").
@@ -196,6 +198,7 @@ const PRIMITIVE_FIELDS: Record<string, FieldSpec[]> = {
     { key: 'to', label: 'To', kind: 'number', group: 'content' },
     { key: 'decimals', label: 'Decimals', kind: 'number', group: 'content' },
     { key: 'thousands', label: 'Thousands separator', kind: 'boolean', group: 'content' },
+    { key: 'pad', label: 'Min. integer digits (zero-pad)', kind: 'number', group: 'content' },
     { key: 'prefix', label: 'Prefix', kind: 'string', group: 'content' },
     { key: 'suffix', label: 'Suffix', kind: 'string', group: 'content' },
     { key: 'ease', label: 'Count ease', kind: 'ease', group: 'timing' },
@@ -356,6 +359,14 @@ export function fieldsForPrimitive(use: string): FieldSpec[] | undefined {
   const own = PRIMITIVE_FIELDS[use];
   if (!own) return undefined;
   return [...timingFields, ...own];
+}
+
+/** B-322 — the layer keys of a `custom` layer that `fieldsForPrimitive` cannot
+ *  list: `props` (the component's declared props, D-409) and `component` (the
+ *  pinned reference). The props' own ids come from the definition embedded in the
+ *  manifest, so they are checked there, not against this list. */
+export function isCustomLayerKey(use: string, key: string): boolean {
+  return use === 'custom' && (key === 'props' || key === 'component');
 }
 
 /** scene-level fields (selection target `{kind:'scene'}`).

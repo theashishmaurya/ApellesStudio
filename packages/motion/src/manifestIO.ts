@@ -17,6 +17,7 @@ import { detectBeats } from '@apelles/bridge';
 import { assetFileName } from '@apelles/motion-engine/src/lib/assetId';
 import type { Soundtrack } from '@apelles/motion-engine/src/engine/schema';
 
+import { runLongOp } from './longOp';
 import type { MotionRenderStatus, SceneRenderJob } from './renderLoop';
 
 /** The exact message `motion.rs::current_project_dir` rejects with. */
@@ -145,7 +146,7 @@ export async function previewFrames(req: {
   label: string;
 }): Promise<{ path: string; width: number; height: number; columns: number; rows: number }> {
   try {
-    return await invoke('chroma_motion_preview_frame', req);
+    return await runLongOp(invoke<string>('chroma_motion_preview_frame_start', req));
   } catch (e) {
     rethrow(e);
   }

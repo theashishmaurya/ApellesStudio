@@ -158,7 +158,7 @@ describe('refresh_media (D-260)', () => {
     expect(after.tracks[0].clips[0].source_fps).toBeUndefined();
   });
 
-  it('skips a locked track entirely', () => {
+  it('refreshes a locked track too: a lock guards edits, the file length is a fact (B-316)', () => {
     const before: Timeline = {
       id: 't1',
       name: 'T',
@@ -168,8 +168,19 @@ describe('refresh_media (D-260)', () => {
       ],
     };
     const after = applyOp(before, refresh(240));
-    expect(after.tracks[0].clips[0].source_len).toBe(100); // locked — untouched
+    expect(after.tracks[0].clips[0].source_len).toBe(240);
     expect(after.tracks[1].clips[0].source_len).toBe(240);
+  });
+
+  it('clamps a locked clip to a re-render that came out shorter (B-316)', () => {
+    const before: Timeline = {
+      id: 't1',
+      name: 'T',
+      tracks: [{ kind: 'video', clips: [clip('a', { duration: 100 })], locked: true }],
+    };
+    const after = applyOp(before, refresh(60));
+    expect(after.tracks[0].clips[0]).toMatchObject({ source_len: 60, duration: 60 });
+    expect(after.tracks[0].locked).toBe(true);
   });
 
   it('refuses a non-positive length — that means "unprobed", not "zero frames"', () => {

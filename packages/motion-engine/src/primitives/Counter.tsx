@@ -5,6 +5,9 @@
  *   {"use":"counter","from":0,"to":12500,"at":0.3,"dur":1.6,"prefix":"$","suffix":"+",
  *    "thousands":true,"decimals":0,"size":160,"x":960,"y":420,"align":"center"}
  *
+ * A timer zero-pads with `pad` (minimum integer digits): prefix `"0:"`, `pad: 2`,
+ * `decimals: 2` counts `0:00.00` ... `0:09.00` (B-324).
+ *
  * Counts over `dur` seconds from `at`, eased by `ease` (the bezier tuple every
  * Motion key uses; default the house settle-out), then holds `to`. Formatting
  * is done here, arithmetically, with a fixed `,` thousands separator and `.`
@@ -21,12 +24,18 @@ import { Easing, interpolate, useCurrentFrame } from "remotion";
 import { motion } from "../design";
 import { useTheme } from "../ThemeContext";
 
-/** Format `value` with `decimals` places and an optional `,` thousands
- *  separator — locale-independent by construction. Exported for tests. */
-export function formatCount(value: number, decimals: number, thousands: boolean): string {
+/** The most integer digits `pad` may ask for. */
+const MAX_PAD = 12;
+
+/** Format `value` with `decimals` places, an optional `,` thousands
+ *  separator and (B-324) at least `pad` integer digits, zero-filled — a timer
+ *  reads `09.00`, not `9.00`. Locale-independent by construction. Exported for
+ *  tests. */
+export function formatCount(value: number, decimals: number, thousands: boolean, pad = 0): string {
   const places = Math.max(0, Math.min(6, Math.round(decimals)));
   const fixed = Math.abs(value).toFixed(places);
-  const [whole, frac] = fixed.split(".");
+  const [digits, frac] = fixed.split(".");
+  const whole = digits.padStart(Math.max(0, Math.min(MAX_PAD, Math.round(pad))), "0");
   const grouped = thousands ? whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",") : whole;
   const sign = value < 0 && Number(fixed) !== 0 ? "-" : "";
   return `${sign}${grouped}${frac !== undefined ? `.${frac}` : ""}`;
@@ -37,6 +46,8 @@ export const Counter: React.FC<{
   to: number;
   decimals?: number;
   thousands?: boolean;
+  /** minimum integer digits, zero-filled (`2` -> `09`) */
+  pad?: number;
   prefix?: string;
   suffix?: string;
   ease?: readonly [number, number, number, number];
@@ -56,6 +67,7 @@ export const Counter: React.FC<{
   to,
   decimals = 0,
   thousands = true,
+  pad = 0,
   prefix = "",
   suffix = "",
   ease = motion.ease.out,
@@ -96,7 +108,7 @@ export const Counter: React.FC<{
       }}
     >
       {prefix}
-      {formatCount(value, decimals, thousands)}
+      {formatCount(value, decimals, thousands, pad)}
       {suffix}
     </div>
   );

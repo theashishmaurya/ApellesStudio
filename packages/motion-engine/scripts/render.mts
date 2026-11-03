@@ -45,13 +45,12 @@ import {
 } from "@remotion/renderer";
 
 import { manifestRendersAudio } from "./renderAudio.mts";
+import { defaultVideoScale } from "./renderScale.mts";
 
 /** `Config.setChromiumOpenGlRenderer("angle")` in `remotion.config.ts`. */
 const CHROMIUM_OPTIONS: ChromiumOptions = { gl: "angle" };
 /** `Config.setVideoImageFormat("jpeg")`: the frame format a video is encoded from. */
 const VIDEO_FRAME_FORMAT = "jpeg" as const;
-/** `Config.setScale(2)` (D-342): a video renders at 2x its authored size unless told otherwise. */
-const DEFAULT_VIDEO_SCALE = 2;
 /** The one composition a manifest renders through. */
 const DEFAULT_COMPOSITION = "Animation";
 /** The CLI's `--sequence` file names (`element-042.png`); `apelles_motion::still::sequence_frames` reads them. */
@@ -121,7 +120,9 @@ const browserExecutable = values["browser-executable"] ?? null;
 const binariesDirectory = values["binaries-directory"] ?? null;
 const scaleArg = values.scale === undefined ? undefined : Number(values.scale);
 if (scaleArg !== undefined && !(scaleArg > 0)) fail(2, `--scale must be positive, got ${values.scale}`);
-const scale = scaleArg ?? (mode === "video" ? DEFAULT_VIDEO_SCALE : 1);
+// D-342 / B-300: a video without an explicit scale renders 2x while that stays within UHD.
+const scale =
+  scaleArg ?? (mode === "video" ? defaultVideoScale(Number(inputProps.width), Number(inputProps.height)) : 1);
 const concurrency = integer("concurrency", values.concurrency) ?? null;
 
 // With an executable given this only checks it exists; without one (a developer
