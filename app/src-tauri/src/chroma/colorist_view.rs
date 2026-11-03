@@ -20,9 +20,9 @@
 //!   scale → rotate → position, via `edit::composite_layer_onto` itself.
 //!
 //! What it does NOT do, deliberately:
-//! - **No grade.** The Colorist is what *produces* the grade; baking
-//!   `grade_lut::lut_for_clip` in here would show the grade twice (once from
-//!   the LUT, once from the live wgpu pipeline the Colorist renders this frame
+//! - **No grade.** The Colorist is what *produces* the grade; applying
+//!   the clip's grade in here (`grade_pass`) would show the grade twice (once from
+//!   the Edit pass, once from the live wgpu pipeline the Colorist renders this frame
 //!   through) and make every subsequent adjustment compound on itself.
 //! - **No opacity / fade / transition alpha.** Those are how a clip *blends
 //!   into layers beneath it*, and the Colorist canvas has no layers beneath

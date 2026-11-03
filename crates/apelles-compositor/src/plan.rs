@@ -12,7 +12,6 @@
 
 use std::sync::Arc;
 
-use apelles_types::Lut3d;
 use apelles_types::adjustment::AdjustmentOps;
 use image::{RgbImage, RgbaImage};
 
@@ -63,6 +62,21 @@ pub enum Source {
         height: u32,
         rgba: [u8; 4],
     },
+    /// Pixels already on the engine's device (D-450): a clip graded by the
+    /// Colorist's shader, handed over with no CPU read-back.
+    Gpu(GpuImage),
+}
+
+/// An RGBA8 picture in a storage buffer on the engine's own device, rows
+/// `row_pixels` apart (a texture-to-buffer copy pads each row to 256 bytes).
+/// Byte order is an `RgbaImage`'s: red first. The buffer must come from the
+/// device the engine was built on ([`crate::Engine::with_device`]).
+#[derive(Clone)]
+pub struct GpuImage {
+    pub buffer: wgpu::Buffer,
+    pub width: u32,
+    pub height: u32,
+    pub row_pixels: u32,
 }
 
 impl Source {
@@ -71,6 +85,16 @@ impl Source {
             Source::Rgba(img) => img.dimensions(),
             Source::Rgb(img) => img.dimensions(),
             Source::Solid { width, height, .. } => (*width, *height),
+            Source::Gpu(g) => (g.width, g.height),
+        }
+    }
+
+    /// The source's row length in pixels: its width, or a GPU image's padded
+    /// stride.
+    pub fn row_pixels(&self) -> u32 {
+        match self {
+            Source::Gpu(g) => g.row_pixels,
+            other => other.dimensions().0,
         }
     }
 }
@@ -79,14 +103,13 @@ impl Source {
 ///
 /// The CPU compositor this replaced (`chroma::edit::composite_layer_onto`,
 /// D-132/D-217/B-218/D-338/D-344) defined every field's meaning; the kernels
-/// reproduce its order exactly: grade (LUT) → crop → resample into the box →
+/// reproduce its order exactly: crop → resample into the box →
 /// round the box's corners → rotate about the box's centre → opacity → source-over.
 #[derive(Clone)]
 pub struct Layer {
+    /// The layer's pixels. A graded clip's are already graded (D-450: the
+    /// Colorist's shader runs before the plan, on the same device).
     pub source: Source,
-    /// D-256: the clip's baked Colorist grade, applied to its own pixels
-    /// before any geometry.
-    pub lut: Option<Arc<Lut3d>>,
     /// The kept rectangle of the source, `(x0, y0, x1, y1)` exclusive, in
     /// source pixels. Never empty (the caller drops a layer cropped away).
     pub crop: (u32, u32, u32, u32),

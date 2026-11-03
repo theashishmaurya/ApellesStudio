@@ -324,7 +324,7 @@ import { stitchTimelineTranscript, transcriptSources } from './timelineTranscrip
 // B-289 / D-420 — a VAD silence never overlaps a transcribed word.
 import { transcriptWordSpans } from './silenceWords';
 import { framedSilences, parseSilenceOptions, resolveSilences, type SilenceOptions } from './silenceAudio';
-// D-256 — the baked Colorist grade for each clip, behind `editor_get_grade_status`.
+// D-256 / D-450 — each clip's Colorist grade status, behind `editor_get_grade_status`.
 import { warmGradeLuts } from './gradeLuts';
 import {
   darkKey,

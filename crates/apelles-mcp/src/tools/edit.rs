@@ -2443,22 +2443,22 @@ impl ApellesMcp {
     its Colorist grade applied — automatically, with no toggle; see
     `editor_get_capabilities`' `colorist_grade` key for the model. `graded:
     false` covers both "never graded" and "graded, then reset to nothing":
-    either way no LUT is applied at all, and the pixels are identical to a
+    either way no grade is run at all, and the pixels are identical to a
     build without the feature.
 
     **Read `warnings` before trusting an export to match the Colorist tab.**
-    The grade crosses into the Edit tab as a baked 3D LUT, which carries the
-    whole global grade exactly but *cannot* carry anything spatial — a mask /
-    local layer, the Colorist crop, depth relight. Each such drop is listed
-    here, named by clip. An empty `warnings` list means the exported file is
-    the grade, in full.
+    The Edit preview and the export run the Colorist's own grade shader on
+    every frame (D-450), so the whole grade arrives exactly except what is
+    not carried yet — a mask / local layer, the Colorist crop or rotation,
+    depth relight. Each such drop is listed here, named by clip. An empty
+    `warnings` list means the exported file is the grade, in full.
 
     Use it to confirm a grade actually landed on the clip you meant (the link
     is the CLIP id, not the source file — two clips cut from one file grade
     independently, and splitting a graded clip does not copy the grade onto
     the new half), and to check a timeline before `editor_export`.
 
-    Cheap to call repeatedly: each clip's lattice is memoised on its grade
+    Cheap to call repeatedly: each clip's grade is memoised on its grade
     file's own mtime, so asking twice costs nothing."#
     )]
     pub async fn editor_get_grade_status(&self) -> Result<CallToolResult, ErrorData> {

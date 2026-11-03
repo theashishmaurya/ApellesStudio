@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Apelles L1 — the Edit tab's one GPU render engine (wgpu/Metal): layer paint (crop, resample, rounded corners, rotation, opacity, source-over), the baked Colorist grade (3D LUT) and adjustment-clip operators, for the live preview and the export alike (D-449)."
+description = "Apelles L1 — the Edit tab's one GPU render engine (wgpu/Metal): layer paint (crop, resample, rounded corners, rotation, opacity, source-over), adjustment-clip operators, and the GPU-resident pixels of a clip the Colorist's own shader graded on the same device (D-450), for the live preview and the export alike (D-449)."
 
 [dependencies]
 apelles-gpu = { path = "../apelles-gpu" }
@@ -16,3 +16,6 @@ bytemuck = { version = "1.25", features = ["derive"] }
 image = { version = "0.25.10", default-features = false }
 thiserror = { workspace = true }
 log = "0.4"
+
+[dev-dependencies]
+half = "2.7" # the Colorist's own f32 -> f16 conversion, the reference the to_f16 kernel is tested against

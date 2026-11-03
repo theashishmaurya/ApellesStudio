@@ -2353,7 +2353,7 @@ pub fn run() {
             chroma::edit::chroma_timeline_frame,
             chroma::edit::chroma_trim_view_frame,
             chroma::edit::chroma_trim_view_end,
-            chroma::grade_lut::chroma_timeline_grade_luts,
+            chroma::grade_pass::chroma_timeline_grade_luts,
             chroma::edit::chroma_timeline_clip_geometry,
             chroma::caption_render::chroma_measure_caption_bounds,
             chroma::edit::chroma_timeline_composition_size,

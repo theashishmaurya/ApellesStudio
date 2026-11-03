@@ -315,6 +315,7 @@ dependencies = [
  "apelles-gpu",
  "apelles-types",
  "bytemuck",
+ "half",
  "image",
  "log",
  "pollster",

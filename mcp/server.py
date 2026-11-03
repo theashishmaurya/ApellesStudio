@@ -1295,30 +1295,30 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "with editor_get_grade_status."
         ),
         "what_it_carries": (
-            "The GLOBAL grade, exactly: exposure, contrast, curves, colour "
-            "wheels, HSL, and an applied .cube. It is carried as a 33-cube "
-            "3D LUT baked by running an identity lattice through the "
-            "Colorist's own GPU pipeline once, so the Edit preview and the "
-            "export apply the identical numbers (one compositor, D-448). "
-            "What a 3D LUT CANNOT carry is anything spatial: mask/local "
-            "layers, the Colorist crop, depth relight, and the effects that "
-            "read neighbouring pixels or the frame position (sharpening, "
-            "clarity, structure, dehaze, centre, noise reduction, vignette, "
-            "grain, chromatic aberration, glow, halation, flare, lens blur; "
-            "B-381). Each is left out and reported — as a warning in "
-            "editor_get_grade_status, in the Export panel before you "
-            "export, and in the app log. Contrast, shadows, highlights, "
-            "whites and blacks are local operators in the Colorist: the LUT "
-            "carries their flat-area response, so textured areas can differ "
-            "a little, and that is warned too. If editor_get_grade_status "
-            "lists warnings for a clip, the Edit preview and the exported "
+            "The whole grade, exactly, except the parts named below (D-450): "
+            "exposure, contrast, curves, colour wheels, HSL, an applied "
+            ".cube, the local tone operators (shadows, highlights, whites, "
+            "blacks) and the effects that read neighbouring pixels or the "
+            "frame position (sharpening, clarity, structure, dehaze, centre, "
+            "noise reduction, vignette, grain, chromatic aberration, glow, "
+            "halation, flare). The Edit preview and the export run the "
+            "Colorist's own grade shader on every frame of a graded clip, so "
+            "an exported frame is the Colorist's render of it, bit for bit. "
+            "Not carried yet: mask/local layers, the Colorist crop, rotation "
+            "and flips, and depth relight. Each is left out and reported — "
+            "as a warning in editor_get_grade_status, in the Export panel "
+            "before you export, and in the app log. If "
+            "editor_get_grade_status lists warnings for a clip, the exported "
             "file will legitimately differ from what the Colorist tab shows "
-            "for it; nothing else will."
+            "for it; nothing else will. The Edit PREVIEW grades the smaller "
+            "frame it decodes (a 960-px long edge), so it is a close preview "
+            "of the grade, not a pixel copy of it; the export grades every "
+            "frame at full size."
         ),
         "identity_is_nothing": (
-            "A clip that was never graded, or whose grade was reset, has NO "
-            "LUT applied at all — not an identity one — so its preview and "
-            "its exported pixels are bit-identical to a build without this "
+            "A clip that was never graded, or whose grade was reset, runs NO "
+            "grade at all — not an identity one — so its preview and its "
+            "exported pixels are bit-identical to a build without this "
             "feature. `graded: false` from editor_get_grade_status means "
             "exactly that, and covers both 'no grade file' and 'a grade file "
             "that does nothing'."
@@ -1794,22 +1794,22 @@ def editor_get_grade_status() -> str:
     its Colorist grade applied — automatically, with no toggle; see
     `editor_get_capabilities`' `colorist_grade` key for the model. `graded:
     false` covers both "never graded" and "graded, then reset to nothing":
-    either way no LUT is applied at all, and the pixels are identical to a
+    either way no grade is run at all, and the pixels are identical to a
     build without the feature.
 
     **Read `warnings` before trusting an export to match the Colorist tab.**
-    The grade crosses into the Edit tab as a baked 3D LUT, which carries the
-    whole global grade exactly but *cannot* carry anything spatial — a mask /
-    local layer, the Colorist crop, depth relight. Each such drop is listed
-    here, named by clip. An empty `warnings` list means the exported file is
-    the grade, in full.
+    The Edit preview and the export run the Colorist's own grade shader on
+    every frame (D-450), so the whole grade arrives exactly except what is
+    not carried yet — a mask / local layer, the Colorist crop or rotation,
+    depth relight. Each such drop is listed here, named by clip. An empty
+    `warnings` list means the exported file is the grade, in full.
 
     Use it to confirm a grade actually landed on the clip you meant (the link
     is the CLIP id, not the source file — two clips cut from one file grade
     independently, and splitting a graded clip does not copy the grade onto
     the new half), and to check a timeline before `editor_export`.
 
-    Cheap to call repeatedly: each clip's lattice is memoised on its grade
+    Cheap to call repeatedly: each clip's grade is memoised on its grade
     file's own mtime, so asking twice costs nothing."""
     import json
 

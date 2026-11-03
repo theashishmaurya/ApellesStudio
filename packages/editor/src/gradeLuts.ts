@@ -1,31 +1,30 @@
 /**
  * @apelles/editor — the Edit tab's export pre-flight for each clip's
- * **Colorist grade** (D-256, D-448).
+ * **Colorist grade** (D-256, D-448, D-450).
  *
  * **What it is:** one call, [`warmGradeLuts`], to `chroma_timeline_grade_luts`
- * — the backend baking every graded clip's `grade.json` through the Colorist's
- * own wgpu pipeline into the lattice cache the compositor grades with
- * (`app/src-tauri/src/chroma/grade_lut.rs`), and naming what each grade cannot
- * carry (a mask, a Colorist crop, a vignette, grain …; B-381).
+ * — the backend reading every graded clip's `grade.json` into the memo the
+ * render engine grades from (`app/src-tauri/src/chroma/grade_pass.rs`, which
+ * runs the Colorist's own shader on each frame), and naming what each grade
+ * does not carry yet (a mask, the Colorist crop / geometry, relight; D-450).
  *
- * **Why it runs before an export is queued:** a grade that fails to bake is a
+ * **Why it runs before an export is queued:** a grade that cannot be read is a
  * refusal, not a silent ungraded file — `prepareEditorExport` turns the
  * rejection into a named error — and what a grade cannot carry is shown in the
  * Export panel before the person presses Export (`EditorExportDialog.tsx`).
  *
- * **What it does NOT do:** no baking, no grade maths. The lattice never enters
- * the frontend, and since D-448 no `.cube` file is written: the compositor
- * reads the lattice from the backend's own cache.
+ * **What it does NOT do:** no grade maths. The grade never enters the
+ * frontend, and no `.cube` file is written (D-448).
  */
 import { invoke } from '@tauri-apps/api/core';
 
 import type { Timeline } from './timeline';
 
-/** Mirrors `chroma::grade_lut::GradeCheck` (serde `camelCase`). */
+/** Mirrors `chroma::grade_pass::GradeCheck` (serde `camelCase`). */
 export interface GradeCheck {
   /** The clips with a real, non-identity grade. */
   graded: string[];
-  /** What baking had to leave out, already prefixed with the clip id. */
+  /** What the grade does not carry yet, already prefixed with the clip id. */
   warnings: string[];
 }
 
@@ -44,14 +43,13 @@ function clipIdsOf(tl: Timeline): string[] {
 }
 
 /**
- * Bake (or reuse) the grade of every graded clip on `tl` and return what the
- * export cannot carry of them.
+ * Read (or reuse) the grade of every graded clip on `tl` and return what the
+ * export does not carry of them.
  *
- * Cheap and idempotent in the normal case: the backend memoises each lattice on
- * its grade file's own (mtime, len), so a repeat call re-bakes nothing. A
- * timeline with no graded clip at all never even creates a GPU device.
+ * Cheap and idempotent: the backend memoises each grade on its file's own
+ * (mtime, len), and reading one touches no GPU.
  *
- * Throws if a clip's grade could not be baked — deliberately, so the export
+ * Throws if a clip's grade could not be read — deliberately, so the export
  * fails loudly rather than shipping without the grade.
  */
 export async function warmGradeLuts(tl: Timeline): Promise<GradeCheck> {

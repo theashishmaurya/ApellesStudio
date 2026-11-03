@@ -1,44 +1,20 @@
-//! **grade_lut.rs — the Colorist ⇄ Edit grade bridge** (D-256).
+//! **grade_lut.rs — a Colorist grade baked into a 3D LUT** (D-256, D-450).
 //!
-//! What it is: the one place that turns a clip's saved Colorist grade
-//! (`<project>/grades/<clip.id>.grade.json`, D-025/D-070) into a baked
-//! [`Lut3d`] — by running an identity RGB lattice through **the real Colorist
-//! wgpu pipeline** — plus the process-wide cache that keeps a live preview from
-//! re-baking one per frame.
+//! What it is: [`BakeSession::bake`] / [`bake_lut3d`] turn a grade document's
+//! `adjustments` into a [`Lut3d`] by running an identity RGB lattice through
+//! **the real Colorist wgpu pipeline**, and read the result back. That is the
+//! Colorist's own "bake this grade to a `.cube`" export
+//! (`chroma::export`), a file a person takes to another tool.
 //!
-//! What it does: [`bake_lut3d`] renders the lattice through
-//! `render_core::render` exactly as a graded frame would be rendered, and reads
-//! the result back as a lattice; [`lut_for_clip`] resolves a `Clip` id to
-//! `Some(lut)` / `None` against the open project, memoised on the grade file's
-//! own (mtime, len). The lattice is applied to a clip's pixels by the GPU
-//! render engine (`apelles_compositor`, D-449), the first step of painting
-//! that clip.
+//! What it is no longer (D-450): how a grade reaches the Edit tab or its
+//! export. Those run the Colorist's shader per frame on the GPU render
+//! engine's device (`chroma::grade_pass`), which carries everything the shader
+//! does, so the lattice, its per-clip cache and the Export panel's pre-flight
+//! that lived here are gone.
 //!
 //! What it does NOT do: no `.cube` parsing (the app's `lut_processing` owns
 //! that direction), no lattice maths (that is `apelles_types::lut3d`, pure and
-//! unit-tested there), no timeline knowledge, no filtergraph knowledge. It does
-//! **not** carry the spatial half of a grade — see "What a LUT cannot carry"
-//! below; that is a documented, warned-about limit, not an oversight.
-//!
-//! ## Why a baked lattice, and not the shader itself (D-256)
-//!
-//! `apelles_types::adjustment`'s header states the obstacle this module removes,
-//! and states it correctly: the Colorist's `adjustments` blob is untyped in
-//! Rust and is applied *only* by RapidRAW's wgpu shader, the Edit compositor is
-//! deliberately GPU-free, and the ffmpeg exporter could never reproduce a
-//! shader — so wiring the Edit tab "straight into the grade" would have meant
-//! either a second CPU implementation of the whole grading stack (two
-//! implementations to keep in step: the exact defect class B-090/B-095/B-098
-//! were) or a guaranteed preview-vs-export divergence.
-//!
-//! Baking sidesteps both. The shader stays the *only* implementation of the
-//! grade maths — it is what renders the lattice — and what crosses into the
-//! compositor is 3×33³ numbers, interpolated per pixel by the GPU render
-//! engine with `Lut3d::apply_rgb8`'s own arithmetic (D-449: manual trilinear
-//! fetches, never a hardware sampler). The Edit preview and the export are
-//! drawn by that one engine (D-449, D-449), so they agree *by construction*.
-//! (Until D-448 an ffmpeg filter-graph export read the same lattice as a
-//! `.cube` through `lut3d`; that path is gone.)
+//! unit-tested there), no timeline knowledge.
 //!
 //! ## What a LUT cannot carry
 //!
@@ -49,39 +25,23 @@
 //! sharpening, clarity, vignette, grain …). [`bake_lut3d`] strips those
 //! before baking (they would also distort the lattice image itself — a crop
 //! applied to a 33×1089 lattice is meaningless) and returns a warning naming
-//! each one it dropped, which [`lut_for_clip`] logs once per bake rather than
-//! once per frame. The clip's *global* grade — exposure, contrast, curves,
-//! colour wheels, HSL, an applied `.cube`, everything the primary panel does —
-//! is carried exactly.
+//! each one it dropped. The grade's *global* part — exposure, contrast,
+//! curves, colour wheels, HSL, an applied `.cube`, everything the primary
+//! panel does — is carried exactly.
 //!
 //! ## Determinism (CLAUDE.md's render-path invariant)
 //!
-//! Same grade document ⇒ same lattice ⇒ same pixels. The bake reads only the
-//! grade JSON; the cache is keyed on the grade file's (mtime, len) but that is
-//! a staleness check, never an input to the maths — a cache hit and a cold bake
-//! of the same file produce the same `Lut3d`. `sample_trilinear` is pure `f32`
-//! arithmetic with no accumulation order to vary.
-//!
-//! Fork hygiene (D-003): all new code, in a new file. Upstream footprint is
-//! `pub mod grade_lut;` in `chroma/mod.rs` and the `generate_handler!` line in
-//! `lib.rs` for `chroma_timeline_grade_luts`. Divergence logged in
-//! `docs/09-engine-notes.md`.
+//! Same grade document ⇒ same lattice. The bake reads only the grade JSON.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use apelles_types::Lut3d;
-use apelles_types::lut3d::{DEFAULT_SIZE, IDENTITY_TOL};
 use image::{DynamicImage, RgbImage};
-use once_cell::sync::Lazy;
 use serde_json::{Value, json};
 
 use crate::gpu_processing::RenderRequest;
 use crate::image_processing::{GpuContext, get_all_adjustments_from_json};
 use crate::render_core::{self, OwnedRenderCaches};
-
-use super::state;
 
 /// The `.cube` `TITLE` written for a baked clip grade, and the `caller_id` the
 /// render is tagged with in the GPU profiler.
@@ -368,278 +328,10 @@ pub fn bake_lut3d(
     BakeSession::new()?.bake(js_adjustments, size, chain_source_lut)
 }
 
-// --------------------------------------------------------------------------- //
-// grade file → LUT, memoised
-// --------------------------------------------------------------------------- //
-
-/// `<project>/grades/<clip_id>.grade.json` — where the Colorist writes a clip's
-/// grade (D-025's document, at D-070's clip-id-keyed name).
-pub fn grade_file_for(project_dir: &Path, clip_id: &str) -> PathBuf {
-    apelles_project::grade_dir(project_dir).join(format!("{clip_id}.grade.json"))
-}
-
-/// A grade file's staleness fingerprint: (mtime nanos, length). Never an input
-/// to the bake — only a "has this file changed since we baked it" test. See the
-/// module doc's determinism note.
-type Fingerprint = (i128, u64);
-
-fn fingerprint(path: &Path) -> Option<Fingerprint> {
-    let meta = std::fs::metadata(path).ok()?;
-    let mtime = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_nanos() as i128)
-        .unwrap_or(0);
-    Some((mtime, meta.len()))
-}
-
-/// What one clip's grade file resolved to.
-#[derive(Clone)]
-pub struct ClipGrade {
-    /// The lattice, or `None` for a grade that bakes to the identity — see
-    /// [`resolve_clip_lut`]'s doc for why an identity grade resolves to no
-    /// lattice at all rather than to an identity one.
-    pub lut: Option<Arc<Lut3d>>,
-    /// What baking had to drop (see the module doc's "What a LUT cannot
-    /// carry"). Carried on the cached entry, not just logged at bake time, so
-    /// the Export dialog can show the user the cases where the exported file
-    /// legitimately will not match the Colorist tab.
-    pub warnings: Vec<String>,
-}
-
-/// What a grade file resolved to, once.
-///
-/// **Three states, not two, and the third is why.** `Ok(lut: None)` and `Err`
-/// are both "no lattice to apply", but the two callers must treat them
-/// completely differently: the live preview shows the ungraded picture either
-/// way (a broken bake must not blank the Edit tab), while the *export* must
-/// refuse outright on `Err` — an export that silently drops a grade the preview
-/// was showing is precisely the preview-vs-export divergence this decision
-/// exists to prevent. Collapsing them into `Option` is what would make that
-/// silent.
-type Resolved = Result<ClipGrade, String>;
-
-/// One memoised answer + the fingerprint it was baked against. Caching a
-/// failure matters as much as caching a success: without it a structural error
-/// (no GPU adapter) would retry a full bake on every single preview frame.
-type CacheEntry = (Fingerprint, Resolved);
-
-static LUT_CACHE: Lazy<Mutex<HashMap<PathBuf, CacheEntry>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
-/// Drop every memoised bake.
-///
-/// `#[cfg(test)]` because nothing in a running app needs it: entries are keyed
-/// by absolute path *and* fingerprint, so a stale one is impossible by
-/// construction and the only cost of keeping them is a few hundred kB. What
-/// does need it is a test that writes two different grades to the same temp
-/// path — possibly inside one filesystem timestamp tick, where (mtime, len)
-/// would look unchanged. Gated rather than left `pub` so it does not read as
-/// dead code in a shipped build (CLAUDE.md: no dead code).
-#[cfg(test)]
-pub fn clear_cache() {
-    if let Ok(mut c) = LUT_CACHE.lock() {
-        c.clear();
-    }
-}
-
-/// The baked grade for `clip_id` in the currently-open project, or `None` when
-/// there is no project, no grade file, or the grade bakes to the identity.
-///
-/// **`None` for an identity grade is deliberate** and is what keeps an
-/// ungraded — or graded-then-reset — clip's preview byte-identical to what it
-/// was before D-256: no LUT is applied at all, rather than an identity LUT
-/// whose 8-bit round trip could still shift a value. Same "an untouched effect
-/// emits nothing" property D-230's adjustment clip has in both engines.
-///
-/// A bake failure (no GPU adapter, a corrupt grade file) is logged and treated
-/// as `None` here rather than propagated: a preview that shows the ungraded
-/// picture is a far better failure than an Edit tab that renders nothing at
-/// all. The export path calls [`resolve_clip_lut`] instead and **refuses** on
-/// the same error, because there silently dropping a grade is the worse
-/// failure — see [`Resolved`].
-pub fn lut_for_clip(clip_id: &str) -> Option<Arc<Lut3d>> {
-    match resolve_clip_lut(clip_id, None) {
-        Ok(grade) => grade.lut,
-        Err(e) => {
-            log::warn!("[chroma::grade_lut] clip {clip_id}: {e} — previewing ungraded");
-            None
-        }
-    }
-}
-
-/// Resolve `clip_id` to its baked lattice against the open project, memoised.
-///
-/// `Ok` with `lut: None` = nothing to apply (no project, no grade file, or a
-/// grade that bakes to the identity). `Err` = there IS a grade here and it could
-/// not be baked — never conflated with the former (see [`Resolved`]).
-///
-/// **An identity grade resolves to no lattice at all**, deliberately: it keeps
-/// an ungraded — or graded-then-reset — clip's preview byte-identical to what it
-/// was before D-256, rather than running it through an identity LUT whose 8-bit
-/// round trip could still shift a value. Same "an untouched effect emits
-/// nothing" property D-230's adjustment clip has in both engines.
-///
-/// `session` lets a batch caller (the export's [`check_clip_grades`]) share
-/// one GPU device across every clip instead of creating one per bake; `None`
-/// makes a throwaway session, which is what the single-clip preview path wants.
-pub fn resolve_clip_lut(clip_id: &str, session: Option<&BakeSession>) -> Resolved {
-    let nothing = || ClipGrade {
-        lut: None,
-        warnings: Vec::new(),
-    };
-    let Some(project) = state::current_project() else {
-        return Ok(nothing());
-    };
-    let path = grade_file_for(&project.path, clip_id);
-    let Some(fp) = fingerprint(&path) else {
-        return Ok(nothing()); // no grade file for this clip — the common case
-    };
-
-    if let Ok(cache) = LUT_CACHE.lock()
-        && let Some((cached_fp, resolved)) = cache.get(&path)
-        && *cached_fp == fp
-    {
-        return resolved.clone();
-    }
-
-    let resolved = bake_clip_grade(&path, DEFAULT_SIZE, session).map(|baked| {
-        for w in &baked.warnings {
-            // Once per bake, not once per frame — see the module doc.
-            log::warn!("[chroma::grade_lut] clip {clip_id}: {w}");
-        }
-        ClipGrade {
-            lut: (!baked.lut.is_identity(IDENTITY_TOL)).then(|| Arc::new(baked.lut)),
-            warnings: baked.warnings,
-        }
-    });
-    if let Ok(mut cache) = LUT_CACHE.lock() {
-        cache.insert(path, (fp, resolved.clone()));
-    }
-    resolved
-}
-
-/// Read one `grade.json` and bake its `adjustments`. Loads through
-/// `apelles_grade_model::load_grade`, the same loader the Colorist itself uses,
-/// so schema migration happens exactly once in exactly one place.
-pub fn bake_clip_grade(
-    grade_path: &Path,
-    size: u32,
-    session: Option<&BakeSession>,
-) -> Result<BakedGrade, String> {
-    let grade = apelles_grade_model::load_grade(&grade_path.to_string_lossy())?;
-    let adjustments = grade
-        .get("adjustments")
-        .cloned()
-        .ok_or_else(|| format!("{} has no `adjustments`", grade_path.display()))?;
-    match session {
-        Some(s) => s.bake(&adjustments, size, true),
-        None => bake_lut3d(&adjustments, size, true),
-    }
-}
-
-// --------------------------------------------------------------------------- //
-// the export side: every graded clip baked, and what a LUT cannot carry named
-// --------------------------------------------------------------------------- //
-
-/// What [`check_clip_grades`] hands the frontend.
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GradeCheck {
-    /// The clips that have a real, non-identity grade — the ones the
-    /// compositor will grade. A clip absent from this list has nothing to
-    /// apply, which is exactly what the preview does for it too.
-    pub graded: Vec<String>,
-    /// Everything baking had to leave out (masks, a Colorist crop, the spatial
-    /// effects), already prefixed with the clip — shown in the Export panel
-    /// before the export runs, because these are the cases where the file
-    /// legitimately will NOT match the Colorist tab and the user has to know.
-    pub warnings: Vec<String>,
-}
-
-/// Bake every graded clip in `clip_ids` into the process-wide lattice cache
-/// the compositor reads ([`resolve_clip_lut`]), and report what each grade
-/// could not carry — the export's pre-flight (D-256; D-448 dropped the `.cube`
-/// files the deleted ffmpeg filter path read).
-///
-/// **One [`BakeSession`] for the whole batch**: `init_gpu_context` is the
-/// expensive part of a bake, and a 30-clip timeline must not mean 30 GPU
-/// devices.
-///
-/// Errors rather than skipping. A clip that HAS a grade whose bake failed comes
-/// back as `Err`, so the export is refused instead of shipping a file that
-/// silently disagrees with the preview; the render checks again before it
-/// draws ([`super::edit_render`]'s grade pre-flight), for a grade edited while
-/// the job waited in the queue.
-pub fn check_clip_grades(clip_ids: &[String]) -> Result<GradeCheck, String> {
-    let Some(project) = state::current_project() else {
-        return Ok(GradeCheck {
-            graded: Vec::new(),
-            warnings: Vec::new(),
-        });
-    };
-    // Nothing to do at all unless at least one clip actually has a grade file —
-    // the common case, and worth not creating a GPU device for.
-    let with_file: Vec<&String> = clip_ids
-        .iter()
-        .filter(|id| grade_file_for(&project.path, id).is_file())
-        .collect();
-    // Built lazily: every clip may already be memoised from the preview, in
-    // which case this whole call touches no GPU at all.
-    let mut session: Option<BakeSession> = None;
-    let mut graded = Vec::new();
-    let mut warnings = Vec::new();
-    for clip_id in with_file {
-        if session.is_none() && !is_memoised(&project.path, clip_id) {
-            session = Some(BakeSession::new()?);
-        }
-        let grade = resolve_clip_lut(clip_id, session.as_ref())
-            .map_err(|e| format!("clip {clip_id}: {e}"))?;
-        warnings.extend(
-            grade
-                .warnings
-                .iter()
-                .map(|w| format!("clip {clip_id}: {w}")),
-        );
-        if grade.lut.is_some() {
-            graded.push(clip_id.clone());
-        }
-    }
-    Ok(GradeCheck { graded, warnings })
-}
-
-/// Is this clip's grade already memoised at its current fingerprint? Only used
-/// to decide whether a batch bake needs a GPU device at all.
-fn is_memoised(project_dir: &Path, clip_id: &str) -> bool {
-    let path = grade_file_for(project_dir, clip_id);
-    let Some(fp) = fingerprint(&path) else {
-        return true; // nothing to bake
-    };
-    LUT_CACHE
-        .lock()
-        .ok()
-        .and_then(|c| c.get(&path).map(|(cached, _)| *cached == fp))
-        .unwrap_or(false)
-}
-
-/// Bake the grades an Edit-tab export draws, for the clips the caller names,
-/// and report what they cannot carry. See [`check_clip_grades`].
-///
-/// Off the Tauri main thread (`spawn_blocking`) for `chroma_timeline_frame`'s
-/// reason — a cold batch is real GPU work and the window's event loop must not
-/// wait on it.
-#[tauri::command]
-pub async fn chroma_timeline_grade_luts(clip_ids: Vec<String>) -> Result<GradeCheck, String> {
-    tokio::task::spawn_blocking(move || check_clip_grades(&clip_ids))
-        .await
-        .map_err(|e| format!("grade lut bake task: {e}"))?
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::RgbaImage;
+    use apelles_types::lut3d::{DEFAULT_SIZE, IDENTITY_TOL};
 
     fn gpu_or_skip(what: &str) -> bool {
         if render_core::init_gpu_context().is_err() {
@@ -806,104 +498,5 @@ mod tests {
             a.warnings
         );
         assert_eq!(a.lut.data(), b.lut.data());
-    }
-
-    /// The engine applies a lattice to a clip's pixels (D-449: on the GPU, the
-    /// only place a grade is applied to a frame) leaving alpha alone (the
-    /// compositor owns it) and really changing colour.
-    #[test]
-    fn applying_a_lattice_changes_colour_and_preserves_alpha() {
-        // "half the red", built by hand.
-        let n = 5usize;
-        let mut data = vec![0.0f32; 3 * n * n * n];
-        for b in 0..n {
-            for g in 0..n {
-                for r in 0..n {
-                    let i = ((b * n + g) * n + r) * 3;
-                    data[i] = (r as f32 / 4.0) * 0.5;
-                    data[i + 1] = g as f32 / 4.0;
-                    data[i + 2] = b as f32 / 4.0;
-                }
-            }
-        }
-        let lut = Arc::new(Lut3d::new(5, data).unwrap());
-        let img = Arc::new(RgbaImage::from_pixel(
-            4,
-            4,
-            image::Rgba([200, 100, 50, 128]),
-        ));
-        let img = super::super::gpu_compositor::grade(&img, &lut).expect("GPU grade");
-        let px = img.get_pixel(0, 0);
-        assert_eq!(px[0], 100, "red should halve");
-        assert_eq!(px[1], 100);
-        assert_eq!(px[2], 50);
-        assert_eq!(px[3], 128, "alpha must be untouched");
-    }
-
-    /// **The preview has to stay snappy** (CLAUDE.md: performance first).
-    ///
-    /// Applying the lattice is the one per-pixel cost a graded clip adds to a
-    /// frame. On the CPU it measured 22 ms serial / 3 ms row-parallel for a
-    /// 960×540 preview frame; on the GPU engine it is one pass of the layer's
-    /// prepare kernel. This times a whole frame through the engine, a graded
-    /// 4K layer composited 1:1 against the same frame ungraded, and bounds what
-    /// the grade adds.
-    #[test]
-    fn a_graded_layer_stays_inside_the_frame_budget() {
-        if !gpu_or_skip("a_graded_layer_stays_inside_the_frame_budget") {
-            return;
-        }
-        const BUDGET_MS: f64 = 4.0;
-        let baked = bake_lut3d(
-            &json!({ "exposure": 0.8, "contrast": 20.0 }),
-            DEFAULT_SIZE,
-            true,
-        )
-        .expect("bake");
-        let lut = Arc::new(baked.lut);
-        let img = Arc::new(image::RgbImage::from_fn(3840, 2160, |x, y| {
-            image::Rgb([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8])
-        }));
-        let plan = |lut: Option<Arc<Lut3d>>| apelles_compositor::FramePlan {
-            width: 3840,
-            height: 2160,
-            background: apelles_compositor::Background::Solid([0, 0, 0, 255]),
-            steps: vec![apelles_compositor::Step::Paint(apelles_compositor::Layer {
-                source: apelles_compositor::Source::Rgb(img.clone()),
-                lut,
-                crop: (0, 0, 3840, 2160),
-                size: (3840, 2160),
-                origin: (0.0, 0.0),
-                opacity: 1.0,
-                corner_radius: 0.0,
-                rotation_deg: 0.0,
-            })],
-        };
-        let best = |p: &apelles_compositor::FramePlan| {
-            (0..5)
-                .map(|_| {
-                    let t = std::time::Instant::now();
-                    super::super::gpu_compositor::render(p).expect("GPU render");
-                    t.elapsed().as_secs_f64() * 1000.0
-                })
-                .fold(f64::INFINITY, f64::min)
-        };
-        let plain = best(&plan(None));
-        let graded = best(&plan(Some(lut)));
-        eprintln!("4K frame through the engine: {plain:.2} ms ungraded, {graded:.2} ms graded");
-        assert!(
-            graded - plain < BUDGET_MS,
-            "the grade adds {:.2} ms to a 4K frame, over the {BUDGET_MS} ms budget",
-            graded - plain
-        );
-    }
-
-    #[test]
-    fn grade_file_path_is_the_d070_clip_keyed_name() {
-        let p = grade_file_for(Path::new("/tmp/My.chroma"), "clip-abc");
-        assert_eq!(
-            p,
-            PathBuf::from("/tmp/My.chroma/grades/clip-abc.grade.json")
-        );
     }
 }

@@ -29,7 +29,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use apelles_types::Lut3d;
 use image::RgbaImage;
 use wgpu::util::DeviceExt as _;
 
@@ -41,7 +40,7 @@ use crate::tables;
 /// above that, so it only ever fires on a real fault.
 pub const GPU_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// The bytes the shared-source cache (titles, stills, grade lattices kept on
+/// The bytes the shared-source cache (titles and stills kept on
 /// the GPU while the caller keeps them) may hold. A 4K title is 33 MB.
 const SHARED_CACHE_BYTES: u64 = 512 * 1024 * 1024;
 
@@ -75,6 +74,7 @@ struct Kernels {
     overlay: wgpu::ComputePipeline,
     adjust: wgpu::ComputePipeline,
     fill: wgpu::ComputePipeline,
+    to_f16: wgpu::ComputePipeline,
 }
 
 struct PooledBuffer {
@@ -88,7 +88,7 @@ struct Pool {
     free: Vec<PooledBuffer>,
 }
 
-/// A source the caller holds in its own cache (a title, a still, a lattice),
+/// A source the caller holds in its own cache (a title, a still),
 /// kept on the GPU while the caller still shares it.
 struct SharedEntry {
     // Holding the Arc is what makes the pointer key sound: the allocation it
@@ -114,6 +114,14 @@ pub struct Engine {
     pool: Mutex<Pool>,
     shared: Mutex<SharedCache>,
     dummy: wgpu::Buffer,
+    /// `tables::half_of_u8`, for `to_f16.wgsl`.
+    half_of_u8: wgpu::Buffer,
+    /// `write_f16_texture`'s source buffer, kept for the next frame of the same
+    /// size or smaller. Reusing it is safe because `queue.write_buffer` is
+    /// ordered after every submission already on the queue (the previous
+    /// frame's conversion reads it first), and it spares a fresh 25 MB
+    /// mapped allocation per 4K frame.
+    f16_source: Mutex<Option<wgpu::Buffer>>,
     counters: Counters,
 }
 
@@ -182,8 +190,17 @@ struct PrepareParams {
     crop_y0: u32,
     crop_w: u32,
     crop_h: u32,
-    lut_n: u32,
     solid: u32,
+    _pad: u32,
+}
+
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct ToF16Params {
+    src_w: u32,
+    kind: u32,
+    width: u32,
+    height: u32,
 }
 
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -379,11 +396,17 @@ impl Engine {
             overlay: k("overlay", include_str!("kernels/overlay.wgsl")),
             adjust: k("adjust", include_str!("kernels/adjust.wgsl")),
             fill: k("fill", include_str!("kernels/fill.wgsl")),
+            to_f16: k("to_f16", include_str!("kernels/to_f16.wgsl")),
         };
         let limits = device.limits();
         let max_binding = limits
             .max_storage_buffer_binding_size
             .min(limits.max_buffer_size);
+        let half_of_u8 = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("apelles-compositor half of u8"),
+            contents: bytemuck::cast_slice(&tables::half_of_u8()),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
         let dummy = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("apelles-compositor unused binding"),
             size: 16,
@@ -398,8 +421,17 @@ impl Engine {
             pool: Mutex::new(Pool::default()),
             shared: Mutex::new(SharedCache::default()),
             dummy,
+            half_of_u8,
+            f16_source: Mutex::new(None),
             counters: Counters::default(),
         }
+    }
+
+    /// The device and queue the engine draws on. A pass that hands the engine
+    /// GPU-resident pixels ([`crate::Source::Gpu`], D-450) must allocate them
+    /// here.
+    pub fn device_and_queue(&self) -> (&Arc<wgpu::Device>, &Arc<wgpu::Queue>) {
+        (&self.device, &self.queue)
     }
 
     fn count_upload(&self, bytes: usize) {
@@ -747,42 +779,23 @@ impl Engine {
             }
             Source::Rgb(img) => (frame.upload(img.as_raw())?, 1, 0),
             Source::Solid { rgba, .. } => (self.dummy.clone(), 2, u32::from_le_bytes(*rgba)),
+            // Already on this device (D-450), packed RGBA8 like `Rgba`, read
+            // with its own row stride.
+            Source::Gpu(g) => (g.buffer.clone(), 0, 0),
         })
     }
 
-    fn lut_buffer(&self, lut: &Arc<Lut3d>) -> Result<wgpu::Buffer, ComposeError> {
-        let key = Arc::as_ptr(lut) as usize;
-        let keep: Arc<dyn std::any::Any + Send + Sync> = lut.clone();
-        self.shared_buffer(key, keep, bytemuck::cast_slice(lut.data()))
-    }
-
-    /// Record the prepare pass for `layer`: its crop, widened and graded.
+    /// Record the prepare pass for `source`: its crop, as packed RGBA8.
     fn record_prepare(
         &self,
         frame: &mut Frame<'_>,
         source: &Source,
-        lut: Option<&Arc<Lut3d>>,
         crop: (u32, u32, u32, u32),
     ) -> Result<wgpu::Buffer, ComposeError> {
         let (src, kind, solid) = self.source_buffer(frame, source)?;
-        self.record_prepare_from(frame, (&src, kind, solid, source.dimensions().0), lut, crop)
-    }
-
-    /// [`Self::record_prepare`] from a source already on the GPU:
-    /// `(buffer, kind, solid colour, row width)`.
-    fn record_prepare_from(
-        &self,
-        frame: &mut Frame<'_>,
-        (src, kind, solid, src_w): (&wgpu::Buffer, u32, u32, u32),
-        lut: Option<&Arc<Lut3d>>,
-        crop: (u32, u32, u32, u32),
-    ) -> Result<wgpu::Buffer, ComposeError> {
+        let src_w = source.row_pixels();
         let (cx0, cy0, cx1, cy1) = crop;
         let (crop_w, crop_h) = (cx1 - cx0, cy1 - cy0);
-        let (lut_buf, lut_n) = match lut {
-            Some(l) => (self.lut_buffer(l)?, l.size()),
-            None => (self.dummy.clone(), 0),
-        };
         let out = frame.buffer(
             u64::from(crop_w) * u64::from(crop_h) * 4,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -794,16 +807,11 @@ impl Engine {
             crop_y0: cy0,
             crop_w,
             crop_h,
-            lut_n,
             solid,
+            _pad: 0,
         };
         let k = &self.kernels.prepare;
-        frame.dispatch(
-            k,
-            uniform_bytes(&p),
-            &[src, &lut_buf, &out],
-            (crop_w, crop_h),
-        );
+        frame.dispatch(k, uniform_bytes(&p), &[&src, &out], (crop_w, crop_h));
         Ok(out)
     }
 
@@ -833,8 +841,7 @@ impl Engine {
             let Some(t) = tables::sample_tables(layer, (cw, ch)) else {
                 return Ok(());
             };
-            let prepared =
-                self.record_prepare(frame, &layer.source, layer.lut.as_ref(), layer.crop)?;
+            let prepared = self.record_prepare(frame, &layer.source, layer.crop)?;
             let cols = frame.upload(bytemuck::cast_slice(&t.cols))?;
             let rows = frame.upload(bytemuck::cast_slice(&t.rows))?;
             let (wx0, wy0, wx1, wy1) = t.window;
@@ -872,7 +879,7 @@ impl Engine {
         if wx1 <= wx0 || wy1 <= wy0 {
             return Ok(());
         }
-        let prepared = self.record_prepare(frame, &layer.source, layer.lut.as_ref(), layer.crop)?;
+        let prepared = self.record_prepare(frame, &layer.source, layer.crop)?;
         let storage = wgpu::BufferUsages::STORAGE;
         let (vspans, vweights) = tables::triangle_weights(crop_h, sh);
         let (hspans, hweights) = tables::triangle_weights(crop_w, sw);
@@ -947,62 +954,152 @@ impl Engine {
         Ok(())
     }
 
-    /// Apply `lut` to `img` (alpha untouched) and return the graded picture:
-    /// the prepare kernel on its own, for a caller that has to draw on the
-    /// graded pixels before they are composited (clip highlights, D-396).
-    pub fn grade(&self, img: &Arc<RgbaImage>, lut: &Arc<Lut3d>) -> Result<RgbaImage, ComposeError> {
-        let (w, h) = img.dimensions();
-        if w == 0 || h == 0 {
-            return Ok(img.as_ref().clone());
+    /// Write `source`'s pixels into `target`, an `Rgba16Float` texture of the
+    /// same size with `STORAGE_BINDING` usage, as `v / 255` per channel
+    /// (`to_f16.wgsl`): the input the Colorist's grade shader reads (D-450).
+    /// Recorded and submitted at once, so a later submission on this queue
+    /// (the grade itself) sees the result. Only a decoded picture (RGB8 or
+    /// RGBA8 on the CPU) can be written.
+    pub fn write_f16_texture(
+        &self,
+        source: &Source,
+        target: &wgpu::Texture,
+    ) -> Result<(), ComposeError> {
+        let (w, h) = source.dimensions();
+        if target.width() != w || target.height() != h {
+            return Err(ComposeError::TooLarge(format!(
+                "a {w}x{h} source into a {}x{} texture",
+                target.width(),
+                target.height()
+            )));
         }
-        let px = u64::from(w) * u64::from(h);
-        let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let mut frame = Frame {
-            engine: self,
-            encoder: self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("apelles-compositor grade"),
-                }),
-            taken: Vec::new(),
-        };
-        let recorded = frame
-            .upload(img.as_raw())
-            .and_then(|src| {
-                self.record_prepare_from(&mut frame, (&src, 0, 0, w), Some(lut), (0, 0, w, h))
-            })
-            .and_then(|out| {
-                let staging = frame.buffer(
-                    px * 4,
-                    wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                )?;
-                frame
-                    .encoder
-                    .copy_buffer_to_buffer(&out, 0, &staging, 0, px * 4);
-                Ok(staging)
-            });
-        let Frame { encoder, taken, .. } = frame;
-        let staging = match recorded {
-            Ok(s) => s,
-            Err(e) => {
-                drop(scope.pop());
-                self.give_back(taken);
-                return Err(e);
+        let (bytes, kind) = match source {
+            Source::Rgba(img) => (img.as_raw().as_slice(), 0),
+            Source::Rgb(img) => (img.as_raw().as_slice(), 1),
+            Source::Solid { .. } | Source::Gpu(_) => {
+                return Err(ComposeError::Gpu(
+                    "only a decoded picture can be written to a half-float texture".to_string(),
+                ));
             }
         };
+        let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let need = (bytes.len() as u64).div_ceil(4).max(1) * 4;
+        let src = {
+            let mut slot = self.f16_source.lock().unwrap_or_else(|e| e.into_inner());
+            match slot.as_ref() {
+                Some(b) if b.size() >= need => b.clone(),
+                _ => {
+                    if need > self.max_binding {
+                        return Err(ComposeError::TooLarge(format!(
+                            "a {need}-byte frame is over this device's {}-byte limit",
+                            self.max_binding
+                        )));
+                    }
+                    let b = self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("apelles-compositor to_f16 source"),
+                        size: need,
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                    *slot = Some(b.clone());
+                    b
+                }
+            }
+        };
+        write_padded(&self.queue, &src, bytes);
+        self.count_upload(bytes.len());
+        let p = ToF16Params {
+            src_w: w,
+            kind,
+            width: w,
+            height: h,
+        };
+        let uniform = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("apelles-compositor to_f16 params"),
+                contents: uniform_bytes(&p),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        let k = &self.kernels.to_f16;
+        let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &k.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: src.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.half_of_u8.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("apelles-compositor to_f16"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            pass.set_pipeline(k);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(groups(w), groups(h), 1);
+        }
+        self.queue.submit(Some(encoder.finish()));
+        match pollster::block_on(scope.pop()) {
+            Some(e) => Err(ComposeError::Gpu(e.to_string())),
+            None => Ok(()),
+        }
+    }
+
+    /// Copy a [`GpuImage`] back to the CPU, exactly, for the one caller that
+    /// must draw on a graded picture before it is composited (a clip's
+    /// highlighter strokes, D-396, rasterised on the CPU). Waits for the GPU.
+    pub fn read_gpu_image(&self, image: &crate::GpuImage) -> Result<RgbaImage, ComposeError> {
+        let (w, h) = (image.width, image.height);
+        let row = u64::from(image.row_pixels) * 4;
+        let bytes = row * u64::from(h);
+        let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let staging = self.take(
+            bytes,
+            wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        )?;
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("apelles-compositor read gpu image"),
+            });
+        encoder.copy_buffer_to_buffer(&image.buffer, 0, &staging.buffer, 0, bytes);
         let index = self.queue.submit(Some(encoder.finish()));
         if let Some(e) = pollster::block_on(scope.pop()) {
-            self.give_back(taken);
             return Err(ComposeError::Gpu(e.to_string()));
         }
-        let result = self.read_back(&staging, index, px, (w, h));
-        // As in `PendingFrame::wait`: a failed read-back may leave the map
-        // pending, so those buffers are released rather than pooled.
-        if result.is_ok() {
-            self.give_back(taken);
+        let px = bytes / 4;
+        let padded = self.read_back(&staging.buffer, index, px, (image.row_pixels, h));
+        match padded {
+            Ok(full) => {
+                self.give_back(vec![staging]);
+                let mut out = RgbaImage::new(w, h);
+                let stride = row as usize;
+                let width_bytes = w as usize * 4;
+                for (y, dst) in out.as_mut().chunks_mut(width_bytes).enumerate() {
+                    dst.copy_from_slice(&full.as_raw()[y * stride..y * stride + width_bytes]);
+                }
+                Ok(out)
+            }
+            Err(e) => Err(e),
         }
-        self.trim_shared();
-        result
     }
 }
 

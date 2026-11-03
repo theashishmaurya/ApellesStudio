@@ -52,9 +52,13 @@ fn horizontal_blur(@builtin(global_invocation_id) id: vec3<u32>) {
     textureStore(output_texture, id.xy, vec4<f32>(final_color, 1.0));
 }
 
-@compute @workgroup_size(1, 256, 1)
+// D-450 — 16x16 workgroups rather than one 256-tall column per workgroup: a
+// workgroup's reads then cover a compact block of the texture instead of a
+// one-pixel-wide strip, which is what the texture cache serves well. Each
+// invocation still computes exactly the same sum for the same pixel.
+@compute @workgroup_size(16, 16, 1)
 fn vertical_blur(@builtin(global_invocation_id) id: vec3<u32>) {
-    if (id.y >= params.input_height) {
+    if (id.x >= params.input_width || id.y >= params.input_height) {
         return;
     }
 
