@@ -6296,8 +6296,20 @@ export function useEditorControl(): void {
         if (!Number.isInteger(track) || track < 0 || track >= count) {
           return { error: `no track ${track} (the timeline has ${count}; indices shift when a track is added or removed above)` };
         }
-        useEditorTimelineStore.getState().applyOp({ kind: 'set_track_gain', track, gain });
-        return { ok: true, track, gain };
+        useEditorTimelineStore
+          .getState()
+          .applyOp({ kind: 'set_track_gain', track, gain }, 'mcp:editor_set_track_gain');
+        // B-293 — say WHICH track the index landed on, so a caller holding an
+        // index from before a renumbering sees the mismatch in the answer.
+        const hit = useEditorTimelineStore.getState().timeline?.tracks[track];
+        return {
+          ok: true,
+          track,
+          gain,
+          trackKind: hit?.kind,
+          trackName: hit?.name ?? null,
+          clipCount: hit?.clips.length ?? 0,
+        };
       },
       editor_set_track_locked: (a) => {
         const track = Math.round(Number(a?.track));

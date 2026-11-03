@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { applyOp, type Clip, type EditOp, type Timeline } from './timeline';
-import { isJournalEntry, replayJournal, type EditJournalEntry } from './editJournal';
+import { UNATTRIBUTED_ORIGIN, isJournalEntry, journalOrigin, replayJournal, type EditJournalEntry } from './editJournal';
 
 const clip = (id: string, start: number): Clip => ({
   id,
@@ -241,5 +241,19 @@ describe('a reload inside the save debounce (B-274)', { timeout: 60_000 }, () =>
     const page2 = await openPage();
     expect(page2.getState().timeline).toEqual(base());
     expect(page2.getState().recoveredEdits).toBe(2);
+  });
+});
+
+describe('journalOrigin (B-293)', () => {
+  const zero = { kind: 'set_track_gain', track: 0, gain: 0 } as const;
+  it('records the named origin on a gain-0 write', () => {
+    expect(journalOrigin(zero, 'mute-button')).toBe('mute-button');
+    expect(journalOrigin(zero, 'mcp:editor_set_track_gain')).toBe('mcp:editor_set_track_gain');
+  });
+  it('flags a gain-0 write nobody named as unattributed', () => {
+    expect(journalOrigin(zero, undefined)).toBe(UNATTRIBUTED_ORIGIN);
+  });
+  it('adds nothing to an ordinary gain write', () => {
+    expect(journalOrigin({ kind: 'set_track_gain', track: 0, gain: 0.5 }, undefined)).toBeUndefined();
   });
 });

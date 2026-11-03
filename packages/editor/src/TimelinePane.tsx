@@ -2656,7 +2656,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
     const t = tracks[track];
     if (!t) return;
     const muted = (t.gain ?? DEFAULT_TRACK_GAIN) <= 0;
-    applyOp({ kind: 'set_track_gain', track, gain: muted ? DEFAULT_TRACK_GAIN : 0 });
+    applyOp({ kind: 'set_track_gain', track, gain: muted ? DEFAULT_TRACK_GAIN : 0 }, 'mute-button');
   };
 
   /** D-149 — patch one track's ducking. Reads the track's CURRENT values for

@@ -182,6 +182,31 @@ describe('B-293 — editor_set_track_gain names a missing track instead of answe
   });
 });
 
+describe('B-293 — a stale track index cannot silently hit the wrong track', () => {
+  it('after a title lands on a new top track the old index addresses the title track, and the answer says so', async () => {
+    await mountWith(threeClips());
+    const added = await op('editor_add_text_clip', { content: 'Title', start_frame: 0, duration_frames: 48 });
+    expect(added.ok).toBe(true);
+    // The title went on a NEW track 0; the original footage track is now 1.
+    expect(tl().tracks).toHaveLength(2);
+    expect(tl().tracks[1].clips.map((c) => c.id)).toEqual(['a', 'b', 'c']);
+
+    // The caller still holds the old index 0 for "the voiceover".
+    const stale = await op('editor_set_track_gain', { track: 0, gain: 0 });
+    expect(stale.ok).toBe(true);
+    const r = stale.result as { clipCount: number; trackKind: string };
+    // The answer names what was hit: the one-clip title track, not the 3-clip one,
+    // so the mismatch is visible to the caller and the footage track is untouched.
+    expect(r.clipCount).toBe(1);
+    expect(tl().tracks[1].gain).toBe(1);
+
+    // By its CURRENT index the footage track is addressed correctly.
+    const right = await op('editor_set_track_gain', { track: 1, gain: 0.5 });
+    expect((right.result as { clipCount: number }).clipCount).toBe(3);
+    expect(tl().tracks[1].gain).toBe(0.5);
+  });
+});
+
 describe('B-348 — Shift+Delete ripple delete (rippleDeleteClips)', () => {
   it('lifts the clip AND closes the hole: later clips move up', async () => {
     await mountWith(threeClips());

@@ -114,7 +114,7 @@ import type { SafeAreaViewId } from './safeAreas';
 import { clampPlaybackRate, DEFAULT_PLAYBACK_RATE } from '@apelles/player';
 import { DEFAULT_CLIP_INSPECTOR_TAB, type ClipInspectorTab } from './clipInspectorTabs';
 import { DEFAULT_EDIT_LIBRARY_MODE, type EditLibraryMode } from './editLibrary';
-import { isJournalEntry, replayJournal, type EditJournalEntry, type EditJournalState } from './editJournal';
+import { UNATTRIBUTED_ORIGIN, isJournalEntry, journalOrigin, replayJournal, type EditJournalEntry, type EditJournalState } from './editJournal';
 import { applyMarks } from './marks';
 import { loadPerfBegin, loadPerfHydrated } from './loadPerf';
 import { fpsToRational, MAX_TIMELINE_FPS } from './timelineRetime';
@@ -612,7 +612,10 @@ interface EditorTimelineState {
    *  writer for both the human's browser tab (`EditBrowser.tsx`) and
    *  `debug_set_library_mode`. */
   setLibraryMode: (mode: EditLibraryMode) => void;
-  applyOp: (op: EditOp) => void;
+  /** `origin` names who asked (B-293): recorded in the edit journal for a
+   *  write that silences a track (`set_track_gain` to 0), and warned about
+   *  when absent. */
+  applyOp: (op: EditOp, origin?: string) => void;
   /** D-051 — restore a full `Timeline` snapshot (an undo/redo target),
    *  bypassing the debounced save so it lands immediately. */
   restoreSnapshot: (timeline: Timeline) => void;
@@ -1158,7 +1161,7 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
 
   setLibraryMode: (mode) => set({ libraryMode: mode }),
 
-  applyOp: (op) => {
+  applyOp: (op, origin) => {
     const before = get().timeline;
     if (!before) return;
     const after = applyOpPure(before, op);
@@ -1166,7 +1169,19 @@ export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('ed
     localEditGeneration += 1; // B-272
     // B-274/D-402 — written ahead of the debounced save, the moment the edit
     // exists, so a web process killed inside the debounce loses nothing.
-    if (journalOn) appendJournal({ seq: ++journalSeq, timelineId: after.id, kind: 'op', op });
+    const recordedOrigin = journalOrigin(op, origin);
+    if (recordedOrigin === UNATTRIBUTED_ORIGIN) {
+      console.warn(`[edit] a track gain was set to 0 by an unattributed writer (B-293): ${JSON.stringify(op)}`);
+    }
+    if (journalOn) {
+      appendJournal({
+        seq: ++journalSeq,
+        timelineId: after.id,
+        kind: 'op',
+        op,
+        ...(recordedOrigin ? { origin: recordedOrigin } : {}),
+      });
+    }
     const dur = timelineDuration(after);
     set((s) => ({ timeline: after, playhead: Math.min(s.playhead, Math.max(0, dur - 1)) }));
 
