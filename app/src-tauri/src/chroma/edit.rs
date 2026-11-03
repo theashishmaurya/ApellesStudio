@@ -14,7 +14,7 @@
 //!   /`chroma_timeline_create`/`chroma_timeline_set_active` manage the
 //!   `timelines` list itself, and (D-411 Phase 0) `chroma_timeline_get_by_id`
 //!   / `_rename` / `_set_output` / `_set_rate` / `_duplicate` / `_delete` address any
-//!   timeline by id (thin wrappers over `apelles_project::timeline`); `chroma_timeline_frame` resolves a timeline
+//!   timeline by id (thin wrappers over `apelles_project::timeline`); the preview frame (`chroma_timeline_frame` then, [`draw_preview_frame`] since D-454) resolves a timeline
 //!   position on the active timeline to `(clip, source frame)` via
 //!   [`apelles_timeline::Track::clip_at`] and decodes that source frame with the
 //!   lightweight [`super::decode_pipe`] path (ffmpeg → rgb → JPEG);
@@ -330,7 +330,7 @@ fn resolve_audio_timeline() -> Result<Timeline, String> {
 }
 
 /// [`resolve_timeline`] plus the project's output spec (D-038) — the pair
-/// [`timeline_frame`] needs, since D-136 made the compositor's canvas the
+/// [`render_timeline_frame`] needs, since D-136 made the compositor's canvas the
 /// **composition** rather than the top layer's decoded size.
 pub(crate) fn resolve_timeline_and_settings(
     persist: bool,
@@ -463,7 +463,7 @@ pub(super) fn derived_composition_size(
 /// winning clip under **opaque, top-track-wins** compositing (D-056, Phase B1
 /// of `docs/notes/multi-track-nle.md`), the corresponding **source** frame,
 /// and that clip's probed [`VideoInfo`] (D-049) — the shared first half of
-/// both the video preview's [`chroma_timeline_frame`] and the audio path's
+/// both the video preview's frame ([`draw_preview_frame`]) and the audio path's
 /// `audio::chroma_audio_play`: both read from the same clip at the same
 /// position, one for pixels, one for samples.
 ///
@@ -1093,14 +1093,14 @@ pub fn chroma_timeline_link_clips(
     Ok(group)
 }
 
-/// The preview JPEG's quality, 0-100. 80 is what the preview has always used;
-/// named here because [`encode_preview_jpeg`] is now the single place the
-/// preview's wire format is decided, and because this is the one dial that
-/// trades preview bytes for preview fidelity.
+/// The quality, 0-100, of the JPEGs this module still makes: the launcher
+/// card's thumbnail ([`timeline_thumb_jpeg`]) and the two-up trim viewer's
+/// frames ([`chroma_trim_view_frame`]). The live preview is not one of them
+/// since D-454: it is drawn on the GPU straight into its native surface
+/// ([`draw_preview_frame`]).
 const PREVIEW_JPEG_QUALITY: u8 = 80;
 
-/// Encode one preview picture to JPEG bytes — the only place the preview's wire
-/// format is chosen (D-217).
+/// Encode one picture to JPEG bytes at [`PREVIEW_JPEG_QUALITY`] (D-217).
 fn encode_preview_jpeg(img: &DynamicImage) -> Result<Vec<u8>, String> {
     let mut buf = Cursor::new(Vec::with_capacity(64 * 1024));
     img.to_rgb8()
@@ -1112,125 +1112,23 @@ fn encode_preview_jpeg(img: &DynamicImage) -> Result<Vec<u8>, String> {
     Ok(buf.into_inner())
 }
 
-/// A 1×1 black JPEG — the preview's "nothing visible" frame for a timeline
-/// that has **no frame size at all** (no timeline output, no project size, no
-/// footage or still to read one from — see [`derived_composition_size`]), where
-/// there is no honest size to draw black at. Every timeline that has a size
-/// gets [`black_frame_jpeg`] at that size instead (B-290).
-///
-/// **Black JPEG, not the 1×1 transparent PNG this used to be (D-217).** The
-/// preview payload is raw bytes now and the frontend wraps them in one `Blob`
-/// of one fixed MIME type; a second image format on the same channel would mean
-/// either byte-sniffing on the JS side or an outright wrong `Content-Type`. At
-/// 1×1 inside an `object-contain` `<img>` the two are equally invisible — the
-/// element lays out at its 1×1 intrinsic size either way — so nothing the user
-/// sees changes.
-fn blank_frame_jpeg() -> Result<Vec<u8>, String> {
-    encode_preview_jpeg(&DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
-        1,
-        1,
-        image::Rgb([0, 0, 0]),
-    )))
-}
-
-/// The last [`black_frame_jpeg`] encoded, keyed by its size. One entry: the
-/// preview asks at one size for as long as the composition and the preview
-/// quality stay put, so a single slot is a hit on every frame of a gap or of
-/// an audio-only timeline's playback, and holds a few KB.
-type BlackFrameSlot = Option<((u32, u32), Vec<u8>)>;
-static BLACK_FRAME_JPEG: std::sync::Mutex<BlackFrameSlot> = std::sync::Mutex::new(None);
-
-/// **B-290 — what the preview shows where nothing is visible: opaque black at
-/// the composition's own size** (scaled to the preview canvas, see
-/// [`preview_canvas_size`]), the same picture the export writes there (the
-/// compositor export's `blank` frame and the filter export's `color=black`
-/// base) and what every NLE shows over a gap.
-///
-/// It used to be [`blank_frame_jpeg`]'s 1×1 dot for every such position, which
-/// an `object-contain` `<img>` lays out at one pixel: over a gap that read as
-/// "the picture vanished", and on an audio-only timeline (where it is every
-/// position) the viewer had no frame at all to play its sound over.
-///
-/// Memoised in [`BLACK_FRAME_JPEG`] because it is asked for on every displayed
-/// frame of a gap during playback, and the answer only changes with the size.
-fn black_frame_jpeg(size: (u32, u32)) -> Result<Vec<u8>, String> {
-    let mut slot = BLACK_FRAME_JPEG.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((cached_size, bytes)) = slot.as_ref()
-        && *cached_size == size
-    {
-        return Ok(bytes.clone());
-    }
-    let bytes = encode_preview_jpeg(&DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
-        size.0,
-        size.1,
-        image::Rgb([0, 0, 0]),
-    )))?;
-    *slot = Some((size, bytes.clone()));
-    Ok(bytes)
-}
-
 /// The pixel size a composition of `comp` is rendered into for a preview
 /// capped at `max_long_edge`: the composition itself, or `scale_target`'s
 /// aspect-preserving (even-dimension) downscale of it. The one definition the
 /// compositor's canvas ([`composite_video_frame`]) and the preview's
-/// nothing-visible frame ([`black_frame_jpeg`]) share, so a gap's black frame
-/// is exactly the size of the composited frames either side of it.
+/// nothing-visible frame ([`draw_preview_frame`]) share, so a gap's black
+/// frame is exactly the size of the composited frames either side of it.
 fn preview_canvas_size(comp: (u32, u32), max_long_edge: Option<u32>) -> (u32, u32) {
     max_long_edge
         .and_then(|le| decode_pipe::scale_target(comp.0, comp.1, le))
         .unwrap_or(comp)
 }
 
-/// Decode the source frame(s) under timeline position `pos` and return the
-/// result as raw JPEG bytes. `max_long_edge` (px) optionally caps the decoded
-/// size — ffmpeg downscales, so a 4K source is
-/// never CPU-scaled here (except inside [`composite_video_frame`]'s own
-/// per-layer resize/rotate, unavoidable once more than one layer is real
-/// compositing, not a plain decode).
-///
-/// D-088 (Phase 2 of the P0 full-NLE effort, `docs/notes/multi-track-nle.md`
-/// Phase B3): this used to be a single-clip decode only
-/// (`resolve_video_position`'s opaque top-wins winner) — now resolves EVERY
-/// visible video track's clip at `pos`
-/// (`Timeline::resolve_visible_video_layers_at`, D-086) and, when there's
-/// more than one, real-composites them (`composite_video_frame`) instead of
-/// showing only the top one. The exactly-one-layer case (still the
-/// overwhelming common one) takes the same fast plain-decode path as
-/// before — byte-identical output, no new cost — **unless that one layer
-/// carries a real transform** (D-132/B-053: it used to take the fast path
-/// even then, silently discarding that clip's own crop / opacity /
-/// position / scale / rotation; see the guard in [`timeline_frame`]).
-/// Deliberately does NOT call
-/// `resolve_video_position` (that resolver stays single-winner, unchanged,
-/// for its OTHER two callers — Colorist's active-clip resolution and the
-/// embedded-audio baseline, both genuinely single-clip concerns this
-/// change has no business touching).
-///
-/// Out-of-range / nothing visible → black at the composition's size
-/// ([`black_frame_jpeg`], B-290), or a 1×1 black JPEG ([`blank_frame_jpeg`])
-/// for a timeline with no size at all; a decode / probe failure → `Err`.
-///
-/// **Raw bytes over IPC, not a `data:image/jpeg;base64,…` string (D-217).**
-/// Base64 on this path cost a second full pass over the picture plus ~33% more
-/// bytes to JSON-escape, ship, parse and decode again in the webview, for every
-/// displayed frame during playback. `tauri::ipc::Response` hands the frontend
-/// an `ArrayBuffer` instead; see D-217 for the measured split.
-///
-/// **Runs off the Tauri main thread** (D-125). A plain `#[tauri::command] fn`
-/// is `ExecutionContext::Blocking` — Tauri runs it on the main thread, so every
-/// millisecond this spends decoding is a millisecond the whole window's event
-/// loop and *every other* IPC command (notably `chroma_audio_play`, whose
-/// start latency is what keeps audio in step with the video clock — D-050)
-/// is stalled behind it. A cold pipe spawn is ~0.5 s even after D-125's other
-/// fixes, which is far too long to hold the main thread. Same `async fn` +
-/// `spawn_blocking` shape `chroma::commands`' and `chroma::session`'s decode
-/// commands already use.
-///
 /// D-432 P3 — one frame of one SOURCE file as preview JPEG bytes, for the Edit
 /// tab's two-up trim viewer (the outgoing and incoming frames of a roll, slip
 /// or slide while it is dragged).
 ///
-/// Why a source frame and not [`chroma_timeline_frame`]: during the drag the
+/// Why a source frame and not the timeline's frame: during the drag the
 /// persisted timeline still holds the pre-edit cut, so the frame a roll is
 /// about to make the outgoing clip's last one is not at any timeline position
 /// yet; it is a frame of that clip's source. Decoded through the same
@@ -1276,96 +1174,106 @@ pub async fn chroma_trim_view_end() -> Result<(), String> {
     .map_err(|e| format!("trim view release task: {e}"))
 }
 
-/// **`playing` is D-324.** `Some(true)` means "this is the next frame of a
-/// running playback", which is what licenses priming a decode pipe for the cut
-/// ahead (see [`prefetch_upcoming_boundaries`]). Optional and defaulting to
-/// `false` so a scrub, a paused seek or any caller that does not care keeps the
-/// exact pre-D-324 behaviour rather than spawning an `ffmpeg` per dragged
-/// frame.
-#[tauri::command]
-pub async fn chroma_timeline_frame(
-    pos: u64,
-    max_long_edge: Option<u32>,
-    playing: Option<bool>,
-) -> Result<tauri::ipc::Response, String> {
-    let intent = if playing.unwrap_or(false) {
-        FrameIntent::Playing
-    } else {
-        FrameIntent::Single
-    };
-    let jpeg = tokio::task::spawn_blocking(move || timeline_frame(pos, max_long_edge, intent))
-        .await
-        .map_err(|e| format!("timeline frame task: {e}"))??;
-    Ok(tauri::ipc::Response::new(jpeg))
-}
-
-/// The real body of [`chroma_timeline_frame`], synchronous — split out so the
-/// command can hand it to `spawn_blocking` and so tests can call it directly
-/// without a tokio runtime.
+/// **D-454 — the Edit preview's frame at timeline position `pos`, drawn by the
+/// GPU engine straight into the preview's native surface**
+/// (`chroma::preview_surface`): every visible video layer decoded, graded,
+/// composited (D-088's multi-track resolve, D-449's engine) and captioned, at
+/// a canvas whose long edge is `long_edge` (the picture box's, capped at the
+/// drawable's: `Placement::render_long_edge`), then unpacked into the
+/// presenter's retained frame inside the engine's own submission
+/// (`Destination::Present`). No pixel is read back, encoded or sent over IPC.
 ///
-/// Two phases, deliberately separable so they can be timed apart (D-217):
-/// [`timeline_frame_image`] produces the picture (decode + composite),
-/// [`encode_preview_jpeg`] turns it into the wire payload.
+/// It replaces `chroma_timeline_frame`, which composited the same frame, read
+/// it back, encoded it as a JPEG (D-217) and returned it over IPC to an
+/// `<img>`; that path and its blank/black JPEGs are deleted.
 ///
-/// Resolves the timeline once and hands the same document to both the render
-/// and, when nothing is visible, [`nothing_visible_jpeg`].
-pub(crate) fn timeline_frame(
+/// Where nothing is visible (a gap, an audio-only timeline), the frame is
+/// opaque black at the composition's preview canvas, what the export writes
+/// there (B-290), drawn by the engine like any other frame; a timeline with no
+/// frame size at all shows the letterbox alone.
+///
+/// `intent` is D-324's: [`FrameIntent::Playing`] (the playback loop) licenses
+/// priming a decode pipe for the cut ahead; a scrub predicts nothing.
+///
+/// Returns the engine's submission, which the caller holds until its next
+/// frame so the pooled buffers are released only after the GPU is done.
+pub(crate) fn draw_preview_frame(
     pos: u64,
-    max_long_edge: Option<u32>,
+    long_edge: u32,
     intent: FrameIntent,
-) -> Result<Vec<u8>, String> {
+    presenter: &mut super::preview_surface::presenter::Presenter,
+) -> Result<Option<super::gpu_compositor::GpuFrame>, String> {
     let (timeline, settings) = resolve_timeline_and_settings(false)?;
-    match render_timeline_frame(
+    let target = super::preview_surface::presenter::PresentTarget::new(presenter);
+    let to = super::gpu_compositor::Destination::Present(&target);
+    let drawn = render_timeline_frame_deferred(
         &timeline,
         &settings,
         pos,
-        max_long_edge,
+        Some(long_edge),
         intent,
         decode_pipe::PipeLane::LIVE,
-    )? {
-        Some(img) => encode_preview_jpeg(&img),
-        None => nothing_visible_jpeg(&settings, &timeline, max_long_edge),
+        &to,
+    )?;
+    if let Some(RenderedFrame::Gpu(frame)) = drawn {
+        return Ok(Some(frame));
+    }
+    match nothing_visible_canvas(&settings, &timeline, Some(long_edge)) {
+        Some((w, h)) => {
+            let plan = apelles_compositor::FramePlan {
+                width: w,
+                height: h,
+                background: apelles_compositor::Background::Solid([0, 0, 0, 255]),
+                steps: Vec::new(),
+            };
+            super::gpu_compositor::submit(&plan, &to).map(Some)
+        }
+        None => {
+            target.clear_frame()?;
+            Ok(None)
+        }
     }
 }
 
-/// B-290 — the preview frame for a position where [`render_timeline_frame`]
-/// found nothing to draw: [`black_frame_jpeg`] at the preview canvas of this
-/// timeline's composition, or [`blank_frame_jpeg`] when it has no size at all.
+/// B-290 — the canvas of the preview frame for a position where
+/// [`render_timeline_frame`] found nothing to draw: opaque black at the preview
+/// canvas of this timeline's composition (what the export writes there, and
+/// what every NLE shows over a gap), or `None` — the letterbox alone — for a
+/// timeline with no frame size at all.
 ///
-/// A composition that fails to RESOLVE (a source on a video track that will not
-/// probe) degrades to the 1×1 frame rather than failing this one: nothing is
-/// visible here, so no clip's probe has any bearing on what this frame shows,
-/// and a preview error over a gap would blame the wrong thing. The failure is
-/// still reported by every frame that does show that clip.
-fn nothing_visible_jpeg(
+/// A composition that fails to RESOLVE (a source on a video track that will
+/// not probe) degrades to `None` rather than failing the frame: nothing is
+/// visible here, so no clip's probe has any bearing on what it shows, and an
+/// error over a gap would blame the wrong thing. Every frame that does show
+/// that clip still reports it.
+fn nothing_visible_canvas(
     settings: &project::ProjectSettings,
     timeline: &Timeline,
     max_long_edge: Option<u32>,
-) -> Result<Vec<u8>, String> {
+) -> Option<(u32, u32)> {
     match derived_composition_size(settings, timeline) {
-        Ok(Some(comp)) => black_frame_jpeg(preview_canvas_size(comp, max_long_edge)),
-        Ok(None) => blank_frame_jpeg(),
+        Ok(Some(comp)) => Some(preview_canvas_size(comp, max_long_edge)),
+        Ok(None) => None,
         Err(e) => {
-            log::debug!("timeline_frame: no composition for a nothing-visible frame ({e})");
-            blank_frame_jpeg()
+            log::debug!("preview: no composition for a nothing-visible frame ({e})");
+            None
         }
     }
 }
 
 /// B-141 — the launcher card's own `thumb.jpg`, generated from the EXACT same
 /// composited picture the Edit tab's live preview shows at timeline position
-/// 0: the same [`timeline_frame_image`] call `chroma_timeline_frame` makes,
-/// so a clip's `rotation`/`scale`/`position_*`/crop and any Colorist grade
-/// are all applied identically. `chroma::project::regen_thumb` is the only
+/// 0: the same render [`draw_preview_frame`] draws, read back, so a clip's
+/// `rotation`/`scale`/`position_*`/crop and any Colorist grade are all applied
+/// identically. `chroma::project::regen_thumb` is the only
 /// caller — it needs `None` (rather than a placeholder image) for "the
 /// timeline has nothing to show at frame 0" so it can fall back to its own
 /// legacy single-clip grab instead of writing a black square to disk.
 ///
-/// **Deliberately not [`timeline_frame`]:** that function turns "nothing
-/// visible" into a black frame ([`nothing_visible_jpeg`], B-290) for the live
-/// preview's `<img>`, which is the right answer for a video element but the
-/// wrong one for a thumbnail file — a black square is a worse launcher card
-/// than the pre-B-141 raw frame grab, not a better one.
+/// **Deliberately not the preview's nothing-visible rule:** the preview shows
+/// black there ([`nothing_visible_canvas`], B-290), which is the right answer
+/// for a viewer but the wrong one for a thumbnail file — a black square is a
+/// worse launcher card than the pre-B-141 raw frame grab, not a better one.
 ///
 /// `None` on either "nothing visible at frame 0" (a gap, or a timeline with no
 /// video track — an audio-only one since B-290) or a genuine decode error —
@@ -1377,9 +1285,11 @@ pub(crate) fn timeline_thumb_jpeg(max_long_edge: u32) -> Option<Vec<u8>> {
     }
 }
 
-/// The decode + composite half of [`timeline_frame`]: the finished preview
-/// picture for timeline position `pos`, or `None` when nothing is visible there
-/// (which [`timeline_frame`] turns into a black frame, [`nothing_visible_jpeg`]).
+/// The finished preview picture for timeline position `pos`, read back to the
+/// CPU, or `None` when nothing is visible there (where the live preview shows
+/// black, [`nothing_visible_canvas`]). For the callers that need the picture
+/// as pixels (the launcher thumbnail) and the tests; the live preview itself
+/// never reads a frame back ([`draw_preview_frame`]).
 ///
 /// Split out of `timeline_frame` by D-217 so the two halves can be timed
 /// independently — the whole point of that decision was to find out which half
@@ -1399,6 +1309,44 @@ pub(crate) fn timeline_frame_image(
         intent,
         decode_pipe::PipeLane::LIVE,
     )
+}
+
+/// **Tests only (D-454): the live preview's picture at `pos`, as lossless PNG
+/// bytes.** The product preview never leaves the GPU
+/// ([`draw_preview_frame`]), so the tests that check what the viewer shows
+/// read the same render back: [`render_timeline_frame`]'s frame, or the black
+/// canvas the preview draws where nothing is visible
+/// ([`nothing_visible_canvas`]), or a 1×1 black frame for a timeline with no
+/// size (the preview shows the letterbox alone there). PNG so a test decoding
+/// it sees the exact pixels; until D-454 these tests read the JPEG the
+/// preview was sent.
+#[cfg(test)]
+pub(crate) fn preview_frame_png(
+    pos: u64,
+    max_long_edge: Option<u32>,
+    intent: FrameIntent,
+) -> Result<Vec<u8>, String> {
+    let (timeline, settings) = resolve_timeline_and_settings(false)?;
+    let picture = match render_timeline_frame(
+        &timeline,
+        &settings,
+        pos,
+        max_long_edge,
+        intent,
+        decode_pipe::PipeLane::LIVE,
+    )? {
+        Some(img) => img,
+        None => {
+            let (w, h) =
+                nothing_visible_canvas(&settings, &timeline, max_long_edge).unwrap_or((1, 1));
+            DynamicImage::ImageRgb8(image::RgbImage::from_pixel(w, h, image::Rgb([0, 0, 0])))
+        }
+    };
+    let mut buf = Cursor::new(Vec::new());
+    picture
+        .write_to(&mut buf, image::ImageFormat::Png)
+        .map_err(|e| format!("png encode: {e}"))?;
+    Ok(buf.into_inner())
 }
 
 /// Whether a resolved [`VisibleLayer`] is one this renderer will actually
@@ -1510,13 +1458,13 @@ pub(crate) fn render_timeline_frame_deferred(
     max_long_edge: Option<u32>,
     intent: FrameIntent,
     lane: decode_pipe::PipeLane,
-    to: &super::gpu_compositor::Destination,
+    to: &super::gpu_compositor::Destination<'_>,
 ) -> Result<Option<RenderedFrame>, String> {
     // B-290 — no "timeline has no video track" refusal here any more. An
     // audio-only timeline (a cut voiceover, a podcast) is a real document: it
     // simply has no visible layer at any position, which is the same answer a
     // gap gives, and every caller already turns that into black — the preview
-    // via `nothing_visible_jpeg`, the compositor export via its `blank` frame.
+    // via `nothing_visible_canvas`, the compositor export via its `blank` frame.
     // The refusal dated from D-041's single-track MVP and took the preview AND
     // the compositor export of such a timeline down at frame 0.
     let layers: Vec<VisibleLayer<'_>> = timeline
@@ -1693,7 +1641,7 @@ fn captions_over_black(
     settings: &project::ProjectSettings,
     pos: u64,
     max_long_edge: Option<u32>,
-    to: &super::gpu_compositor::Destination,
+    to: &super::gpu_compositor::Destination<'_>,
 ) -> Result<Option<RenderedFrame>, String> {
     if timeline.resolve_visible_captions_at(pos as i64).is_empty() {
         return Ok(None);
@@ -1982,7 +1930,7 @@ pub struct ClipGeometry {
 /// for both is strictly better than two conventions in one interaction.
 ///
 /// Probes the source (cached, [`probe_cached`]), so it is `async` +
-/// `spawn_blocking` for the same reason [`chroma_timeline_frame`] is: a cold
+/// `spawn_blocking` for the same reason [`draw_preview_frame`] runs off the main thread: a cold
 /// probe is two `ffprobe` spawns and must not sit on Tauri's main thread.
 #[tauri::command]
 pub async fn chroma_timeline_clip_geometry(
@@ -1995,7 +1943,7 @@ pub async fn chroma_timeline_clip_geometry(
 }
 
 /// The synchronous body of [`chroma_timeline_clip_geometry`] — split out for
-/// the same reason [`timeline_frame`] is, so tests can call it without a
+/// the same reason [`render_timeline_frame`] is, so tests can call it without a
 /// tokio runtime.
 pub(crate) fn clip_geometry(track: usize, clip: usize) -> Result<ClipGeometry, String> {
     let (timeline, settings) = resolve_timeline_and_settings(false)?;
@@ -2107,7 +2055,7 @@ pub async fn chroma_timeline_composition_size(
 }
 
 /// The synchronous body of [`chroma_timeline_composition_size`] — same
-/// `spawn_blocking` split as [`timeline_frame`]/[`clip_geometry`]: this can
+/// `spawn_blocking` split as [`render_timeline_frame`]/[`clip_geometry`]: this can
 /// end up probing a clip too (`composition_size`'s no-explicit-settings
 /// fallback), which is real disk I/O, so it stays off the async runtime's
 /// caller and off Tauri's main thread the same way.
@@ -2178,7 +2126,7 @@ pub(super) struct ClipTransform {
 
 impl ClipTransform {
     /// D-132/B-053 — whether applying this transform to a layer would change
-    /// nothing at all, so [`timeline_frame`]'s single-layer fast path may
+    /// nothing at all, so [`render_timeline_frame`]'s single-layer fast path may
     /// skip compositing entirely and return the plain decoded frame.
     ///
     /// Exact comparisons, not epsilons: these values come from the
@@ -2371,7 +2319,7 @@ impl ClipTransform {
 /// [`ClipTransform::is_identity`]: the fade is already folded into `opacity`
 /// by the time that runs, so a faded lone clip correctly fails the
 /// `opacity >= 1.0` test and goes through the compositor instead of
-/// [`timeline_frame`]'s plain-decode fast path — which is exactly the
+/// [`render_timeline_frame`]'s plain-decode fast path — which is exactly the
 /// D-132/B-053 lesson about a lone clip's transform being silently discarded.
 fn resolve_clip_transform(clip: &Clip, source_frame: i64) -> ClipTransform {
     let mut t = resolve_clip_transform_unfaded(clip, source_frame);
@@ -2592,7 +2540,7 @@ fn composite_video_frame(
     comp: (u32, u32),
     lane: decode_pipe::PipeLane,
     overlays: impl FnOnce((u32, u32)) -> Result<Vec<apelles_compositor::Step>, String>,
-    to: &super::gpu_compositor::Destination,
+    to: &super::gpu_compositor::Destination<'_>,
 ) -> Result<super::gpu_compositor::GpuFrame, String> {
     /// One step of the paint walk. Was a plain struct (a layer always had
     /// pixels) until D-230 introduced a layer that has none and instead
@@ -5534,8 +5482,8 @@ mod composition_size_tests {
 /// Pure: nothing here decodes. The audio clip's source is never opened (the
 /// picture walk only reads video tracks), so these need no ffmpeg and no
 /// project on disk. They call [`render_timeline_frame`] and
-/// [`nothing_visible_jpeg`] — the two halves [`timeline_frame`] is made of —
-/// against an explicit document. The sound half is `chroma::audio`'s
+/// [`nothing_visible_canvas`] — the two halves [`draw_preview_frame`] is made
+/// of — against an explicit document. The sound half is `chroma::audio`'s
 /// `resolve_sources_at_a_timeline_with_no_video_track_plays_its_audio`, and the
 /// export half `edit_render`'s
 /// `an_audio_only_timeline_exports_a_black_picture_and_its_sound`.
@@ -5602,32 +5550,23 @@ mod audio_only_preview_tests {
         }
     }
 
-    /// What the viewer then shows: opaque black at the timeline's own output
-    /// size (D-411), scaled to the preview canvas — a portrait short previews
-    /// as a portrait black frame — not the 1×1 dot it used to be.
+    /// What the viewer then shows: black at the timeline's own output size
+    /// (D-411), scaled to the preview canvas — a portrait short previews as a
+    /// portrait black frame — not a 1×1 dot.
     #[test]
     fn nothing_visible_previews_as_black_at_the_timelines_own_size() {
         let tl = voiceover(Some(OutputSpec::new(1080, 1920).expect("size")), None);
         let settings = project::ProjectSettings::default();
-        let jpeg = nothing_visible_jpeg(&settings, &tl, Some(LONG_EDGE)).expect("a frame");
-        let img = image::load_from_memory(&jpeg).expect("a JPEG").to_rgb8();
         assert_eq!(
-            img.dimensions(),
-            (540, 960),
+            nothing_visible_canvas(&settings, &tl, Some(LONG_EDGE)),
+            Some((540, 960)),
             "the 9:16 output at the 960 px preview edge"
         );
-        assert!(
-            img.pixels().all(|p| p.0.iter().all(|c| *c <= 2)),
-            "every pixel black (JPEG may round by a level)"
-        );
-        // Asked again at the same size: the same bytes (the memo).
-        let again = nothing_visible_jpeg(&settings, &tl, Some(LONG_EDGE)).expect("a frame");
-        assert_eq!(jpeg, again);
     }
 
     /// The project's size stands in when the timeline has no override, and a
-    /// timeline with no size anywhere keeps the 1×1 frame — there is no honest
-    /// size to draw black at.
+    /// timeline with no size anywhere shows the letterbox alone — there is no
+    /// honest size to draw black at.
     #[test]
     fn the_black_frame_takes_the_project_size_and_degrades_without_one() {
         let tl = voiceover(None, None);
@@ -5636,15 +5575,14 @@ mod audio_only_preview_tests {
             height: Some(720),
             ..Default::default()
         };
-        let sized = nothing_visible_jpeg(&settings, &tl, Some(LONG_EDGE)).expect("a frame");
-        let img = image::load_from_memory(&sized).expect("a JPEG");
-        assert_eq!((img.width(), img.height()), (960, 540));
-
-        let sizeless =
-            nothing_visible_jpeg(&project::ProjectSettings::default(), &tl, Some(LONG_EDGE))
-                .expect("a frame");
-        let img = image::load_from_memory(&sizeless).expect("a JPEG");
-        assert_eq!((img.width(), img.height()), (1, 1));
+        assert_eq!(
+            nothing_visible_canvas(&settings, &tl, Some(LONG_EDGE)),
+            Some((960, 540))
+        );
+        assert_eq!(
+            nothing_visible_canvas(&project::ProjectSettings::default(), &tl, Some(LONG_EDGE)),
+            None
+        );
     }
 
     /// A caption over a voiceover is drawn over black at the preview canvas —
@@ -5693,7 +5631,7 @@ mod audio_only_preview_tests {
 
 /// D-211 — the text/title clip's **live-preview path, end to end**: a real
 /// `.chroma` project on disk, a real video source, and the actual
-/// [`timeline_frame`] command the preview pane calls over IPC — resolve the
+/// [`render_timeline_frame`] command the preview pane calls over IPC — resolve the
 /// visible layers, rasterise the title, composite, JPEG-encode — with the
 /// returned data-URL decoded back to pixels and checked.
 ///
@@ -5846,7 +5784,8 @@ mod preview_text_tests {
         super::decode_pipe::reset();
 
         let frame = decode_preview(
-            &super::timeline_frame(12, Some(W), super::FrameIntent::Single).expect("preview frame"),
+            &super::preview_frame_png(12, Some(W), super::FrameIntent::Single)
+                .expect("preview frame"),
         );
         assert_eq!(frame.dimensions(), (W, H));
 
@@ -5930,7 +5869,7 @@ mod preview_text_tests {
         };
 
         let centred = centre_x(&decode_preview(
-            &super::timeline_frame(12, Some(W), super::FrameIntent::Single).expect("frame"),
+            &super::preview_frame_png(12, Some(W), super::FrameIntent::Single).expect("frame"),
         ));
 
         // Shift the title a quarter of the frame to the right and re-render
@@ -5940,7 +5879,7 @@ mod preview_text_tests {
         super::chroma_timeline_set(tl, None).expect("persist");
         let _ = &project; // keep the project dir alive for the second render
         let shifted = centre_x(&decode_preview(
-            &super::timeline_frame(12, Some(W), super::FrameIntent::Single).expect("frame"),
+            &super::preview_frame_png(12, Some(W), super::FrameIntent::Single).expect("frame"),
         ));
 
         let moved = shifted - centred;
@@ -6088,8 +6027,8 @@ mod preview_transition_tests {
     /// decoded back from `timeline_frame`'s own JPEG bytes — exactly what the
     /// preview `<img>` shows.
     fn centre_pixel(pos: u64) -> [u8; 3] {
-        let jpeg =
-            super::timeline_frame(pos, Some(W), super::FrameIntent::Single).expect("preview frame");
+        let jpeg = super::preview_frame_png(pos, Some(W), super::FrameIntent::Single)
+            .expect("preview frame");
         let img = image::load_from_memory(&jpeg)
             .expect("decode jpeg")
             .to_rgba8();
@@ -6222,7 +6161,6 @@ mod preview_throughput_tests {
     use std::time::Instant;
 
     use apelles_timeline::{Clip, Timeline, Track, TrackKind};
-    use base64::Engine as _;
 
     fn test_video() -> Option<String> {
         std::env::var("CHROMA_TEST_VIDEO")
@@ -6413,7 +6351,7 @@ mod preview_throughput_tests {
 
         // --- a scrub primes nothing -------------------------------------- //
         apelles_media::decode_pipe::reset();
-        super::timeline_frame(0, Some(640), super::FrameIntent::Single).expect("scrub frame");
+        super::preview_frame_png(0, Some(640), super::FrameIntent::Single).expect("scrub frame");
         assert_eq!(
             apelles_media::decode_pipe::standby_pipe_count(),
             0,
@@ -6422,7 +6360,7 @@ mod preview_throughput_tests {
 
         // --- playback primes the next boundary --------------------------- //
         apelles_media::decode_pipe::reset();
-        super::timeline_frame(0, Some(640), super::FrameIntent::Playing).expect("play frame 0");
+        super::preview_frame_png(0, Some(640), super::FrameIntent::Playing).expect("play frame 0");
         assert_eq!(
             apelles_media::decode_pipe::standby_pipe_count(),
             1,
@@ -6432,7 +6370,7 @@ mod preview_throughput_tests {
 
         // --- and crossing every boundary neither fails nor leaks --------- //
         for pos in 0..(N_CLIPS * CLIP_FRAMES) as u64 {
-            super::timeline_frame(pos, Some(640), super::FrameIntent::Playing)
+            super::preview_frame_png(pos, Some(640), super::FrameIntent::Playing)
                 .unwrap_or_else(|e| panic!("play frame {pos}: {e}"));
             assert!(
                 apelles_media::decode_pipe::open_pipe_count() <= 1,
@@ -6477,7 +6415,7 @@ mod preview_throughput_tests {
 
         apelles_media::decode_pipe::reset();
         for pos in 10..40u64 {
-            super::timeline_frame(pos, Some(640), super::FrameIntent::Playing)
+            super::preview_frame_png(pos, Some(640), super::FrameIntent::Playing)
                 .unwrap_or_else(|e| panic!("play frame {pos}: {e}"));
             assert_eq!(
                 apelles_media::decode_pipe::standby_pipe_count(),
@@ -6520,7 +6458,7 @@ mod preview_throughput_tests {
         apelles_media::decode_pipe::reset();
         let mut max_primed = 0usize;
         for pos in 0..(N_CLIPS * CLIP_FRAMES) as u64 {
-            super::timeline_frame(pos, Some(640), super::FrameIntent::Playing)
+            super::preview_frame_png(pos, Some(640), super::FrameIntent::Playing)
                 .unwrap_or_else(|e| panic!("play frame {pos}: {e}"));
             let primed = apelles_media::decode_pipe::standby_pipe_count();
             max_primed = max_primed.max(primed);
@@ -6594,11 +6532,11 @@ mod preview_throughput_tests {
         let run = |intent: super::FrameIntent| -> (f64, f64) {
             apelles_media::decode_pipe::reset();
             // The first frame of any run pays a cold spawn either way.
-            super::timeline_frame(0, Some(960), intent).expect("warm frame");
+            super::preview_frame_png(0, Some(960), intent).expect("warm frame");
             let (mut cuts, mut mids) = (Vec::new(), Vec::new());
             for pos in 1..last {
                 let t = Instant::now();
-                super::timeline_frame(pos, Some(960), intent).expect("frame");
+                super::preview_frame_png(pos, Some(960), intent).expect("frame");
                 let ms = t.elapsed().as_secs_f64() * 1000.0;
                 if pos % CLIP_FRAMES as u64 == 0 {
                     cuts.push(ms);
@@ -6675,11 +6613,11 @@ mod preview_throughput_tests {
 
         // The first frame legitimately pays the pipe spawns + keyframe seeks;
         // it is not part of the steady-state measurement.
-        super::timeline_frame(100, Some(960), super::FrameIntent::Single).expect("warm frame");
+        super::preview_frame_png(100, Some(960), super::FrameIntent::Single).expect("warm frame");
 
         let start = Instant::now();
         for f in 101..101 + FRAMES {
-            super::timeline_frame(f, Some(960), super::FrameIntent::Single).expect("frame");
+            super::preview_frame_png(f, Some(960), super::FrameIntent::Single).expect("frame");
         }
         let per_frame = start.elapsed().as_millis() / FRAMES as u128;
         eprintln!(
@@ -6712,7 +6650,7 @@ mod preview_throughput_tests {
         let _project = open_multi_track_project(&vid, 3, None);
         super::decode_pipe::reset();
 
-        super::timeline_frame(100, Some(960), super::FrameIntent::Single).expect("frame");
+        super::preview_frame_png(100, Some(960), super::FrameIntent::Single).expect("frame");
         assert_eq!(
             super::decode_pipe::open_pipe_count(),
             3,
@@ -6730,89 +6668,6 @@ mod preview_throughput_tests {
         );
         super::decode_pipe::reset();
         assert_eq!(super::decode_pipe::open_pipe_count(), 0);
-    }
-
-    /// **D-217's profile.** Where a preview frame's time actually goes, phase
-    /// by phase, on a project shaped like the owner's own laggy one: two video
-    /// layers of real 2940×1670 footage composited into a 1080×1920 portrait
-    /// canvas at the live `PREVIEW_LONG_EDGE`.
-    ///
-    /// This exists because the standing theory ("base64 is the dominant cost")
-    /// had never been measured, and a monolithic `timeline_frame` could not
-    /// answer it. It prints the split rather than asserting a wall-clock
-    /// budget for the two cheap phases — those are microseconds and a
-    /// millisecond assertion on them would be noise — but it *does* assert the
-    /// one structural invariant D-217 bought: the payload the frontend gets is
-    /// the JPEG itself, not a ~4/3-inflated base64 transcription of it.
-    ///
-    /// Run it with the numbers visible:
-    /// `CHROMA_TEST_VIDEO=… cargo test -p apelles preview_frame_phase_breakdown -- --nocapture`
-    #[test]
-    fn preview_frame_phase_breakdown() {
-        let Some(vid) = test_video() else {
-            eprintln!("skip: set CHROMA_TEST_VIDEO");
-            return;
-        };
-        let _guard = super::super::PROJECT_STATE_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        // The owner's real reel: two video layers, 1080×1920 portrait canvas.
-        let _project = open_multi_track_project(&vid, 2, Some((1080, 1920)));
-        super::decode_pipe::reset();
-
-        const FRAMES: u64 = 24;
-        const LONG_EDGE: u32 = 960;
-
-        // The first frame pays the pipe spawns + keyframe seeks; not measured.
-        super::timeline_frame(100, Some(LONG_EDGE), super::FrameIntent::Single)
-            .expect("warm frame");
-
-        let (mut t_image, mut t_jpeg, mut t_b64) = (0u128, 0u128, 0u128);
-        let (mut n_jpeg, mut n_b64) = (0usize, 0usize);
-        for f in 101..101 + FRAMES {
-            let t0 = Instant::now();
-            let img = super::timeline_frame_image(f, Some(LONG_EDGE), super::FrameIntent::Single)
-                .expect("image")
-                .expect("a visible layer");
-            t_image += t0.elapsed().as_micros();
-
-            let t1 = Instant::now();
-            let jpeg = super::encode_preview_jpeg(&img).expect("jpeg");
-            t_jpeg += t1.elapsed().as_micros();
-            n_jpeg = jpeg.len();
-
-            // The pre-D-217 payload, measured on the same picture in the same
-            // run so the comparison is like-for-like rather than across builds.
-            let t2 = Instant::now();
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&jpeg);
-            t_b64 += t2.elapsed().as_micros();
-            n_b64 = b64.len() + "data:image/jpeg;base64,".len();
-        }
-
-        let n = FRAMES as u128;
-        eprintln!(
-            "preview frame phases @ {LONG_EDGE}px long edge, 2 layers → 1080×1920 comp, \
-             {FRAMES} frames:\n  decode+composite {:.2} ms/frame\n  jpeg encode      {:.2} ms/frame\
-             \n  base64 encode    {:.2} ms/frame  (removed by D-217)\n  \
-             payload {} KB raw vs {} KB as a data URL (+{:.0}%)",
-            t_image as f64 / n as f64 / 1000.0,
-            t_jpeg as f64 / n as f64 / 1000.0,
-            t_b64 as f64 / n as f64 / 1000.0,
-            n_jpeg / 1024,
-            n_b64 / 1024,
-            (n_b64 as f64 / n_jpeg as f64 - 1.0) * 100.0,
-        );
-
-        // The invariant, not the wall clock: what crosses the IPC boundary is
-        // the JPEG, byte for byte.
-        let payload =
-            super::timeline_frame(120, Some(LONG_EDGE), super::FrameIntent::Single).expect("frame");
-        assert_eq!(&payload[..2], &[0xFF, 0xD8], "raw JPEG bytes, not a string");
-        assert!(
-            payload.len() < n_b64,
-            "the raw payload must be smaller than the base64 one it replaced"
-        );
-        super::decode_pipe::reset();
     }
 }
 
@@ -6986,8 +6841,8 @@ mod preview_adjustment_tests {
     /// decoded back from `timeline_frame`'s own JPEG bytes — exactly what the
     /// preview `<img>` shows.
     fn centre_pixel(pos: u64) -> [u8; 3] {
-        let jpeg =
-            super::timeline_frame(pos, Some(W), super::FrameIntent::Single).expect("preview frame");
+        let jpeg = super::preview_frame_png(pos, Some(W), super::FrameIntent::Single)
+            .expect("preview frame");
         let img = image::load_from_memory(&jpeg)
             .expect("decode jpeg")
             .to_rgba8();
@@ -7316,8 +7171,8 @@ mod grade_bridge_tests {
     /// input.
     fn preview(pos: u64) -> ([u8; 3], u64) {
         super::decode_pipe::reset();
-        let jpeg =
-            super::timeline_frame(pos, Some(W), super::FrameIntent::Single).expect("preview frame");
+        let jpeg = super::preview_frame_png(pos, Some(W), super::FrameIntent::Single)
+            .expect("preview frame");
         (centre_pixel(&jpeg), hash(&jpeg))
     }
 

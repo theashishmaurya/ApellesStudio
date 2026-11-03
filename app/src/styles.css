@@ -190,6 +190,28 @@ html[data-native-preview] [data-preview-hole] {
   background-color: transparent;
 }
 
+/* D-454 — the Edit viewer in the window's native fullscreen: the preview pane
+   (`data-viewer-fullscreen-root`) covers the window and everything else in the
+   app's tree stops painting (`visibility`, not `display`, so no layout the
+   preview's surroundings depend on is torn down, and the pane's own subtree can
+   opt back in). Without it the panels around the preview, which still lie
+   under the pane, would paint over the native picture through the
+   transparent hole. Portals (popovers, menus) live outside `#root` and stay
+   visible. `:where` keeps the hiding rule's specificity below the opt-back-in
+   rule's, so the pane's own header and transport stay visible. See `packages/editor/src/PreviewPane.tsx`. */
+html[data-viewer-fullscreen] :where(#root *) {
+  visibility: hidden;
+}
+html[data-viewer-fullscreen] [data-viewer-fullscreen-root],
+html[data-viewer-fullscreen] [data-viewer-fullscreen-root] * {
+  visibility: visible;
+}
+html[data-viewer-fullscreen] [data-viewer-fullscreen-root] {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+
 @layer base {
   :where(button, [role='button']):not([disabled]) {
     cursor: pointer;

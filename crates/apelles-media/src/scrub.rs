@@ -436,6 +436,8 @@ fn run_scrub(my_gen: u64) -> Result<(), String> {
         sample_format,
         out_channels,
         ring.clone(),
+        // A scrub follows the pointer; it is nobody's clock (D-454).
+        None,
     )?;
 
     let grain = grain_frames(out_rate);

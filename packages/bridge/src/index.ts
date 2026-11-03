@@ -79,20 +79,28 @@ export {
 export type { MotionRuntimeState, MotionRuntimeStatus } from './motionRuntime';
 
 export {
+  PREVIEW_PLAYHEAD_EVENT,
+  WINDOW_FULLSCREEN_EVENT,
+  onPreviewPlayhead,
+  onPreviewPresent,
+  onWindowFullscreen,
   placePreviewSurface,
   playPreviewSurface,
   previewSurfaceStats,
+  setPreviewFullscreen,
   showPreviewSurfaceFrame,
   startPreviewSurface,
   stopPreviewSurface,
 } from './previewSurface';
 export type {
-  PreviewSurfaceColor,
+  PreviewPlayheadEvent,
+  PreviewSurfacePlaceReport,
   PreviewSurfacePlacement,
+  PreviewSurfacePlay,
   PreviewSurfaceRect,
   PreviewSurfaceShowReport,
-  PreviewSurfaceSource,
   PreviewSurfaceSpread,
   PreviewSurfaceStats,
-  PreviewSurfaceTiming,
 } from './previewSurface';
+
+export { audioPlay, audioSetVolume, audioStop } from './audioTransport';

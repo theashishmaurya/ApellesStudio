@@ -182,6 +182,14 @@ several rounds of the owner's own screenshots before an agent could even confirm
    JPEG, and diff) — which is what D-290 had to do, and which is why the tool got
    the missing half rather than the diagnosis getting a guess.
 
+   **Re-pointed by D-454 (2026-11-04).** The preview is drawn natively and played by
+   a display-clocked loop in Rust, so `raf` is now that loop's ticks (one per present,
+   reported by a debug-only event) and `paint` each new frame on the glass (one per
+   `chroma://preview-playhead`, one per paused show). `fetch` / `tick` are gone with
+   the webview play loop they split; `scrub` stays (the paused show round trip). The
+   GPU-side costs and the A/V offset against the audio clock are the debug op
+   `debug_native_preview_stats`.
+
    **Two traps that both look like "it stalled"**, hit live while profiling D-290
    and now called out in the tool's own docstring: a playhead already parked on the
    LAST frame ends playback on the first tick (one `raf` sample, playhead unmoved),

@@ -44,8 +44,10 @@ the export alike. It runs on wgpu (Metal on Apple Silicon).
   keep-alive list), and one submission comes back as a `PendingGpu`. Its
   terminals: a read-back (`submit` → `PendingFrame`), `submit_into` an
   IOSurface `CVPixelBuffer` (`output.wgsl`: Rec.709 video-range NV12 or BGRA)
-  with no read-back, and D-451's native preview presenter (a pass into the
-  drawable, wired separately, roadmap 5c).
+  with no read-back, and the Edit preview's presenter (D-454: a pass that
+  unpacks the canvas into the presenter's retained frame, recorded by the
+  app through `submit_with`, `chroma::gpu_compositor::Destination::Present`;
+  no engine code of its own).
 - **What it does NOT do, on purpose:**
   - **Decide what is drawn.** No timeline, keyframe, fade, transition or
     geometry maths: `app/src-tauri`'s `chroma::edit` resolves each layer and

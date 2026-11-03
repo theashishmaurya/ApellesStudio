@@ -52,7 +52,6 @@
   "packages/editor/src/CaptionLibrary.tsx",
   "packages/editor/src/ClipAudioTab.tsx",
   "packages/editor/src/EditorExportDialog.tsx",
-  "packages/editor/src/PreviewPane.tsx",
   "packages/editor/src/TwoUpViewer.tsx",
   "packages/editor/src/Waveform.tsx",
   "packages/editor/src/clipThumbs.ts",

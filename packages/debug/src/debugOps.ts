@@ -93,11 +93,12 @@
  *                                   Formats the SAME buffers `debug_frame_
  *                                   timing` reads — never a second, parallel
  *                                   fps number (see `fpsOverlay.ts`).
- *   `debug_native_preview`        — D-451. The native GPU preview surface
- *                                   prototype on / off and its source.
- *   `debug_native_preview_play`   — D-451. Play or stop on the surface's
- *                                   own thread.
- *   `debug_native_preview_stats`  — D-451. The presenter's measurements.
+ *   `debug_native_preview_stats`  — D-451 / D-454. The Edit preview's
+ *                                   presenter and playback loop: presents
+ *                                   and new frames per second, the drawable
+ *                                   wait, the engine's draw, the A/V offset
+ *                                   against the audio clock, the native
+ *                                   view's AppKit frame.
  *
  * NOT here, deliberately: the Colorist tab's own panel/visibility/settings
  * state. It lives in `app/src/store/useUIStore.ts` — inside the vendored
@@ -123,9 +124,8 @@ import {
   parseEditLibraryMode,
   useEditLayoutStore,
   editLayoutSnapshot,
-  useNativePreviewStore,
 } from '@apelles/editor';
-import { playPreviewSurface, previewSurfaceStats, type PreviewSurfaceColor, type PreviewSurfaceSource } from '@apelles/bridge';
+import { previewSurfaceStats } from '@apelles/bridge';
 import { customProxyStore } from '@apelles/motion/src/customProxyStore';
 
 import { describeOpenDialogs, serializeDomTree } from './domTree';
@@ -237,10 +237,6 @@ const AGENT_ACTIVITY_PANEL_ID = 'agent-activity';
 
 /** D-436 — the Sources panel's folder list; also a shell-store flag. */
 const SOURCES_FOLDERS_PANEL_ID = 'sources-folders';
-
-/** D-451 — what `debug_native_preview` accepts. */
-const NATIVE_PREVIEW_SOURCES: readonly PreviewSurfaceSource[] = ['pattern', 'pattern-packed', 'timeline'];
-const NATIVE_PREVIEW_COLORS: readonly PreviewSurfaceColor[] = ['srgb', 'rec709', 'p3'];
 
 export const DEBUG_OPS: Record<string, OpHandler> = {
   debug_get_ui_state: () => uiStateSnapshot(),
@@ -491,48 +487,10 @@ export const DEBUG_OPS: Record<string, OpHandler> = {
     return { ok: true, ...state };
   },
 
-  // D-451 — the native GPU preview surface prototype
-  // (`docs/notes/preview-gpu-surface.md`). `source` turns it on (fed by the
-  // GPU test pattern as a texture, as the engine's packed canvas buffer, or by
-  // today's timeline frame uploaded) or off (`null`); `color` tags the layer.
-  debug_native_preview: (a) => {
-    const source = a?.source ?? null;
-    if (source !== null && !NATIVE_PREVIEW_SOURCES.includes(source)) {
-      return { error: `unknown source ${JSON.stringify(source)} — expected one of ${NATIVE_PREVIEW_SOURCES.join(', ')} or null` };
-    }
-    const color = a?.color;
-    if (color !== undefined && !NATIVE_PREVIEW_COLORS.includes(color)) {
-      return { error: `unknown color ${JSON.stringify(color)} — expected one of ${NATIVE_PREVIEW_COLORS.join(', ')}` };
-    }
-    // The shell root goes transparent too, the same switch the Colorist's
-    // window surface uses (B-006).
-    useShellStore.getState().setWgpuSurfaceActive(source !== null);
-    useNativePreviewStore.getState().setSource(source, color);
-    return { ok: true, source, color: useNativePreviewStore.getState().color };
-  },
-
-  // D-451 — play on the surface's own thread (`fps`, from `from` or the
-  // current position), or stop.
-  debug_native_preview_play: async (a) => {
-    const playing = parseBool(a?.playing, 'playing');
-    if (isParseError(playing)) return playing;
-    const from = a?.from === undefined ? undefined : Math.round(Number(a.from));
-    const fps = a?.fps === undefined ? undefined : Number(a.fps);
-    if (from !== undefined && !(from >= 0)) return { error: "'from' must be a frame number >= 0" };
-    if (fps !== undefined && !(fps > 0)) return { error: "'fps' must be > 0" };
-    await playPreviewSurface(playing.value, from, fps);
-    return { ok: true, playing: playing.value };
-  },
-
-  // D-451 — the presenter's measurements (fps, present intervals, drawable
-  // wait, hand-over → present / GPU done, bytes uploaded and read back).
-  debug_native_preview_stats: async (a) => {
-    // `lastError` rather than `error`: the control bridge reads a result's
-    // `error` as the op failing, and a stale surface error is a reading.
-    const lastError = useNativePreviewStore.getState().error;
-    const stats = await previewSurfaceStats(a?.reset === true);
-    return { ...stats, lastError };
-  },
+  // D-451 / D-454 — the Edit preview's measurements: presents and new frames
+  // per second and their intervals, the drawable wait, the engine's draw, the
+  // A/V offset against the audio clock, and where AppKit has the native view.
+  debug_native_preview_stats: async (a) => previewSurfaceStats(a?.reset === true),
 };
 
 /** Every op name this registry answers — used by the Colorist registry's own

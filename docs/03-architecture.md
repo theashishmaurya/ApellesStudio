@@ -48,10 +48,10 @@ supersedes `docs/00-vision.md`'s old "not an NLE" clause.
 │    │          │          │             │              │  D-043)       │        │
 │    └────┬─────┘          └──────┬──────┘              └──────┬────────┘        │
 │         │                       │                            │                │
-│  CPU compositor →          packages/motion-engine       wgpu native surface    │
-│  binary IPC preview          (Remotion, 8 layer         (D-006) + the         │
-│  (apelles-timeline +           primitives, multi-scene    grade renderer,      │
-│   apelles-media)               JSON manifest compiler)    AI masks/tracking    │
+│  GPU engine →              packages/motion-engine       wgpu native surface    │
+│  native preview layer        (Remotion, 8 layer         (D-006) + the         │
+│  (apelles-compositor,          primitives, multi-scene    grade renderer,      │
+│   D-449/D-454)                 JSON manifest compiler)    AI masks/tracking    │
 │                                    │                                           │
 │                              apelles-motion crate → node render.mts (D-417)     │
 └──────────────────┬───────────────────────────────────────┬────────────────────┘
@@ -240,10 +240,9 @@ video frames flow through it — with `@dnd-kit` layered over it for every drag 
 unified same-track, cross-track, track-reorder and transition-palette drags onto one
 mechanism after two rounds of racing drag systems).
 
-**One GPU render engine draws every frame (D-449).** `chroma::edit` resolves the visible
+**One GPU render engine draws every frame (D-449), on the process's one GPU device (D-454).** `chroma::edit` resolves the visible
 layers (z-order, keyframes, fades, transitions, crop and placement in pixels — D-086/D-088),
-`apelles-compositor` paints them on the GPU, and the finished frame is handed to the webview
-as a **binary IPC payload**, not base64 (D-217). The same engine paints the export's frames
+`apelles-compositor` paints them on the GPU. The same engine paints the export's frames
 and the Colorist's framed clip, so preview and export are one picture, the way Final Cut
 Pro, Resolve and Premiere run one engine for both. There is no CPU compositor and no
 fallback. **Decode and encode are in process on the media engine (D-452):** every video
@@ -256,15 +255,23 @@ into the VideoToolbox encoder's own pixel buffers, one encoder per segment, and 
 the segments and muxes the sound (`-c:v copy`). No decoded or finished frame crosses the CPU, and a
 scrub starts no process. A clip's Colorist grade is run by the Colorist's own shader on the engine's
 device, per frame, before the clip's geometry (D-450), so a graded clip in the Edit tab is
-the Colorist's picture bit for bit.
+the Colorist's picture bit for bit. Since D-454 there is one wgpu
+instance, adapter, device and queue in the process (`chroma::gpu_compositor::device`): the engine,
+the grade pass, the Edit preview's surface and the Colorist tab's own window surface all use it. A
+finished frame leaves the engine through one step (`Engine::submit_with`, D-452) with three
+terminals: read back to the CPU, written into an encoder's IOSurface, or unpacked into the Edit
+preview's presenter (`gpu_compositor::Destination`).
 
-**How that frame reaches the screen is still the old way, and its replacement is prototyped
-(D-451).** Today the engine's frame is read back to the CPU, JPEG-encoded, sent over IPC and
-decoded again by WebKit for an `<img>`. The chosen replacement, built behind
-`debug_assertions` as `chroma::preview_surface`: a `CAMetalLayer` view inserted below the
-transparent webview under the preview's rectangle, presented to by wgpu on the engine's own
-device, with the preview's panes marked `data-preview-hole` so the React overlays draw on
-top of it (`docs/notes/preview-gpu-surface.md`, with the integration seam in §7).
+**The Edit preview is a native layer under the webview (D-451 / D-454).** A `CAMetalLayer` in its
+own `NSView` sits below the transparent `WKWebView`, kept under the preview's rectangle; the
+preview's panes are marked `data-preview-hole` so the React overlays draw on top and keep the
+pointer (`chroma::preview_surface`). The engine's frame is unpacked into the presenter's retained
+texture in the engine's own submission and drawn into a drawable: no read-back, no JPEG, no IPC
+payload (the old `chroma_timeline_frame` → `<img>` path is deleted). Playback runs in Rust:
+clocked by the display (one queued drawable) and slaved to the audio clock
+(`apelles_media::audio_clock`), it reports each frame it shows to the webview, which moves the
+playhead. The layer is tagged Rec.709 (owner, 2026-11-04). Fullscreen is the window's native
+fullscreen. `docs/notes/preview-gpu-surface.md` §10.
 
 Real, verified capabilities (see `docs/02-scope.md` for the itemised list with `D-NNN`s):
 ripple/roll/slip/slide/split/trim, multi-select + marquee, cross-track ripple + sync-lock,
@@ -282,7 +289,8 @@ measured cross-engine verification (D-224's shared EQ response table, D-226's mi
 pixel measurement, D-223's `volumedetect` on real exported files) rather than a unit test
 alone. A drift between the two is a real defect class, not a theoretical one.
 
-**Not built:** GPU compositing, grade-in-preview, OTIO export, a transcript-driven cut.
+**Not built:** OTIO export, a transcript-driven cut. (GPU compositing and the grade in the
+preview were on this list; D-449 and D-450 built them.)
 Roadmap item 27 tracks the list. (Subtitles/captions were on this list and landed as D-229
 while this pass was being written — a fair illustration of why these docs drift. Adjustment
 clips followed as D-230; **speed ramps** as D-236, and their reverse and live-audio-retime
@@ -541,8 +549,8 @@ real headline gaps as of 2026-09-08, in rough order of how much they shape the a
    thin and the fork cannot shrink to "grade shader + mask raster" the way D-039 intends.
 4. **Wave 4 of the migration** — delete the five re-export shims, retarget the call sites.
    Mechanical, one commit, no behaviour change.
-5. **Edit ↔ Colorist are still two models** (roadmap item 8): no grade-in-preview, and a
-   clip's identity in the Edit tab and a shot's in the Colorist are only partly unified.
+5. **Edit ↔ Colorist are still two models** (roadmap item 8): the grade now shows in the Edit
+   preview (D-450), but a clip's identity in the Edit tab and a shot's in the Colorist are only partly unified.
 6. **`@apelles/tokens` and `@apelles/colorist`** — the two frontend packages that have not
    moved: theming still lives in `app/src/styles.css`, and the entire Colorist UI is still
    un-extracted `app/src/`.

@@ -294,6 +294,16 @@ pub fn read_display_frame(state: &AppState) -> Option<(DynamicImage, DisplayTran
     Some((DynamicImage::ImageRgba8(img_buf), transform))
 }
 
+/// The Colorist's GPU context: the process's one device
+/// (`chroma::gpu_compositor::device`, D-454) plus the Colorist's own
+/// full-window display surface (B-006), made from that device's instance.
+///
+/// It used to open an instance, adapter and device of its own; the Colorist's
+/// `GpuProcessor`, the GPU render engine and the Edit preview's presenter now
+/// share one, so a texture any of them makes can be read by the others with
+/// no copy through the CPU. The context is cached in `AppState` and rebuilt
+/// when the render device was reopened after a GPU failure
+/// (`RenderDevice::is_current`), together with the processor built on it.
 pub fn get_or_init_gpu_context(
     state: &tauri::State<AppState>,
     _app_handle: &tauri::AppHandle,
@@ -312,27 +322,40 @@ pub fn get_or_init_gpu_context(
             guard
         }
     };
-    if let Some(context) = &*context_lock {
-        return Ok(context.clone());
-    }
 
-    #[allow(unused_mut)]
-    let mut instance_desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
-
-    #[cfg(target_os = "windows")]
-    if std::env::var("WGPU_BACKEND").is_err() {
-        instance_desc.backends = wgpu::Backends::PRIMARY;
-    }
-
-    let flag_path = state.gpu_crash_flag_path.lock().unwrap().clone();
-    if let Some(p) = &flag_path {
-        if let Some(parent) = p.parent() {
-            let _ = std::fs::create_dir_all(parent);
+    let flag_path = state
+        .gpu_crash_flag_path
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let shared = {
+        if let Some(p) = &flag_path {
+            if let Some(parent) = p.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(p, "initializing_gpu");
         }
-        let _ = std::fs::write(p, "initializing_gpu");
+        let opened = crate::chroma::gpu_compositor::device();
+        if let Some(p) = &flag_path {
+            let _ = std::fs::remove_file(p);
+        }
+        opened?
+    };
+    if let Some(context) = &*context_lock {
+        if shared.is_current(&context.device) {
+            return Ok(context.clone());
+        }
+        // The render device was reopened after a failure: the surface and the
+        // processor below were made on the forgotten one.
+        *state
+            .gpu_processor
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
     }
-
-    let instance = wgpu::Instance::new(instance_desc);
+    let device = shared.gpu.device.clone();
+    let queue = shared.gpu.queue.clone();
+    let adapter = &shared.gpu.adapter;
+    let limits = shared.gpu.limits.clone();
 
     #[cfg(not(any(target_os = "android", target_os = "linux")))]
     let surface_opt = {
@@ -341,16 +364,13 @@ pub fn get_or_init_gpu_context(
 
         if use_wgpu_renderer {
             if let Some(window) = app_handle.get_webview_window("main") {
-                match instance.create_surface(window) {
+                match shared.gpu.instance.create_surface(window) {
                     Ok(surface) => Some(surface),
                     Err(e) => {
                         log::warn!(
                             "Failed to create surface, falling back to compute-only: {}",
                             e
                         );
-                        if let Some(p) = &flag_path {
-                            let _ = std::fs::remove_file(p);
-                        }
                         None
                     }
                 }
@@ -362,61 +382,13 @@ pub fn get_or_init_gpu_context(
         }
     };
 
-    #[cfg(any(target_os = "android", target_os = "linux"))]
-    let surface_opt: Option<wgpu::Surface> = None;
-
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: surface_opt.as_ref(),
-        ..Default::default()
-    }))
-    .map_err(|e| {
-        if let Some(p) = &flag_path {
-            let _ = std::fs::remove_file(p);
-        }
-        format!("Failed to find a wgpu adapter: {}", e)
-    })?;
-
-    let mut required_features = wgpu::Features::empty();
-    if adapter
-        .features()
-        .contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
-    {
-        required_features |= wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
-    }
-
-    let limits = adapter.limits();
-
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("Processing Device"),
-        required_features,
-        required_limits: limits.clone(),
-        experimental_features: wgpu::ExperimentalFeatures::default(),
-        memory_hints: wgpu::MemoryHints::Performance,
-        trace: wgpu::Trace::Off,
-    }))
-    .map_err(|e| {
-        if let Some(p) = &flag_path {
-            let _ = std::fs::remove_file(p);
-        }
-        e.to_string()
-    })?;
-
-    device.on_uncaptured_error(Arc::new(|err: wgpu::Error| {
-        log::error!("[wgpu-error] {}", err);
-    }));
-
-    if let Some(p) = &flag_path {
-        let _ = std::fs::remove_file(p);
-    }
-
     #[cfg(not(any(target_os = "android", target_os = "linux")))]
     let display_opt = if let Some(surface) = surface_opt {
         let window = app_handle
             .get_webview_window("main")
             .ok_or("Failed to get main window")?;
 
-        let swapchain_caps = surface.get_capabilities(&adapter);
+        let swapchain_caps = surface.get_capabilities(adapter);
         let swapchain_format = swapchain_caps
             .formats
             .iter()
@@ -575,8 +547,8 @@ pub fn get_or_init_gpu_context(
     let display_opt = None;
 
     let new_context = GpuContext {
-        device: Arc::new(device),
-        queue: Arc::new(queue),
+        device,
+        queue,
         limits,
         display: Arc::new(std::sync::Mutex::new(display_opt)),
     };

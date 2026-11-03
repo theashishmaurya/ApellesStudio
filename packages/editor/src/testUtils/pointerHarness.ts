@@ -576,6 +576,21 @@ export function installPointerCaptureStub(): () => void {
 
 export type InvokeHandler = (args: Record<string, unknown> | undefined) => unknown | Promise<unknown>;
 
+/** D-454 — the native preview's commands (`chroma::preview_surface`,
+ *  `@apelles/bridge`'s `previewSurface`), answered as a running presenter
+ *  would: a suite that mounts `PreviewPane` spreads these into its
+ *  `createInvokeStub` handlers. No pixels: the picture is native, so a suite
+ *  can only assert which positions it was asked to show (see
+ *  `PreviewPane.staleness.dom.test.tsx` for one that records them). */
+export const PREVIEW_SURFACE_STUBS: Record<string, InvokeHandler> = {
+  chroma_preview_surface_start: () => undefined,
+  chroma_preview_surface_place: () => ({ needsRender: false, presentedWithMove: true }),
+  chroma_preview_surface_show: (args) => ({ position: Number(args?.position ?? 0), renderMs: 0, acquireMs: 0 }),
+  chroma_preview_surface_play: () => undefined,
+  chroma_preview_surface_stop: () => undefined,
+  chroma_preview_surface_fullscreen: () => undefined,
+};
+
 /** A stand-in for `@tauri-apps/api/core`'s `invoke`, matching D-095's own
  *  established pattern ("stubbing enough of `window.__TAURI_INTERNALS__`").
  *  `handlers` maps a Tauri command name to a canned response (or a function

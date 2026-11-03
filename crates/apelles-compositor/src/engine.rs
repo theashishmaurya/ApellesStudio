@@ -915,7 +915,8 @@ impl Engine {
     /// into the canvas, lets `terminal` record what happens to the finished
     /// canvas on the same command encoder — a staging copy for a read-back
     /// ([`Self::submit`]), the conversion into an IOSurface
-    /// ([`Self::submit_into`]), or a presenter's pass into a drawable (D-451) —
+    /// ([`Self::submit_into`]), or the Edit preview presenter's unpack of the
+    /// canvas into its retained frame (D-454, recorded app-side) —
     /// and submits it all as one command buffer. Returns at once with the
     /// submission in flight ([`PendingGpu`]) and what the terminal returned.
     ///

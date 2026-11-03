@@ -38,6 +38,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React, { act } from 'react';
 
 import {
+  PREVIEW_SURFACE_STUBS,
   actSync,
   captureConsole,
   createInvokeStub,
@@ -57,12 +58,19 @@ const CANVAS_W = 1000;
 const CANVAS_H = 500;
 const FPS = 24;
 
-const STUB_FRAME = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer;
 const NATURAL_FULL_FRAME = { naturalWidth: 1, naturalHeight: 1 };
+
+/** D-454 — every placement sent to the native preview, newest last: the
+ *  picture box the presenter draws the frame in. */
+const placed = vi.hoisted(() => ({ list: [] as { picture: Record<string, number> }[] }));
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
-    chroma_timeline_frame: () => STUB_FRAME,
+    ...PREVIEW_SURFACE_STUBS,
+    chroma_preview_surface_place: (args: Record<string, unknown> | undefined) => {
+      placed.list.push(args?.args as { picture: Record<string, number> });
+      return { needsRender: false, presentedWithMove: true };
+    },
     chroma_timeline_composition_size: () => ({
       compWidth: CANVAS_W,
       compHeight: CANVAS_H,
@@ -225,10 +233,10 @@ async function mountWith(
   return el as HTMLElement;
 }
 
-function previewImage(): HTMLImageElement {
-  const img = mounted?.container.querySelector('[data-preview-surface] img');
-  if (!img) throw new Error('the preview <img> never rendered');
-  return img as HTMLImageElement;
+/** Where the native preview was last told to draw the picture, in viewport
+ *  CSS pixels (jsdom puts the surface at the origin). */
+function placedPicture(): Record<string, number> | undefined {
+  return placed.list.at(-1)?.picture;
 }
 
 function transformBox(): HTMLElement {
@@ -311,9 +319,9 @@ describe('the default view is fit — the assumption every pre-D-218 suite rests
     await mountWith(timelineOf([{ kind: 'video', clips: [clip('solo')] }]));
 
     expect(view()).toEqual(FIT_VIEW);
-    // No CSS transform at all at fit — the picture is exactly where every
-    // other DOM suite's fixtures assume it is.
-    expect(previewImage().style.transform).toBe('');
+    // The picture is the fit box — exactly where every other DOM suite's
+    // fixtures assume it is.
+    expect(placedPicture()).toEqual({ x: 0, y: 0, width: CANVAS_W, height: CANVAS_H });
     expect(button('Reset zoom to fit')).toBeNull();
     expect(requireButton('Zoom in').textContent).toBe('');
     // D-432 P5 — the viewer header reads `Fit` at fit (a percentage otherwise).
@@ -376,13 +384,17 @@ describe('the zoom control, shaped like the timeline’s own', () => {
 });
 
 describe('the picture itself', () => {
-  it('is magnified and displaced by exactly the view, as one compositor transform', async () => {
+  it('is drawn by the native preview in the zoomed, panned box — the same one the overlays use', async () => {
     await mountWith(timelineOf([{ kind: 'video', clips: [clip('solo')] }]));
     setView(ZOOMED_PANNED);
-    await waitFrames(1);
+    await waitFrames(3);
 
-    // pan is a fraction of the FIT box, so 0.25 of 1000×500 is 250×125 px.
-    expect(previewImage().style.transform).toBe('translate(250px, 125px) scale(2)');
+    // The same rect `the canvas boundary follows the picture` asserts below.
+    const p = placedPicture();
+    expect(p?.x).toBeCloseTo(-250, 6);
+    expect(p?.y).toBeCloseTo(-125, 6);
+    expect(p?.width).toBeCloseTo(2000, 6);
+    expect(p?.height).toBeCloseTo(1000, 6);
   });
 });
 
@@ -617,7 +629,8 @@ describe('the wheel gesture, mirroring TimelinePane’s own ctrl/pinch split', (
  * same bar D-216 set for `editor_set_selection`: a tool is not "built for an
  * AI" because a store action exists, it is built when the op round-trips and
  * the real component tree responds to it. Every case below therefore asserts
- * the DOM consequence (the picture's own transform) alongside the response.
+ * the consequence (the box the native preview draws the picture in, D-454)
+ * alongside the response.
  */
 describe('editor_set_preview_zoom — the AI half, through the real op dispatch', () => {
   it('zooms the actual picture and reports the view back', async () => {
@@ -628,8 +641,8 @@ describe('editor_set_preview_zoom — the AI half, through the real op dispatch'
     expect(res.ok).toBe(true);
     expect(res.result).toMatchObject({ zoom: 2, pct: 200, panX: 0.25, panY: 0.25, fit: false });
     expect(res.result.panLimit).toBeCloseTo(0.5, 9);
-    await waitFrames(1);
-    expect(previewImage().style.transform).toBe('translate(250px, 125px) scale(2)');
+    await waitFrames(3);
+    expect(placedPicture()).toMatchObject({ x: -250, y: -125, width: 2000, height: 1000 });
   });
 
   it('accepts "fit" as the reset, recentring the pan as well as the zoom', async () => {
@@ -641,8 +654,8 @@ describe('editor_set_preview_zoom — the AI half, through the real op dispatch'
     expect(res.ok).toBe(true);
     expect(res.result).toMatchObject({ zoom: 1, pct: 100, panX: 0, panY: 0, fit: true });
     expect(view()).toEqual(FIT_VIEW);
-    await waitFrames(1);
-    expect(previewImage().style.transform).toBe('');
+    await waitFrames(3);
+    expect(placedPicture()).toEqual({ x: 0, y: 0, width: CANVAS_W, height: CANVAS_H });
   });
 
   it('keeps the current pan when only a zoom is given', async () => {

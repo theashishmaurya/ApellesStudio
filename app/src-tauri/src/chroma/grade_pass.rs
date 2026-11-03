@@ -720,11 +720,12 @@ mod tests {
         }))
         .ok()?;
         Some(super::super::gpu_compositor::RenderDevice::on(
-            crate::image_processing::GpuContext {
+            apelles_gpu::GpuContext {
+                instance,
+                adapter,
                 device: std::sync::Arc::new(device),
                 queue: std::sync::Arc::new(queue),
                 limits,
-                display: std::sync::Arc::new(std::sync::Mutex::new(None)),
             },
         ))
     }

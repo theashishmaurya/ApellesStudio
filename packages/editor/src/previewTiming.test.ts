@@ -98,87 +98,70 @@ describe('previewTimingReport', () => {
   it('resets every channel', () => {
     record('paint', 5, 10);
     record('raf', 5, 10);
-    recordPreviewSpan('fetch', 3);
-    recordPreviewSpan('tick', 9);
+    recordPreviewSpan('scrub', 3);
     resetPreviewTiming();
     const report = previewTimingReport();
 
     expect(report.paint.samples).toBe(0);
     expect(report.raf.samples).toBe(0);
-    expect(report.fetch.samples).toBe(0);
-    expect(report.tick.samples).toBe(0);
+    expect(report.scrub.samples).toBe(0);
   });
 });
 
 /**
- * The D-290 duration channels. These exist to answer one question the two
- * timestamp channels above structurally cannot — "the loop is running at
- * 40 fps, but where did the 25 ms GO?" — and the answer is got by subtracting
- * one median from another, so the medians have to be right for the conclusion
- * drawn from them to be worth anything.
+ * The duration channel (`scrub`, D-334). Its medians are read as evidence, so
+ * they have to be right.
  */
 describe('previewTimingReport — the duration channels', () => {
   it('reports the spread of a duration channel, and no cadence', () => {
-    for (const ms of [4, 6, 5, 5, 20, 5, 5, 5, 5, 5]) recordPreviewSpan('fetch', ms);
-    const { fetch } = previewTimingReport();
+    for (const ms of [4, 6, 5, 5, 20, 5, 5, 5, 5, 5]) recordPreviewSpan('scrub', ms);
+    const { scrub } = previewTimingReport();
 
-    expect(fetch.samples).toBe(10);
-    expect(fetch.minMs).toBe(4);
-    expect(fetch.medianMs).toBe(5);
-    expect(fetch.maxMs).toBe(20);
-    expect(fetch.meanMs).toBeCloseTo(6.5, 5);
+    expect(scrub.samples).toBe(10);
+    expect(scrub.minMs).toBe(4);
+    expect(scrub.medianMs).toBe(5);
+    expect(scrub.maxMs).toBe(20);
+    expect(scrub.meanMs).toBeCloseTo(6.5, 5);
     // A cost has no frame rate and no hitch count — those belong to a cadence.
-    expect(fetch).not.toHaveProperty('fps');
-    expect(fetch).not.toHaveProperty('hitches');
-  });
-
-  it('keeps fetch and tick independent, so their difference means something', () => {
-    for (let i = 0; i < 10; i += 1) recordPreviewSpan('fetch', 4);
-    for (let i = 0; i < 10; i += 1) recordPreviewSpan('tick', 7);
-    const report = previewTimingReport();
-
-    // The subtraction the module doc prescribes: `tick − fetch` is the loop's
-    // own JavaScript, here 3 ms.
-    expect(report.tick.medianMs! - report.fetch.medianMs!).toBeCloseTo(3, 5);
-    expect(report.fetch.samples).toBe(10);
-    expect(report.tick.samples).toBe(10);
+    expect(scrub).not.toHaveProperty('fps');
+    expect(scrub).not.toHaveProperty('hitches');
   });
 
   it('reports nothing rather than a guess before anything has been measured', () => {
-    const { fetch, tick } = previewTimingReport();
-    expect(fetch.samples).toBe(0);
-    expect(fetch.medianMs).toBeNull();
-    expect(fetch.meanMs).toBeNull();
-    expect(tick.msLatest).toEqual([]);
+    const { scrub } = previewTimingReport();
+    expect(scrub.samples).toBe(0);
+    expect(scrub.medianMs).toBeNull();
+    expect(scrub.meanMs).toBeNull();
+    expect(scrub.msLatest).toEqual([]);
   });
 
   it('refuses a negative or non-finite span rather than poisoning the median', () => {
-    recordPreviewSpan('tick', 10);
-    recordPreviewSpan('tick', -1);
-    recordPreviewSpan('tick', Number.NaN);
-    recordPreviewSpan('tick', Number.POSITIVE_INFINITY);
-    const { tick } = previewTimingReport();
+    recordPreviewSpan('scrub', 10);
+    recordPreviewSpan('scrub', -1);
+    recordPreviewSpan('scrub', Number.NaN);
+    recordPreviewSpan('scrub', Number.POSITIVE_INFINITY);
+    const { scrub } = previewTimingReport();
 
     // A span is always `now - start`, so anything else is a caller bug. The
     // readout's whole value is that a number it reports can be trusted as
     // evidence, which it cannot be if a bug silently skews the statistics.
-    expect(tick.samples).toBe(1);
-    expect(tick.medianMs).toBe(10);
+    expect(scrub.samples).toBe(1);
+    expect(scrub.medianMs).toBe(10);
   });
 
   it('drops the oldest durations past the ring buffer capacity', () => {
-    for (let i = 0; i < TIMING_CAPACITY + 50; i += 1) recordPreviewSpan('fetch', 5);
-    expect(previewTimingReport().fetch.samples).toBe(TIMING_CAPACITY);
+    for (let i = 0; i < TIMING_CAPACITY + 50; i += 1) recordPreviewSpan('scrub', 5);
+    expect(previewTimingReport().scrub.samples).toBe(TIMING_CAPACITY);
   });
 
   it('trims the returned duration list to the limit but derives stats over the whole buffer', () => {
-    for (let i = 0; i < 100; i += 1) recordPreviewSpan('tick', 5);
-    recordPreviewSpan('tick', 400);
-    const { tick } = previewTimingReport(5);
+    for (let i = 0; i < 100; i += 1) recordPreviewSpan('scrub', 5);
+    recordPreviewSpan('scrub', 400);
+    const { scrub } = previewTimingReport(5);
 
-    expect(tick.msLatest).toHaveLength(5);
-    expect(tick.maxMs).toBe(400);
-    expect(tick.samples).toBe(101);
+    expect(scrub.msLatest).toHaveLength(5);
+    expect(scrub.maxMs).toBe(400);
+    expect(scrub.samples).toBe(101);
   });
 });
 
@@ -223,15 +206,15 @@ describe('previewTimingReport — the D-330 time window', () => {
     // Cheap fetches long ago, expensive ones just now. A window that only
     // narrowed the cadence channels would report current fps beside stale
     // costs — two halves of one report silently covering different spans.
-    for (let i = 0; i < 10; i += 1) recordPreviewSpan('fetch', 2, i * 10);
-    for (let i = 0; i < 10; i += 1) recordPreviewSpan('fetch', 40, 1000 + i * 10);
+    for (let i = 0; i < 10; i += 1) recordPreviewSpan('scrub', 2, i * 10);
+    for (let i = 0; i < 10; i += 1) recordPreviewSpan('scrub', 40, 1000 + i * 10);
 
     // Nearest-rank median over all twenty samples lands on the cheap half;
     // the windowed one sees only the expensive ten.
-    expect(previewTimingReport(60).fetch.medianMs).toBe(2);
-    expect(previewTimingReport(60).fetch.samples).toBe(20);
-    expect(previewTimingReport(60, 100).fetch.medianMs).toBe(40);
-    expect(previewTimingReport(60, 100).fetch.samples).toBe(10);
+    expect(previewTimingReport(60).scrub.medianMs).toBe(2);
+    expect(previewTimingReport(60).scrub.samples).toBe(20);
+    expect(previewTimingReport(60, 100).scrub.medianMs).toBe(40);
+    expect(previewTimingReport(60, 100).scrub.samples).toBe(10);
   });
 
   it('treats a zero, negative or non-finite window as no window at all', () => {

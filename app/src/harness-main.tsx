@@ -185,34 +185,6 @@ const HARNESS_PROJECT_KEY = '/harness/fake.chroma';
  *  `testUtils/pointerHarness.ts`'s own `createInvokeStub` contract (kept in
  *  sync by hand; this file can't import that vitest-side module directly
  *  since it isn't part of this app's own dependency graph). */
-/** A tiny (16×9, solid mid-gray) JPEG — stands in for a real
- *  `chroma_timeline_frame` server-composited frame. The harness's job is the
- *  REACT layer around that frame (does it render, does the boundary/overlay
- *  land where the geometry says it should, does a drag commit) — the actual
- *  composited PIXELS are a Rust concern, proven separately through the real
- *  `timeline_frame` code path (see `docs/notes/preview-canvas-boundary.md`),
- *  not something this browser-only page can produce without a real backend.
- *
- *  Kept as the base64 source text but handed over as raw BYTES (D-217): the
- *  real command answers with a `tauri::ipc::Response`, which reaches the
- *  frontend as an `ArrayBuffer`, and `PreviewPane` wraps that in a `Blob`
- *  object URL. A harness that still returned a `data:` URL would no longer be
- *  modelling the backend it exists to stand in for.
- *
- *  **B-099 — this is the bare base64 payload, with no `data:image/jpeg;base64,`
- *  prefix, and it has to stay that way.** D-217 rewrote the line below to
- *  `atob(...)` but left the prefix on the string, so `atob` threw
- *  `InvalidCharacterError` at module load and this whole page mounted
- *  nothing — the real-Chromium tier was silently dead from that commit until
- *  it was next opened. See B-099. */
-const STUB_FRAME_BASE64 =
-  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAJABADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=';
-
-/** `STUB_FRAME_BASE64` as the bytes the real command returns. Decoded once,
- *  at module load, and handed out as a fresh copy per call — `Blob` does not
- *  take ownership, but a shared buffer across calls would still be a
- *  needlessly surprising thing for a stub to do. */
-const STUB_FRAME_BYTES = Uint8Array.from(atob(STUB_FRAME_BASE64), (c) => c.charCodeAt(0));
 
 /** D-199 — the composition/canvas size a `CanvasSettingsPopover` save writes
  *  and `useCompositionSize` reads back; a real, if trivial, in-memory model
@@ -376,7 +348,20 @@ function installInvokeStub(): void {
     // composition-size default fetch — one definition, backed by the same
     // `harnessSettings` a `CanvasSettingsPopover` save round-trips through,
     // rather than two harnesses disagreeing about what this command returns.
-    chroma_timeline_frame: () => STUB_FRAME_BYTES.slice().buffer,
+    // D-454 — the native preview's commands. This page has no native layer:
+    // the picture is a Rust/Metal concern (`chroma::preview_surface`); the
+    // harness's job is the React layer over it, which mounts and measures
+    // without a frame.
+    chroma_preview_surface_start: () => undefined,
+    chroma_preview_surface_place: () => ({ needsRender: false, presentedWithMove: true }),
+    chroma_preview_surface_show: (args) => ({
+      position: Number((args as { position?: number }).position ?? 0),
+      renderMs: 0,
+      acquireMs: 0,
+    }),
+    chroma_preview_surface_play: () => undefined,
+    chroma_preview_surface_stop: () => undefined,
+    chroma_preview_surface_fullscreen: () => undefined,
     // D-204 — now resolves its ARGUMENTS (the real command takes track/clip
     // indices) against the active timeline, so a per-source override in
     // `harnessClipNatural` can give two layers genuinely different boxes.

@@ -280,6 +280,8 @@ pub fn screenshot_to_file<R: Runtime>(
     let scale_factor = window.scale_factor().unwrap_or(1.0);
     let mut frame = capture_webview_png(&window)?;
     composite_wgpu_overlay(app, &mut frame);
+    #[cfg(target_os = "macos")]
+    composite_edit_preview(app, &mut frame, scale_factor);
 
     let path = match out_path {
         Some(p) if !p.trim().is_empty() => PathBuf::from(p),
@@ -460,6 +462,149 @@ fn composite_wgpu_overlay<R: Runtime>(app: &tauri::AppHandle<R>, frame: &mut Cap
         return;
     }
     frame.png = png_bytes;
+}
+
+/// D-454 — the Edit preview's native picture as the window shows it: the
+/// native view's rectangle filled with the letterbox colour and the
+/// presenter's retained frame drawn at its picture box (the box the presenter
+/// itself draws it in), at `px_per_css` capture pixels per CSS pixel. Returns
+/// the pane and where its top-left lands in the capture, or `None` when the
+/// Edit preview is not showing. Read back on demand
+/// (`preview_surface::commands::screenshot_frame`), never on the frame path.
+#[cfg(target_os = "macos")]
+fn edit_preview_pane<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    px_per_css: f64,
+) -> Option<(image::RgbaImage, i64, i64)> {
+    let (picture, view, placement) =
+        match crate::chroma::preview_surface::commands::screenshot_frame(app) {
+            Ok(Some(shown)) => shown,
+            Ok(None) => return None,
+            Err(e) => {
+                log::warn!("[chroma::debug_capture] could not read the Edit preview's frame: {e}");
+                return None;
+            }
+        };
+    let s = px_per_css.max(f64::MIN_POSITIVE);
+    // The picture box is in drawable pixels: the view's backing scale.
+    let scale = view.contents_scale.max(1.0);
+    let bg = placement
+        .background
+        .map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
+    let mut pane = image::RgbaImage::from_pixel(
+        (view.width * s).round().max(1.0) as u32,
+        (view.height * s).round().max(1.0) as u32,
+        image::Rgba([bg[0], bg[1], bg[2], 255]),
+    );
+    let [px, py, pw, ph] = placement.picture.map(f64::from);
+    let to_pane = |drawable_px: f64| drawable_px / scale * s;
+    let resized = image::imageops::resize(
+        &picture,
+        to_pane(pw).round().max(1.0) as u32,
+        to_pane(ph).round().max(1.0) as u32,
+        image::imageops::FilterType::Triangle,
+    );
+    image::imageops::overlay(
+        &mut pane,
+        &resized,
+        to_pane(px).round() as i64,
+        to_pane(py).round() as i64,
+    );
+    Some((
+        pane,
+        (view.x * s).round() as i64,
+        (view.y * s).round() as i64,
+    ))
+}
+
+/// D-454 — the Edit preview's native picture composited into a webview
+/// screenshot, for the same reason as [`composite_wgpu_overlay`] (B-151): the
+/// snapshot sees the transparent hole, never the `CAMetalLayer` under it. The
+/// pane goes UNDER the snapshot, so the overlays (handles, guides) it holds
+/// stay on top, exactly as on screen. Best-effort, like the Colorist's: a
+/// failure leaves the plain snapshot and logs why.
+#[cfg(target_os = "macos")]
+fn composite_edit_preview<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    frame: &mut CapturedFrame,
+    scale_factor: f64,
+) {
+    // `CapturedFrame`: CSS pixels times the window's scale.
+    let Some((pane, x, y)) = edit_preview_pane(app, scale_factor) else {
+        return;
+    };
+    let canvas = match image::load_from_memory(&frame.png) {
+        Ok(img) => img.to_rgba8(),
+        Err(e) => {
+            log::warn!(
+                "[chroma::debug_capture] could not decode the webview snapshot to composite \
+                 the Edit preview onto it: {e}"
+            );
+            return;
+        }
+    };
+    let mut composed = image::RgbaImage::new(canvas.width(), canvas.height());
+    image::imageops::overlay(&mut composed, &pane, x, y);
+    image::imageops::overlay(&mut composed, &canvas, 0, 0);
+    let mut png_bytes = Vec::new();
+    if let Err(e) = image::DynamicImage::ImageRgba8(composed).write_to(
+        &mut std::io::Cursor::new(&mut png_bytes),
+        image::ImageFormat::Png,
+    ) {
+        log::warn!(
+            "[chroma::debug_capture] could not re-encode the screenshot after compositing the \
+             Edit preview: {e}"
+        );
+        return;
+    }
+    frame.png = png_bytes;
+}
+
+/// D-454 — [`composite_edit_preview`] for one raw video frame of
+/// `debug_record_video` (D-330), in the frame's own byte order: wherever the
+/// snapshot is not opaque (the hole, and the edges of whatever is drawn over
+/// it), the native picture shows through it, as on screen. A 24-bit frame
+/// carries no alpha to find the hole by and is left as captured.
+/// `px_per_css` is the frame's width over the window's CSS width.
+#[cfg(target_os = "macos")]
+pub(crate) fn composite_edit_preview_raw<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    frame: &mut CapturedRaw,
+    px_per_css: f64,
+) {
+    // Where R, G, B and A sit in each 4-byte pixel.
+    let order: [usize; 4] = match frame.pix_fmt {
+        "rgba" => [0, 1, 2, 3],
+        "bgra" => [2, 1, 0, 3],
+        "argb" => [1, 2, 3, 0],
+        "abgr" => [3, 2, 1, 0],
+        _ => return,
+    };
+    let Some((pane, x0, y0)) = edit_preview_pane(app, px_per_css) else {
+        return;
+    };
+    let (fw, fh) = (i64::from(frame.width), i64::from(frame.height));
+    for (px, py, p) in pane.enumerate_pixels() {
+        let (x, y) = (x0 + i64::from(px), y0 + i64::from(py));
+        if x < 0 || y < 0 || x >= fw || y >= fh {
+            continue;
+        }
+        let at = ((y * fw + x) * 4) as usize;
+        let Some(dst) = frame.bytes.get_mut(at..at + 4) else {
+            continue;
+        };
+        // The snapshot's pixel is premultiplied over transparent: what shows
+        // through it is the native picture times (1 - alpha).
+        let a = u16::from(dst[order[3]]);
+        if a == 255 {
+            continue;
+        }
+        for c in 0..3 {
+            let under = u16::from(p.0[c]) * (255 - a) / 255;
+            dst[order[c]] = (u16::from(dst[order[c]]) + under).min(255) as u8;
+        }
+        dst[order[3]] = 255;
+    }
 }
 
 fn write_png(path: &Path, png: &[u8]) -> Result<(), String> {

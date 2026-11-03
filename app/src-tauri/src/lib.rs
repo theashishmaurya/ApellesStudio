@@ -1895,6 +1895,12 @@ pub fn run() {
                         display.surface.configure(&ctx.device, &display.config);
                         display.render(&ctx.device, &ctx.queue);
                     }
+            // D-454 — the Edit viewer's fullscreen layout follows the window's
+            // native fullscreen however it was entered or left (the viewer's
+            // button, the green button, Ctrl-Cmd-F, Esc).
+            if let Ok(fullscreen) = window.is_fullscreen() {
+                let _ = window.emit("chroma://window-fullscreen", fullscreen);
+            }
         })
         .setup(move |app| {
             #[cfg(feature = "tethering")]
@@ -2354,7 +2360,6 @@ pub fn run() {
             chroma::webview_lifecycle::chroma_webview_take_termination,
             chroma::page_session::chroma_page_session_get,
             chroma::page_session::chroma_page_session_set_tab,
-            chroma::edit::chroma_timeline_frame,
             chroma::edit::chroma_trim_view_frame,
             chroma::edit::chroma_trim_view_end,
             chroma::grade_pass::chroma_timeline_grade_luts,
@@ -2437,19 +2442,22 @@ pub fn run() {
             // D-434 — the UI harness's trusted native input, gated the same way.
             #[cfg(debug_assertions)]
             chroma::debug_input::chroma_debug_inject_input,
-            // D-451 — the preview GPU surface prototype, gated the same way.
-            #[cfg(all(debug_assertions, target_os = "macos"))]
+            // D-451 / D-454 — the Edit preview on its native GPU surface (the
+            // product preview); its measurements are debug-only.
+            #[cfg(target_os = "macos")]
             chroma::preview_surface::commands::chroma_preview_surface_start,
-            #[cfg(all(debug_assertions, target_os = "macos"))]
+            #[cfg(target_os = "macos")]
             chroma::preview_surface::commands::chroma_preview_surface_place,
-            #[cfg(all(debug_assertions, target_os = "macos"))]
+            #[cfg(target_os = "macos")]
             chroma::preview_surface::commands::chroma_preview_surface_show,
-            #[cfg(all(debug_assertions, target_os = "macos"))]
+            #[cfg(target_os = "macos")]
             chroma::preview_surface::commands::chroma_preview_surface_play,
+            #[cfg(target_os = "macos")]
+            chroma::preview_surface::commands::chroma_preview_surface_fullscreen,
+            #[cfg(target_os = "macos")]
+            chroma::preview_surface::commands::chroma_preview_surface_stop,
             #[cfg(all(debug_assertions, target_os = "macos"))]
             chroma::preview_surface::commands::chroma_preview_surface_stats,
-            #[cfg(all(debug_assertions, target_os = "macos"))]
-            chroma::preview_surface::commands::chroma_preview_surface_stop,
             chroma::grade::chroma_save_grade,
             chroma::grade::chroma_load_grade,
             chroma::grade::chroma_load_grades,

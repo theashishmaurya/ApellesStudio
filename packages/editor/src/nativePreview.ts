@@ -1,68 +1,74 @@
 /**
- * nativePreview.ts — the Edit preview shown on the native GPU surface instead
- * of the `<img>` (D-451, `docs/notes/preview-gpu-surface.md`).
+ * nativePreview.ts — the Edit preview on its native GPU surface (D-451; the
+ * product preview since D-454, `docs/notes/preview-gpu-surface.md`).
  *
- * What it is: a small store saying whether the native surface is on (and fed
- * by which prototype source), plus the hook `PreviewPane` runs to keep the
- * native `CAMetalLayer` exactly under the preview: it reads the preview
- * surface's rectangle and the picture's box once per animation frame and
- * sends them to Rust only when they change, so a panel resize, a zoom, a pan,
- * fullscreen or a window move to another display all follow within a frame.
- * While on, `<html data-native-preview>` makes every element marked
- * `data-preview-hole` transparent (the "hole" the layer shows through, the
- * Colorist's B-006 mechanism) and the `<img>` is hidden but keeps its layout,
- * which is what defines the picture's box for the overlays today.
+ * What it is: the hook `PreviewPane` runs to drive the Rust side
+ * (`chroma::preview_surface`) through `@apelles/bridge`:
+ *   - **the surface:** start the presenter on mount, keep the native
+ *     `CAMetalLayer` exactly under the preview — it reads the surface's
+ *     rectangle once per animation frame and sends it, with the picture's box
+ *     (the same composition-fit box every overlay measures,
+ *     `usePreviewContentBox`, zoom and pan included), only when either
+ *     changed — and take it down on unmount. While the view is shown, `<html
+ *     data-native-preview>` makes every element marked `data-preview-hole`
+ *     transparent (the "hole" the layer shows through, B-006's mechanism);
+ *   - **what is shown while paused:** the playhead's frame, a skimmed frame
+ *     (`previewPeek.ts`), the same frame again when the backend's timeline
+ *     changed (`savedVersion`, B-088) or the render size did (a resize, once
+ *     it settles) — latest-wins, one request in flight
+ *     ({@link createShowQueue});
+ *   - **playback:** Play hands the loop to Rust (clocked by the display,
+ *     slaved to the audio clock) and follows it: each frame it shows comes
+ *     back as an event that moves the store's playhead, and the end of the
+ *     timeline stops the transport.
  *
- * What it does NOT do: carry pixels, or touch the overlays — they stay in the
- * DOM on top of the hole and keep the pointer. The geometry is plain functions
- * ({@link placementFromRects}, {@link sameRect}, {@link cssColorToRgba}) so it
- * is unit-tested without a browser.
- *
- * **Debug-only.** Turned on by the debug op `debug_native_preview`; every call
- * site in `PreviewPane` is behind `import.meta.env.APELLES_DEBUG_TOOLS`, and
- * the Rust commands exist only with debug assertions on.
+ * What it does NOT do: carry pixels, draw overlays (they stay in the DOM over
+ * the hole and keep the pointer), or start the audio (the pane's audio effect
+ * does, at the same transition, as before). The geometry and the show queue
+ * are plain functions, unit-tested without a browser (`nativePreview.test.ts`).
  */
 
-import { useEffect } from 'react';
-import { create } from 'zustand';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  onPreviewPlayhead,
+  onPreviewPresent,
   placePreviewSurface,
+  playPreviewSurface,
   showPreviewSurfaceFrame,
   startPreviewSurface,
   stopPreviewSurface,
-  type PreviewSurfaceColor,
   type PreviewSurfacePlacement,
   type PreviewSurfaceRect,
-  type PreviewSurfaceSource,
 } from '@apelles/bridge';
 
+import { notifyPreviewFrameShown } from './loadPerf';
+import { usePreviewPeekStore } from './previewPeek';
+import { recordPreviewSpan, recordPreviewTiming } from './previewTiming';
+import { timelineDuration, timelineFps } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
-
-/** Starts and stops in the order the effects asked for them: a source switch
- *  runs the old effect's stop before the new one's start, and the Rust side
- *  must see them in that order too. */
-let lifecycle: Promise<unknown> = Promise.resolve();
+import type { ContentBoxLike } from './transformGeometry';
 
 /** The attribute on `<html>` that opens the hole. */
 export const NATIVE_PREVIEW_ATTR = 'data-native-preview';
 
-interface NativePreviewState {
-  /** `null` = off: the `<img>` preview, as shipped. */
-  source: PreviewSurfaceSource | null;
-  color: PreviewSurfaceColor;
-  /** The last error the surface reported, for the debug op to return. */
-  error: string | null;
-  setSource: (source: PreviewSurfaceSource | null, color?: PreviewSurfaceColor) => void;
-  setError: (error: string | null) => void;
-}
+/** How long the layout must hold still before a frame is drawn again at a new
+ *  render size (`needsRender`): a panel drag changes it in 128 px steps
+ *  (`Placement::render_long_edge`), and redrawing on every step would ask the
+ *  decoder for the same frame at each size it passes through. */
+export const RERENDER_SETTLE_MS = 150;
 
-export const useNativePreviewStore = create<NativePreviewState>((set) => ({
-  source: null,
-  color: 'srgb',
-  error: null,
-  setSource: (source, color) => set((s) => ({ source, color: color ?? s.color, error: null })),
-  setError: (error) => set({ error }),
-}));
+/** Starts and stops in the order the effects asked for them: a remount runs
+ *  the old effect's stop before the new one's start, and the Rust side must
+ *  see them in that order too. */
+let lifecycle: Promise<unknown> = Promise.resolve();
+
+/** The play requests' monotonic stamp (`chroma_preview_surface_play` drops
+ *  an older request that arrives after a newer one). */
+let playSeq = 0;
+function nextPlaySeq(): number {
+  playSeq += 1;
+  return playSeq;
+}
 
 export function sameRect(a: PreviewSurfaceRect | null, b: PreviewSurfaceRect | null): boolean {
   if (!a || !b) return a === b;
@@ -82,11 +88,17 @@ export function cssColorToRgba(css: string): [number, number, number, number] {
   return [Number(m[1]) / 255, Number(m[2]) / 255, Number(m[3]) / 255, 1];
 }
 
+/** The picture's box in viewport CSS pixels: the content box (surface-local)
+ *  moved to where the surface is. `null` before the composition size is known. */
+export function pictureRect(view: PreviewSurfaceRect, box: ContentBoxLike): PreviewSurfaceRect | null {
+  if (!(box.width > 0 && box.height > 0)) return null;
+  return { x: view.x + box.offsetX, y: view.y + box.offsetY, width: box.width, height: box.height };
+}
+
 /**
  * The placement for one measurement: the surface's rectangle, the picture's
- * box (the `<img>`'s transformed box, which already includes the zoom and pan)
- * and the letterbox colour. With no picture yet, the picture is the whole view
- * (the source is aspect-fit by the box the engine renders at).
+ * box (zoom and pan included) and the letterbox colour. With no picture box
+ * yet, the picture is the whole view.
  */
 export function placementFromRects(
   view: PreviewSurfaceRect,
@@ -103,44 +115,159 @@ export function placementFromRects(
   };
 }
 
+/** A show queue's surroundings, injectable for the tests. */
+export interface ShowQueueDeps {
+  show: (position: number) => Promise<unknown>;
+  onShown: (position: number) => void;
+  onError: (error: string) => void;
+}
+
 /**
- * Keep the native surface under `surface` while the store says it is on.
- * `picture` is the element whose box is the picture's (the hidden `<img>`).
+ * Latest-wins: one request in flight, the newest wanted position next, the
+ * ones in between dropped (a scrub at 60 Hz asks faster than a decode seek
+ * answers). A position already on screen is not asked for again unless it was
+ * invalidated (`force`): the timeline changed under it, or the render size.
+ * Nothing is asked before {@link ShowQueue.ready} (the surface has a size).
  */
-export function useNativePreviewSurface(surface: HTMLElement | null, picture: () => HTMLElement | null): void {
-  const source = useNativePreviewStore((s) => s.source);
-  const color = useNativePreviewStore((s) => s.color);
+export interface ShowQueue {
+  want: (position: number, force?: boolean) => void;
+  /** The surface is placed: show what is wanted. */
+  ready: () => void;
+  /** Playback put `position` on screen itself. */
+  markShown: (position: number) => void;
+  shown: () => number | null;
+}
+
+export function createShowQueue(deps: ShowQueueDeps): ShowQueue {
+  let isReady = false;
+  let inFlight = false;
+  let wanted: number | null = null;
+  let onScreen: number | null = null;
+  const pump = () => {
+    if (!isReady || inFlight || wanted === null) return;
+    const position = wanted;
+    wanted = null;
+    inFlight = true;
+    deps
+      .show(position)
+      .then(() => {
+        onScreen = position;
+        deps.onShown(position);
+      })
+      .catch((e: unknown) => deps.onError(String(e)))
+      .finally(() => {
+        inFlight = false;
+        pump();
+      });
+  };
+  return {
+    want: (position, force = false) => {
+      if (force) onScreen = null;
+      if (position === onScreen && !inFlight) {
+        wanted = null;
+        return;
+      }
+      wanted = position;
+      pump();
+    },
+    ready: () => {
+      isReady = true;
+      pump();
+    },
+    markShown: (position) => {
+      onScreen = position;
+    },
+    shown: () => onScreen,
+  };
+}
+
+export interface NativePreviewState {
+  /** A first frame has reached the screen (the loader can go). */
+  hasFrame: boolean;
+  /** The last error the surface reported, or `null`. */
+  error: string | null;
+  /** Draw the paused frame again although its position did not change (the
+   *  picture under it did: a source finished converting, D-453's conform).
+   *  Stable across renders. */
+  redraw: () => void;
+}
+
+/**
+ * Drive the native preview under `surface` (the preview surface element),
+ * with the picture at `box` (its composition-fit content box, zoom and pan
+ * included). Mounted while the Edit tab shows a timeline.
+ */
+export function useNativePreview(surface: HTMLElement | null, box: ContentBoxLike): NativePreviewState {
+  const [hasFrame, setHasFrame] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const boxRef = useRef(box);
+  const redrawRef = useRef<() => void>(() => {});
+  const redraw = useCallback(() => redrawRef.current(), []);
+  useEffect(() => {
+    boxRef.current = box;
+  }, [box]);
 
   useEffect(() => {
-    if (!source || !surface) return;
-    const { setError } = useNativePreviewStore.getState();
+    if (!surface) return;
     let live = true;
     let started = false;
-    // The first placement sizes the drawable; nothing can be shown before it.
-    let placed = false;
     let inFlight = false;
     let sent: PreviewSurfacePlacement | null = null;
     let raf = 0;
-    // The letterbox is the colour the surface's container paints today, read
-    // before the hole makes it transparent.
+    let settle: ReturnType<typeof setTimeout> | null = null;
+    const store = useEditorTimelineStore;
+    const queue = createShowQueue({
+      show: (position) => {
+        const began = performance.now();
+        return showPreviewSurfaceFrame(position).then(() => {
+          if (import.meta.env.APELLES_DEBUG_TOOLS === 'true') {
+            recordPreviewSpan('scrub', performance.now() - began);
+            recordPreviewTiming('paint');
+          }
+        });
+      },
+      onShown: () => {
+        if (!live) return;
+        setHasFrame(true);
+        setError(null);
+        // B-369 — the open's loader waits for this (and a debug build measures it).
+        notifyPreviewFrameShown();
+      },
+      onError: (e) => {
+        if (live) setError(e);
+      },
+    });
+    // The letterbox is the colour the surface's container paints, read before
+    // the hole makes it transparent.
     const background = cssColorToRgba(getComputedStyle(surface.parentElement ?? surface).backgroundColor);
+    // The hole is open only while the native view is shown under it: the tabs
+    // stay mounted when hidden, and an open hole over another tab would let the
+    // (transparent) window show through wherever that tab paints nothing. It
+    // opens once a visible placement has landed (the view is up first) and
+    // closes before a hidden one is sent (the page paints first).
     const root = document.documentElement;
-    root.setAttribute(NATIVE_PREVIEW_ATTR, '');
-    const img = picture();
-    if (img) img.style.visibility = 'hidden';
+    const setHole = (open: boolean) => {
+      if (open) root.setAttribute(NATIVE_PREVIEW_ATTR, '');
+      else root.removeAttribute(NATIVE_PREVIEW_ATTR);
+    };
+
+    const paused = (): number | null => {
+      const st = store.getState();
+      if (st.playing || !st.timeline) return null;
+      return usePreviewPeekStore.getState().skimFrame ?? st.playhead;
+    };
+
+    redrawRef.current = () => {
+      const at = paused();
+      if (at !== null) queue.want(at, true);
+    };
 
     const tick = () => {
       if (!live) return;
       raf = requestAnimationFrame(tick);
       if (!started || inFlight) return;
       const view = rectOf(surface.getBoundingClientRect());
-      const pic = picture();
-      const next = placementFromRects(
-        view,
-        pic ? rectOf(pic.getBoundingClientRect()) : null,
-        background,
-        !document.hidden,
-      );
+      const next = placementFromRects(view, pictureRect(view, boxRef.current), background, !document.hidden);
       if (
         sent &&
         sent.visible === next.visible &&
@@ -149,66 +276,121 @@ export function useNativePreviewSurface(surface: HTMLElement | null, picture: ()
       ) {
         return;
       }
+      const first = sent === null;
       sent = next;
       inFlight = true;
+      if (!next.visible) setHole(false);
       placePreviewSurface(next)
-        .catch((e: unknown) => setError(String(e)))
-        .then(() => {
-          if (!placed) {
-            placed = true;
-            showLatest();
+        .then((report) => {
+          if (live && next.visible) setHole(true);
+          if (first) queue.ready();
+          if (report.needsRender && !first) {
+            if (settle) clearTimeout(settle);
+            settle = setTimeout(() => {
+              settle = null;
+              const at = paused();
+              if (at !== null) queue.want(at, true);
+            }, RERENDER_SETTLE_MS);
           }
+        })
+        .catch((e: unknown) => {
+          if (live) setError(String(e));
         })
         .finally(() => {
           inFlight = false;
         });
     };
 
-    // A scrub or a paused seek: show the playhead's frame on the surface,
-    // latest-wins (one request in flight, the newest position next).
-    let showing = false;
-    let wanted: number | null = null;
-    const showLatest = () => {
-      if (!placed || showing || wanted === null) return;
-      const position = wanted;
-      wanted = null;
-      showing = true;
-      showPreviewSurfaceFrame(position)
-        .catch((e: unknown) => setError(String(e)))
-        .finally(() => {
-          showing = false;
-          showLatest();
-        });
-    };
-    const unsubscribe = useEditorTimelineStore.subscribe((s, prev) => {
-      if (s.playhead === prev.playhead || s.playing) return;
-      wanted = s.playhead;
-      showLatest();
+    // While paused: the playhead's frame, a skimmed one, or the same one again
+    // after the backend's timeline changed.
+    const unsubscribeStore = store.subscribe((s, prev) => {
+      if (s.playing) return;
+      if (s.savedVersion !== prev.savedVersion) {
+        const at = paused();
+        if (at !== null) queue.want(at, true);
+        return;
+      }
+      if (s.playhead !== prev.playhead && usePreviewPeekStore.getState().skimFrame === null) {
+        queue.want(s.playhead);
+      }
+    });
+    const unsubscribePeek = usePreviewPeekStore.subscribe((s, prev) => {
+      if (s.skimFrame === prev.skimFrame) return;
+      const at = paused();
+      if (at !== null) queue.want(at);
     });
 
-    wanted = useEditorTimelineStore.getState().playhead;
+    // Playback: the Rust loop owns the picture and reports each frame it shows.
+    const unlistenPlayhead = onPreviewPlayhead((e) => {
+      if (!live) return;
+      const st = store.getState();
+      if (!st.playing) return;
+      queue.markShown(e.frame);
+      if (import.meta.env.APELLES_DEBUG_TOOLS === 'true') recordPreviewTiming('paint');
+      st.setPlayhead(e.frame);
+      if (e.ended) st.setPlaying(false);
+    });
+    // Debug builds only: the loop's display ticks, for `debug_frame_timing`.
+    const unlistenPresent =
+      import.meta.env.APELLES_DEBUG_TOOLS === 'true' ? onPreviewPresent(() => recordPreviewTiming('raf')) : () => {};
+    const play = (playing: boolean) => {
+      const st = store.getState();
+      const end = timelineDuration(st.timeline);
+      if (playing && end <= 1) {
+        st.setPlaying(false);
+        return;
+      }
+      playPreviewSurface({
+        playing,
+        from: st.playhead,
+        fps: timelineFps(st.timeline),
+        rate: st.playbackRate,
+        end,
+        seq: nextPlaySeq(),
+      })
+        .then(() => {
+          // Paused somewhere the loop did not draw (a click on the position
+          // bar mid-play): show it.
+          if (!playing) {
+            const at = paused();
+            if (at !== null) queue.want(at);
+          }
+        })
+        .catch((e: unknown) => {
+          if (live) setError(String(e));
+        });
+    };
+    const unsubscribePlay = store.subscribe((s, prev) => {
+      const restarted = s.playing && (s.playbackRate !== prev.playbackRate || s.seekEpoch !== prev.seekEpoch);
+      if (s.playing !== prev.playing || restarted) play(s.playing);
+    });
+
+    queue.want(store.getState().playhead);
     lifecycle = lifecycle
-      .then(() => startPreviewSurface(source, color))
+      .then(() => startPreviewSurface())
       .then(() => {
         started = true;
+        if (store.getState().playing) play(true);
       })
-      .catch((e: unknown) => setError(String(e)));
+      .catch((e: unknown) => {
+        if (live) setError(String(e));
+      });
     raf = requestAnimationFrame(tick);
 
     return () => {
       live = false;
-      unsubscribe();
+      redrawRef.current = () => {};
       cancelAnimationFrame(raf);
-      root.removeAttribute(NATIVE_PREVIEW_ATTR);
-      const el = picture();
-      if (el) el.style.visibility = '';
-      lifecycle = lifecycle.then(() => stopPreviewSurface()).catch((e: unknown) => setError(String(e)));
+      if (settle) clearTimeout(settle);
+      unsubscribeStore();
+      unsubscribePeek();
+      unsubscribePlay();
+      unlistenPlayhead();
+      unlistenPresent();
+      setHole(false);
+      lifecycle = lifecycle.then(() => stopPreviewSurface()).catch(() => {});
     };
-  }, [source, color, surface, picture]);
-}
+  }, [surface]);
 
-/** The hook `PreviewPane` calls: the real one in a debug-tools build, a no-op
- *  (folded and tree-shaken) in production. Chosen once at module load, so
- *  every render calls the same hook. */
-export const useNativePreview: (surface: HTMLElement | null, picture: () => HTMLElement | null) => void =
-  import.meta.env.APELLES_DEBUG_TOOLS === 'true' ? useNativePreviewSurface : () => {};
+  return { hasFrame, error, redraw };
+}

@@ -96,6 +96,15 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
     deliberately NOT mirrored here, see D-242), the single transport's
     generation/`seq` ordering protocol (D-130), and the waveform-envelope path
     (D-051/D-128).
+  - `audio_clock` — **the play session's master clock (D-454)**: the output
+    callback reports each buffer's real (non-underrun) sample frames and when
+    the device plays its first sample (`cpal`'s output timestamps); the
+    session says which timeline time its first played sample is (start frame
+    plus D-125's warm-up discard); `position(instant)` extrapolates the
+    timeline time being heard at that instant, at the playback rate. The Edit
+    preview's display-clocked playback loop (`app/src-tauri`'s
+    `chroma::preview_surface::player`) shows the frame at that position, so
+    the picture follows the sound. `None` with no play session sounding.
   - `scrub` — **tape-style audio scrubbing (D-232)**: the *position-driven*
     playback mode, beside `audio`'s time-driven one. Given a path and a source
     second that the caller updates at pointer-move rate, it repeatedly emits a

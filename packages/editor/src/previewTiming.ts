@@ -1,32 +1,27 @@
 /**
- * previewTiming.ts — what the Edit-tab preview's playback loop ACTUALLY did,
- * measured in the webview (D-219, `docs/notes/debug-tooling.md` piece 5).
+ * previewTiming.ts — what the Edit-tab preview's playback ACTUALLY did,
+ * measured in the webview (D-219, `docs/notes/debug-tooling.md` piece 5;
+ * re-pointed at the native preview by D-454).
  *
- * What it is: two small ring buffers of `performance.now()` timestamps that
- *   `PreviewPane` writes to as it plays — one per `requestAnimationFrame`
- *   tick, one per frame actually handed to the `<img>` — plus, since D-290,
- *   two ring buffers of DURATIONS covering what one iteration of that loop
- *   spent its time on, plus a report that turns all four into intervals, the
- *   derived fps, the drop count and the per-phase spread. The debug op
- *   `debug_frame_timing` reads it.
- *
- * **Why the duration channels exist (D-290).** The two timestamp channels can
- *   say the loop is running at 40 fps; they cannot say WHERE the 25 ms went,
- *   and that is exactly the question the owner's "playback lags" report needs
- *   answered. D-290 profiled the loop from outside using only these two
- *   channels plus a natural experiment (playing over a timeline GAP, whose
- *   frame is a 1×1 JPEG and so costs no decode at all) and could get as far as
- *   "≈3.5 ms is Rust, ≈21.5 ms is this side" — and then stopped, because
- *   nothing could split that 21.5 ms further. So the tool got the missing
- *   half rather than the diagnosis getting a guess:
- *     * `fetch` — the `chroma_timeline_frame` round trip (Tauri IPC + the Rust
- *       decode/composite/JPEG). Everything below the webview.
- *     * `tick`  — one whole pass of the play loop's `tick`, from entry to the
- *       moment it asks for the next animation frame. `tick − fetch` is the
- *       loop's own JavaScript (the `Blob`, the object URL, the store write).
- *   And `raf`'s interval minus `tick` is what is left: React's render/commit
- *   for that frame plus however long the browser made the loop wait for its
- *   next animation frame. Three numbers, one subtraction each, no guessing.
+ * What it is: two small ring buffers of `performance.now()` timestamps and one
+ *   ring buffer of durations, plus a report that turns them into intervals,
+ *   the derived fps, the drop count and the spread. The debug op
+ *   `debug_frame_timing` and the on-screen fps overlay read it; the UI
+ *   harness's playback floor reads `raf` and `paint`.
+ *     * `raf`   — the playback loop's ticks. Since D-454 the loop runs in
+ *       Rust, clocked by the display (`chroma::preview_surface::player`), and
+ *       in a debug build reports each present as an event; each is recorded
+ *       here. (Until D-454 it was the webview's `requestAnimationFrame` loop,
+ *       hence the name.)
+ *     * `paint` — each NEW frame put on the glass: one per
+ *       `chroma://preview-playhead` event while playing, one per paused show.
+ *     * `scrub` — the paused show round trip (`chroma_preview_surface_show`:
+ *       IPC, decode, composite, present).
+ *   D-290's `fetch` / `tick` duration channels split a webview loop's frame
+ *   into IPC and JavaScript; that loop is gone (no frame crosses the IPC
+ *   while playing), so they are too. The per-frame cost on the GPU side is
+ *   `debug_native_preview_stats` (`drawMs`, `presentMs`, `acquireMs`, the
+ *   A/V offset).
  *
  * Why it exists: D-217 fixed the preview's dominant per-frame cost (42.7 →
  *   14.0 ms) and could measure that precisely in Rust, but could NOT measure
@@ -38,14 +33,11 @@
  *   Measuring in-app sidesteps both: the app times itself and an agent reads
  *   the numbers, with no window needing focus and no second instance.
  *
- * What it does NOT do: measure the browser's actual compositor paint. `paint`
- *   here means "the object URL for this frame was handed to React", which is
- *   the last moment this code controls; the pixels land a compositor frame
- *   later. It also doesn't measure the Rust decode/composite cost — that is
- *   already instrumented on the Rust side (D-217) and is the other half of
- *   the same picture.
+ * What it does NOT do: measure the window server's composite. `paint` is
+ *   when the webview heard about the frame (an event after the present), the
+ *   last moment this code can see; the pixels land on the next composite.
  *
- * **Debug-only.** Every call site in `PreviewPane.tsx` is wrapped in
+ * **Debug-only.** Every call site in `nativePreview.ts` is wrapped in
  * `if (import.meta.env.APELLES_DEBUG_TOOLS === 'true')`, so a production build constant-folds them away
  * and this module is tree-shaken out along with them (D-219's frontend gate).
  * Pure and injectable (`at` is a parameter) so the statistics are unit-tested
@@ -80,20 +72,10 @@ export const DEFAULT_TIMING_WINDOW_MS = 2000;
 
 export type PreviewTimingChannel = 'raf' | 'paint';
 
-/** The D-290 duration channels. Unlike {@link PreviewTimingChannel} these hold
- *  already-measured spans in ms, not moments in time — see the module doc for
- *  what each one covers and which subtraction it is meant for.
- *
- *  `scrub` is D-334's addition and is deliberately a THIRD channel rather than
- *  more samples in `fetch`. Both time the same `chroma_timeline_frame` round
- *  trip, but they are not the same measurement: `fetch` is only ever recorded
- *  inside the play loop, where the decode pipe is streaming forward and D-290
- *  measured ~3.5 ms of Rust; `scrub` is the paused path, where the requested
- *  frame is frequently BEHIND the pipe and so costs a kill-and-respawn plus a
- *  keyframe seek instead. Averaging the two together would hide exactly the
- *  difference this channel exists to expose, and would silently change what
- *  every pre-D-334 `fetch` number meant. */
-export type PreviewSpanChannel = 'fetch' | 'tick' | 'scrub';
+/** The duration channels: already-measured spans in ms, not moments in time.
+ *  `scrub` (D-334) is the paused show round trip; see the module doc for why
+ *  D-290's `fetch` and `tick` went with the webview play loop (D-454). */
+export type PreviewSpanChannel = 'scrub';
 
 const buffers: Record<PreviewTimingChannel, number[]> = { raf: [], paint: [] };
 
@@ -110,7 +92,7 @@ interface Span {
   ms: number;
 }
 
-const spans: Record<PreviewSpanChannel, Span[]> = { fetch: [], tick: [], scrub: [] };
+const spans: Record<PreviewSpanChannel, Span[]> = { scrub: [] };
 
 /** Record one event. `at` defaults to `performance.now()` and is a parameter
  *  purely so the tests can drive a deterministic clock. */
@@ -139,8 +121,6 @@ export function recordPreviewSpan(
 export function resetPreviewTiming(): void {
   buffers.raf = [];
   buffers.paint = [];
-  spans.fetch = [];
-  spans.tick = [];
   spans.scrub = [];
 }
 
@@ -176,25 +156,14 @@ export interface SpanTimingReport {
 }
 
 export interface PreviewTimingReport {
-  /** `requestAnimationFrame` ticks: how often the play loop got to run at
-   *  all. A near-zero fps here with a healthy `paint` fps means the WINDOW is
-   *  throttled (backgrounded), not that decoding is slow. */
+  /** The playback loop's ticks (one per present of the native loop, D-454):
+   *  how often it ran. Near zero while playing = the loop is not running. */
   raf: ChannelTimingReport;
-  /** frames actually handed to the preview `<img>`. */
+  /** New frames put on the glass. */
   paint: ChannelTimingReport;
-  /** D-290 — the `chroma_timeline_frame` round trip: Tauri IPC plus all of
-   *  Rust's decode + composite + JPEG encode. Everything below the webview. */
-  fetch: SpanTimingReport;
-  /** D-290 — one whole pass of the play loop's `tick`. `tick.medianMs −
-   *  fetch.medianMs` is the loop's own JavaScript; `raf.medianMs −
-   *  tick.medianMs` is React's render/commit plus the wait for the next
-   *  animation frame. */
-  tick: SpanTimingReport;
-  /** D-334 — the same `chroma_timeline_frame` round trip as `fetch`, but
-   *  measured on the PAUSED/scrub path, where the decode pipe is usually being
-   *  asked for a frame behind its read head. A `scrub.medianMs` far above
-   *  `fetch.medianMs` is the signature of the respawn-and-keyframe-seek cost,
-   *  not of a slow webview. Empty while nothing has scrubbed. */
+  /** D-334 — the paused show round trip (IPC + decode + composite + present).
+   *  A `scrub.medianMs` in the hundreds of ms is the decoder seeking, not a
+   *  slow webview. Empty while nothing has scrubbed. */
   scrub: SpanTimingReport;
   capacity: number;
   /** D-330 — the time window every channel above was derived over, in ms, or
@@ -336,14 +305,6 @@ export function previewTimingReport(
   return {
     raf: channelReport(withinWindow(buffers.raf, win, stampAt, anchor), capped),
     paint: channelReport(withinWindow(buffers.paint, win, stampAt, anchor), capped),
-    fetch: spanReport(
-      withinWindow(spans.fetch, win, spanAt, anchor).map((s) => s.ms),
-      capped,
-    ),
-    tick: spanReport(
-      withinWindow(spans.tick, win, spanAt, anchor).map((s) => s.ms),
-      capped,
-    ),
     scrub: spanReport(
       withinWindow(spans.scrub, win, spanAt, anchor).map((s) => s.ms),
       capped,

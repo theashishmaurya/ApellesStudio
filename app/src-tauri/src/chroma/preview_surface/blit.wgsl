@@ -1,18 +1,22 @@
-// The preview presenter's one pass (D-451): place the frame in its picture box
-// inside the drawable and fill the rest with the preview background. The
-// frame's bytes are display-referred 8-bit R'G'B' and are written to the
-// (non-sRGB) drawable unchanged; the layer's colour space tag says how the
-// window server interprets them. Two entry points, one per source kind
-// (`FrameSource` in presenter.rs); each pipeline binds only its own resources.
+// The preview presenter's two passes (D-451, D-454; presenter.rs).
+//
+// - `fs_unpack`: the engine's packed canvas (one u32 per pixel, R in the low
+//   byte, row-major, no row padding) into the presenter's retained frame
+//   texture of the same size, pixel for pixel, bytes unchanged.
+// - `fs_present`: the retained frame into its picture box inside the
+//   drawable, with a linear filter, and the preview background around it.
+//
+// The frame's bytes are display-referred 8-bit R'G'B' and reach the
+// (non-sRGB) drawable unchanged; the layer's colour space tag (Rec.709) says
+// how the window server interprets them.
 
 struct Params {
-    // The picture box in drawable pixels: x, y, width, height. It can extend
+    // The picture box in target pixels: x, y, width, height. It can extend
     // past the drawable when the preview is zoomed in.
     picture: vec4<f32>,
-    // The background, as 0-1 display-referred values (the preview pane's own
-    // background colour).
+    // The background, as 0-1 display-referred values.
     background: vec4<f32>,
-    // The source frame's size in pixels (packed-buffer source only).
+    // The source frame's size in pixels.
     src_size: vec2<u32>,
     _pad: vec2<u32>,
 };
@@ -27,57 +31,31 @@ fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(x, y, 0.0, 1.0);
 }
 
-fn picture_uv(pos: vec4<f32>) -> vec2<f32> {
-    return (pos.xy - params.picture.xy) / params.picture.zw;
-}
-
-fn outside(uv: vec2<f32>) -> bool {
-    return uv.x < 0.0 || uv.y < 0.0 || uv.x >= 1.0 || uv.y >= 1.0;
-}
-
-// ---- source: a texture (Rgba8Unorm, filterable) ----------------------------
+// ---- the retained frame into the drawable ----------------------------------
 
 @group(0) @binding(1) var src_tex: texture_2d<f32>;
 @group(0) @binding(2) var src_smp: sampler;
 
 @fragment
-fn fs_texture(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
-    let uv = picture_uv(pos);
-    if outside(uv) {
+fn fs_present(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let uv = (pos.xy - params.picture.xy) / params.picture.zw;
+    if uv.x < 0.0 || uv.y < 0.0 || uv.x >= 1.0 || uv.y >= 1.0 {
         return params.background;
     }
     let c = textureSampleLevel(src_tex, src_smp, uv, 0.0);
     return vec4<f32>(c.rgb, 1.0);
 }
 
-// ---- source: the engine's packed canvas (one u32 per pixel, R in the low
-// byte, row-major, no row padding — `apelles-compositor`'s canvas buffer) ---
+// ---- the engine's canvas into the retained frame ----------------------------
 
 @group(0) @binding(3) var<storage, read> src_buf: array<u32>;
 
-fn texel(x: i32, y: i32) -> vec4<f32> {
-    let w = i32(params.src_size.x);
-    let h = i32(params.src_size.y);
-    let cx = clamp(x, 0, w - 1);
-    let cy = clamp(y, 0, h - 1);
-    return unpack4x8unorm(src_buf[u32(cy * w + cx)]);
-}
-
 @fragment
-fn fs_packed(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
-    let uv = picture_uv(pos);
-    if outside(uv) {
-        return params.background;
-    }
-    // Bilinear, texel centres at +0.5, clamped at the edges: the same filter
-    // the texture path's linear sampler applies.
-    let p = uv * vec2<f32>(params.src_size) - 0.5;
-    let base = floor(p);
-    let f = p - base;
-    let x0 = i32(base.x);
-    let y0 = i32(base.y);
-    let top = mix(texel(x0, y0), texel(x0 + 1, y0), f.x);
-    let bottom = mix(texel(x0, y0 + 1), texel(x0 + 1, y0 + 1), f.x);
-    let c = mix(top, bottom, f.y);
+fn fs_unpack(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    // `pos.xy` is the pixel centre (x + 0.5, y + 0.5) of a target exactly the
+    // canvas's size, so this is the canvas's own pixel.
+    let x = u32(pos.x);
+    let y = u32(pos.y);
+    let c = unpack4x8unorm(src_buf[y * params.src_size.x + x]);
     return vec4<f32>(c.rgb, 1.0);
 }

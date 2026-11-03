@@ -3714,6 +3714,7 @@ fn run_session(
         sample_format,
         out_channels,
         ring.clone(),
+        Some(my_gen),
     )?;
 
     // D-323 — one struct rather than five index-parallel locals; see
@@ -3804,6 +3805,14 @@ fn run_session(
         discard_samples(&mut open.decoded, skew_samples, out_channels, chunk_len)?;
         pos_frames += (skew_samples / out_channels.max(1)) as u64;
     }
+    // D-454 — the timeline time the first sample the device plays is: the
+    // start frame plus the warm-up just discarded. The Edit preview's picture
+    // follows this clock (`crate::audio_clock`).
+    let clock_base_secs = if fps > 0.0 {
+        start_frame as f64 / fps
+    } else {
+        0.0
+    } + pos_frames as f64 / f64::from(out_rate.max(1));
 
     let prefill_len = (PREFILL_SECS * out_rate as f64) as usize * out_channels.max(1);
     while ring.lock().unwrap_or_else(|e| e.into_inner()).len() < prefill_len
@@ -3830,6 +3839,11 @@ fn run_session(
         capped_skew * 1000.0,
         prefill_len
     );
+    // D-454 — at 1x (and any rate the stretch stage treats as 1x) one real
+    // second is one timeline second.
+    let clock_rate = if stretch.is_some() { rate } else { 1.0 };
+    crate::audio_clock::begin(my_gen, clock_base_secs, clock_rate, out_rate);
+    let _clock = ClockSession(my_gen);
     stream.play().map_err(|e| format!("stream.play: {e}"))?;
 
     // B-111 — how many OUTPUT sample-frames between re-resolves; see
@@ -4382,22 +4396,38 @@ fn splice_edit(
     Ok(over)
 }
 
+/// D-454 — ends play session `.0`'s clock ([`crate::audio_clock`]) however
+/// [`run_session`] returns, so a finished or failed session is never read as
+/// the position of the picture.
+struct ClockSession(u64);
+
+impl Drop for ClockSession {
+    fn drop(&mut self) {
+        crate::audio_clock::end(self.0);
+    }
+}
+
 /// Build the `cpal` output stream for whichever `sample_format` the device's
 /// default config actually is, dispatching to a generic body via
 /// `dasp_sample::FromSample` for the `f32` (internal pipeline) → device
 /// sample-type conversion.
+///
+/// `clock` (D-454) is the play session whose clock each filled buffer
+/// advances ([`crate::audio_clock::advance`]); `None` for a scrub.
 pub(crate) fn build_output_stream(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     sample_format: cpal::SampleFormat,
     channels: usize,
     ring: Arc<Mutex<VecDeque<f32>>>,
+    clock: Option<u64>,
 ) -> Result<cpal::Stream, String> {
     let out_rate = config.sample_rate;
+    let out = (out_rate, channels, clock);
     match sample_format {
-        cpal::SampleFormat::F32 => build_typed::<f32>(device, config, out_rate, channels, ring),
-        cpal::SampleFormat::I16 => build_typed::<i16>(device, config, out_rate, channels, ring),
-        cpal::SampleFormat::U16 => build_typed::<u16>(device, config, out_rate, channels, ring),
+        cpal::SampleFormat::F32 => build_typed::<f32>(device, config, out, ring),
+        cpal::SampleFormat::I16 => build_typed::<i16>(device, config, out, ring),
+        cpal::SampleFormat::U16 => build_typed::<u16>(device, config, out, ring),
         other => Err(format!("unsupported cpal output sample format {other:?}")),
     }
 }
@@ -4405,8 +4435,7 @@ pub(crate) fn build_output_stream(
 fn build_typed<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
-    out_rate: u32,
-    channels: usize,
+    (out_rate, channels, clock): (u32, usize, Option<u64>),
     ring: Arc<Mutex<VecDeque<f32>>>,
 ) -> Result<cpal::Stream, String>
 where
@@ -4422,11 +4451,23 @@ where
     device
         .build_output_stream(
             *config,
-            move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
-                let (samples, _underran) = {
+            move |data: &mut [T], info: &cpal::OutputCallbackInfo| {
+                let (samples, real) = {
                     let mut buf = ring.lock().unwrap_or_else(|e| e.into_inner());
-                    pull_or_silence(&mut buf, data.len())
+                    let real = buf.len().min(data.len());
+                    (pull_or_silence(&mut buf, data.len()).0, real)
                 };
+                // D-454 — this buffer's real samples, and when the device
+                // plays its first one: the play session's clock.
+                if let Some(generation) = clock {
+                    let ts = info.timestamp();
+                    crate::audio_clock::advance(
+                        generation,
+                        (real / channels.max(1)) as u64,
+                        Instant::now(),
+                        ts.playback.duration_since(ts.callback),
+                    );
+                }
                 // D-126: the master monitoring volume, applied here — after
                 // the ring buffer, before the device and before the RMS/peak
                 // meter — so `chroma_audio_level` (and any future meter UI)

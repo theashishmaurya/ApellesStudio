@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React, { act } from 'react';
 
 import {
+  PREVIEW_SURFACE_STUBS,
   actSync,
   createInvokeStub,
   installObjectUrlStub,
@@ -30,11 +31,10 @@ const COMP = vi.hoisted(() => ({ w: 1080, h: 1920 }));
 const SURFACE_W = 1000;
 const SURFACE_H = 500;
 const FPS = 25;
-const STUB_FRAME = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer;
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
-    chroma_timeline_frame: () => STUB_FRAME,
+    ...PREVIEW_SURFACE_STUBS,
     chroma_timeline_composition_size: () => ({
       compWidth: COMP.w,
       compHeight: COMP.h,
