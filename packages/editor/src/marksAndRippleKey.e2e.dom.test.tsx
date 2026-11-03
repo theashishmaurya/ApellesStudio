@@ -169,6 +169,19 @@ describe('B-348 — editor_set_marks', () => {
   });
 });
 
+describe('B-293 — editor_set_track_gain names a missing track instead of answering ok', () => {
+  it('errors on an index past the last track and changes nothing', async () => {
+    await mountWith(threeClips());
+    const bad = await op('editor_set_track_gain', { track: 4, gain: 0 });
+    expect(bad.ok).toBe(false);
+    expect(bad.error).toMatch(/no track 4/);
+    expect(tl().tracks[0].gain).toBe(1);
+    const good = await op('editor_set_track_gain', { track: 0, gain: 0.5 });
+    expect(good.ok).toBe(true);
+    expect(tl().tracks[0].gain).toBe(0.5);
+  });
+});
+
 describe('B-348 — Shift+Delete ripple delete (rippleDeleteClips)', () => {
   it('lifts the clip AND closes the hole: later clips move up', async () => {
     await mountWith(threeClips());

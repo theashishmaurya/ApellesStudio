@@ -8,7 +8,7 @@
 
 use std::io::Write;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -21,6 +21,15 @@ pub const MAX_PAGE_SIZE: u32 = 20;
 pub const DEFAULT_PAGE_SIZE: u32 = 10;
 /// A `429 Retry-After` up to this long is waited out once; longer is reported.
 const MAX_RETRY_WAIT: Duration = Duration::from_secs(10);
+/// How many times a transient upstream failure (`500`/`502`/`503`/`504`) is
+/// retried after the first try (B-294).
+const MAX_UPSTREAM_RETRIES: u32 = 2;
+/// The pause before each such retry, doubling (1 s, then 2 s).
+const UPSTREAM_BACKOFF: Duration = Duration::from_secs(1);
+/// No further upstream retry is started once a call has already run this long,
+/// so a slow cold search that then 504s cannot push the whole tool call past
+/// the bridge's own deadline (B-294: cold searches took 35-55 s before failing).
+const UPSTREAM_RETRY_BUDGET: Duration = Duration::from_secs(60);
 /// Time allowed to open the connection.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Time allowed with no bytes arriving. Idle, not total: Openverse's search has
@@ -174,9 +183,15 @@ impl Client {
         Ok((written, content_type))
     }
 
-    /// GET with one polite retry on `429`.
+    /// GET with one polite retry on `429`, and up to `MAX_UPSTREAM_RETRIES`
+    /// retries, backing off, on a transient upstream failure (B-294: Openverse
+    /// answers an intermittent `500` on the record endpoint and a `504` on a
+    /// cold search that the next, warm, try usually serves).
     async fn get_text(&self, url: &str, params: &[(&str, String)]) -> Result<String, String> {
-        for attempt in 0..2 {
+        let started = Instant::now();
+        let mut upstream_retries = 0;
+        let mut rate_limit_retried = false;
+        loop {
             let resp = self
                 .http
                 .get(url)
@@ -192,7 +207,8 @@ impl Client {
                         .and_then(|v| v.to_str().ok()),
                 );
                 match wait {
-                    Some(w) if w <= MAX_RETRY_WAIT && attempt == 0 => {
+                    Some(w) if w <= MAX_RETRY_WAIT && !rate_limit_retried => {
+                        rate_limit_retried = true;
                         tokio::time::sleep(w).await;
                         continue;
                     }
@@ -210,16 +226,40 @@ impl Client {
                     }
                 }
             }
+            if is_transient_upstream(status)
+                && upstream_retries < MAX_UPSTREAM_RETRIES
+                && started.elapsed() < UPSTREAM_RETRY_BUDGET
+            {
+                tokio::time::sleep(UPSTREAM_BACKOFF * 2u32.pow(upstream_retries)).await;
+                upstream_retries += 1;
+                continue;
+            }
             if !status.is_success() {
-                return Err(format!("Openverse answered HTTP {status}"));
+                return Err(if is_transient_upstream(status) {
+                    format!(
+                        "Openverse answered HTTP {status} after {} {} (its servers are struggling; try again in a minute)",
+                        upstream_retries + 1,
+                        if upstream_retries == 0 {
+                            "try"
+                        } else {
+                            "tries"
+                        }
+                    )
+                } else {
+                    format!("Openverse answered HTTP {status}")
+                });
             }
             return resp
                 .text()
                 .await
                 .map_err(|e| format!("could not read Openverse's answer: {e}"));
         }
-        Err("Openverse is rate-limiting anonymous requests; try again in a minute".into())
     }
+}
+
+/// Whether `status` is a failure on Openverse's side that a later try can fix.
+fn is_transient_upstream(status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 500 | 502 | 503 | 504)
 }
 
 /// `Retry-After` as seconds (the HTTP-date form is not used by Openverse and is
@@ -310,6 +350,18 @@ pub fn file_stem(title: &str, id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_openverses_own_server_errors_are_retried() {
+        for code in [500u16, 502, 503, 504] {
+            let status = reqwest::StatusCode::from_u16(code).expect("a valid status code");
+            assert!(is_transient_upstream(status), "{code} is transient");
+        }
+        for code in [200u16, 400, 401, 404, 429, 501] {
+            let status = reqwest::StatusCode::from_u16(code).expect("a valid status code");
+            assert!(!is_transient_upstream(status), "{code} is not");
+        }
+    }
 
     #[test]
     fn retry_after_reads_seconds_and_nothing_else() {

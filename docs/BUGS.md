@@ -784,15 +784,22 @@ status: **fixed 2026-11-03 (documented; there is one convention, not two)** · s
 
 ## B-294 — Openverse calls fail often: cold `editor_search_audio` 35-55 s then 504; record endpoint intermittent 500; an `editor_import_audio` timed out at 120 s but finished later (file + credit written, clip not placed)
 
-status: **open** · severity: **minor** · area: `apelles-audio-library` client (D-400, B-275)
+status: **partly fixed 2026-11-03: the client now retries upstream 5xx; the slow cold search and the late-finishing import are upstream/transport behaviour, left open** · severity: **minor** · area: `apelles-audio-library` client (D-400, B-275)
 
 - **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Expected: a timeout that later completes still places the clip or reports how to finish; clearer retry/backoff for the upstream 5xx.
 
+- **investigation 2026-11-03 (code read; no live Openverse calls made):** `apelles-audio-library`'s `get_text` retried only `429`; a `500` / `502` / `503` / `504` was returned to the caller at once. The 120 s `editor_import_audio` case is a three-step sequence (`chroma_audio_download`, pool import, `editor_add_clip`), and the slow step is the download; the bridge deadline (B-314) ending the caller's wait does not stop it, so the file and the credit land. Why the third step did not run in that one case cannot be shown from the code; the 35-55 s cold search is Openverse's own first-byte latency (B-275 measured 34 s), which the 90 s idle timeout already tolerates.
+- **fix:** `get_text` retries a transient upstream failure (`500`/`502`/`503`/`504`) up to twice with a 1 s then 2 s backoff, and starts no new retry once the call has run 60 s (so a slow cold search that 504s cannot push the tool past the 120 s bridge deadline). The final error says the servers are struggling and how many tries were made. Test: `only_openverses_own_server_errors_are_retried` (the status classifier; the retry loop itself needs a live or mock server, not available offline).
+- **left open:** (a) a clip may be left unplaced when the bridge deadline passes mid-import (the import finishes: place it with `editor_list_media` + `editor_add_clip`, no re-download); making the import a polled job like the B-321 Motion ops is the real fix and is not small; (b) the cold-search latency itself.
+
 ## B-293 — a voiceover track's gain was found at 0 mid-edit with no recorded cause
 
-status: **open** · severity: **unknown** · area: Edit track gain
+status: **open (investigated 2026-11-03, no single cause provable; one hole closed)** · severity: **unknown** · area: Edit track gain
 
 - **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Seen once in the Five Levels edit; set back to 1 before export. Needs a repro (check the edit journal / undo history next time).
+
+- **investigation 2026-11-03 (code read, no repro):** only three paths write a track's gain to 0, all through `set_track_gain`: the track header's Mute button (`toggleMute`: gain <= 0 -> default, else 0; one click), `editor_set_track_gain`, and a journal replay of either. Nothing else (ducking, fades, `editor_set_audio_monitor`, transitions) writes `Track.gain`; a duck is applied at mix time and never stored. So the 0 was either a Mute click or an `editor_set_track_gain` call with a stale index: adding a title with no `track` inserts a NEW video track at index 0 and renumbers every track below it, so a caller holding an old index lands on a different track, and the handler answered `ok: true` even for an index past the last track (silent no-op).
+- **fix (the hole that can be closed):** `editor_set_track_gain` now errors on a track index that does not exist, naming the count and that indices shift when a track is added above. The cause of the one observed 0 stays unproven. The undo history already records every gain change by name (`trackGainLabel`: "Mute track N"), so next time the undo history shows which op did it. Test: `marksAndRippleKey.e2e.dom.test.tsx` (B-293).
 
 ## B-292 — one component crash blanked the whole app and every control-bridge op timed out until a full reload
 

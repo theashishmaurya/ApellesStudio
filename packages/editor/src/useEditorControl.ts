@@ -6283,6 +6283,13 @@ export function useEditorControl(): void {
         const track = Math.round(Number(a?.track));
         const gain = Number(a?.gain);
         if (!Number.isFinite(gain)) return { error: 'gain must be a finite number' };
+        // B-293 — a track index from before a renumbering (a title added on a new top
+        // track shifts every index by one) used to answer `ok: true` and change
+        // nothing, or change the WRONG track; at least a missing track is now an error.
+        const count = useEditorTimelineStore.getState().timeline?.tracks.length ?? 0;
+        if (!Number.isInteger(track) || track < 0 || track >= count) {
+          return { error: `no track ${track} (the timeline has ${count}; indices shift when a track is added or removed above)` };
+        }
         useEditorTimelineStore.getState().applyOp({ kind: 'set_track_gain', track, gain });
         return { ok: true, track, gain };
       },
