@@ -7939,6 +7939,27 @@ def debug_set_editor_layout(
 
 
 @mcp.tool()
+def debug_set_inspector_section(id: str, open: bool) -> str:
+    """Open or collapse one section of the Edit tab's clip Inspector — the same
+    state the section header's own click drives (v0.3.0). Sections start
+    collapsed and the user's choice is remembered per section, so a
+    `debug_screenshot` or a UI-harness step that needs a control inside one
+    (the Scale slider in "transform", Opacity in "compositing") opens it first.
+
+    `id`: transform, compositing, crop, dynamic-zoom, speed, fade, keyframes,
+    highlights, audio, eq, project-settings, timeline-settings. An unknown id
+    is refused with that list. Like a click, the choice persists.
+
+    You do NOT need this to EDIT anything (every control has its own
+    `editor_*` tool); it is for looking at and driving the app's UI.
+
+    Returns {ok, id, open}."""
+    import json
+
+    return json.dumps(_op("debug_set_inspector_section", id=id, open=open), indent=2, default=str)
+
+
+@mcp.tool()
 def debug_set_inspector_tab(tab: str) -> str:
     """Switch the Edit tab's clip Inspector between its "video", "audio",
     "speed" and "info" tabs (D-246; four since v0.3.0) — the same state the

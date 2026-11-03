@@ -50,6 +50,7 @@
  *                                   height) and whether the browser shows;
  *                                   reported as `editor.layout`.
  *   `debug_set_inspector_tab`     — that Inspector's Video/Audio/Speed/Info tab (D-246, v0.3.0).
+ *   `debug_set_inspector_section` — open / collapse one Inspector section (v0.3.0).
  *   `debug_set_popover_open`      — any registered Edit-tab popover/dialog by
  *                                   id (D-252, `@apelles/editor`'s
  *                                   `panelRegistry.ts`) — the canvas-size
@@ -109,6 +110,8 @@ import {
   resetPreviewTiming,
   CLIP_INSPECTOR_TABS,
   parseClipInspectorTab,
+  INSPECTOR_SECTION_IDS,
+  parseInspectorSectionId,
   PANEL_IDS,
   parsePanelId,
   EDIT_LIBRARY_MODES,
@@ -314,6 +317,18 @@ export const DEBUG_OPS: Record<string, OpHandler> = {
     // The same action the tab button's own click calls (`ClipInspectorPanel`).
     useEditorTimelineStore.getState().setInspectorTab(tab);
     return { ok: true, inspectorTab: useEditorTimelineStore.getState().inspectorTab };
+  },
+
+  debug_set_inspector_section: (a) => {
+    const id = parseInspectorSectionId(a?.id);
+    if (id === null) {
+      return { error: `unknown section ${JSON.stringify(a?.id)} — expected one of ${INSPECTOR_SECTION_IDS.join(', ')}` };
+    }
+    const open = parseBool(a?.open, 'open');
+    if (isParseError(open)) return open;
+    // The same action the section header's own click calls (`EditorSection`).
+    useEditorTimelineStore.getState().setInspectorSectionOpen(id, open.value);
+    return { ok: true, id, open: useEditorTimelineStore.getState().inspectorSections[id] ?? false };
   },
 
   debug_set_popover_open: (a) => {

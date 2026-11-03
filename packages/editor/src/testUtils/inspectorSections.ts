@@ -9,24 +9,13 @@
  * reason.
  */
 import type { useEditorTimelineStore } from '../timelineStore';
+import { INSPECTOR_SECTION_IDS } from '../EditorSection';
 
 type TimelineStore = typeof useEditorTimelineStore;
 
-/** Every collapsible `EditorSection` id the editor renders. */
-export const ALL_INSPECTOR_SECTION_IDS = [
-  'transform',
-  'compositing',
-  'crop',
-  'dynamic-zoom',
-  'speed',
-  'fade',
-  'keyframes',
-  'highlights',
-  'audio',
-  'eq',
-  'project-settings',
-  'timeline-settings',
-] as const;
+/** Every collapsible `EditorSection` id the editor renders (the editor's own
+ *  list, `EditorSection.tsx`). */
+export const ALL_INSPECTOR_SECTION_IDS = INSPECTOR_SECTION_IDS;
 
 /** Open the named sections (and leave every other one as it is). */
 export function openInspectorSections(store: TimelineStore, ...ids: string[]): void {

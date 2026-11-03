@@ -1804,6 +1804,28 @@
       }
     },
     {
+      "name": "debug_set_inspector_section",
+      "description": "Open or collapse one section of the Edit tab's clip Inspector \u2014 the same\n    state the section header's own click drives (v0.3.0). Sections start\n    collapsed and the user's choice is remembered per section, so a\n    `debug_screenshot` or a UI-harness step that needs a control inside one\n    (the Scale slider in \"transform\", Opacity in \"compositing\") opens it first.\n\n    `id`: transform, compositing, crop, dynamic-zoom, speed, fade, keyframes,\n    highlights, audio, eq, project-settings, timeline-settings. An unknown id\n    is refused with that list. Like a click, the choice persists.\n\n    You do NOT need this to EDIT anything (every control has its own\n    `editor_*` tool); it is for looking at and driving the app's UI.\n\n    Returns {ok, id, open}.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "open": {
+            "title": "Open",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "open"
+        ],
+        "type": "object",
+        "title": "debug_set_inspector_sectionArguments"
+      }
+    },
+    {
       "name": "debug_set_inspector_tab",
       "description": "Switch the Edit tab's clip Inspector between its \"video\", \"audio\",\n    \"speed\" and \"info\" tabs (D-246; four since v0.3.0) \u2014 the same state the\n    tab bar's own button drives.\n\n    The Inspector splits a clip's properties: Video holds Transform,\n    Compositing, Crop, Dynamic Zoom, Highlights, Fade and the whole-clip\n    Keyframes actions; Audio holds Volume/Pan and the four-band EQ; Speed\n    holds the retime; Info is a read-only page of the clip's media facts and\n    its in / out. Only one is on screen at a time, so a `debug_screenshot` or\n    a `debug_dom_tree` of the Inspector shows one of them \u2014 set the tab first\n    when you are looking for a control on another.\n\n    You do NOT need this to EDIT anything: every control on both tabs already\n    has its own MCP tool (`editor_set_clip_transform`, `set_clip_audio` /\n    `editor_set_clip_*`, \u2026) that writes the timeline directly, whichever tab\n    is showing. This is for looking at the app, which is what the `debug_*`\n    family is for.\n\n    The choice is sticky and per session: a clip without the chosen tab (a\n    generated title has no Audio or Speed) shows its Video tab regardless,\n    without forgetting the choice. An unknown name is refused with the accepted list rather than\n    silently ignored.\n\n    Returns {ok, inspectorTab}.",
       "inputSchema": {
@@ -16823,6 +16845,31 @@
             "enabled": false,
             "corner": "v_debug_set_fps_overlay.corner",
             "updateMs": 9
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "debug_set_inspector_section",
+      "case": "minimal",
+      "arguments": {
+        "id": "v_debug_set_inspector_section.id",
+        "open": false
+      },
+      "requests": [
+        {
+          "op": "debug_set_inspector_section",
+          "args": {
+            "id": "v_debug_set_inspector_section.id",
+            "open": false
           },
           "timeout_ms": 20000
         }
