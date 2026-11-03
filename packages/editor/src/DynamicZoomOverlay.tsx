@@ -89,9 +89,14 @@ export function DynamicZoomOverlay({ container }: { container: HTMLElement | nul
   const armed = !!dynamicZoom && !!clip && clip.id === dynamicZoom.clipId;
   const trackLocked = primary ? !!timeline?.tracks[primary.track]?.locked : false;
 
-  const geometry = useClipGeometry(primary?.track ?? null, clipIndex, clip?.source_path, clip?.scaling);
+  // B-374 — only an ARMED overlay measures anything. Unarmed (every selection
+  // change that is not a dynamic zoom, e.g. the select-and-trim of an edit
+  // gesture), the geometry probe was an IPC round trip and the content box's
+  // `clientWidth` read forced the whole freshly committed page to lay out inside
+  // the release's commit, then re-rendered this overlay for nothing.
+  const geometry = useClipGeometry(armed && primary ? primary.track : null, clipIndex, clip?.source_path, clip?.scaling);
   const contentBox = usePreviewContentBox(
-    container,
+    armed ? container : null,
     geometry ? { width: geometry.compWidth, height: geometry.compHeight } : null,
   );
 

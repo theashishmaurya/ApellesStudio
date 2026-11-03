@@ -1,6 +1,6 @@
 # Timeline lanes: replacing `@xzdarcy/react-timeline-editor` (D-437 build plan)
 
-Status: **plan, 2026-11-01. Built so far: S0, S1, S2, S3a, S3b, S4, S5, S6, S7 (live paint A/B pending), S8 (live check pending), S10 (2026-11-03, measured in headless Chromium; live check pending), live playback/release profile (2026-11-03, see "Live playback/release profile" after S10) — `TimelinePane` renders the lanes and our playhead since S4; the library package and its selectors are gone (S5, S6). See each step's "Built" note.** Decision: D-437 (`docs/08-decisions.md`).
+Status: **plan, 2026-11-01. Built so far: S0, S1, S2, S3a, S3b, S4, S5, S6, S7 (live paint A/B pending), S8 (live check pending), S10 (2026-11-03, measured in headless Chromium; live check pending), live playback/release profile (2026-11-03, see "Live playback/release profile" after S10), S11 (2026-11-03, the rest of the release frame, measured in the production bundle; dev re-check pending) — `TimelinePane` renders the lanes and our playhead since S4; the library package and its selectors are gone (S5, S6). See each step's "Built" note.** Decision: D-437 (`docs/08-decisions.md`).
 Evidence: `docs/notes/timeline-drag-perf.md` (B-347), the live harness runs under
 `scratch/ui-harness/runs/` (run 4: `2026-10-31T21-00-23-799Z`). Builds on D-432 P2/P3
 (`docs/notes/ui-redesign.md` §6b, §6c) and the harness (`docs/notes/ui-harness.md`).
@@ -975,6 +975,44 @@ is paint)._
 **`track-header-quiet` (B-372).** Harness, not app: passes alone and after `track-height-drag` with Apelles frontmost; the failing full run ended with another app in front, where the delivered move applies no `:hover`. Fixed in the runner (H18: re-activate and replay once, else SKIP).
 
 **Live re-check after merge (dev app, Apelles frontmost):** `npm run harness --workspace @apelles/ui-harness -- --filter perf-300-playback` (expect raf ≥ 50, paint ≥ 29; `debug_frame_timing` fetch median ≈ 14–16 ms), `--filter perf-300-trim-select` (expect `commit-rendered` ≈ 10 ms lower than today's 22–35 and no `Shell` in the release's React entries), `--filter track-header-quiet` (PASS, or SKIP with the H18 reason if the front is taken), and the full suite for regressions.
+
+### S11 — the rest of the release frame (built 2026-11-03)
+- **Brief:** find and fix what was left of the release frame at 300 clips after B-371 (dev: trim 102 ms, ripple-trim 67, roll 63, slide 84, slip 49, move 44; the ~20–25 ms main-thread gap with no React in it). **Goal:** release frame < 50 ms worst for trim / ripple / roll / slip / slide / move at 300 clips in the production bundle.
+- **Method.** A `tauri build --debug` bundle from the worktree (`studio.apelles.perf`, port 19798, window sized like the dev app, 1470×923), driven by `npm run harness -- --port 19798 --filter perf-300-…`. Attribution with the new **release tracer** (`packages/debug/src/releaseTrace.ts`, armed by `debug_perf_entries {traceReleaseMs}`): forced layouts with their caller, timer / rAF / message / observer callbacks, listeners and main-thread gaps after each commit mark. For "which components rendered", an exploration-only bundle aliased `react-dom/client` to `react-dom/profiling` under a `<Profiler>` (the tracer records React's component track); none of that is committed. The method is in `ui-harness.md` "Perf method".
+- **Where the release went (300 clips, profiling build, 1 ms timer resolution).**
+
+| phase (trim, select tool) | before | evidence |
+|---|---|---|
+| pointerup → React render + commit of the edit | 13–20 ms | React track: `TimelinePane` 7–12 ms incl. the toolbar, track headers and lanes; commit 3–4 ms |
+| **unattributed main-thread time after the commit** | **~19–22 ms** | no JS row at all; a throwaway `document.body.offsetWidth` right after the gesture removed `data-chroma-edit-gesture` took **22 ms**, the one after React's commit 7 ms |
+| the `click` the release produces | 4–6 ms | React `Event: click` render of `TimelinePane` + its tooltip / panel subtree (`onClipClick` re-set the same selection) |
+| `DynamicZoomOverlay` on the new selection (unarmed) | ~5 ms | `layout|clientWidth` from `useContentBox`'s layout effect inside the commit, then a cascading render |
+| rendering update (style / layout / paint) | 4–7 ms | `commitPaintedMs − commitFrameMs` |
+| move (dnd-kit) release: React restoring focus | **~22 ms** | `layout|scrollLeft` 12 ms, `layout|focus` 7 ms, `layout|set scrollLeft` 3 ms, all inside React's `commitRoot` (the moved clip body was focused and its DOM node was re-ordered) |
+
+- **The 20 ms gap was a style recalculation of every clip.** `timeline.css` had `[data-chroma-edit-gesture] * { cursor: inherit !important }`. Adding or removing the attribute on the edit area invalidated the style of every descendant: 300 clips and their filmstrips, waveforms, badges and trim zones. WebKit then recalculated all of them at the next style update, on the release frame (and on the first move frame, at the press). No JS ran, so the profile showed a gap.
+- **Fixes (B-374).**
+  1. **The gesture cursor is a full-window layer** (`gestureCursor.ts`): one transparent `fixed inset-0 z-50` element with the cursor, shown at the press and hidden at the release. It restyles one element. The marker attribute stays (the pane reads it), and no stylesheet rule names it (`timelineOverrides.test.ts` pins that). The pane cancels a running gesture on unmount, so the layer cannot outlive it.
+  2. **The release's own `click` is swallowed** (capture phase on `window`, gone by the next task). It re-selected the clip, or on empty space cleared the selection the edit had just made after a `getBoundingClientRect`.
+  3. **`DynamicZoomOverlay` measures only while armed:** no geometry IPC, no content-box `clientWidth` read, no re-render on an ordinary selection change.
+  4. **A pointer clip drop blurs the dragged clip body** before its commit, so React has no focus to restore into the re-ordered lane (`focus()` on the pane instead was measured at ~14 ms of forced layout itself). Keyboard drags keep dnd-kit's focus restore; shortcuts are window-level (D-273).
+- **Results (production bundle, `tauri build --debug`, 300 clips, 1470×923; `releaseMaxMs`, the worst frame after the `pointerup`).** Before = `main` 99e7145, after = this step's final bundle; the two were run interleaved (A/B/A) because the machine was shared with other agents' builds. Load average (1 min) per run in brackets. Runs: `scratch/perf-s11/ab-*`.
+
+| op | before (load 11 / 10–20 / 7–14) | after (load 11–7 / 13–11) | before, loaded (25–33) |
+|---|---|---|---|
+| trim (select) | 51 / 61 / 64 | **39 / 31** | 81 |
+| ripple-trim | 53 / 58 / 54 | **34 / 40** | 106 |
+| roll | 46 / 59 / 63 | **43 / 37** | 74 |
+| slip | 64 / 72 / 48 | **29 / 27** | 159 |
+| slide | 49 / 89 / 67 | **45 / 42** | 150 |
+| move | 45 / 80 / 47 | **32 / 42** | 88 |
+
+  `commitFrameMs` (commit → the next frame's start) 41–70 → 19–34 ms. `commitRenderedMs` (React's render of the edit) did not move, 7–19 ms either way, mostly with load. A loaded run of the build before fix 4 (load 20–34) stayed at 30–56 ms for the five edit tools where `main` measured 74–159; its move (96–106) is what fix 4 then addressed.
+- **Dev bundle.** Before: the 2026-11-03 v0.3.0 run above (trim 102, ripple 67, roll 63, slip 49, slide 84, move 44). After: not measured here (the owner's dev app runs `main`; a second dev server from the worktree would collide with it). Re-check after merge with `--filter perf-300` on the dev app.
+- **What is left, measured, not fixed here.**
+  - **React's render of the edit, 4–16 ms production.** `TimelinePane` re-renders its whole subtree on any timeline change: the toolbar's tooltips and menus, all eight `TrackHeader`s (inline closures and a fresh `duck` object each render, so they cannot be memoised as they are), and the lanes (where `LaneClip`'s memo holds). The fix is moving the timeline subscription down (toolbar and headers off the `timeline` object), a bigger change to the pane.
+  - **The Inspector mounting for the newly selected clip** lands one or two frames after the release (S10's deferred selection) and costs 10–20 ms there: its render plus Base UI's `CompositeList` calling `scrollIntoViewIfNeeded` on mount, a forced layout of the new Inspector DOM. It counts in `releaseMaxMs` when it lands in the measured window. Re-using the panel across selections instead of re-mounting it per selection would remove most of it.
+  - **The dnd-kit move:** dnd-kit's own `pointerup` handler renders synchronously before `onDragEnd` (a cascading update, ~15–20 ms profiling build under load), and every `useDraggable` re-renders on drag start and end. That is the move's remaining release cost and its move-phase p95.
 
 ## 6. Risks and how each is handled
 

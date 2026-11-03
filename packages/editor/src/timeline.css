@@ -1,8 +1,8 @@
 /*
  * Apelles — the timeline's few global CSS rules (imported by `TimelinePane.tsx`).
  *
- * The lanes (`lanes/`) style themselves inline and with tokens; only two rules
- * need a stylesheet. (D-437 S5: this file was `timeline-overrides.css` while it
+ * The lanes (`lanes/`) style themselves inline and with tokens; only one rule
+ * needs a stylesheet. (D-437 S5: this file was `timeline-overrides.css` while it
  * overrode `@xzdarcy/react-timeline-editor`'s bundled CSS; the library is gone.)
  */
 
@@ -20,11 +20,7 @@
 }
 
 /*
- * D-432 P2 — while an edit gesture runs, the edit area carries
- * `data-chroma-edit-gesture` and the gesture's cursor (`useEditGesture.ts`);
- * every element under the pointer shows that cursor rather than its own, so a
- * roll that passes over a clip body or a marker never flickers to an arrow.
+ * (D-432 P2's `[data-chroma-edit-gesture] *` cursor rule is gone: it restyled every
+ * clip on each press and release, ~20 ms at 300 clips. The gesture's cursor is a
+ * full-window layer now, `gestureCursor.ts`; B-374.)
  */
-[data-chroma-edit-gesture] * {
-  cursor: inherit !important;
-}

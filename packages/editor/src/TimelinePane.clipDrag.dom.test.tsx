@@ -314,3 +314,24 @@ describe('where a dragged clip lands (B-145)', () => {
     }
   });
 });
+
+describe('the drop does not make React restore focus into a re-ordered lane (B-374)', () => {
+  it('5. a pointer drag lets go of the dragged clip\'s focus before the commit', async () => {
+    const el = clipBody('a');
+    // A real press focuses the clip body (dnd-kit makes it a tabIndex=0 button).
+    actSync(() => el.focus());
+    expect(document.activeElement).toBe(el);
+    const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus');
+    try {
+      const box = el.getBoundingClientRect();
+      await dragBy(el, box.left + 40, ROW_HEIGHT_PX * 0.5, 180);
+      expect(placed('a')).toEqual({ track: 0, startFrame: CLIP_START + framesFor(180) });
+      expect(document.activeElement, 'focus did not go back into the moved lane').toBe(document.body);
+      // React's restore would call focus() on the clip body inside the commit.
+      const onClips = focusSpy.mock.contexts.filter((c) => c instanceof HTMLElement && c.hasAttribute('data-chroma-clip-drag'));
+      expect(onClips).toEqual([]);
+    } finally {
+      focusSpy.mockRestore();
+    }
+  });
+});

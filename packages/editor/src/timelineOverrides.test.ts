@@ -18,7 +18,9 @@ describe('timeline.css', () => {
     expect(rules).toMatch(/\n\[data-chroma-clip-drag\]\s*\{\s*cursor:\s*default;/);
   });
 
-  it('keeps the edit gesture cursor over everything under the pointer (D-432 P2)', () => {
-    expect(rules).toMatch(/\[data-chroma-edit-gesture\]\s*\*\s*\{\s*cursor:\s*inherit\s*!important;/);
+  it('has no rule that restyles every descendant of the edit area on a press or release (B-374)', () => {
+    // The gesture's cursor is a layer (`gestureCursor.ts`); a `[data-chroma-edit-gesture]`
+    // rule would make toggling the marker restyle all 300 clips again.
+    expect(rules).not.toMatch(/data-chroma-edit-gesture/);
   });
 });

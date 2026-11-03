@@ -2992,6 +2992,20 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
       const headerDrag = asTrackHeaderDrag(raw);
       const transitionDrag =
         raw && (raw as TransitionDragData).type === 'transition' ? (raw as TransitionDragData) : null;
+      // B-374 — a pointer press focused the dragged clip body (dnd-kit makes it
+      // a `tabIndex={0}` button). A move past a neighbour re-orders the lane's
+      // DOM, the moved node loses focus, and React's commit then restores it:
+      // reads every ancestor's scroll position and calls `focus()`, forced
+      // layouts of the freshly moved 300-clip page. After a mouse drop nothing
+      // needs the clip focused (the shortcuts are window-level, D-273), so it is
+      // blurred here, before the commit. `blur()`, not focusing the pane: a
+      // `focus()` checks focusability and scrolls into view, itself a forced
+      // layout of the dirty page (measured ~14 ms). A keyboard drag keeps
+      // dnd-kit's own focus restore.
+      if (clipDrag && !(event.activatorEvent instanceof KeyboardEvent)) {
+        const focused = document.activeElement;
+        if (focused instanceof HTMLElement && focused.closest('[data-chroma-clip-drag]')) focused.blur();
+      }
       setActiveDrag(null);
       setClipGrab(null);
       dragPreviewRef.current?.setLanding((prev) => (prev === null ? prev : null));
