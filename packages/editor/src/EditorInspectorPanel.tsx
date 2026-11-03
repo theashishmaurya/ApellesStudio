@@ -69,6 +69,7 @@
  * unchanged — showing Project Settings there would misreport "nothing is
  * selected" when several clips actually are.
  */
+import { useDeferredValue } from 'react';
 import {
   adjacentParamKeyframeFrame,
   clearClipKeyframes,
@@ -97,7 +98,6 @@ import {
   DEFAULT_EASE_CURVE,
   EASE_PRESETS,
   easePresetName,
-  endFrame,
   isClipAudioParam,
   timelineFps,
   type ClipAudioParam,
@@ -105,9 +105,10 @@ import {
   type ClipTransformParam,
   type EaseCurve,
   type EqBand,
+  type Timeline,
 } from './timeline';
 import type { SpeedPoint } from './speedRamp';
-import { useEditorTimelineStore } from './timelineStore';
+import { useEditorTimelineStore, type Selection } from './timelineStore';
 import { inspectorTarget, paramFacet, type ClipTarget } from './inspectorTarget';
 import { useClipGeometry } from './useClipGeometry';
 
@@ -119,10 +120,38 @@ interface FacetCtx {
   sourceFrame: number;
 }
 
+/** D-437 S10 — `EditorInspectorPanel`'s playhead selector: the playhead while
+ *  the selected clip (either facet of a linked pair) has keyframes, whose
+ *  values the rows show at the playhead; otherwise `-1`, a constant, so
+ *  playback does not render the panel. Exported for its render-count test. */
+export function inspectorPlayhead(s: { timeline: Timeline | null; selection: readonly Selection[]; playhead: number }): number {
+  const selected = s.selection.length === 1 ? s.selection[0] : null;
+  if (!selected) return -1;
+  const keyed = (t: ClipTarget | null) => (t?.clip.chroma_keyframes?.length ?? 0) > 0;
+  return keyed(inspectorTarget(s.timeline, selected, 'video')) || keyed(inspectorTarget(s.timeline, selected, 'audio'))
+    ? s.playhead
+    : -1;
+}
+
 export function EditorInspectorPanel() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
-  const playhead = useEditorTimelineStore((s) => s.playhead);
-  const selection = useEditorTimelineStore((s) => s.selection);
+  // D-437 S10 — the playhead only while something on screen depends on it: a
+  // selected clip with keyframes shows each property's value AT the playhead.
+  // Otherwise the selector answers a constant and a played frame renders this
+  // panel zero times (it used to render the whole Inspector per frame). The
+  // handlers that write at the playhead read it live (`liveSourceFrame`), and
+  // the Speed section's "add a point here" subscribes for itself.
+  const playhead = useEditorTimelineStore(inspectorPlayhead);
+  // D-437 S10 — the selection this panel SHOWS is deferred (React's
+  // `useDeferredValue`): a click or a select-and-trim release commits the
+  // timeline's own change first, and the Inspector's re-mount for the new clip
+  // (its tabs, sections and Base UI composites, plus the layout read a
+  // composite's first mount forces) renders in the background right after,
+  // interruptible, instead of inside the release frame (measured at 300 clips:
+  // about half of that frame's React work). By id, so a timeline that changed
+  // underneath still resolves the right clip.
+  const liveSelection = useEditorTimelineStore((s) => s.selection);
+  const selection = useDeferredValue(liveSelection);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
   // D-208 — the `<` / `>` per-property keyframe nav moves the playhead.
   const setPlayhead = useEditorTimelineStore((s) => s.setPlayhead);
@@ -170,6 +199,11 @@ export function EditorInspectorPanel() {
     keyframes: t?.clip.chroma_keyframes ?? [],
     sourceFrame: t ? clipSourceFrame(t.clip, playhead, fps) : 0,
   });
+  /** The playhead's source frame in `t` NOW, for the handlers that write at
+   *  the playhead: the render's `playhead` is a constant when nothing is
+   *  keyframed (`inspectorPlayhead`). */
+  const liveSourceFrame = (t: ClipTarget | null) =>
+    t ? clipSourceFrame(t.clip, useEditorTimelineStore.getState().playhead, fps) : 0;
   const ctxVideo = facetCtx(videoTarget);
   const ctxAudio = facetCtx(audioTarget);
   const clipKfSourceFrame = ctxVideo.sourceFrame;
@@ -343,7 +377,7 @@ export function EditorInspectorPanel() {
       if (param === 'scale' && (ctx.target.clip.box_width != null || ctx.target.clip.box_height != null)) {
         applyTransform({ box_width: null, box_height: null });
       }
-      applyKeyframes(mergeClipKeyframeParams(ctx.keyframes, ctx.sourceFrame, { [param]: value }), ctx);
+      applyKeyframes(mergeClipKeyframeParams(ctx.keyframes, liveSourceFrame(ctx.target), { [param]: value }), ctx);
     } else {
       staticWrite(param, value);
     }
@@ -367,11 +401,11 @@ export function EditorInspectorPanel() {
     const ctx = ctxOf(param);
     if (!ctx.target) return;
     if (hasParamKeyframes(ctx.keyframes, param)) {
-      const held = paramValueAt(ctx.keyframes, param, ctx.sourceFrame, staticValue(param));
+      const held = paramValueAt(ctx.keyframes, param, liveSourceFrame(ctx.target), staticValue(param));
       if (held !== staticValue(param)) staticWrite(param, held);
       applyKeyframes(removeClipKeyframeParam(ctx.keyframes, param), ctx);
     } else {
-      applyKeyframes(mergeClipKeyframeParams(ctx.keyframes, ctx.sourceFrame, { [param]: staticValue(param) }), ctx);
+      applyKeyframes(mergeClipKeyframeParams(ctx.keyframes, liveSourceFrame(ctx.target), { [param]: staticValue(param) }), ctx);
     }
   };
 
@@ -402,7 +436,7 @@ export function EditorInspectorPanel() {
     const value = CLIP_KEYFRAME_DEFAULTS[param];
     staticWrite(param, value);
     if (hasParamKeyframes(ctx.keyframes, param)) {
-      applyKeyframes(mergeClipKeyframeParams(ctx.keyframes, ctx.sourceFrame, { [param]: value }), ctx);
+      applyKeyframes(mergeClipKeyframeParams(ctx.keyframes, liveSourceFrame(ctx.target), { [param]: value }), ctx);
     }
   };
 
@@ -431,10 +465,10 @@ export function EditorInspectorPanel() {
     const all = Object.fromEntries(
       (Object.keys(CLIP_TRANSFORM_DEFAULTS) as ClipTransformParam[]).map((p) => [p, paramStates[p].value]),
     );
-    applyKeyframes(mergeClipKeyframeParams(clipKeyframes, clipKfSourceFrame, all));
+    applyKeyframes(mergeClipKeyframeParams(clipKeyframes, liveSourceFrame(videoTarget), all));
   };
 
-  const doRemoveKeyframeHere = () => applyKeyframes(removeClipKeyframe(clipKeyframes, clipKfSourceFrame));
+  const doRemoveKeyframeHere = () => applyKeyframes(removeClipKeyframe(clipKeyframes, liveSourceFrame(videoTarget)));
 
   const doClearKeyframes = () => applyKeyframes(clearClipKeyframes());
 
@@ -533,17 +567,6 @@ export function EditorInspectorPanel() {
       onTransformChange={applyTransform}
       onFadeChange={applyFade}
       onSpeedChange={applySpeed}
-      // D-236 — `null` when the playhead is not over this clip at all, so the
-      // Speed section disables "add a point here" rather than guessing a
-      // position. `clipKfSourceFrame` is the same clamped source frame the
-      // keyframe rows use, which is why the two land together.
-      playheadSourceFrame={
-        selectedClip &&
-        playhead >= selectedClip.start_frame &&
-        playhead < endFrame(selectedClip, timelineFps(timeline))
-          ? Math.round(clipKfSourceFrame)
-          : null
-      }
       onEqBandChange={applyEqBand}
       onEqClear={clearEq}
       onParamChange={applyParam}

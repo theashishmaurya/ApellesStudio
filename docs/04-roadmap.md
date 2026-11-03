@@ -261,17 +261,17 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      2. The owner edits something real for about 10 minutes.
      3. One export end to end (1080p short clip): loudness and picture.
      4. ~~B-359 item 6: the view doesn't follow a programmatic seek, and zoom persists across timelines.~~ **Fixed 2026-11-03** (a paused jump outside the view centres it; zoom and scroll are per timeline). Check live with `seek-far-playhead-visible`.
-     5. Verify pinch zoom in a production bundle (unverified because of the window size).
+     5. Verify pinch zoom in a production bundle (unverified because of the window size). **2026-11-03:** not the window. A production bundle zooms on a pinch at the default 1280×720 in Chromium; the S9 failure is the native magnify injection into the second-instance perf app. Rerun `zoom-trackpad-pinch` live with the perf app frontmost and the dev app quit.
    - **Fix or ship as a known issue (decide at release):**
-     6. Playback at about 300 clips runs at rAF 26 fps / paint 22 fps (the owner's Nemotron timeline has 288). Fixed by D-437 S10.
-     7. Release frame 52–87 ms at 300 clips (acceptable).
+     6. Playback at about 300 clips runs at rAF 26 fps / paint 22 fps (the owner's Nemotron timeline has 288). **D-437 S10 (2026-11-03)** took every per-frame React render outside the pane off the playhead; in Chromium the whole React cost of playback is ~0.25 ms/frame, so the live shortfall is outside the tree (preview IPC/decode/compositing): needs a live `debug_frame_timing` profile.
+     7. Release frame 52–87 ms at 300 clips (acceptable). **D-437 S10:** React commit on release 16–25 → 6–12 ms in a production build (headless); recheck live.
    - **Also before v0.3.0 (owner ask):** B-361. A caption preset click captions the video from its transcript (or restyles existing captions) instead of dropping a placeholder.
    - **Also before v0.3.0:** B-362 (Clipper panel horizontal scroll); B-368 (Motion renders add a silent linked audio clip).
    - **Not for v0.3.0:** B-354, B-359's polish items, the missing keys (J/K/L, I/O, Shift+Delete), B-340.
    - **Release housekeeping:** version v0.3.0 (v0.4.0 stays the Motion release); release notes from the CHANGELOG; the website's MCP tool count (`website/src/data/mcp.ts` says 255, the real count is 269); the tag-triggered CI release (D-392). The owner gives the go and runs the push.
 00a3. **PAUSED 2026-11-01 (owner: out of subagent credits)**, resume in this order:
    1. ~~Inspector sections collapsed by default~~: **done**, merged 2026-11-01.
-   2. D-437 S10: release < 50 ms, zoom, playback at 300 clips (`docs/notes/timeline-lanes.md` S10; worktree `agent-a22c86466a8ce7faa`, no commits).
+   2. ~~D-437 S10: release < 50 ms, zoom, playback at 300 clips~~: **built 2026-11-03** (`docs/notes/timeline-lanes.md` S10); live production check pending.
    3. B-354: toolbar regroup, empty states, Cmd+4, volume popover.
    4. B-348's missing NLE keys: J/K/L, I/O, Shift+Delete ripple delete.
    5. ~~Mockup-vs-app comparison pass~~: done 2026-11-01; its gaps are B-359 (fix with B-354).

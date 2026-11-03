@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-03** — **D-437 S10 built** (measured on a production build of the harness page, headless): the Inspector's re-mount for a new selection is deferred out of the release commit and `EditorTab` no longer re-renders per edit (release React commit 16–25 → 6–12 ms at 300 clips); six per-frame playhead subscribers outside the pane are off React state. CSS-variable zoom measured out; production pinch works at the default window (the S9 miss is the native injection).
 - **2026-11-03** — **B-359 item 6 fixed** (v0.3.0 blocker): a paused playhead jump outside the view (`editor_set_playhead`, Index markers, ↑/↓, transcript lines) now centres it, and the timeline zoom and scroll are remembered per timeline instead of session-wide. New harness scenario `seek-far-playhead-visible`.
 - **2026-11-01** — **B-368 logged** (owner): placing a Motion render adds a linked audio clip because renders carry a silent AAC track (−91 dB). Fix both the render (no audio stream without a soundtrack) and the probe (digital silence = no audio). On the v0.3.0 checklist.
 - **2026-11-01** — **Roadmap 00g added:** a Motion style library (an `apelles-motion-styles` skill, then templates for the top 10 explainer styles, then whole-video themes, plus "not AI-made" rules), for v0.4.0. It uses an external style guide as a reference for categories and structure only.

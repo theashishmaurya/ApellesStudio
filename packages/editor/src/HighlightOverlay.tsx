@@ -48,10 +48,13 @@ const MIN_BOX = 0.01;
 
 export function HighlightOverlay({ container }: { container: HTMLElement | null }) {
   const timeline = useEditorTimelineStore((s) => s.timeline);
-  const playhead = useEditorTimelineStore((s) => s.playhead);
   const selection = useEditorTimelineStore((s) => s.selection);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
   const armedClipId = useHighlightEditStore((s) => s.armedClipId);
+  // D-437 S10 — the playhead only while a clip's boxes are armed for editing
+  // (where the overlay is drawn and follows keyframed placement); otherwise a
+  // constant, so playback renders this overlay zero times.
+  const playhead = useEditorTimelineStore((s) => (armedClipId !== null ? s.playhead : -1));
   const selected = useHighlightEditStore((s) => s.selected);
   const select = useHighlightEditStore((s) => s.select);
 
