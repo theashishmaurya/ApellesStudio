@@ -23,10 +23,10 @@ const {
   userPresetFrom,
   withPreset,
 } = await import('./exportPresets');
-const { audioCodecArgs, estimateExportBytes, filterVideoCodecArgs, fmtApproxSize, pipeVideoCodecArgs } = await import('./exportFormat');
+const { audioCodecArgs, estimateExportBytes, fmtApproxSize, pipeVideoCodecArgs } = await import('./exportFormat');
 const { buildPipeExportPlan } = await import('./timelinePipeExport');
 import type { Timeline } from './timeline';
-import type { TimelineExportOptions } from './timelineExport';
+import type { TimelineExportOptions } from './exportTimeline';
 
 beforeEach(() => {
   invokeMock.mockReset();
@@ -163,23 +163,19 @@ describe('the default "Save as"', () => {
 });
 
 describe('the codec tail per format', () => {
-  it('software H.264 keeps each path’s long-standing tail; software ProRes 422 HQ is prores_ks profile 3 with PCM sound', () => {
-    expect(filterVideoCodecArgs('h264', 'software')).toEqual([]);
+  it('software H.264 is libx264 CRF 18; software ProRes 422 HQ is prores_ks profile 3 with PCM sound', () => {
     expect(audioCodecArgs('h264')).toEqual([]);
     expect(pipeVideoCodecArgs('h264', 'software')).toEqual(['-c:v', 'libx264', '-crf', '18', '-pix_fmt', 'yuv420p']);
     const prores = ['-c:v', 'prores_ks', '-profile:v', '3', '-vendor', 'apl0', '-pix_fmt', 'yuv422p10le'];
-    expect(filterVideoCodecArgs('prores_hq', 'software')).toEqual(prores);
     expect(pipeVideoCodecArgs('prores_hq', 'software')).toEqual(prores);
     expect(audioCodecArgs('prores_hq')).toEqual(['-c:a', 'pcm_s24le']);
   });
 
-  it('D-446 — the hardware encoder is VideoToolbox on both paths: H.264 at q 70, ProRes 422 HQ fed bgra', () => {
+  it('D-446 — the hardware encoder is VideoToolbox: H.264 at q 70, ProRes 422 HQ fed bgra', () => {
     const h264 = ['-c:v', 'h264_videotoolbox', '-q:v', '70', '-pix_fmt', 'yuv420p'];
     expect(pipeVideoCodecArgs('h264', 'hardware')).toEqual(h264);
-    expect(filterVideoCodecArgs('h264', 'hardware')).toEqual(h264);
     const prores = ['-c:v', 'prores_videotoolbox', '-profile:v', '3', '-pix_fmt', 'bgra'];
     expect(pipeVideoCodecArgs('prores_hq', 'hardware')).toEqual(prores);
-    expect(filterVideoCodecArgs('prores_hq', 'hardware')).toEqual(prores);
   });
 
   it('D-446 — a compiler caller that names no encoder still gets the pre-D-446 software argv', () => {

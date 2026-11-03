@@ -121,13 +121,6 @@ export function pipeVideoCodecArgs(format: ExportFormat, encoder: ExportEncoder)
   return ['-c:v', 'libx264', '-crf', '18', '-pix_fmt', 'yuv420p'];
 }
 
-/** The video codec tail of the filter-graph path. Empty for software H.264:
- *  that path has always left the codec to ffmpeg's `.mp4` default. */
-export function filterVideoCodecArgs(format: ExportFormat, encoder: ExportEncoder): string[] {
-  if (encoder === 'hardware') return hardwareVideoArgs(format);
-  return format === 'prores_hq' ? proresVideoArgs() : [];
-}
-
 /** D-446 — the VideoToolbox tails. ProRes is fed `bgra` and VideoToolbox does
  *  the 4:2:2 10-bit conversion itself: handing it ffmpeg's own `p210le`
  *  produced a visibly wrong picture (PSNR ~24 dB against `prores_ks` on the

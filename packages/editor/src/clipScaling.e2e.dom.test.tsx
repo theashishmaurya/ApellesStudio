@@ -51,7 +51,6 @@ import { useHistoryStore } from '@apelles/history';
 import type { Timeline } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 import { useEditorControl } from './useEditorControl';
-import { resolveSourceFootprints } from './editorExport';
 
 interface OpEnvelope {
   ok: boolean;
@@ -196,27 +195,4 @@ describe('input scaling through the op layer (D-425)', () => {
     expect(bad.error).toContain('default_scaling must be one of');
   });
 
-  it('B-325: the export footprint of a 2160x3840 render on a 1080x1920 timeline is exactly the frame', async () => {
-    await callOp('editor_set_clip_transform', { track: 0, clip: 0, scaling: 'fit' });
-    const tl = useEditorTimelineStore.getState().timeline;
-    expect(tl).not.toBeNull();
-    if (!tl) return;
-    expect(resolveSourceFootprints(tl, FRAME)).toEqual({ old: { width: 1, height: 1 } });
-
-    // The same clip under `native` is the 2x footprint that cropped the preview.
-    await callOp('editor_set_clip_transform', { track: 0, clip: 0, scaling: 'native' });
-    const native = useEditorTimelineStore.getState().timeline;
-    if (!native) return;
-    expect(resolveSourceFootprints(native, FRAME)).toEqual({ old: { width: 2, height: 2 } });
-  });
-
-  it('a wide source fits as a letterbox inside the portrait frame', async () => {
-    await callOp('editor_add_clip', { mediaId: 'm-wide', track: 0, startFrame: 48 });
-    const tl = useEditorTimelineStore.getState().timeline;
-    if (!tl) throw new Error('no timeline');
-    const wide = tl.tracks[0].clips.find((c) => c.start_frame === 48);
-    const fp = resolveSourceFootprints(tl, FRAME)[wide?.id ?? ''];
-    expect(fp.width).toBe(1);
-    expect(fp.height).toBeCloseTo(607.5 / 1920, 6);
-  });
 });

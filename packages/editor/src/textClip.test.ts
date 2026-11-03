@@ -25,12 +25,7 @@ import {
   type Timeline,
   type Track,
 } from './timeline';
-import {
-  buildExportFfmpegArgs,
-  ffmpegColorLiteral,
-  quoteFiltergraphValue,
-  textClipsMissingFonts,
-} from './timelineExport';
+import { textClipsMissingFonts } from './exportTimeline';
 
 const FONT_FILE = '/System/Library/Fonts/Supplemental/Arial Bold.ttf';
 const FONTS = { [DEFAULT_TEXT_FONT]: FONT_FILE };
@@ -222,163 +217,10 @@ describe('applyOp — set_text_clip', () => {
 // escaping / colour literals
 // --------------------------------------------------------------------------- //
 
-describe('drawtext escaping', () => {
-  it('wraps the value in filtergraph quotes', () => {
-    expect(quoteFiltergraphValue('PLAIN')).toBe("'PLAIN'");
-  });
-
-  it("escapes an apostrophe for BOTH parsers, not just the filtergraph one", () => {
-    // The shell-style `'\''` is the version that silently fails: it delivers
-    // a bare `'` to `av_opt_set_from_string`, which opens a quote there and
-    // swallows every option after it. See `quoteFiltergraphValue`'s own doc.
-    expect(quoteFiltergraphValue("it's")).toBe("'it'\\\\\\''s'");
-    expect(quoteFiltergraphValue("it's")).not.toContain("'\\''s");
-  });
-
-  it('escapes `:` and `\\` for the option-level parser that runs after the quotes are stripped', () => {
-    expect(quoteFiltergraphValue('12:30')).toBe("'12\\:30'");
-    expect(quoteFiltergraphValue('a\\b')).toBe("'a\\\\b'");
-  });
-
-  it('leaves alone what the outer quotes and `expansion=none` already handle', () => {
-    for (const s of ['a, b', 'a; b', '[bracket]', '100% sure', '{OK}', 'a=b']) {
-      expect(quoteFiltergraphValue(s)).toBe(`'${s}'`);
-    }
-  });
-
-  it('converts a hex colour to ffmpeg\'s own 0xRRGGBB literal', () => {
-    expect(ffmpegColorLiteral('#FF8800')).toBe('0xFF8800');
-    expect(ffmpegColorLiteral('ff8800')).toBe('0xFF8800');
-    expect(ffmpegColorLiteral('#f80')).toBe('0xFF8800');
-    // Degrades to white exactly as `TextLayer::rgb` does on the Rust side,
-    // so a malformed colour renders the SAME in both engines.
-    expect(ffmpegColorLiteral('puce')).toBe('0xFFFFFF');
-  });
-});
-
-// --------------------------------------------------------------------------- //
-// the compiler
-// --------------------------------------------------------------------------- //
-
-describe('buildExportFfmpegArgs — text clips', () => {
-  it('opens no ffmpeg input for a text clip', () => {
-    const args = buildExportFfmpegArgs(timeline([track('video', [textClip('t')])]), '/out.mp4', OPTS);
-    expect(args.filter((a) => a === '-i')).toHaveLength(0);
-    expect(drawtextNode(args)).toContain('text=');
-  });
-
-  it('sizes the text from the OUTPUT height, so `size` is a real fraction', () => {
-    const tl = timeline([track('video', [textClip('t', { text: layer({ size: 0.25 }) })])]);
-    expect(drawtextNode(buildExportFfmpegArgs(tl, '/out.mp4', OPTS))).toContain('fontsize=90'); // 360 * 0.25
-    expect(
-      drawtextNode(buildExportFfmpegArgs(tl, '/out.mp4', { ...OPTS, height: 1080 })),
-    ).toContain('fontsize=270'); // 1080 * 0.25
-  });
-
-  it('centres on the ink box and offsets by position_*, mirroring the Rust compositor', () => {
-    const tl = timeline([track('video', [textClip('t', { position_x: 0.25, position_y: -0.1 })])]);
-    const node = drawtextNode(buildExportFfmpegArgs(tl, '/out.mp4', OPTS)) ?? '';
-    expect(node).toContain("x='(w-text_w)/2+w*(0.25)'");
-    expect(node).toContain("y='(h-text_h)/2+h*(-0.1)'");
-  });
-
-  it('gates the title to its own timeline window', () => {
-    const tl = timeline([track('video', [textClip('t', { start_frame: 24, duration: 48 })])]);
-    // 24/24 = 1s in, 48 frames = 2s long.
-    expect(drawtextNode(buildExportFfmpegArgs(tl, '/out.mp4', OPTS))).toContain("enable='between(t,1,3)'");
-  });
-
-  it('turns text expansion off, so % and {} are literal text', () => {
-    const tl = timeline([track('video', [textClip('t', { text: layer({ content: '100% {done}' }) })])]);
-    const node = drawtextNode(buildExportFfmpegArgs(tl, '/out.mp4', OPTS)) ?? '';
-    expect(node).toContain('expansion=none');
-    expect(node).toContain("text='100% {done}'");
-  });
-
-  it('re-bases keyframe and fade expressions to TIMELINE time, not clip-input time', () => {
-    // A media clip's chain has its own t==0 (its `-ss`); a text clip's
-    // `drawtext` runs on the composited base stream where `t` is timeline
-    // time — so everything authored clip-relative needs `(t-startSec)`.
-    const tl = timeline([
-      track('video', [
-        textClip('t', {
-          start_frame: 48, // 2s in at 24fps
-          duration: 48,
-          chroma_keyframes: [
-            { frame: 0, params: { position_x: 0 } },
-            { frame: 24, params: { position_x: 0.5 } },
-          ],
-          fade_in_frames: 12,
-        }),
-      ]),
-    ]);
-    const node = drawtextNode(buildExportFfmpegArgs(tl, '/out.mp4', OPTS)) ?? '';
-    expect(node).toContain('(t-2)');
-    expect(node).not.toMatch(/x='\(w-text_w\)\/2\+w\*\(if\([^)]*\bt\b[,)]/); // never bare `t` in the keyframe expr
-    expect(node).toContain("alpha='");
-  });
-
-  it('composes opacity and fade multiplicatively, as the preview does', () => {
-    const tl = timeline([track('video', [textClip('t', { opacity: 0.5 })])]);
-    expect(drawtextNode(buildExportFfmpegArgs(tl, '/out.mp4', OPTS))).toContain("alpha='0.5'");
-
-    const faded = timeline([track('video', [textClip('t', { opacity: 0.5, fade_in_frames: 12 })])]);
-    expect(drawtextNode(buildExportFfmpegArgs(faded, '/out.mp4', OPTS))).toContain("alpha='(0.5)*(");
-  });
-
-  it('paints the title at its own place in the z-order — a track-0 title over track-1 video', () => {
-    const tl = timeline([
-      track('video', [textClip('title')]),
-      track('video', [mediaClip('under')]),
-    ]);
-    const graph = buildExportFfmpegArgs(tl, '/out.mp4', OPTS)[
-      buildExportFfmpegArgs(tl, '/out.mp4', OPTS).indexOf('-filter_complex') + 1
-    ];
-    const steps = graph.split(';');
-    const overlayIdx = steps.findIndex((s) => s.includes('overlay='));
-    const drawIdx = steps.findIndex((s) => s.includes('drawtext='));
-    // Track 0 paints LAST (on top) — so the title's drawtext must come after
-    // the video's overlay, and must read that overlay's own output label.
-    expect(drawIdx).toBeGreaterThan(overlayIdx);
-    expect(steps[drawIdx]).toContain('[ov0]');
-    expect(steps[drawIdx]).toContain('[outv]');
-  });
-
-  it('counts a title toward the export duration even with no video clip at all', () => {
-    // B-076's own failure mode, in the one shape that could reintroduce it:
-    // an all-titles timeline with no `-i` inputs whatsoever.
-    const tl = timeline([track('video', [textClip('t', { start_frame: 24, duration: 48 })])]);
-    const args = buildExportFfmpegArgs(tl, '/out.mp4', OPTS);
-    expect(args[args.indexOf('-t') + 1]).toBe('3'); // 1s offset + 2s long
-  });
-
-  it('never references a text clip as an audio source', () => {
-    // A text clip has no input stream, so `[N:a]` would be a filtergraph
-    // reference to nothing — a hard ffmpeg failure, not silence.
-    const tl = timeline([track('video', [textClip('t'), mediaClip('m', { start_frame: 100 })])]);
-    const args = buildExportFfmpegArgs(tl, '/out.mp4', {
-      ...OPTS,
-      // Deliberately lying about the title having audio, to prove the guard.
-      hasAudioOverrides: { t: true, m: true },
-    });
-    const graph = args[args.indexOf('-filter_complex') + 1];
-    expect(graph).not.toContain('[1:a]');
-    expect(graph).toContain('[0:a]'); // the real media clip's own audio still mixes
-  });
-
+describe('the export refuses a title whose font this machine lacks', () => {
   it('reports — rather than guesses at — a font this machine has no file for', () => {
     const tl = timeline([track('video', [textClip('t', { text: layer({ font: 'no-such-font' }) })])]);
     expect(textClipsMissingFonts(tl, FONTS)).toEqual([{ clipId: 't', font: 'no-such-font' }]);
     expect(textClipsMissingFonts(tl, { 'no-such-font': FONT_FILE })).toEqual([]);
-    // …and the compiler skips it rather than emitting an unrunnable node.
-    expect(drawtextNode(buildExportFfmpegArgs(tl, '/out.mp4', OPTS))).toBeNull();
-  });
-
-  it('leaves a timeline with no text clips byte-identical to before D-211', () => {
-    const tl = timeline([track('video', [mediaClip('a'), mediaClip('b', { start_frame: 48 })])]);
-    const withFonts = buildExportFfmpegArgs(tl, '/out.mp4', OPTS);
-    const withoutFonts = buildExportFfmpegArgs(tl, '/out.mp4', { fps: 24, width: 640, height: 360 });
-    expect(withFonts).toEqual(withoutFonts);
-    expect(withFonts.join(' ')).not.toContain('drawtext');
   });
 });

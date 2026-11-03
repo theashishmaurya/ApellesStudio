@@ -272,6 +272,16 @@ pub fn timeline_frames_to_source(source_fps: Option<f64>, timeline_frames: i64, 
     ((timeline_frames as f64 * src_fps) / fps).round() as i64
 }
 
+/// B-382 — the exact (fractional) SOURCE position `timeline_frames` timeline
+/// frames into a clip of native rate `src_fps`, for picking the frame on
+/// screen ([`Clip::source_frame_at`] floors it). Snapped to a millionth of a
+/// frame so a product that is a whole number in exact arithmetic (23.976 ×
+/// 1001 / 1000 …) does not floor to the frame before it.
+fn source_offset_at(timeline_frames: i64, src_fps: f64, fps: f64) -> f64 {
+    const SNAP: f64 = 1e6;
+    ((timeline_frames as f64 * src_fps / fps) * SNAP).round() / SNAP
+}
+
 /// The whole edit — every track, top to bottom.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Timeline {
@@ -1679,6 +1689,31 @@ pub struct Clip {
     /// byte-identically in both engines, with no extra work.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub highlights: Vec<Highlight>,
+
+    // --- Clip exceptions (D-448) -------------------------------------------- //
+    /// **D-448 — "Stretch to fill"**: the clip's box keeps the UNCROPPED
+    /// source's shape (`height = natural height × scale`), so a crop stretches
+    /// what is left into it instead of the box following the cropped aspect
+    /// (B-218's default). An explicit `box_height` still wins, as it does over
+    /// the cropped aspect.
+    ///
+    /// Written by the export compiler from the Export panel's per-clip Clip
+    /// exception (`fitOverrides`, B-074) onto the copy of the timeline it hands
+    /// the compositor; nothing writes it into the stored document today. A
+    /// field of the clip rather than an export-only option so the one
+    /// compositor draws it the way it draws every other placement fact.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stretch: bool,
+    /// **D-448 — "Hold last frame"**: keep drawing this clip's own last frame,
+    /// frozen (its transform and fade as they are on that frame), from its end
+    /// up to this TIMELINE frame (exclusive), wherever no other clip of its
+    /// track covers the position. `None` — every clip — is no hold.
+    ///
+    /// Picture only: the clip's sound ends where the clip does. Written by the
+    /// export compiler from the Clip exception (`freezeOverrides`, D-188) the
+    /// same way [`Self::stretch`] is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold_until_frame: Option<i64>,
 }
 
 fn default_opacity() -> f64 {
@@ -1766,6 +1801,9 @@ impl Default for Clip {
             adjustment: None,
             // D-396 — empty is "no highlights", the only sane default.
             highlights: Vec::new(),
+            // D-448 — no Clip exception.
+            stretch: false,
+            hold_until_frame: None,
         }
     }
 }
@@ -1971,11 +2009,22 @@ impl Clip {
     /// instead, which is the exact inverse of the forward map the exporter's
     /// `setpts` expression is built from. An un-ramped clip takes the original
     /// addition unchanged, so nothing about a normal clip's decode moves.
+    ///
+    /// **B-382 — the rate conversion floors, it does not round.** A timeline
+    /// frame at time `t` shows the source frame whose own display interval
+    /// contains `t` (the one that has started and not yet been replaced), which
+    /// is `floor(t × source_fps)`; it is what the export's `setpts` + `-r`
+    /// produced and what the ramp branch below always computed from an exact
+    /// position. Rounding (the shared [`timeline_frames_to_source`], which is
+    /// right for a LENGTH) showed the next source frame for the second half of
+    /// each frame's screen time — up to half a source frame ahead of its sound
+    /// on any clip whose rate is not the timeline's. Same-rate clips land on
+    /// whole numbers and are unchanged.
     pub fn source_frame_at(&self, timeline_frame: i64, fps: f64) -> i64 {
-        let output_pos =
-            timeline_frames_to_source(self.source_fps, timeline_frame - self.start_frame, fps);
+        let src_fps = self.source_fps.filter(|f| *f > 0.0).unwrap_or(fps);
+        let output_pos = source_offset_at(timeline_frame - self.start_frame, src_fps, fps);
         if self.speed_points.is_empty() {
-            return self.source_start + output_pos;
+            return self.source_start + output_pos.floor() as i64;
         }
         // FLOOR, not round: a frame occupies the half-open interval
         // `[n, n+1)` on the source axis, so the frame visible at a
@@ -1995,8 +2044,7 @@ impl Clip {
         // interval in the other direction and its mirror rule is `ceil - 1`.
         // See that function for the full argument; for every forward ramp it
         // is exactly the `.floor()` this line used to be.
-        speed_ramp::quantized_source_frame_at_output(&self.speed_segments(), output_pos as f64)
-            as i64
+        speed_ramp::quantized_source_frame_at_output(&self.speed_segments(), output_pos) as i64
     }
 
     /// D-226 — [`Self::source_frame_at`] pinned into the source's own real
@@ -3539,7 +3587,7 @@ impl Track {
     pub fn duration(&self, fps: f64) -> i64 {
         self.clips
             .iter()
-            .map(|c| c.end_frame_at(fps))
+            .map(|c| c.end_frame_at(fps).max(c.hold_until_frame.unwrap_or(0)))
             .max()
             .unwrap_or(0)
     }
@@ -3570,6 +3618,29 @@ impl Track {
             // transition's handle lookup also needs (unbounded by this
             // method's own window check). Byte-identical result here.
             .map(|c| (c, c.source_frame_at(timeline_frame, fps)))
+    }
+
+    /// D-448 — the clip whose "Hold last frame" ([`Clip::hold_until_frame`])
+    /// covers `timeline_frame`, at its own last SOURCE frame. Only consulted
+    /// where [`Self::clip_at`] found nothing, so a held frame never covers
+    /// another clip of its own track. Picture only: [`Self::clip_at`], which
+    /// the audio mixer also reads, is unchanged.
+    pub fn held_clip_at(&self, timeline_frame: i64, fps: f64) -> Option<(&Clip, i64)> {
+        if timeline_frame < 0 {
+            return None;
+        }
+        self.clips
+            .iter()
+            .filter(|c| {
+                let end = c.end_frame_at(fps);
+                end > c.start_frame
+                    && c.hold_until_frame
+                        .is_some_and(|until| timeline_frame >= end && timeline_frame < until)
+            })
+            // Two holds over one position: the clip that ended last is the
+            // nearest one before it.
+            .max_by_key(|c| c.end_frame_at(fps))
+            .map(|c| (c, c.source_frame_at(c.end_frame_at(fps) - 1, fps)))
     }
 
     /// D-226 — append everything this track contributes at TIMELINE frame
@@ -3604,7 +3675,9 @@ impl Track {
         fps: f64,
         out: &mut Vec<VisibleLayer<'a>>,
     ) {
-        let primary = self.clip_at(pos, fps);
+        let primary = self
+            .clip_at(pos, fps)
+            .or_else(|| self.held_clip_at(pos, fps));
         let plain = |c: &'a Clip, sf: i64| VisibleLayer {
             track,
             source: LayerSource::Clip {
@@ -7794,5 +7867,129 @@ mod caption_tests {
         assert_eq!(tl.tracks[0].clips[0].start_frame, 100);
         assert_eq!(tl.resolve_visible_captions_at(100).len(), 1);
         assert!(tl.resolve_visible_captions_at(0).is_empty());
+    }
+}
+
+/// D-448 — the Clip exceptions as clip data: "Hold last frame" in the layer
+/// resolver, and the round trip of both fields.
+#[cfg(test)]
+mod clip_exception_tests {
+    use super::*;
+
+    fn media(id: &str, start: i64, dur: i64, source_start: i64) -> Clip {
+        Clip {
+            id: id.into(),
+            name: id.into(),
+            source_path: format!("/media/{id}.mp4"),
+            source_start,
+            duration: dur,
+            source_len: 10_000,
+            start_frame: start,
+            ..Clip::default()
+        }
+    }
+
+    fn video(clips: Vec<Clip>) -> Track {
+        Track {
+            kind: TrackKind::Video,
+            clips,
+            ..Track::default()
+        }
+    }
+
+    fn shown(layers: &[VisibleLayer<'_>]) -> Option<(String, i64)> {
+        layers.first().and_then(|l| match &l.source {
+            LayerSource::Clip {
+                clip, source_frame, ..
+            } => Some((clip.id.clone(), *source_frame)),
+            LayerSource::Color { .. } => None,
+        })
+    }
+
+    fn at(track: &Track, pos: i64) -> Option<(String, i64)> {
+        let mut out = Vec::new();
+        track.push_layers_at(0, pos, 30.0, &mut out);
+        shown(&out)
+    }
+
+    #[test]
+    fn a_held_clip_shows_its_last_source_frame_until_the_hold_ends() {
+        let mut held = media("a", 0, 30, 100);
+        held.hold_until_frame = Some(90);
+        let track = video(vec![held]);
+        assert_eq!(
+            at(&track, 29),
+            Some(("a".into(), 129)),
+            "its own last frame"
+        );
+        assert_eq!(at(&track, 30), Some(("a".into(), 129)), "held past its end");
+        assert_eq!(at(&track, 89), Some(("a".into(), 129)));
+        assert_eq!(at(&track, 90), None, "the hold ends before its end frame");
+        assert_eq!(
+            track.duration(30.0),
+            90,
+            "the hold counts towards the track's length"
+        );
+    }
+
+    #[test]
+    fn a_hold_never_covers_another_clip_and_the_mixer_lookup_ignores_it() {
+        let mut held = media("a", 0, 30, 0);
+        held.hold_until_frame = Some(120);
+        let track = video(vec![held, media("b", 60, 30, 0)]);
+        assert_eq!(at(&track, 70).map(|s| s.0), Some("b".into()));
+        assert_eq!(
+            at(&track, 45).map(|s| s.0),
+            Some("a".into()),
+            "the gap holds a"
+        );
+        assert!(
+            track.clip_at(45, 30.0).is_none(),
+            "picture only: clip_at is unchanged"
+        );
+    }
+
+    #[test]
+    fn a_clip_without_exceptions_serialises_neither_field() {
+        let c = media("a", 0, 30, 0);
+        let v = serde_json::to_value(&c).expect("serialise");
+        assert!(v.get("stretch").is_none() && v.get("hold_until_frame").is_none());
+        let mut d = c.clone();
+        d.stretch = true;
+        d.hold_until_frame = Some(40);
+        let back: Clip =
+            serde_json::from_value(serde_json::to_value(&d).expect("ser")).expect("de");
+        assert!(back.stretch);
+        assert_eq!(back.hold_until_frame, Some(40));
+    }
+}
+
+/// B-382 — which source frame a clip shows at a timeline frame.
+#[cfg(test)]
+mod source_frame_tests {
+    use super::*;
+
+    /// B-382 — a 24 fps source on a 30 fps timeline shows the source frame on
+    /// screen at each instant (floor), never the next one (round); a same-rate
+    /// clip is unchanged.
+    #[test]
+    fn a_mixed_rate_clip_shows_the_frame_on_screen_not_the_next_one() {
+        let mut c = Clip {
+            id: "a".into(),
+            source_path: "/media/a.mp4".into(),
+            duration: 240,
+            source_len: 10_000,
+            start_frame: 0,
+            ..Clip::default()
+        };
+        c.source_fps = Some(24.0);
+        // timeline frame n is at n/30 s; source frame floor(n × 24/30)
+        let got: Vec<i64> = (0..10).map(|n| c.source_frame_at(n, 30.0)).collect();
+        assert_eq!(got, vec![0, 0, 1, 2, 3, 4, 4, 5, 6, 7]);
+        c.source_fps = Some(30.0);
+        assert_eq!(c.source_frame_at(7, 30.0), 7);
+        // NTSC rates: a whole-number product does not floor to the frame before
+        c.source_fps = Some(24_000.0 / 1001.0);
+        assert_eq!(c.source_frame_at(1001, 24_000.0 / 1001.0), 1001);
     }
 }

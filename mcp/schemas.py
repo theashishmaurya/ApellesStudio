@@ -94,7 +94,6 @@ __all__ = [
     "EaseCurve",
     "EasePresetName",
     "CaptionScope",
-    "ExportRenderer",
     "LoudnessPreset",
     "FitMode",
     "GapSelector",
@@ -474,12 +473,6 @@ class DynamicZoomFraming(BaseModel):
 
 # `fit_overrides` values — the handler accepts exactly these two strings.
 FitMode = Literal["fit", "stretch"]
-
-# D-350 — `editor_export`'s `renderer`: which engine composites the PICTURE.
-# "compositor" = the app's own live-preview compositor, rendered headlessly and
-# piped into one ffmpeg process; "filter" = the original `-filter_complex` graph
-# with one `-i` per clip. The handler accepts exactly these two strings.
-ExportRenderer = Literal["filter", "compositor"]
 
 # D-401 — `editor_export`'s `loudness_preset`: the delivery spec the finished
 # mix is normalised to. "off" is the default (no post-processing at all).

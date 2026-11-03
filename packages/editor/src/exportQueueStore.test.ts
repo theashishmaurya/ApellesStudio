@@ -10,11 +10,9 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invokeM
 const { useExportQueueStore } = await import('./exportQueueStore');
 const { useEditorTimelineStore } = await import('./timelineStore');
 const { useMediaPoolStore } = await import('@apelles/bridge');
-// D-256 — `enqueue` compiles the argv, and the compiler refuses outright
-// unless each clip's Colorist grade has been baked (see `gradeLuts.ts`'s
-// cold-cache rule). The GUI's own Export dialog awaits this before enqueueing;
-// these tests do the same rather than being exempted from the contract.
-const { resetGradeLutCache, warmGradeLuts } = await import('./gradeLuts');
+// D-256 — the grade pre-flight the GUI's own Export dialog runs before it
+// enqueues; these tests do the same.
+const { warmGradeLuts } = await import('./gradeLuts');
 import type { Timeline } from './timeline';
 
 function timelineWithOneClip(): Timeline {
@@ -45,23 +43,38 @@ function deferred<T>() {
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
+/** D-448 — every job is a compositor render. What each render the backend is
+ *  asked for answers, in order (a thunk, so a rejection is made only when it is
+ *  asked for); status reads answer "idle", so the progress follower has nothing
+ *  to believe. */
+let renders: Array<() => Promise<unknown>> = [];
+const renderWith = (v: unknown) => renders.push(() => (v instanceof Promise ? v : Promise.resolve(v)));
+const renderCalls = () => invokeMock.mock.calls.filter((c) => c[0] === 'chroma_render_timeline_export');
+function routeBackend() {
+  invokeMock.mockImplementation((cmd: string) => {
+    if (cmd === 'chroma_editor_export_status') return Promise.resolve({ state: 'idle', jobId: 0 });
+    if (cmd === 'chroma_render_timeline_export') return (renders.shift() ?? (() => new Promise(() => {})))();
+    if (cmd === 'chroma_cancel_editor_export') return Promise.resolve({ wasRunning: true });
+    return Promise.resolve(undefined);
+  });
+}
+
 beforeEach(async () => {
   invokeMock.mockReset();
   useExportQueueStore.setState({ jobs: [] });
   useEditorTimelineStore.setState({ timeline: timelineWithOneClip() } as any);
   useMediaPoolStore.setState({ items: [] } as any);
-  // D-256 — warm the grade cache the way the real Export dialog does. The
-  // fixture clip has no grade, so the backend's honest answer is an empty map;
-  // what matters is that a warm HAPPENED, since "never asked" and "asked, and
-  // nothing is graded" are deliberately different states.
-  resetGradeLutCache();
-  invokeMock.mockResolvedValueOnce({ luts: {}, warnings: [] });
+  // D-256 — the grade pre-flight the real Export dialog runs. The fixture clip
+  // has no grade, so the backend's honest answer is an empty list.
+  renderWith({ graded: [], warnings: [] });
   await warmGradeLuts(timelineWithOneClip());
   // ...and forget that call, so the tests below can keep counting `invoke` as
   // "how many times ffmpeg was actually run". `mockClear` (not `mockReset`)
   // deliberately: it drops the recorded calls without touching the mock's
   // queued implementations.
   invokeMock.mockClear();
+  renders = [];
+  routeBackend();
 });
 
 afterEach(() => {
@@ -80,7 +93,7 @@ describe('useExportQueueStore.enqueue', () => {
 
   it('a valid export is enqueued as "queued" and immediately starts running (nothing else in the queue)', async () => {
     const { promise } = deferred<unknown>();
-    invokeMock.mockReturnValueOnce(promise);
+    renderWith(promise);
 
     const result = useExportQueueStore.getState().enqueue('job1', validArgs);
     expect('id' in result).toBe(true);
@@ -95,7 +108,7 @@ describe('useExportQueueStore.enqueue', () => {
 
   it('REAL sequential behavior: job 2 stays "queued" while job 1 is still running, and starts the instant job 1 settles', async () => {
     const job1Ffmpeg = deferred<{ ok: boolean; stdout_tail: string; stderr_tail: string }>();
-    invokeMock.mockReturnValueOnce(job1Ffmpeg.promise);
+    renderWith(job1Ffmpeg.promise);
 
     useExportQueueStore.getState().enqueue('job1', { ...validArgs, outPath: '/tmp/out1.mp4' });
     await flush();
@@ -107,11 +120,11 @@ describe('useExportQueueStore.enqueue', () => {
     let jobs = useExportQueueStore.getState().jobs;
     expect(jobs[0].status).toBe('running');
     expect(jobs[1].status).toBe('queued'); // must NOT have started yet
-    expect(invokeMock).toHaveBeenCalledTimes(1); // ffmpeg only actually invoked once so far
+    expect(renderCalls()).toHaveLength(1); // only one render started so far
 
     // Job 1 finishes -> job 2 must start automatically, with no external poke.
     const job2Ffmpeg = deferred<{ ok: boolean; stdout_tail: string; stderr_tail: string }>();
-    invokeMock.mockReturnValueOnce(job2Ffmpeg.promise);
+    renderWith(job2Ffmpeg.promise);
     job1Ffmpeg.resolve({ ok: true, stdout_tail: '', stderr_tail: '' });
     await flush();
     await flush();
@@ -120,7 +133,7 @@ describe('useExportQueueStore.enqueue', () => {
     expect(jobs[0].status).toBe('done');
     expect(jobs[0].finishedAt).not.toBeNull();
     expect(jobs[1].status).toBe('running'); // started automatically
-    expect(invokeMock).toHaveBeenCalledTimes(2);
+    expect(renderCalls()).toHaveLength(2);
 
     job2Ffmpeg.resolve({ ok: true, stdout_tail: '', stderr_tail: '' });
     await flush();
@@ -128,8 +141,8 @@ describe('useExportQueueStore.enqueue', () => {
     expect(useExportQueueStore.getState().jobs[1].status).toBe('done');
   });
 
-  it('a failed ffmpeg run marks the job "failed" with its real stderr, and still lets the next job run', async () => {
-    invokeMock.mockResolvedValueOnce({ ok: false, stdout_tail: '', stderr_tail: 'ffmpeg: real failure reason' });
+  it('a failed render marks the job "failed" with its real stderr, and still lets the next job run', async () => {
+    renderWith({ ok: false, stdout_tail: '', stderr_tail: 'ffmpeg: real failure reason' });
     useExportQueueStore.getState().enqueue('job1', validArgs);
     await flush();
     await flush();
@@ -140,21 +153,20 @@ describe('useExportQueueStore.enqueue', () => {
   });
 
   it('a rejected invoke() (not just a {ok:false} result) also marks the job failed rather than hanging forever', async () => {
-    invokeMock.mockRejectedValueOnce(new Error('spawn ffmpeg failed'));
+    renders.push(() => Promise.reject(new Error('the render failed to start')));
     useExportQueueStore.getState().enqueue('job1', validArgs);
     await flush();
     await flush();
 
     const job = useExportQueueStore.getState().jobs[0];
     expect(job.status).toBe('failed');
-    expect(job.error).toContain('spawn ffmpeg failed');
+    expect(job.error).toContain('the render failed to start');
   });
 });
 
 // D-362 (fixes B-231) — a running compositor job carries the renderer's own
 // live progress, polled from `chroma_editor_export_status`.
 describe('a compositor job follows the render\'s real progress', () => {
-  const compositorArgs = { ...validArgs, renderer: 'compositor' as const };
 
   /** `{state, jobId, …}` as `chroma::export_status::ExportStatus` serialises. */
   function status(state: string, jobId: number, extra: Record<string, unknown> = {}) {
@@ -193,7 +205,7 @@ describe('a compositor job follows the render\'s real progress', () => {
         return Promise.reject(new Error(`unexpected command ${cmd}`));
       });
 
-      useExportQueueStore.getState().enqueue('job1', compositorArgs);
+      useExportQueueStore.getState().enqueue('job1', validArgs);
       await vi.advanceTimersByTimeAsync(0);
       const running = useExportQueueStore.getState().jobs[0];
       expect(running.status).toBe('running');
@@ -230,30 +242,13 @@ describe('a compositor job follows the render\'s real progress', () => {
       vi.useRealTimers();
     }
   });
-
-  it('a filter-graph job is never polled — that path has no progress to report', async () => {
-    const ffmpeg = deferred<{ ok: boolean; stdout_tail: string; stderr_tail: string }>();
-    invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === 'chroma_run_editor_export') return ffmpeg.promise;
-      return Promise.reject(new Error(`unexpected command ${cmd}`));
-    });
-
-    useExportQueueStore.getState().enqueue('job1', validArgs);
-    await flush();
-    await flush();
-
-    expect(useExportQueueStore.getState().jobs[0].status).toBe('running');
-    expect(useExportQueueStore.getState().jobs[0].progress).toBeNull();
-    expect(invokeMock.mock.calls.every((c) => c[0] === 'chroma_run_editor_export')).toBe(true);
-    ffmpeg.resolve({ ok: true, stdout_tail: '', stderr_tail: '' });
-  });
 });
 
 describe('useExportQueueStore.clearFinished', () => {
   it('removes done/failed jobs but leaves queued/running ones', async () => {
     const inFlight = deferred<unknown>();
-    invokeMock.mockReturnValueOnce(inFlight.promise);
-    invokeMock.mockResolvedValueOnce({ ok: true, stdout_tail: '', stderr_tail: '' });
+    renderWith(inFlight.promise);
+    renderWith({ ok: true, stdout_tail: '', stderr_tail: '' });
 
     useExportQueueStore.getState().enqueue('running-job', { ...validArgs, outPath: '/tmp/a.mp4' });
     await flush();
@@ -272,7 +267,7 @@ describe('useExportQueueStore.clearFinished', () => {
 describe('cancel, retry and the ProRes format (D-441)', () => {
   it('cancelling a queued job takes it out of the line without touching the backend', async () => {
     const first = deferred<unknown>();
-    invokeMock.mockReturnValueOnce(first.promise);
+    renderWith(first.promise);
     useExportQueueStore.getState().enqueue('job1', validArgs);
     const second = useExportQueueStore.getState().enqueue('job2', { ...validArgs, outPath: '/tmp/two.mp4' });
     await flush();
@@ -285,25 +280,21 @@ describe('cancel, retry and the ProRes format (D-441)', () => {
     first.resolve({ ok: true, cancelled: false, stdout_tail: '', stderr_tail: '' });
     await flush();
     await flush();
-    expect(invokeMock.mock.calls.filter((c) => c[0] === 'chroma_run_editor_export')).toHaveLength(1);
+    expect(renderCalls()).toHaveLength(1);
   });
 
   it('cancelling a running job asks the backend under the job id, and the run settles it "cancelled"', async () => {
     const run = deferred<unknown>();
-    invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === 'chroma_run_editor_export') return run.promise;
-      if (cmd === 'chroma_cancel_editor_export') return Promise.resolve({ wasRunning: true });
-      return Promise.resolve(undefined);
-    });
+    renderWith(run.promise);
     const queued = useExportQueueStore.getState().enqueue('job1', validArgs);
     const id = 'id' in queued ? queued.id : '';
     await flush();
-    const runCall = invokeMock.mock.calls.find((c) => c[0] === 'chroma_run_editor_export');
-    expect(runCall?.[1]).toMatchObject({ output: '/tmp/out.mp4', cancelToken: id });
+    const runCall = renderCalls()[0];
+    expect(runCall?.[1]).toMatchObject({ req: { output: '/tmp/out.mp4', cancelToken: id } });
     const out = await useExportQueueStore.getState().cancel(id);
     expect(out).toEqual({ ok: true, wasRunning: true });
     expect(invokeMock).toHaveBeenCalledWith('chroma_cancel_editor_export', { token: id });
-    // The backend kills the ffmpeg; the run comes back cancelled.
+    // The backend kills the encoders; the render comes back cancelled.
     run.resolve({ ok: false, cancelled: true, stdout_tail: '', stderr_tail: 'the export was cancelled' });
     await flush();
     await flush();
@@ -311,14 +302,14 @@ describe('cancel, retry and the ProRes format (D-441)', () => {
   });
 
   it('a finished job cannot be cancelled, and Try again queues its frozen argv as a new job', async () => {
-    invokeMock.mockResolvedValueOnce({ ok: false, cancelled: false, stdout_tail: '', stderr_tail: 'disk full' });
+    renderWith({ ok: false, cancelled: false, stdout_tail: '', stderr_tail: 'disk full' });
     const queued = useExportQueueStore.getState().enqueue('job1', validArgs);
     const id = 'id' in queued ? queued.id : '';
     await flush();
     await flush();
     expect(useExportQueueStore.getState().jobs[0].status).toBe('failed');
     expect(await useExportQueueStore.getState().cancel(id)).toEqual({ error: expect.stringContaining('already failed') });
-    invokeMock.mockResolvedValueOnce({ ok: true, cancelled: false, stdout_tail: '', stderr_tail: '' });
+    renderWith({ ok: true, cancelled: false, stdout_tail: '', stderr_tail: '' });
     const again = useExportQueueStore.getState().retry(id);
     expect('id' in again && again.id !== id).toBe(true);
     await flush();
@@ -331,7 +322,6 @@ describe('cancel, retry and the ProRes format (D-441)', () => {
   });
 
   it('the ProRes master compiles prores_ks 422 HQ with PCM sound into a .mov, and refuses an .mp4', () => {
-    invokeMock.mockReturnValue(new Promise(() => {}));
     const ok = useExportQueueStore.getState().enqueue('master', { ...validArgs, outPath: '/tmp/master.mov', format: 'prores_hq' });
     expect('id' in ok).toBe(true);
     const job = useExportQueueStore.getState().jobs[0];

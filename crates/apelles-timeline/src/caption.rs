@@ -515,10 +515,9 @@ impl CaptionLayout {
     /// two the module doc already names as each engine's own job: one advance
     /// width per line, and the font's line-box height. Both are glyph
     /// measurements, and this crate never opens a font — so they are passed
-    /// in, the same "the pure part is given what only the caller can know"
-    /// split (D-197) `chroma_measure_caption_words` already uses for the
-    /// export compiler. `chroma::text::caption_bounds_fraction` is the caller
-    /// that measures them with `ab_glyph`.
+    /// in, the "the pure part is given what only the caller can know" split
+    /// (D-197). `chroma::text::caption_bounds_fraction` is the caller that
+    /// measures them with `ab_glyph`.
     ///
     /// `line_advances` is one entry per line, in [`Self::lines`] order; extra
     /// entries are ignored and a short slice simply bounds the lines it

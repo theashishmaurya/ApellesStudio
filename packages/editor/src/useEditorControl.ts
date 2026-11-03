@@ -5046,7 +5046,7 @@ export function useEditorControl(): void {
       editor_get_grade_status: async () => {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
-        let baked: { luts: Record<string, string>; warnings: string[] };
+        let baked: { graded: string[]; warnings: string[] };
         try {
           baked = await warmGradeLuts(tl);
         } catch (e) {
@@ -5056,14 +5056,15 @@ export function useEditorControl(): void {
         for (const track of tl.tracks) {
           for (const clip of track.clips) {
             if (clip.text || clip.adjustment || track.kind === 'audio') continue;
-            clips.push({ clipId: clip.id, name: clip.name, graded: !!baked.luts[clip.id] });
+            clips.push({ clipId: clip.id, name: clip.name, graded: baked.graded.includes(clip.id) });
           }
         }
         return {
           clips,
           gradedCount: clips.filter((c) => c.graded).length,
-          // Each entry names a clip whose exported pixels will legitimately
-          // differ from the Colorist tab (a mask, a Colorist crop — see
+          // Each entry names a clip whose Edit preview and exported pixels will
+          // legitimately differ from the Colorist tab (a mask, a Colorist crop,
+          // a vignette or another spatial effect — see
           // `editor_get_capabilities`' `colorist_grade.what_it_carries`).
           warnings: baked.warnings,
         };

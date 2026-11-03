@@ -127,26 +127,22 @@ dragging a pool item in from the shell's Sources panel.
   speed") resolved into concrete constant-speed segments, the clip's retimed
   output length, and **both directions of the time remap** — the inverse
   (`sourceFrameAtOutput`, what the preview decodes with) and the forward
-  (`outputAtSourceFrame`, what the exporter's `setpts` expression is built
-  from). Also the two ffmpeg compilations that follow from it: the nested
-  `if(lt(T,…))` `setpts` body, and the per-segment windows
-  `timelineExportAudio.ts` turns into `atrim`/`atempo`/`concat`. An exact
-  mirror of Rust's `apelles_timeline::speed_ramp`, and load-bearing in the way
-  `eq.ts` is: the two files ARE the preview/export agreement for this feature,
-  so they are kept line-for-line comparable and pinned by `speedRamp.test.ts`
-  plus a real-decoded-pixel test (`speedRamp.ffmpeg.test.ts`). A flat speed is
-  a one-segment ramp — the pre-D-236 export-time `speedOverrides` resolves
-  through the same function and still compiles the identical filtergraph.
+  (`outputAtSourceFrame`, what the GUI's speed-point editor places points
+  with). Also the per-segment windows `timelineExportAudio.ts` turns into
+  `atrim`/`atempo`/`concat` for the sound (the picture is the compositor's,
+  `Clip::source_frame_at`). An exact mirror of Rust's
+  `apelles_timeline::speed_ramp`, and load-bearing in the way `eq.ts` is: the
+  two files ARE the picture/sound agreement for this feature, so they are kept
+  line-for-line comparable and pinned by `speedRamp.test.ts`. A flat speed is
+  a one-segment ramp — the export-time `speedOverrides` Clip exception is
+  written onto the copy of the timeline the export draws as exactly that
+  (`clipExceptions.ts`, D-448).
   `SpeedRampEditor.tsx` is the Inspector section around it.
   **Reverse (D-241)** is a NEGATIVE speed, per run: one `anchor` term (a
   reversed run's output starts at its source END) generalises both maps, and
   `quantizedSourceFrameAtOutput` carries the rounding, which mirrors from
-  `floor` to `ceil - 1` when the direction of travel does. It compiles to a
-  different filtergraph *shape*, not a different expression — `trim`/`reverse`/
-  `concat` per run (`buildReversibleRampSteps` in `timelineExport.ts`) and
-  `areverse` + `atempo=|s|` for the sound — because a negative `setpts` slope
-  is a graph ffmpeg runs happily and which reverses nothing. Pinned by
-  `speedRampReverse.ffmpeg.test.ts`. **Does not** do smoothed S-curve
+  `floor` to `ceil - 1` when the direction of travel does. The sound compiles
+  to `areverse` + `atempo=|s|` per run. **Does not** do smoothed S-curve
   transitions or frame interpolation — see D-236's "not built" list, as
   narrowed by D-241.
 - `editTypes.ts` + `EditOverlay.tsx` (D-239, roadmap item 27) — **the seven
@@ -283,8 +279,8 @@ D-094's grip handle was. The drag clamps to the clip's own length; the *model*
 still permits a longer-than-clip fade (`set_clip_fade` deliberately does not
 clamp), which renders honestly and parks its handle at the far edge.
 `clipFade.test.ts` covers the geometry, `TimelinePane.fade.dom.test.tsx` the
-gesture and its committed effect, and `timelineExport.ffmpeg.test.ts` proves a
-drag-derived fade really exports faded.
+gesture and its committed effect; the compositor draws the fade in the
+preview and the export alike (D-448).
 
 **Music edits by story beat (D-408).** A dropout, a one-second stop-time
 breath or a dry section cut into a music bed is ONE `music_edits` op
@@ -457,6 +453,17 @@ The timeline library's interact.js resize is no longer used. Spec and as-built n
 cut, GPU compositing, grade-in-preview, OTIO export, MCP, timeline
 rename/delete. See `docs/notes/editor-mvp.md`.
 
+
+**Export (D-350, D-448).** One image engine: every export's picture is drawn by
+the app's own compositor (`chroma::edit_render`, the Edit preview's renderer)
+and piped into one ffmpeg that only encodes and muxes. `editorExport.ts`
+validates and compiles (no I/O) and runs; `timelinePipeExport.ts` is the argv
+and the audio mix (`timelineExportAudio.ts`); `exportTimeline.ts` is the
+options type, the export's length and the missing-font refusals;
+`clipExceptions.ts` writes the Export panel's Clip exceptions onto the copy of
+the timeline the compositor draws; `gradeLuts.ts` is the Colorist-grade
+pre-flight. The ffmpeg filter-graph renderer (`timelineExport.ts`) was deleted
+by D-448.
 ## `MediaThumbnail` (D-436)
 
 The one kind-aware picture well for a piece of media: poster `src`, else by `kind` (`video` / `audio` / `image` / `motion` / `text`) a placeholder glyph, or for `audio` the file's own waveform (`Waveform variant="band"` over the cached `getPeaks`, `clip-audio` tokens) with a glyph fallback while peaks load; `status` `loading` / `offline`; a duration badge; `children` as overlays. `mediaItemThumbnailProps(item)` maps a media-pool item. It does not fetch posters or know about the pool UI. Consumers: Sources panel tiles, `ProjectLauncher`, `ShotStrip`. Tests: `src/MediaThumbnail.dom.test.tsx`.

@@ -88,6 +88,7 @@ import { timelineDuration, timelineFps, type Clip, type Timeline } from './timel
 import { useExportQueueStore, type ExportJob } from './exportQueueStore';
 import { prepareEditorExport } from './editorExport';
 import { warmCompositionSize } from './compositionSize';
+import { warmGradeLuts } from './gradeLuts';
 import {
   DEFAULT_TRUE_PEAK_DBTP,
   LOUDNESS_PRESETS,
@@ -542,6 +543,23 @@ function ExportSheet({ onClose }: { onClose: () => void }) {
     };
   }, [projectKey, targetName, targetKey, values.format]);
 
+  // B-381 — what the export cannot carry of each clip's Colorist grade (a
+  // mask, a vignette …) is said BEFORE Export is pressed, not only in the
+  // moment between Export and the sheet closing.
+  useEffect(() => {
+    if (!target) return;
+    let cancelled = false;
+    void warmGradeLuts(target).then(
+      (g) => {
+        if (!cancelled) setNotes(g.warnings);
+      },
+      () => {},
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [target]);
+
   const choosePreset = (p: ExportPreset) => {
     setPresetId(p.id);
     setValues(valuesOf(p));
@@ -831,7 +849,7 @@ function ExportSheet({ onClose }: { onClose: () => void }) {
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <span data-chroma-export-warning aria-label="The export will differ from the preview">
+                    <span data-chroma-export-warning aria-label="Notes on what this export will look like">
                       <WarningIcon weight="fill" className="size-3.5 text-text-primary" />
                     </span>
                   }

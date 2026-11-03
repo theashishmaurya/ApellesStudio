@@ -15,9 +15,8 @@
 //! - [`discard_partial_output`] removes the output file and the loudness pass's
 //!   scratch siblings once a cancelled run has unwound.
 //!
-//! The two runners consult it: `ffmpeg_run::chroma_run_editor_export` (the
-//! filter-graph path, one ffmpeg) and `edit_render::render_timeline` (the
-//! compositor path, N segment encoders and a concat step). The compositor's own
+//! The runner consults it: `edit_render::render_timeline` (N segment encoders
+//! and a concat step; D-448 deleted the filter-graph runner). The compositor's own
 //! segment temp directory is a `tempfile::TempDir` and removes itself when the
 //! render unwinds.
 //!

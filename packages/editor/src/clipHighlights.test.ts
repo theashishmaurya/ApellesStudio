@@ -1,6 +1,6 @@
-// D-396 — clip highlights: the model helpers, the `set_clip_highlights`
-// reducer and the filter compile. The pixel parity between this exporter and
-// the Rust compositor is `timelineExportHighlight.ffmpeg.test.ts`.
+// D-396 — clip highlights: the model helpers and the `set_clip_highlights`
+// reducer. The compositor draws them (`chroma::highlight_draw`); D-448 deleted
+// the filter-graph twin this file used to compile.
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_HIGHLIGHT_COLOR,
@@ -15,8 +15,6 @@ import {
   type ClipHighlight,
 } from './clipHighlights';
 import { applyOp, labelForOp, type Clip, type Timeline } from './timeline';
-import { buildExportFfmpegArgs } from './timelineExport';
-import { highlightGeqSteps, highlightProgressExpr, HIGHLIGHT_SWEEP_SAMPLES } from './timelineExportHighlight';
 
 const hl = (over: Partial<ClipHighlight> = {}): ClipHighlight => ({
   box: [0.1, 0.2, 0.6, 0.3],
@@ -144,47 +142,5 @@ describe('set_clip_highlights reducer', () => {
     const t = tl([clip('a', { name: 'Headline' })]);
     expect(labelForOp(op([hl()]), t)).toContain('Headline');
     expect(labelForOp(op([]), t)).toMatch(/Clear .*highlights/);
-  });
-});
-
-describe('export compile', () => {
-  const compile = (h: ClipHighlight[], extra: Partial<Clip> = {}) => {
-    const t = tl([clip('a', { source_fps: 25, highlights: h, ...extra })]);
-    return buildExportFfmpegArgs(t, '/tmp/out.mp4', { fps: 25, width: 1920, height: 1080 });
-  };
-  const graphOf = (args: string[]) => args[args.indexOf('-filter_complex') + 1];
-
-  it('a clip without highlights compiles with no geq node at all (byte-identical argv)', () => {
-    expect(graphOf(compile([]))).not.toContain('format=rgba,geq');
-    expect(compile([])).toEqual(compile([], { highlights: undefined }));
-  });
-
-  it('one geq node per highlight, after the clip input and before the scale', () => {
-    const graph = graphOf(compile([hl(), hl({ at: 20, color: '#00ff00', opacity: 0.3 })]));
-    const nodes = graph.match(/format=rgba,geq=/g) ?? [];
-    expect(nodes).toHaveLength(2);
-    expect(graph.indexOf('geq=')).toBeLessThan(graph.indexOf('scale='));
-    expect(graph).toContain('[hlv0_0]');
-    expect(graph).toContain('[hlv0_1]');
-  });
-
-  it('a degenerate box or zero opacity compiles to nothing', () => {
-    const { steps } = highlightGeqSteps({
-      highlights: [hl({ box: [0.5, 0, 0.5, 1] }), hl({ opacity: 0 })],
-      src: '[0:v]',
-      label: 'x',
-      sourceStart: 0,
-      fps: 25,
-      bigTVar: 'T',
-    });
-    expect(steps).toEqual([]);
-  });
-
-  it('the progress expression is a clamped ramp over the sweep, in clip-input seconds', () => {
-    const expr = highlightProgressExpr({ at: 50, dur: 25 }, 25, 25, 'T');
-    // at-25 = 25 frames = 1s .. 2s; holds 0 before, 1 after.
-    expect(expr).toMatch(/^if\(lt\(T,1\),0,/);
-    expect((expr.match(/between\(/g) ?? []).length).toBe(HIGHLIGHT_SWEEP_SAMPLES);
-    expect(highlightProgressExpr({ at: 25, dur: 0 }, 0, 25, 'T')).toBe('gte(T,0.98)');
   });
 });

@@ -61,13 +61,11 @@ export interface ExportJob {
   /** The compiled ffmpeg argv, frozen at enqueue time — see this module's
    *  own header doc for why. */
   args: string[];
-  /** D-350 — frozen alongside `args` when this job was compiled for the
-   *  compositor render path: the frame count and size the app's own compositor
-   *  must feed that argv's stdin. Absent for a job compiled for the old
-   *  filter-graph path, which needs no frames from us. Frozen for exactly the
-   *  reason `args` is — a job must run the path it was queued for, even if the
-   *  timeline or the dialog's choice has changed since. */
-  render?: TimelineRenderPlan;
+  /** D-350 — frozen alongside `args`: the frame count and size the app's own
+   *  compositor must feed that argv's stdin, and (D-448) the timeline it
+   *  draws. Frozen for exactly the reason `args` is — a job must run what it
+   *  was queued with, even if the timeline has changed since. */
+  render: TimelineRenderPlan;
   /** D-401 — the loudness target frozen at enqueue, like `args`. */
   loudness?: LoudnessTarget;
   /** D-441 — the file format `args` writes, and the preset the job was made
@@ -172,20 +170,17 @@ function runNext(): void {
     jobs: s.jobs.map((j) => (j.id === next.id ? { ...j, status: 'running' as const, startedAt: Date.now() } : j)),
   }));
 
-  // Only the compositor path has progress to report (see `ExportJob.progress`).
   // The baseline is read BEFORE the render starts, so the poller can tell this
   // job's render from whatever the slot is still holding.
   let stopFollowing: (() => void) | null = null;
-  if (next.render) {
-    void readTimelineExportStatus()
-      .then((before) => {
-        // By the time this resolves the job may already have finished; starting
-        // a poller then would leave an interval running with nothing to update.
-        if (useExportQueueStore.getState().jobs.find((j) => j.id === next.id)?.status !== 'running') return;
-        stopFollowing = followProgress(next.id, before.jobId);
-      })
-      .catch(() => {});
-  }
+  void readTimelineExportStatus()
+    .then((before) => {
+      // By the time this resolves the job may already have finished; starting
+      // a poller then would leave an interval running with nothing to update.
+      if (useExportQueueStore.getState().jobs.find((j) => j.id === next.id)?.status !== 'running') return;
+      stopFollowing = followProgress(next.id, before.jobId);
+    })
+    .catch(() => {});
 
   const settle = (patch: Partial<ExportJob>) => {
     stopFollowing?.();

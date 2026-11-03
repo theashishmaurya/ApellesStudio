@@ -41,44 +41,17 @@ describe('resolveLoudnessTarget', () => {
 describe('runCompiledExport and the loudness target', () => {
   beforeEach(() => invokeMock.mockReset());
 
-  it('off: the filter path runs ffmpeg and nothing else, so the output is untouched', async () => {
-    invokeMock.mockResolvedValueOnce({ ok: true, stdout_tail: '', stderr_tail: '' });
-    const r = await runCompiledExport(['-y', 'out.mp4'], undefined, '/tmp/out.mp4');
-    expect(r.ok).toBe(true);
-    expect(r.loudness).toBeUndefined();
-    expect(invokeMock.mock.calls.map((c) => c[0])).toEqual(['chroma_run_editor_export']);
-  });
-
   it('off: the render path carries no loudness target to the renderer', async () => {
     invokeMock.mockResolvedValueOnce({ ok: true, frames: 1, segments: 1, ms: 1, stderr_tail: '' });
     await runCompiledExport(['-y'], plan, '/tmp/out.mp4');
     expect(invokeMock.mock.calls[0][1].req.loudness).toBeNull();
   });
 
-  it('on, filter path: the target rides in the run (normalised inside it, D-441) and the report comes back', async () => {
-    const report = { target: LOUDNESS_PRESETS.youtube, before: null, after: null, gainDb: 7, attempts: 1, targetMet: true };
-    invokeMock.mockResolvedValueOnce({ ok: true, cancelled: false, stdout_tail: '', stderr_tail: '', loudness: report });
-    const r = await runCompiledExport(['-y', 'out.mp4'], undefined, '/tmp/out.mp4', LOUDNESS_PRESETS.youtube, undefined, 'job-1');
-    expect(invokeMock).toHaveBeenCalledTimes(1);
-    expect(invokeMock.mock.calls[0]).toEqual([
-      'chroma_run_editor_export',
-      { args: ['-y', 'out.mp4'], output: '/tmp/out.mp4', cancelToken: 'job-1', loudness: LOUDNESS_PRESETS.youtube },
-    ]);
-    expect(r.loudness).toEqual(report);
-  });
-
   it('a cancelled run reports cancelled, not failed (D-441)', async () => {
-    invokeMock.mockResolvedValueOnce({ ok: false, cancelled: true, stdout_tail: '', stderr_tail: 'the export was cancelled' });
-    const r = await runCompiledExport(['-y'], undefined, '/tmp/out.mp4', undefined, undefined, 'job-2');
+    invokeMock.mockResolvedValueOnce({ ok: false, cancelled: true, frames: 0, segments: 1, ms: 1, stderr_tail: 'the export was cancelled' });
+    const r = await runCompiledExport(['-y'], plan, '/tmp/out.mp4', undefined, undefined, 'job-2');
     expect(r.ok).toBe(false);
     expect(r.cancelled).toBe(true);
-  });
-
-  it('on, filter path: a failed ffmpeg is never normalised', async () => {
-    invokeMock.mockResolvedValueOnce({ ok: false, stdout_tail: '', stderr_tail: 'boom' });
-    const r = await runCompiledExport(['-y'], undefined, '/tmp/out.mp4', LOUDNESS_PRESETS.youtube);
-    expect(r.ok).toBe(false);
-    expect(invokeMock).toHaveBeenCalledTimes(1);
   });
 
   it('on, render path: the target rides in the render request', async () => {
