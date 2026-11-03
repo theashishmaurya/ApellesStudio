@@ -52,12 +52,13 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { useEditorTimelineStore } from './timelineStore';
 import { TimelinePane } from './TimelinePane';
 import { useTimelineViewStore } from './timelineView';
+import { pinchZoomFactor } from './timelineZoom';
 import { DEFAULT_MARKER_COLOR, type Timeline } from './timeline';
 
 const FPS = 24;
 const AREA = { left: 0, top: 0, width: 1200, height: 600 };
-/** `TimelinePane.tsx`'s own zoom step, restated (see `ZOOM_STEP`). */
-const ZOOM_STEP = 1.2;
+/** The factor one `deltaY: -120` wheel event applies (B-375: proportional, clamped per event). */
+const ZOOM_STEP = pinchZoomFactor(-120);
 const DEFAULT_PX_PER_SEC = 90;
 const START_LEFT_PX = 32;
 

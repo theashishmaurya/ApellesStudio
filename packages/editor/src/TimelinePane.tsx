@@ -392,7 +392,13 @@ import {
 import { clampPxPerSec, perTimelineView, useTimelineViewStore } from './timelineView';
 // B-116 — anchored zoom: keep whatever is under the cursor (wheel) or the
 // playhead (buttons) under it across a zoom step.
-import { buttonZoomAnchorX, frameAtViewportX, scrollLeftForAnchor } from './timelineZoom';
+import {
+  buttonZoomAnchorX,
+  createZoomCoalescer,
+  frameAtViewportX,
+  pinchZoomFactor,
+  scrollLeftForAnchor,
+} from './timelineZoom';
 // B-145 — the one place a dnd-kit drag's displacement is derived. NOT
 // `event.delta`, which is corrupted by this pane's own scroll container — see
 // that module's doc for the full mechanism.
@@ -1005,6 +1011,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
   useEffect(() => {
     const el = editAreaRef.current;
     if (!el) return;
+    const zoomCoalescer = createZoomCoalescer((factor, clientX) => zoomByRef.current(factor, clientX));
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey) {
         // B-357 — a plain wheel pans through the lanes' scroller natively, but
@@ -1020,6 +1027,7 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
         return;
       }
       e.preventDefault();
+      // B-375 — proportional to the gesture (`pinchZoomFactor`), and
       // D-437 S8 — coalesced to ONE zoom step per animation frame. A trackpad
       // pinch delivers several ctrl-wheel events per frame, and each used to be
       // a full zoom (a store write → a synchronous render of the pane and every
@@ -1027,23 +1035,12 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
       // 181–247 ms pinch frames measured live at 300 clips). The factors
       // multiply, the latest pointer x is the anchor, and the zoom lands once,
       // in the next frame.
-      pendingZoom.factor *= e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
-      pendingZoom.clientX = e.clientX;
-      if (zoomRaf === 0) zoomRaf = requestAnimationFrame(flushZoom);
-    };
-    const pendingZoom = { factor: 1, clientX: 0 };
-    let zoomRaf = 0;
-    const flushZoom = () => {
-      zoomRaf = 0;
-      const { factor, clientX } = pendingZoom;
-      pendingZoom.factor = 1;
-      // In-then-out within one frame multiplies back to ~1: no zoom at all.
-      if (Math.abs(factor - 1) > 1e-9) zoomByRef.current(factor, clientX);
+      zoomCoalescer.push(pinchZoomFactor(e.deltaY, e.deltaMode), e.clientX);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => {
       el.removeEventListener('wheel', onWheel);
-      if (zoomRaf !== 0) cancelAnimationFrame(zoomRaf);
+      zoomCoalescer.cancel();
     };
     // B-123 — `editArea`, not `[]`: this node mounts LATE on the real app's
     // own startup path (see its declaration), and an empty array bound this

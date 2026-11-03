@@ -53,6 +53,14 @@ status: **fixed 2026-11-03 (harness)** · severity: minor (false FAIL) · area: 
 - **cause:** H5 skipped a hover check only when WebKit DROPPED the move. With `_simulateMouseMove:` the pointermove is delivered even to a non-key window, but an inactive window applies no `:hover` (the track-header toggles are `group-hover` CSS), so the check failed on the desktop's state.
 - **fix (H18):** a native `move` whose report says the window was not key re-activates Apelles (`debug_activate_app`) and is replayed once; still not key → SKIP with the reason, delivered or not. Tests in `runner.test.ts` (H18).
 
+## B-375 — a pinch zoomed a fixed 1.2x per wheel event whatever its delta, and a pinch frame at 300 clips dropped frames
+
+status: **fixed 2026-11-03** (zoom is proportional; the frame cost was already coalesced by D-437 S8) · severity: medium · area: `@apelles/editor` (`TimelinePane.tsx` wheel handler, `timelineZoom.ts`)
+
+- **cause:** the ctrl-wheel handler applied `deltaY < 0 ? 1.2 : 1/1.2` per event, ignoring the magnitude: a slow pinch and a fast one zoomed the same per event, and a trackpad's burst of small events overshot. Each event was also its own store write and a render of the pane plus every visible clip (the 122-318 ms pinch frames at 300 clips; ~30 ms per zoom step in the dev bundle); D-437 S8 already batched those to one write per frame.
+- **fix:** `pinchZoomFactor(deltaY, deltaMode)` = `exp(-deltaY x 0.01)`, the per-event delta clamped to +-30 px (so a mouse notch of 100 is about a 1.35x step), line/page modes scaled. Exponents add, so N small events equal one event of their sum and in-then-out cancels. `createZoomCoalescer` (injectable rAF) holds the batching: factors multiply, the last pointer x anchors, one flush per frame, none when the frame cancels to ~1. The toolbar and `=`/`-` keep the fixed 1.2x step.
+- **tests:** `timelineZoom.test.ts` (proportional, exponential additivity, clamp, delta modes; 6 events in a frame = 1 flush with the product and the last anchor; cancelling events do not flush; the anchored frame holds still across a batch; cancel), `TimelinePane.zoom.dom.test.tsx` (anchor preserved through the real handler).
+
 ## B-374 — the release frame paid a style recalculation of every clip (the gesture cursor's descendant rule), plus a second render from the release's `click`, an unarmed overlay's forced layout and, on a clip move, React's focus restore
 
 status: **fixed 2026-11-03 (worktree; production bundle measured, dev re-check pending)** · severity: major (every edit at scale missed the 50 ms release budget; v0.3.0 roadmap 00r item 7, B-347) · area: `packages/editor/src/timeline.css`, `useEditGesture.ts`, `gestureCursor.ts`, `DynamicZoomOverlay.tsx`, `TimelinePane.tsx` (`onDndDragEnd`)
@@ -396,12 +404,13 @@ status: **fixed** (2026-10-31, D-435) · severity: **major** for the AI-native w
 
 ## B-340 — the segmented export picks its parallel-chunk count from CPU cores only, not memory, so a 4K export can over-commit RAM on a 16 GB Mac
 
-status: **open, deferred** (owner, 2026-10-31: "log it, we will do it later") · severity: medium · area: `app/src-tauri/src/chroma/edit_render.rs` (`MAX_SEGMENTS`, the segment-count function)
+status: **fixed 2026-11-03** (the bound; the peak-RSS measurement is still owed, below) · severity: medium · area: `app/src-tauri/src/chroma/edit_render.rs` (`MAX_SEGMENTS`, the segment-count function)
 
 - **What:** D-360/D-369 split an export into up to `MAX_SEGMENTS = 6` parallel segments, bounded by the work, by cores ÷ processes-per-segment, and by the constant. Nothing bounds it by memory. Each segment holds its own encoder plus one `decode_pipe` ffmpeg per visible video track (~385 MB per 4K decoder after B-230's cap), plus the `WRITE_AHEAD = 4` frame buffer (133 MB at 4K).
 - **Measured so far:** a single-stream 4K export of a 79-clip project ran at ~3.2 GB (`docs/notes/export-gpu-compositor.md` §9.1). The segmented 4K case is **unmeasured**: the constant's own doc says so. Estimated 5–8 GB at 4K with several video tracks.
 - **Risk:** a 16 GB Mac with many cores can go into compression/swap during a 4K export; B-229/B-230 and the B-274-era stall show what that does (slow or hung exports).
-- **Fix when picked up:** add a memory bound to the segment count (available RAM ÷ an estimated per-segment cost at the output size and track count), then measure peak RSS for 1080p and 4K exports with the UI harness and record the numbers as the app's system requirements.
+- **fix (2026-11-03):** `plan_segment_count` takes the output size and a fourth bound: `by_memory = (available RAM x 50%) / segment_memory_bytes`, read with `sysinfo` (already an `apelles` dependency, so no new crate). A segment is estimated at 100 MB fixed + pixels x (48 B per decoder [B-230's 385 MB per 4K decoder] x visible video tracks + 64 B encoder + 16 B for the 4-frame write-ahead); 4K with two video tracks is about 1.6 GB per segment. The codec is not an input (the argv is opaque to this side, D-350), the encoder constant is sized for the heaviest case. No reported memory plans one segment. Tests: `edit_render::tests::the_segment_count_is_bounded_by_available_memory` (4K on 8/16 GB, 1080p on 8/16/64 GB, 0 GB), the pure `segment_count_for` takes every machine input as a parameter. **Still owed:** measuring peak RSS for 1080p and 4K with the UI harness to replace the estimated constants and publish system requirements.
+- **Original plan:** add a memory bound to the segment count (available RAM ÷ an estimated per-segment cost at the output size and track count), then measure peak RSS for 1080p and 4K exports with the UI harness and record the numbers as the app's system requirements.
 
 ## B-339 — adding a marker does not open its editor popover
 

@@ -78,6 +78,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import { useEditorTimelineStore } from './timelineStore';
 import { useTimelineViewStore } from './timelineView';
+import { pinchZoomFactor } from './timelineZoom';
 import { TimelinePane } from './TimelinePane';
 import { TIMELINE_TEST_IDS as ID, TIMELINE_VIEW_ATTRS } from './timelineTestIds';
 import type { Clip, Timeline } from './timeline';
@@ -244,7 +245,7 @@ describe('D-437 S8 — zoom and playback follow still write the scroller', () =>
     expect(counts.pane).toBe(0); // coalesced: nothing until the frame
     await waitFrames(1);
     expect(counts.pane).toBe(1);
-    expect(useTimelineViewStore.getState().pxPerSec).toBeCloseTo(before * 1.2 ** 3, 6);
+    expect(useTimelineViewStore.getState().pxPerSec).toBeCloseTo(before * pinchZoomFactor(-4) ** 3, 6);
     const left = scroller().scrollLeft;
     expect(left).toBeGreaterThan(900); // zoom-in about a point right of the left edge
     expect(area().getAttribute(TIMELINE_VIEW_ATTRS.scrollLeft)).toBe(String(Math.round(left)));
