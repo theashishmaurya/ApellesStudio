@@ -214,6 +214,9 @@ mod tests {
             scale,
         )
         .expect("warm decode");
+        // D-452 — the decoded frame reaches the Colorist as pixels through the
+        // GPU engine's conversion, as `chroma::commands` does it.
+        let warm = crate::chroma::edit::decoded_picture(warm, scale).expect("convert");
         let _ = render_once(&warm, 1, "playback_bench_warm");
 
         let mut t_decode = std::time::Duration::ZERO;
@@ -233,6 +236,7 @@ mod tests {
                 scale,
             )
             .expect("decode");
+            let frame = crate::chroma::edit::decoded_picture(frame, scale).expect("convert");
             t_decode += d0.elapsed();
 
             let g0 = Instant::now();

@@ -13,6 +13,8 @@
 use std::sync::Arc;
 
 use apelles_types::adjustment::AdjustmentOps;
+#[cfg(target_os = "macos")]
+use apelles_types::video_frame::VideoFrame;
 use image::{RgbImage, RgbaImage};
 
 /// One frame: a `width` × `height` RGBA8 canvas, its starting contents, and the
@@ -65,6 +67,12 @@ pub enum Source {
     /// Pixels already on the engine's device (D-450): a clip graded by the
     /// Colorist's shader, handed over with no CPU read-back.
     Gpu(GpuImage),
+    /// D-452 — a decoded video frame, still in the decoder's IOSurface: its
+    /// two Y'CbCr planes are imported as textures and converted to RGB on the
+    /// GPU with the source's matrix and range (`ycbcr.wgsl`), so the CPU never
+    /// touches its pixels.
+    #[cfg(target_os = "macos")]
+    Video(VideoFrame),
 }
 
 /// An RGBA8 picture in a storage buffer on the engine's own device, rows
@@ -86,6 +94,8 @@ impl Source {
             Source::Rgb(img) => img.dimensions(),
             Source::Solid { width, height, .. } => (*width, *height),
             Source::Gpu(g) => (g.width, g.height),
+            #[cfg(target_os = "macos")]
+            Source::Video(frame) => frame.buffer.dimensions(),
         }
     }
 

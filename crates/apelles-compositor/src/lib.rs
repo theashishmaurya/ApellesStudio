@@ -31,9 +31,17 @@
 mod engine;
 mod plan;
 pub mod tables;
+#[cfg(target_os = "macos")]
+mod video;
 
-pub use engine::{ComposeError, Engine, EngineStats, GPU_TIMEOUT, PendingFrame};
+#[cfg(target_os = "macos")]
+pub use engine::OutputFormat;
+pub use engine::{
+    Canvas, ComposeError, Engine, EngineStats, FrameOutput, GPU_TIMEOUT, PendingFrame, PendingGpu,
+};
 pub use plan::{Background, FramePlan, GpuImage, Layer, Source, Step};
 
 #[cfg(test)]
 mod tests;
+#[cfg(all(test, target_os = "macos"))]
+mod video_tests;

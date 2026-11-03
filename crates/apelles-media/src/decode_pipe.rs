@@ -1,20 +1,26 @@
-//! Persistent sequential-decode pipe for smooth scrub / playback (roadmap
-//! round-2 item 5, D-030; multi-pipe pool + hardware decode, D-125; boundary
-//! prefetch, D-324).
+//! The pool of sequential decode streams for scrub, playback and export
+//! (roadmap round-2 item 5, D-030; multi-stream pool + hardware decode, D-125;
+//! boundary prefetch, D-324; lanes, D-360; the media engine, D-452).
 //!
-//! What it is: one long-lived `ffmpeg -f rawvideo` process per *pipe slot* that
-//!   streams frames sequentially, instead of a fresh process + keyframe seek +
-//!   PNG round-trip per frame (`video::decode_frame`, D-015).
-//! What it does: `playback_frame_scaled(slot, path, info, target, scale)`
-//!   returns frame `target` as an 8-bit RGB `DynamicImage`. Cheap when `target`
-//!   is the next frame or a short forward hop *for that slot*; a keyframe-seek
-//!   respawn otherwise — or, since D-324, the adoption of a pipe `prefetch`
-//!   primed for that exact jump.
-//! What it does NOT do: audio, colour management, the GPU grade, caching decoded
-//!   frames. It is purely "give me frame N fast, in order".
-//! Fallback: any pipe error drops that slot's pipe and returns `Err` — callers
-//!   fall back to `video::decode_frame`. The pipe is a fast path, never a new
-//!   failure mode.
+//! What it is: one long-lived decode stream per *slot* (one per visible video
+//!   track) per *lane* (one per walker of the timeline) that reads frames in
+//!   order, instead of a fresh decode + keyframe seek per frame. Since D-452 a
+//!   stream is the in-process media engine (`vt_decode::Reader`: AVFoundation +
+//!   VideoToolbox, frames left in IOSurfaces for the GPU engine) for the
+//!   QuickTime family, and a long-lived `ffmpeg -f rawvideo` process for any
+//!   other container, until the import-time conform the owner chose makes
+//!   every source one the media engine opens and the ffmpeg arm is deleted.
+//! What it does: `playback_frame_scaled(lane, slot, path, info, target, scale)`
+//!   returns frame `target` as a [`Decoded`]. Cheap when `target` is the frame
+//!   last handed out (a hold, a slow ramp: D-452), the next one, or a short
+//!   forward hop *for that slot*; a keyframe-seek reopen otherwise — or, since
+//!   D-324, the adoption of a stream primed for that exact jump.
+//! What it does NOT do: audio, colour conversion (the GPU engine converts a
+//!   media-engine frame), the grade, caching decoded frames beyond the last.
+//! Failure: any stream error drops that slot's stream and returns `Err`. A
+//!   media-engine error is reported as it is (D-452: no software fallback); an
+//!   ffmpeg pipe that failed with `-hwaccel` is retried once in software
+//!   (D-125).
 //!
 //! ## Frame `N` means the same thing here as everywhere else (D-228, B-104)
 //!
@@ -151,10 +157,13 @@ use std::process::{Child, ChildStdout, Stdio};
 use std::sync::Mutex;
 
 use anyhow::{Context, Result, anyhow};
-use image::{DynamicImage, RgbImage};
+use std::sync::Arc;
+
+use image::RgbImage;
 use once_cell::sync::Lazy;
 
 use crate::video::VideoInfo;
+pub use crate::vt_decode::VideoFrame;
 
 /// How far forward we'll fast-skip (discard decoded frames) before a respawn —
 /// with its keyframe seek — becomes the cheaper option. ~2 s at 24 fps.
@@ -233,23 +242,64 @@ fn disable_hwaccel(path: &Path) {
         .insert(path.to_path_buf());
 }
 
+/// One decoded frame as a pipe hands it out (D-452).
+#[derive(Clone, Debug)]
+pub enum Decoded {
+    /// From the media engine: still in the decoder's IOSurface, in the
+    /// source's own Y'CbCr layout, at the source's full size. The GPU engine
+    /// converts and scales it.
+    Video(VideoFrame),
+    /// From the ffmpeg pipe (a container the media engine does not open):
+    /// 8-bit RGB, already downscaled to the requested size.
+    Rgb(Arc<RgbImage>),
+}
+
+/// One sequential decode stream: a media-engine reader, or (for a container
+/// AVFoundation cannot open, until the import-time conform replaces it) an
+/// `ffmpeg` process.
 pub struct FramePipe {
     path: PathBuf,
+    /// absolute source frame index the next read will return
+    next_index: u64,
+    /// `Some((w, h))` if ffmpeg is scaling the output; `None` = native size.
+    /// Always `None` for a media-engine stream, whose frames reach the GPU at
+    /// their full size ([`effective_scale`]).
+    scale: Option<(u32, u32)>,
+    /// D-452 — the frame last handed out, and its index. A request for the
+    /// same frame again (a held frame, a slow-motion ramp that shows each
+    /// source frame twice) is answered from here instead of by a seek.
+    last: Option<(u64, Decoded)>,
+    stream: Stream,
+}
+
+enum Stream {
+    Engine(crate::vt_decode::Reader),
+    Ffmpeg(FfmpegStream),
+}
+
+struct FfmpegStream {
     child: Child,
     stdout: BufReader<ChildStdout>,
-    /// absolute source frame index the next `read_raw()` will return
-    next_index: u64,
     frame_bytes: usize,
     /// output frame dimensions — the *source* size, or a downscale target when
     /// `scale` is set (D-031 playback: ffmpeg's SIMD scaler is far cheaper than a
     /// CPU downscale of a 4K frame every playback frame).
     w: u32,
     h: u32,
-    /// `Some((w, h))` if ffmpeg is scaling the output; `None` = native size.
-    scale: Option<(u32, u32)>,
     /// Whether this process was spawned with `-hwaccel videotoolbox` (D-125) —
     /// read on failure to decide whether a software retry is worth attempting.
     hwaccel: bool,
+}
+
+/// The scale a pipe for `path` actually decodes at: the media engine always
+/// hands over full-size frames (the GPU engine resamples them as part of the
+/// layer it paints), so a requested scale only means something for ffmpeg.
+fn effective_scale(path: &Path, scale: Option<(u32, u32)>) -> Option<(u32, u32)> {
+    if crate::vt_decode::is_engine_container(path) {
+        None
+    } else {
+        scale
+    }
 }
 
 /// Even-dimension downscale target for a `long_edge` cap. Returns `None` when the
@@ -267,7 +317,7 @@ pub fn scale_target(src_w: u32, src_h: u32, long_edge: u32) -> Option<(u32, u32)
     Some((w.max(2), h.max(2)))
 }
 
-impl Drop for FramePipe {
+impl Drop for FfmpegStream {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -275,27 +325,22 @@ impl Drop for FramePipe {
 }
 
 impl FramePipe {
-    /// Spawn ffmpeg decoding `path` from absolute frame `start` to EOF as a raw
-    /// rgb24 stream, **conformed to the source's nominal frame grid**
-    /// ([`crate::conform`], D-228) so the `n`th frame out of this pipe is source
-    /// frame `start + n` as the rest of Apelles defines it — the picture at
-    /// `(start + n) / source_fps` seconds.
+    /// Start decoding `path` from absolute frame `start`, **conformed to the
+    /// source's nominal frame grid** (D-228) so the `n`th frame out of this
+    /// pipe is source frame `start + n` — the picture at `(start + n) /
+    /// source_fps` seconds.
     ///
-    /// B-104: this used to be `-ss (start-0.5)/fps` + `-fps_mode passthrough`,
-    /// i.e. seek once by time and then **count coded frames**. That is only the
-    /// same thing on CFR footage. On a variable-frame-rate source the two
-    /// diverge without bound between respawns — measured at up to 4.07 s on the
-    /// owner's own screen recording — which is what detached the on-canvas
-    /// transform box from the picture it was drawn over.
-    #[allow(dead_code)] // native-size wrapper; production path is `open_scaled`
-    pub fn open(path: &Path, info: &VideoInfo, start: u64) -> Result<Self> {
-        Self::open_scaled(path, info, start, None)
-    }
-
-    /// As [`FramePipe::open`], but ffmpeg downscales every frame to `scale`
-    /// (`Some((w, h))`) before it hits the pipe. Used by the playback path (D-031)
-    /// so a 4K frame is never CPU-downscaled per frame. Hardware decode is used
-    /// unless this source has already failed at it once (D-125).
+    /// D-452 — a QuickTime-family file is decoded in process by the media
+    /// engine (`vt_decode`, VideoToolbox, frames left on the GPU side at full
+    /// size). Any other container still runs the ffmpeg pipe below, scaled to
+    /// `scale` (D-031) with hardware decode unless this source has already
+    /// failed at it once (D-125).
+    ///
+    /// B-104: the ffmpeg pipe used to be `-ss (start-0.5)/fps` +
+    /// `-fps_mode passthrough`, i.e. seek once by time and then **count coded
+    /// frames**. That is only the same thing on CFR footage; on a
+    /// variable-frame-rate source the two diverge without bound between
+    /// respawns (measured at up to 4.07 s on the owner's own screen recording).
     pub fn open_scaled(
         path: &Path,
         info: &VideoInfo,
@@ -309,6 +354,26 @@ impl FramePipe {
     /// after a hardware-decode failure ([`playback_frame_scaled`]) can force it
     /// off without racing the [`NO_HWACCEL`] memo it just wrote.
     fn open_with_hwaccel(
+        path: &Path,
+        info: &VideoInfo,
+        start: u64,
+        scale: Option<(u32, u32)>,
+        hwaccel: bool,
+    ) -> Result<Self> {
+        if crate::vt_decode::is_engine_container(path) {
+            return Ok(Self {
+                path: path.to_path_buf(),
+                next_index: start,
+                scale: None,
+                last: None,
+                stream: Stream::Engine(crate::vt_decode::Reader::open(path, info, start)?),
+            });
+        }
+        Self::open_ffmpeg(path, info, start, scale, hwaccel)
+    }
+
+    /// The ffmpeg pipe, for the containers the media engine does not open.
+    fn open_ffmpeg(
         path: &Path,
         info: &VideoInfo,
         start: u64,
@@ -376,34 +441,78 @@ impl FramePipe {
 
         Ok(Self {
             path: path.to_path_buf(),
-            child,
-            stdout,
             next_index: start,
-            frame_bytes: out_w as usize * out_h as usize * 3,
-            w: out_w,
-            h: out_h,
             scale,
-            hwaccel,
+            last: None,
+            stream: Stream::Ffmpeg(FfmpegStream {
+                child,
+                stdout,
+                frame_bytes: out_w as usize * out_h as usize * 3,
+                w: out_w,
+                h: out_h,
+                hwaccel,
+            }),
         })
     }
 
-    fn read_raw(&mut self) -> Result<RgbImage> {
-        let mut buf = vec![0u8; self.frame_bytes];
-        self.stdout
-            .read_exact(&mut buf)
-            .context("reading a frame from the decode pipe")?;
-        self.next_index += 1;
-        RgbImage::from_raw(self.w, self.h, buf)
-            .ok_or_else(|| anyhow!("rgb frame buffer size mismatch"))
+    /// Whether a failure on this pipe is worth a software retry (D-125): only
+    /// an ffmpeg pipe that ran with `-hwaccel`. A media-engine failure is
+    /// reported as it is (D-452: no fallback).
+    fn retry_in_software(&self) -> bool {
+        matches!(&self.stream, Stream::Ffmpeg(f) if f.hwaccel)
     }
 
-    fn skip_raw(&mut self) -> Result<()> {
-        let mut buf = vec![0u8; self.frame_bytes];
-        self.stdout
-            .read_exact(&mut buf)
-            .context("skipping a frame in the decode pipe")?;
+    /// The next frame on the grid.
+    fn read(&mut self) -> Result<Decoded> {
+        let index = self.next_index;
+        let frame = match &mut self.stream {
+            Stream::Engine(reader) => {
+                let f = reader.next_frame()?;
+                if f.index != index {
+                    return Err(anyhow!(
+                        "the media engine returned frame {} for {index}",
+                        f.index
+                    ));
+                }
+                Decoded::Video(f)
+            }
+            Stream::Ffmpeg(f) => {
+                let mut buf = vec![0u8; f.frame_bytes];
+                f.stdout
+                    .read_exact(&mut buf)
+                    .context("reading a frame from the decode pipe")?;
+                Decoded::Rgb(Arc::new(
+                    RgbImage::from_raw(f.w, f.h, buf)
+                        .ok_or_else(|| anyhow!("rgb frame buffer size mismatch"))?,
+                ))
+            }
+        };
+        self.next_index += 1;
+        self.last = Some((index, frame.clone()));
+        Ok(frame)
+    }
+
+    /// Read and discard the next frame (a forward hop shorter than a seek).
+    fn skip(&mut self) -> Result<()> {
+        match &mut self.stream {
+            Stream::Engine(reader) => drop(reader.next_frame()?),
+            Stream::Ffmpeg(f) => {
+                let mut buf = vec![0u8; f.frame_bytes];
+                f.stdout
+                    .read_exact(&mut buf)
+                    .context("skipping a frame in the decode pipe")?;
+            }
+        }
         self.next_index += 1;
         Ok(())
+    }
+
+    /// D-452 — the frame last handed out, if it is `target`.
+    fn repeat_of(&self, target: u64) -> Option<Decoded> {
+        match &self.last {
+            Some((index, frame)) if *index == target => Some(frame.clone()),
+            _ => None,
+        }
     }
 
     /// Whether this pipe can produce `target` by reading forward — i.e. without
@@ -415,61 +524,48 @@ impl FramePipe {
     /// needs to ask exactly this question of two *different* pipes: of the live
     /// one ("do I even need to prime anything?") and of a primed standby ("can
     /// this one be adopted for the frame actually being asked for?").
+    ///
+    /// D-452 — and the frame it last handed out: a held frame, or a ramp
+    /// slower than real time asking for the same source frame twice, is served
+    /// again rather than sending the pipe back for a seek.
     fn can_serve(&self, path: &Path, target: u64, scale: Option<(u32, u32)>) -> bool {
         path == self.path
-            && scale == self.scale
-            && target >= self.next_index
-            && target <= self.next_index + MAX_FORWARD_SKIP
+            && effective_scale(path, scale) == self.scale
+            && (self.repeat_of(target).is_some()
+                || (target >= self.next_index && target <= self.next_index + MAX_FORWARD_SKIP))
     }
 
-    /// Absolute frame `target` as an 8-bit RGB image, optionally downscaled to
-    /// `scale` by ffmpeg. A change of `path` or `scale`, a backward step, or a
-    /// forward jump past [`MAX_FORWARD_SKIP`] forces a keyframe-seek respawn.
+    /// Absolute frame `target`. A change of `path` or (for an ffmpeg pipe)
+    /// `scale`, a backward step past the last frame handed out, or a forward
+    /// jump past [`MAX_FORWARD_SKIP`] forces a keyframe-seek reopen.
     pub fn frame_scaled(
         &mut self,
         path: &Path,
         info: &VideoInfo,
         target: u64,
         scale: Option<(u32, u32)>,
-    ) -> Result<DynamicImage> {
-        let need_restart = !self.can_serve(path, target, scale);
-
-        if need_restart {
+    ) -> Result<Decoded> {
+        if !self.can_serve(path, target, scale) {
             // D-330 — a respawn is the one event that measures its own cost, so
-            // measure it. `open_scaled` + the first `read_raw` IS the keyframe
-            // seek the prefetch exists to hide, and the scheduler needs to know
-            // how big it is on THIS source to know how far ahead to prime.
-            // Timed here rather than around the call because only this branch
-            // is a seek: the `else` below is a forward read, and an adopted
-            // standby never reaches this branch at all.
+            // measure it. `open_scaled` + the first read IS the keyframe seek
+            // the prefetch exists to hide, and the scheduler needs to know how
+            // big it is on THIS source to know how far ahead to prime. Timed
+            // here rather than around the call because only this branch is a
+            // seek: the path below is a forward read, and an adopted standby
+            // never reaches this branch at all.
             let started = std::time::Instant::now();
             *self = Self::open_scaled(path, info, target, scale)?;
-            let img = self.read_raw()?;
+            let frame = self.read()?;
             record_seek_cost(path, started.elapsed().as_secs_f64() * 1000.0);
-            return Ok(DynamicImage::ImageRgb8(img));
+            return Ok(frame);
+        }
+        if let Some(frame) = self.repeat_of(target) {
+            return Ok(frame);
         }
         while self.next_index < target {
-            self.skip_raw()?;
+            self.skip()?;
         }
-        Ok(DynamicImage::ImageRgb8(self.read_raw()?))
-    }
-
-    /// Absolute frame `target` as an 8-bit RGB image (native size).
-    #[allow(dead_code)] // native-size wrapper; production path is `frame_scaled`
-    pub fn frame(&mut self, path: &Path, info: &VideoInfo, target: u64) -> Result<DynamicImage> {
-        let need_restart = path != self.path
-            || self.scale.is_some()
-            || target < self.next_index
-            || target > self.next_index + MAX_FORWARD_SKIP;
-
-        if need_restart {
-            *self = Self::open(path, info, target)?;
-        } else {
-            while self.next_index < target {
-                self.skip_raw()?;
-            }
-        }
-        Ok(DynamicImage::ImageRgb8(self.read_raw()?))
+        self.read()
     }
 }
 
@@ -767,26 +863,11 @@ fn release_key(pool: &mut PipePool, key: PipeKey) -> Option<FramePipe> {
     }
 }
 
-/// Decode `target` via `slot`'s playback pipe, creating / advancing /
-/// restarting it as needed. On any failure the slot's pipe is dropped and the
-/// error returned; callers should fall back to [`crate::video::decode_frame`].
-///
-/// Native-size convenience wrapper; scrub goes through
-/// `playback_frame_scaled(.., None)`, kept for API symmetry.
-#[allow(dead_code)]
-pub fn playback_frame(
-    lane: PipeLane,
-    slot: PipeSlot,
-    path: &Path,
-    info: &VideoInfo,
-    target: u64,
-) -> Result<DynamicImage> {
-    playback_frame_scaled(lane, slot, path, info, target, None)
-}
-
-/// As [`playback_frame`], but ffmpeg downscales each frame to `scale` first
-/// (D-031). Switching `scale` (e.g. entering / leaving playback) costs one
-/// respawn, same as a seek jump.
+/// Decode `target` via `slot`'s pipe in `lane`, creating / advancing /
+/// reopening it as needed. On a failure the slot's pipe is dropped and the
+/// error returned. An ffmpeg pipe downscales to `scale` first (D-031), and
+/// switching `scale` costs it one respawn; a media-engine pipe ignores `scale`
+/// (D-452).
 ///
 /// A failure on a hardware-accelerated pipe is retried **once** in software
 /// before being reported (D-125) — hardware decode does not cover every
@@ -807,7 +888,7 @@ pub fn playback_frame_scaled(
     info: &VideoInfo,
     target: u64,
     scale: Option<(u32, u32)>,
-) -> Result<DynamicImage> {
+) -> Result<Decoded> {
     let key = PipeKey { lane, slot };
     let mut held = check_out(key, path, target, scale);
 
@@ -825,7 +906,7 @@ pub fn playback_frame_scaled(
         return Err(anyhow!("decode pipe vanished between open and read"));
     };
 
-    let was_hwaccel = pipe.hwaccel;
+    let was_hwaccel = pipe.retry_in_software();
     let decoded = pipe.frame_scaled(path, info, target, scale);
     if was_vacant && decoded.is_ok() {
         record_seek_cost(path, started.elapsed().as_secs_f64() * 1000.0);
@@ -914,7 +995,10 @@ pub fn sync_prefetch(lane: PipeLane, wanted: &[PrefetchSpec<'_>]) {
     //    read from it, so it is still the frame it was spawned for.
     let still_wanted = |key: PipeKey, p: &FramePipe| {
         wanted.iter().any(|w| {
-            w.slot == key.slot && w.path == p.path && w.scale == p.scale && w.target == p.next_index
+            w.slot == key.slot
+                && w.path == p.path
+                && effective_scale(w.path, w.scale) == p.scale
+                && w.target == p.next_index
         })
     };
     for (key, primed) in pool.standby.iter_mut() {
@@ -947,10 +1031,11 @@ pub fn sync_prefetch(lane: PipeLane, wanted: &[PrefetchSpec<'_>]) {
             continue;
         }
         let primed = pool.standby.entry(key).or_default();
-        if primed
-            .iter()
-            .any(|p| p.path == spec.path && p.scale == spec.scale && p.next_index == spec.target)
-        {
+        if primed.iter().any(|p| {
+            p.path == spec.path
+                && p.scale == effective_scale(spec.path, spec.scale)
+                && p.next_index == spec.target
+        }) {
             continue; // already seeking for exactly this boundary
         }
         if primed.len() >= MAX_STANDBY_PER_SLOT {
@@ -1213,6 +1298,40 @@ mod tests {
         POOL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// D-452 — these tests drive the ffmpeg pipe, which now serves only the
+    /// containers the media engine does not open, so their fixtures are
+    /// Matroska and every frame they read is RGB. (The media engine's own
+    /// grid and seek behaviour is tested in `vt_decode`; the pool's
+    /// engine-backed behaviour in `engine_pipe_tests` below.)
+    trait AsRgb {
+        fn rgb(self) -> RgbImage;
+    }
+
+    impl AsRgb for Decoded {
+        fn rgb(self) -> RgbImage {
+            match self {
+                Decoded::Rgb(img) => Arc::unwrap_or_clone(img),
+                Decoded::Video(_) => panic!("a Matroska fixture decoded through the media engine"),
+            }
+        }
+    }
+
+    impl AsRgb for image::DynamicImage {
+        fn rgb(self) -> RgbImage {
+            self.to_rgb8()
+        }
+    }
+
+    fn playback_frame_rgb(
+        lane: PipeLane,
+        slot: PipeSlot,
+        path: &Path,
+        info: &VideoInfo,
+        target: u64,
+    ) -> Result<Decoded> {
+        playback_frame_scaled(lane, slot, path, info, target, None)
+    }
+
     fn test_video() -> Option<PathBuf> {
         std::env::var("CHROMA_TEST_VIDEO")
             .ok()
@@ -1326,9 +1445,12 @@ mod tests {
         // Three live pipes: two on `a` (one of them the Colorist's own slot,
         // which this call MUST drop and `retain_pipe_slots` never would), one
         // on `b`.
-        playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &a, &info_a, 0).expect("a on track 0");
-        playback_frame(PipeLane::LIVE, PipeSlot::Current, &a, &info_a, 0).expect("a on Current");
-        playback_frame(PipeLane::LIVE, PipeSlot::Track(1), &b, &info_b, 0).expect("b on track 1");
+        playback_frame_rgb(PipeLane::LIVE, PipeSlot::Track(0), &a, &info_a, 0)
+            .expect("a on track 0");
+        playback_frame_rgb(PipeLane::LIVE, PipeSlot::Current, &a, &info_a, 0)
+            .expect("a on Current");
+        playback_frame_rgb(PipeLane::LIVE, PipeSlot::Track(1), &b, &info_b, 0)
+            .expect("b on track 1");
         assert_eq!(open_pipe_count(), 3);
 
         assert_eq!(
@@ -1360,7 +1482,7 @@ mod tests {
 
     /// A 24 fps `testsrc` long enough to seek around inside.
     fn synth_seekable(dir: &Path, secs: u32) -> PathBuf {
-        let out = dir.join("seekable.mp4");
+        let out = dir.join("seekable.mkv");
         let status = crate::ffmpeg_locate::ffmpeg()
             .expect("an ffmpeg to build the fixture")
             .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
@@ -1417,7 +1539,7 @@ mod tests {
 
         // Playing along at frame 10 — a long way from the boundary below, so
         // the live pipe genuinely cannot reach it by reading forward.
-        playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
+        playback_frame_rgb(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
         assert_eq!(open_pipe_count(), 1);
         assert_eq!(standby_pipe_count(), 0);
 
@@ -1429,9 +1551,9 @@ mod tests {
             "a target the live pipe cannot reach must be primed"
         );
 
-        let got = playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, BOUNDARY)
+        let got = playback_frame_rgb(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, BOUNDARY)
             .expect("the boundary frame")
-            .to_rgb8();
+            .rgb();
         assert_eq!(
             standby_pipe_count(),
             0,
@@ -1442,14 +1564,14 @@ mod tests {
         // Adoption must not cost a frame, duplicate one, or land elsewhere.
         let want = crate::video::decode_frame(&vid, crate::video::FramePos::Index(BOUNDARY), &info)
             .expect("reference decode")
-            .to_rgb8();
+            .rgb();
         assert!(
             mean_abs_diff(&got, &want) < 1.0,
             "the adopted pipe served the wrong frame"
         );
 
         // And the adopted pipe is a normal sequential pipe afterwards.
-        let next = playback_frame(
+        let next = playback_frame_rgb(
             PipeLane::LIVE,
             PipeSlot::Track(0),
             &vid,
@@ -1457,11 +1579,11 @@ mod tests {
             BOUNDARY + 1,
         )
         .expect("the frame after the boundary")
-        .to_rgb8();
+        .rgb();
         let next_want =
             crate::video::decode_frame(&vid, crate::video::FramePos::Index(BOUNDARY + 1), &info)
                 .expect("reference decode")
-                .to_rgb8();
+                .rgb();
         assert!(
             mean_abs_diff(&next, &next_want) < 1.0,
             "reading on from an adopted pipe drifted"
@@ -1481,18 +1603,18 @@ mod tests {
         let info = crate::video::probe(&vid).expect("probe");
         reset();
 
-        playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
+        playback_frame_rgb(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
         const BOUNDARY: u64 = 300;
         prime_one(PipeSlot::Track(0), &vid, &info, BOUNDARY, None);
 
         let late = BOUNDARY + 3;
-        let got = playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, late)
+        let got = playback_frame_rgb(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, late)
             .expect("a late landing")
-            .to_rgb8();
+            .rgb();
         assert_eq!(standby_pipe_count(), 0, "adopted, not discarded");
         let want = crate::video::decode_frame(&vid, crate::video::FramePos::Index(late), &info)
             .expect("reference decode")
-            .to_rgb8();
+            .rgb();
         assert!(
             mean_abs_diff(&got, &want) < 1.0,
             "a late landing must skip forward within the adopted pipe, not respawn"
@@ -1523,19 +1645,20 @@ mod tests {
         let info = crate::video::probe(&vid).expect("probe");
         reset();
 
-        playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 200).expect("frame 200");
+        playback_frame_rgb(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 200)
+            .expect("frame 200");
         prime_one(PipeSlot::Track(0), &vid, &info, 300, None);
         assert_eq!(standby_pipe_count(), 1);
 
         // The user seeks backwards instead — the prediction is now worthless.
         let elsewhere = 40;
-        let got = playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, elsewhere)
+        let got = playback_frame_rgb(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, elsewhere)
             .expect("a seek elsewhere")
-            .to_rgb8();
+            .rgb();
         let want =
             crate::video::decode_frame(&vid, crate::video::FramePos::Index(elsewhere), &info)
                 .expect("reference decode")
-                .to_rgb8();
+                .rgb();
         assert!(
             mean_abs_diff(&got, &want) < 1.0,
             "an unusable standby must not affect the picture"
@@ -1567,7 +1690,7 @@ mod tests {
         let info = crate::video::probe(&vid).expect("probe");
         reset();
 
-        playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
+        playback_frame_rgb(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
 
         // Three cuts, each far enough from the last to be a genuine seek — the
         // shape of a run of sub-second clips on one track.
@@ -1592,9 +1715,9 @@ mod tests {
 
         // Crossing each boundary adopts that one and leaves the rest alone.
         for (i, &cut) in CUTS.iter().enumerate() {
-            let got = playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, cut)
+            let got = playback_frame_rgb(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, cut)
                 .unwrap_or_else(|e| panic!("cut {cut}: {e}"))
-                .to_rgb8();
+                .rgb();
             assert_eq!(
                 standby_pipe_count(),
                 CUTS.len() - 1 - i,
@@ -1604,7 +1727,7 @@ mod tests {
             let reference =
                 crate::video::decode_frame(&vid, crate::video::FramePos::Index(cut), &info)
                     .expect("reference decode")
-                    .to_rgb8();
+                    .rgb();
             assert!(
                 mean_abs_diff(&got, &reference) < 1.0,
                 "an adopted standby must produce the right picture at {cut}"
@@ -1656,12 +1779,12 @@ mod tests {
         reset();
 
         // A cold open + first frame IS a respawn, so it is measured.
-        playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
+        playback_frame_rgb(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
         let first = estimated_seek_ms(&vid).expect("a cold open is a measured seek");
         assert!(first > 0.0, "a measured seek must be a real duration");
 
         // A sequential read is not a seek and must not be folded in.
-        playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 11).expect("frame 11");
+        playback_frame_rgb(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 11).expect("frame 11");
         assert_eq!(
             estimated_seek_ms(&vid),
             Some(first),
@@ -1705,7 +1828,8 @@ mod tests {
         let info = crate::video::probe(&vid).expect("probe");
         reset();
 
-        playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 100).expect("frame 100");
+        playback_frame_rgb(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 100)
+            .expect("frame 100");
 
         // Mid-clip: the lookahead frame is a short forward hop the live pipe
         // will reach on its own.
@@ -1790,7 +1914,7 @@ mod tests {
         // (b) the file is replaced underneath it (D-260)
         reset();
         prime_one(PipeSlot::Track(0), &vid, &info, 100, None);
-        playback_frame(PipeLane::LIVE, PipeSlot::Track(1), &vid, &info, 0)
+        playback_frame_rgb(PipeLane::LIVE, PipeSlot::Track(1), &vid, &info, 0)
             .expect("a live pipe too");
         assert_eq!(
             drop_pipes_for_path(&vid),
@@ -1883,16 +2007,25 @@ mod tests {
         let info = crate::video::probe(&vid).expect("probe");
 
         // frames 300, 301, 302 sequential out of the pipe...
-        let mut pipe = FramePipe::open(&vid, &info, 300).expect("open pipe");
-        let p300 = pipe.frame(&vid, &info, 300).expect("f300").to_rgb8();
-        let p301 = pipe.frame(&vid, &info, 301).expect("f301").to_rgb8();
-        let p302 = pipe.frame(&vid, &info, 302).expect("f302").to_rgb8();
+        let mut pipe = FramePipe::open_scaled(&vid, &info, 300, None).expect("open pipe");
+        let p300 = pipe
+            .frame_scaled(&vid, &info, 300, None)
+            .expect("f300")
+            .rgb();
+        let p301 = pipe
+            .frame_scaled(&vid, &info, 301, None)
+            .expect("f301")
+            .rgb();
+        let p302 = pipe
+            .frame_scaled(&vid, &info, 302, None)
+            .expect("f302")
+            .rgb();
 
         // ...must equal the independent per-frame decode path.
         for (n, piped) in [(300u64, &p300), (301, &p301), (302, &p302)] {
             let one = crate::video::decode_frame(&vid, crate::video::FramePos::Index(n), &info)
                 .expect("decode_frame")
-                .to_rgb8();
+                .rgb();
             assert_eq!(piped.dimensions(), one.dimensions(), "frame {n} dims");
             let diff = mean_abs_diff(piped, &one);
             assert!(
@@ -1909,23 +2042,23 @@ mod tests {
             return;
         };
         let info = crate::video::probe(&vid).expect("probe");
-        let mut pipe = FramePipe::open(&vid, &info, 0).expect("open");
+        let mut pipe = FramePipe::open_scaled(&vid, &info, 0, None).expect("open");
 
         let a = pipe
-            .frame(&vid, &info, 10)
+            .frame_scaled(&vid, &info, 10, None)
             .expect("skip fwd to 10")
-            .to_rgb8();
+            .rgb();
         let b = pipe
-            .frame(&vid, &info, 2)
+            .frame_scaled(&vid, &info, 2, None)
             .expect("restart back to 2")
-            .to_rgb8();
+            .rgb();
 
         let a_ref = crate::video::decode_frame(&vid, crate::video::FramePos::Index(10), &info)
             .expect("d10")
-            .to_rgb8();
+            .rgb();
         let b_ref = crate::video::decode_frame(&vid, crate::video::FramePos::Index(2), &info)
             .expect("d2")
-            .to_rgb8();
+            .rgb();
         assert!(mean_abs_diff(&a, &a_ref) < 1.0, "forward-skip landed wrong");
         assert!(
             mean_abs_diff(&b, &b_ref) < 1.0,
@@ -1963,14 +2096,14 @@ mod tests {
             let f = pipe
                 .frame_scaled(&vid, &info, n, scale)
                 .expect("scaled frame")
-                .to_rgb8();
+                .rgb();
             assert_eq!(f.dimensions(), (sw, sh), "frame {n} not at scale target");
         }
         // a scale change forces a respawn (native size back)
         let native = pipe
             .frame_scaled(&vid, &info, 203, None)
             .expect("native frame")
-            .to_rgb8();
+            .rgb();
         assert_eq!(
             native.dimensions(),
             (info.resolution.width, info.resolution.height)
@@ -2040,7 +2173,7 @@ mod tests {
     /// exact. `pipe_matches_single_frame_decode` above still exercises the
     /// hardware path, on real footage, at the tolerance that difference needs.
     fn open_software(path: &Path, info: &VideoInfo, start: u64) -> FramePipe {
-        FramePipe::open_with_hwaccel(path, info, start, None, false).expect("open pipe")
+        FramePipe::open_ffmpeg(path, info, start, None, false).expect("open pipe")
     }
 
     /// Plain 30 fps `testsrc` — the control, to prove the conform changes
@@ -2101,7 +2234,11 @@ mod tests {
         let mut pipe = open_software(&vid, &info, 0);
         let mut frames = Vec::new();
         for n in 0..=46u64 {
-            frames.push(pipe.frame(&vid, &info, n).expect("frame").to_rgb8());
+            frames.push(
+                pipe.frame_scaled(&vid, &info, n, None)
+                    .expect("frame")
+                    .rgb(),
+            );
         }
 
         // Inside the hold every slot resolves to the SAME coded frame, so this
@@ -2157,15 +2294,15 @@ mod tests {
             let mut seq = open_software(&vid, &info, 0);
             let mut walked = None;
             for n in 0..=target {
-                walked = Some(seq.frame(&vid, &info, n).expect("walk").to_rgb8());
+                walked = Some(seq.frame_scaled(&vid, &info, n, None).expect("walk").rgb());
             }
             let walked = walked.expect("at least one frame");
 
             // reached by opening the pipe directly on it
             let opened = open_software(&vid, &info, target)
-                .frame(&vid, &info, target)
+                .frame_scaled(&vid, &info, target, None)
                 .expect("direct")
-                .to_rgb8();
+                .rgb();
 
             let d = mean_abs_diff(&walked, &opened);
             assert_eq!(
@@ -2189,10 +2326,10 @@ mod tests {
 
         let mut pipe = open_software(&vid, &info, 0);
         for n in [0u64, 7, 15, 29, 44, 45, 58] {
-            let piped = pipe.frame(&vid, &info, n).expect("pipe").to_rgb8();
+            let piped = pipe.frame_scaled(&vid, &info, n, None).expect("pipe").rgb();
             let one = crate::video::decode_frame(&vid, crate::video::FramePos::Index(n), &info)
                 .expect("decode_frame")
-                .to_rgb8();
+                .rgb();
             let d = mean_abs_diff(&piped, &one);
             assert_eq!(d, 0.0, "frame {n}: pipe vs decode_frame mean|Δ| {d}");
         }
@@ -2211,13 +2348,13 @@ mod tests {
             let by_index =
                 crate::video::decode_frame(&vid, crate::video::FramePos::Index(n), &info)
                     .expect("by index")
-                    .to_rgb8();
+                    .rgb();
             // anywhere strictly inside slot `n`'s own span
             let secs = info.frame_to_secs(n) + 0.4 / info.fps();
             let by_time =
                 crate::video::decode_frame(&vid, crate::video::FramePos::Secs(secs), &info)
                     .expect("by time")
-                    .to_rgb8();
+                    .rgb();
             assert_eq!(
                 mean_abs_diff(&by_index, &by_time),
                 0.0,
@@ -2241,7 +2378,10 @@ mod tests {
         let mut pipe = open_software(&vid, &info, 0);
         let mut prev: Option<RgbImage> = None;
         for n in 0..12u64 {
-            let f = pipe.frame(&vid, &info, n).expect("frame").to_rgb8();
+            let f = pipe
+                .frame_scaled(&vid, &info, n, None)
+                .expect("frame")
+                .rgb();
             if let Some(p) = &prev {
                 assert!(
                     mean_abs_diff(p, &f) > 0.1,
@@ -2251,7 +2391,7 @@ mod tests {
             }
             let one = crate::video::decode_frame(&vid, crate::video::FramePos::Index(n), &info)
                 .expect("decode_frame")
-                .to_rgb8();
+                .rgb();
             assert_eq!(
                 mean_abs_diff(&f, &one),
                 0.0,
@@ -2351,7 +2491,10 @@ mod tests {
         // the ARGMIN over a neighbourhood. A wrong frame loses to the right one
         // by orders of magnitude; decoder noise does not move the argmin at all.
         for n in probes {
-            let got = pipe.frame(&vid, &info, n).expect("pipe frame").to_rgb8();
+            let got = pipe
+                .frame_scaled(&vid, &info, n, None)
+                .expect("pipe frame")
+                .rgb();
 
             // truth: the last coded frame at or before n / fps
             let t = n as f64 / fps;
@@ -2419,7 +2562,7 @@ mod tests {
         );
         image::load_from_memory(&out.stdout)
             .expect("oracle PNG")
-            .to_rgb8()
+            .rgb()
     }
 
     fn mean_abs_diff(a: &RgbImage, b: &RgbImage) -> f64 {
@@ -2433,3 +2576,6 @@ mod tests {
         if n == 0 { 0.0 } else { sum as f64 / n as f64 }
     }
 }
+
+#[cfg(test)]
+mod engine_pipe_tests;

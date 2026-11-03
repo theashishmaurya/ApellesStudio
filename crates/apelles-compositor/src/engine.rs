@@ -75,6 +75,16 @@ struct Kernels {
     adjust: wgpu::ComputePipeline,
     fill: wgpu::ComputePipeline,
     to_f16: wgpu::ComputePipeline,
+    /// D-452 — a decoded frame's Y'CbCr planes to RGBA.
+    #[cfg(target_os = "macos")]
+    ycbcr: wgpu::ComputePipeline,
+    /// D-452 — the finished canvas into a pixel buffer's planes.
+    #[cfg(target_os = "macos")]
+    out_luma: wgpu::ComputePipeline,
+    #[cfg(target_os = "macos")]
+    out_chroma: wgpu::ComputePipeline,
+    #[cfg(target_os = "macos")]
+    out_bgra: wgpu::ComputePipeline,
 }
 
 struct PooledBuffer {
@@ -123,6 +133,9 @@ pub struct Engine {
     /// mapped allocation per 4K frame.
     f16_source: Mutex<Option<wgpu::Buffer>>,
     counters: Counters,
+    /// D-452 — the CoreVideo texture cache on this device, made on first use.
+    #[cfg(target_os = "macos")]
+    textures: Mutex<Option<Arc<crate::video::TextureCache>>>,
 }
 
 /// Running totals since the engine opened, summed over every thread that
@@ -266,6 +279,35 @@ struct CanvasParams {
 
 const PRELUDE: &str = include_str!("kernels/prelude.wgsl");
 
+#[cfg(target_os = "macos")]
+const OUTPUT: &str = include_str!("kernels/output.wgsl");
+
+/// D-452 — the pixel layout of an encoder's target buffer.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutputFormat {
+    /// `420v`: Rec.709 Y'CbCr, video range, 4:2:0, two planes (H.264).
+    Nv12Rec709,
+    /// `BGRA`: 8-bit B, G, R, A (the ProRes encoder converts it itself).
+    Bgra,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct OutputParams {
+    width: u32,
+    height: u32,
+    pitch_words: u32,
+    _pad: u32,
+}
+
+/// `copy_buffer_to_texture`'s row alignment.
+#[cfg(target_os = "macos")]
+fn padded_row(bytes: u32) -> u32 {
+    bytes.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+}
+
 fn kernel(device: &wgpu::Device, name: &str, body: &str, entry: &str) -> wgpu::ComputePipeline {
     let source = format!("{PRELUDE}\n{body}");
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -292,6 +334,61 @@ struct Frame<'e> {
     engine: &'e Engine,
     encoder: wgpu::CommandEncoder,
     taken: Vec<PooledBuffer>,
+    /// What must outlive the submission besides the pooled buffers (D-452).
+    keep: Keep,
+}
+
+/// Resources a submission reads or writes that the engine does not own (an
+/// imported video plane, whose IOSurface must not be recycled by the decoder
+/// or handed to an encoder while the GPU still uses it; anything a
+/// [`FrameOutput`] terminal hands over), released only once the submission
+/// has finished (D-452).
+#[derive(Default)]
+struct Keep {
+    items: Vec<Box<dyn std::any::Any + Send + Sync>>,
+}
+
+impl Keep {
+    fn push(&mut self, item: impl std::any::Any + Send + Sync) {
+        self.items.push(Box::new(item));
+    }
+}
+
+/// **The finished canvas of a frame, lent to a [`FrameOutput`] terminal**
+/// (D-452): packed RGBA8 words, red in the low byte, `width` × `height`, rows
+/// unpadded. Valid for reading by passes recorded on the terminal's encoder.
+pub struct Canvas<'a> {
+    pub buffer: &'a wgpu::Buffer,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// **What a terminal of [`Engine::submit_with`] records with** (D-452): the
+/// frame's own command encoder (so its passes are in the same submission,
+/// after the frame), scratch buffers from the engine's pool, and a place to
+/// keep anything the GPU reads or writes until the submission has finished.
+pub struct FrameOutput<'f, 'e>(&'f mut Frame<'e>);
+
+impl FrameOutput<'_, '_> {
+    /// The frame's command encoder.
+    pub fn encoder(&mut self) -> &mut wgpu::CommandEncoder {
+        &mut self.0.encoder
+    }
+
+    /// A buffer of at least `bytes` from the engine's pool, returned to it
+    /// once the submission has finished.
+    pub fn buffer(
+        &mut self,
+        bytes: u64,
+        usage: wgpu::BufferUsages,
+    ) -> Result<wgpu::Buffer, ComposeError> {
+        self.0.buffer(bytes, usage)
+    }
+
+    /// Keep `item` alive until the submission has finished.
+    pub fn keep(&mut self, item: impl std::any::Any + Send + Sync) {
+        self.0.keep.push(item);
+    }
 }
 
 impl<'e> Frame<'e> {
@@ -357,6 +454,50 @@ impl<'e> Frame<'e> {
     }
 }
 
+impl Frame<'_> {
+    /// [`Frame::dispatch`] with arbitrary bindings after the uniform (D-452:
+    /// the video planes are textures, not buffers).
+    #[cfg(target_os = "macos")]
+    fn dispatch_resources(
+        &mut self,
+        pipeline: &wgpu::ComputePipeline,
+        params: &[u8],
+        resources: Vec<wgpu::BindingResource<'_>>,
+        size: (u32, u32),
+    ) {
+        if size.0 == 0 || size.1 == 0 {
+            return;
+        }
+        let device = &self.engine.device;
+        let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("apelles-compositor params"),
+            contents: params,
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let mut entries = vec![wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform.as_entire_binding(),
+        }];
+        for (i, resource) in resources.into_iter().enumerate() {
+            entries.push(wgpu::BindGroupEntry {
+                binding: i as u32 + 1,
+                resource,
+            });
+        }
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &entries,
+        });
+        let mut pass = self
+            .encoder
+            .begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(groups(size.0), groups(size.1), 1);
+    }
+}
+
 /// `queue.write_buffer` needs a 4-byte-multiple length; an RGB8 frame need
 /// not be one, so its tail word is written padded.
 fn write_padded(queue: &wgpu::Queue, buf: &wgpu::Buffer, data: &[u8]) {
@@ -397,6 +538,14 @@ impl Engine {
             adjust: k("adjust", include_str!("kernels/adjust.wgsl")),
             fill: k("fill", include_str!("kernels/fill.wgsl")),
             to_f16: k("to_f16", include_str!("kernels/to_f16.wgsl")),
+            #[cfg(target_os = "macos")]
+            ycbcr: k("ycbcr", include_str!("kernels/ycbcr.wgsl")),
+            #[cfg(target_os = "macos")]
+            out_luma: kernel(&device, "out_luma", OUTPUT, "luma"),
+            #[cfg(target_os = "macos")]
+            out_chroma: kernel(&device, "out_chroma", OUTPUT, "chroma"),
+            #[cfg(target_os = "macos")]
+            out_bgra: kernel(&device, "out_bgra", OUTPUT, "bgra"),
         };
         let limits = device.limits();
         let max_binding = limits
@@ -424,6 +573,8 @@ impl Engine {
             half_of_u8,
             f16_source: Mutex::new(None),
             counters: Counters::default(),
+            #[cfg(target_os = "macos")]
+            textures: Mutex::new(None),
         }
     }
 
@@ -549,6 +700,17 @@ impl Engine {
     /// Release cached sources nobody else holds any more, then the least
     /// recently used until the cache fits its budget.
     fn trim_shared(&self) {
+        // D-452 — and let CoreVideo drop the textures of video frames no
+        // submission holds any more.
+        #[cfg(target_os = "macos")]
+        if let Some(textures) = self
+            .textures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            textures.flush();
+        }
         let mut cache = self.shared.lock().unwrap_or_else(|e| e.into_inner());
         cache.entries.retain(|_, e| Arc::strong_count(&e._keep) > 1);
         let mut total: u64 = cache.entries.values().map(|e| e.bytes).sum();
@@ -572,7 +734,145 @@ impl Engine {
     /// drawn while the caller does other work (decodes the next frame); its
     /// pixels come from [`PendingFrame::wait`]. A validation error in the plan
     /// is reported here; a device fault or a hang is reported by `wait`.
+    ///
+    /// D-452 — the read-back terminal of [`Self::submit_with`].
     pub fn submit(self: &Arc<Self>, plan: &FramePlan) -> Result<PendingFrame, ComposeError> {
+        let (w, h) = (plan.width, plan.height);
+        let px = u64::from(w) * u64::from(h);
+        let (gpu, staging) = self.submit_with(plan, |out, canvas| {
+            let staging = out.buffer(
+                px * 4,
+                wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            )?;
+            out.encoder()
+                .copy_buffer_to_buffer(canvas.buffer, 0, &staging, 0, px * 4);
+            Ok(staging)
+        })?;
+        let (index, taken, keep) = gpu.into_parts();
+        let (tx, rx) = std::sync::mpsc::channel();
+        staging
+            .slice(..px * 4)
+            .map_async(wgpu::MapMode::Read, move |r| {
+                let _ = tx.send(r);
+            });
+        Ok(PendingFrame {
+            inner: Some(Pending {
+                engine: self.clone(),
+                staging,
+                index,
+                taken,
+                keep,
+                px,
+                size: (w, h),
+                mapped: Some(rx),
+            }),
+        })
+    }
+
+    /// D-452 — record `plan`, then convert the finished canvas into `target`,
+    /// an IOSurface-backed `CVPixelBuffer` of the plan's size laid out as
+    /// `format`, and submit: the IOSurface terminal of [`Self::submit_with`].
+    /// No pixel is read back; the buffer holds the frame once
+    /// [`PendingGpu::wait`] returns (the export hands it to its encoder then).
+    #[cfg(target_os = "macos")]
+    pub fn submit_into(
+        self: &Arc<Self>,
+        plan: &FramePlan,
+        target: &apelles_types::video_frame::PixelBuffer,
+        format: OutputFormat,
+    ) -> Result<PendingGpu, ComposeError> {
+        let (w, h) = (plan.width, plan.height);
+        if target.dimensions() != (w, h) {
+            return Err(ComposeError::TooLarge(format!(
+                "the target buffer is {:?}, the frame {w}x{h}",
+                target.dimensions()
+            )));
+        }
+        let cache = self.texture_cache()?;
+        let (gpu, ()) = self.submit_with(plan, |out, canvas| {
+            let frame = &mut *out.0;
+            let storage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC;
+            let copy = wgpu::TextureUsages::COPY_DST;
+            // (plane, its size, its texture format, bytes per pixel)
+            let planes: Vec<(usize, (u32, u32), wgpu::TextureFormat, u32)> = match format {
+                OutputFormat::Nv12Rec709 => vec![
+                    (0, (w, h), wgpu::TextureFormat::R8Uint, 1),
+                    (
+                        1,
+                        (w.div_ceil(2), h.div_ceil(2)),
+                        wgpu::TextureFormat::Rg8Uint,
+                        2,
+                    ),
+                ],
+                OutputFormat::Bgra => vec![(0, (w, h), wgpu::TextureFormat::Bgra8Unorm, 4)],
+            };
+            for (plane, (pw, ph), texture_format, bytes_per_px) in planes {
+                let row = padded_row(pw * bytes_per_px);
+                let staging = frame.buffer(u64::from(row) * u64::from(ph), storage)?;
+                let p = OutputParams {
+                    width: w,
+                    height: h,
+                    pitch_words: row / 4,
+                    _pad: 0,
+                };
+                let (kernel, groups_x) = match (format, plane) {
+                    (OutputFormat::Nv12Rec709, 0) => (&self.kernels.out_luma, pw.div_ceil(4)),
+                    (OutputFormat::Nv12Rec709, _) => (&self.kernels.out_chroma, pw.div_ceil(2)),
+                    (OutputFormat::Bgra, _) => (&self.kernels.out_bgra, pw),
+                };
+                frame.dispatch(
+                    kernel,
+                    uniform_bytes(&p),
+                    &[canvas.buffer, &staging],
+                    (groups_x, ph),
+                );
+                let texture =
+                    cache.import(&self.device, target, plane, (pw, ph), texture_format, copy)?;
+                frame.encoder.copy_buffer_to_texture(
+                    wgpu::TexelCopyBufferInfo {
+                        buffer: &staging,
+                        layout: wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(row),
+                            rows_per_image: Some(ph),
+                        },
+                    },
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &texture.texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d {
+                        width: pw,
+                        height: ph,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                frame.keep.push(texture);
+            }
+            Ok(())
+        })?;
+        Ok(gpu)
+    }
+
+    /// **The one "frame finished on the GPU" step (D-452).** Records `plan`
+    /// into the canvas, lets `terminal` record what happens to the finished
+    /// canvas on the same command encoder — a staging copy for a read-back
+    /// ([`Self::submit`]), the conversion into an IOSurface
+    /// ([`Self::submit_into`]), or a presenter's pass into a drawable (D-451) —
+    /// and submits it all as one command buffer. Returns at once with the
+    /// submission in flight ([`PendingGpu`]) and what the terminal returned.
+    ///
+    /// A recording error returns `Err` with nothing submitted. A validation or
+    /// out-of-memory error from the device returns `Err` too, after the
+    /// submission was made: its buffers go back to the pool only once it has
+    /// finished.
+    pub fn submit_with<T>(
+        self: &Arc<Self>,
+        plan: &FramePlan,
+        terminal: impl FnOnce(&mut FrameOutput<'_, '_>, &Canvas<'_>) -> Result<T, ComposeError>,
+    ) -> Result<(PendingGpu, T), ComposeError> {
         let (w, h) = (plan.width, plan.height);
         if w == 0 || h == 0 {
             return Err(ComposeError::TooLarge(
@@ -591,25 +891,26 @@ impl Engine {
                     label: Some("apelles-compositor frame"),
                 }),
             taken: Vec::new(),
+            keep: Keep::default(),
         };
-        let recorded = self.record(&mut frame, plan, px);
-        let staging = match recorded {
-            Ok(canvas) => {
-                let staging = frame.buffer(
-                    px * 4,
-                    wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                );
-                staging.inspect(|s| {
-                    frame
-                        .encoder
-                        .copy_buffer_to_buffer(&canvas, 0, s, 0, px * 4);
-                })
-            }
-            Err(e) => Err(e),
-        };
-        let Frame { encoder, taken, .. } = frame;
-        let staging = match staging {
-            Ok(s) => s,
+        let recorded = self.record(&mut frame, plan, px).and_then(|canvas| {
+            terminal(
+                &mut FrameOutput(&mut frame),
+                &Canvas {
+                    buffer: &canvas,
+                    width: w,
+                    height: h,
+                },
+            )
+        });
+        let Frame {
+            encoder,
+            taken,
+            keep,
+            ..
+        } = frame;
+        let output = match recorded {
+            Ok(o) => o,
             Err(e) => {
                 drop(oom.pop());
                 drop(scope.pop());
@@ -621,39 +922,21 @@ impl Engine {
         add(&self.counters.record_ns, started);
         let oom = pollster::block_on(oom.pop());
         let invalid = pollster::block_on(scope.pop());
-        if let Some(e) = oom.or(invalid) {
-            // Not waited on: the submission may still be running, so the
-            // buffers go back only once it has finished (`PendingFrame`'s drop).
-            drop(PendingFrame {
-                inner: Some(Pending {
-                    engine: self.clone(),
-                    staging,
-                    index,
-                    taken,
-                    px,
-                    size: (w, h),
-                    mapped: None,
-                }),
-            });
-            return Err(ComposeError::Gpu(e.to_string()));
+        let pending = PendingGpu {
+            engine: self.clone(),
+            index: Some(index),
+            taken,
+            keep,
+        };
+        match oom.or(invalid) {
+            // Dropped, not waited on by the caller: `PendingGpu`'s drop waits
+            // for the submission before its buffers go back to the pool.
+            Some(e) => {
+                drop(pending);
+                Err(ComposeError::Gpu(e.to_string()))
+            }
+            None => Ok((pending, output)),
         }
-        let (tx, rx) = std::sync::mpsc::channel();
-        staging
-            .slice(..px * 4)
-            .map_async(wgpu::MapMode::Read, move |r| {
-                let _ = tx.send(r);
-            });
-        Ok(PendingFrame {
-            inner: Some(Pending {
-                engine: self.clone(),
-                staging,
-                index,
-                taken,
-                px,
-                size: (w, h),
-                mapped: Some(rx),
-            }),
-        })
     }
 
     fn read_back(
@@ -782,6 +1065,13 @@ impl Engine {
             // Already on this device (D-450), packed RGBA8 like `Rgba`, read
             // with its own row stride.
             Source::Gpu(g) => (g.buffer.clone(), 0, 0),
+            // Converted by `record_video` instead; never read as a buffer.
+            #[cfg(target_os = "macos")]
+            Source::Video(_) => {
+                return Err(ComposeError::Gpu(
+                    "a video frame has no buffer form; it is read through record_video".into(),
+                ));
+            }
         })
     }
 
@@ -792,6 +1082,12 @@ impl Engine {
         source: &Source,
         crop: (u32, u32, u32, u32),
     ) -> Result<wgpu::Buffer, ComposeError> {
+        // D-452 — a decoded video frame's crop, converted from its planes, is
+        // already the prepared layer.
+        #[cfg(target_os = "macos")]
+        if let Source::Video(video) = source {
+            return self.record_video(frame, video, crop);
+        }
         let (src, kind, solid) = self.source_buffer(frame, source)?;
         let src_w = source.row_pixels();
         let (cx0, cy0, cx1, cy1) = crop;
@@ -812,6 +1108,68 @@ impl Engine {
         };
         let k = &self.kernels.prepare;
         frame.dispatch(k, uniform_bytes(&p), &[&src, &out], (crop_w, crop_h));
+        Ok(out)
+    }
+
+    /// The engine's CoreVideo texture cache, made on first use (D-452).
+    #[cfg(target_os = "macos")]
+    fn texture_cache(&self) -> Result<Arc<crate::video::TextureCache>, ComposeError> {
+        let mut slot = self.textures.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(c) = slot.as_ref() {
+            return Ok(c.clone());
+        }
+        let cache = Arc::new(crate::video::TextureCache::new(&self.device)?);
+        *slot = Some(cache.clone());
+        Ok(cache)
+    }
+
+    /// D-452 — import `video`'s planes and convert its `crop` to packed RGBA8.
+    #[cfg(target_os = "macos")]
+    fn record_video(
+        &self,
+        frame: &mut Frame<'_>,
+        video: &apelles_types::video_frame::VideoFrame,
+        crop: (u32, u32, u32, u32),
+    ) -> Result<wgpu::Buffer, ComposeError> {
+        let cache = self.texture_cache()?;
+        let (w, h) = video.buffer.dimensions();
+        let (sx, sy) = video.layout.chroma_shift;
+        let chroma_size = (w.div_ceil(1 << sx), h.div_ceil(1 << sy));
+        let (luma_format, chroma_format) = crate::video::plane_formats(&video.layout);
+        let usage = wgpu::TextureUsages::TEXTURE_BINDING;
+        let luma = cache.import(&self.device, &video.buffer, 0, (w, h), luma_format, usage)?;
+        let chroma = cache.import(
+            &self.device,
+            &video.buffer,
+            1,
+            chroma_size,
+            chroma_format,
+            usage,
+        )?;
+        let (cx0, cy0, cx1, cy1) = crop;
+        let out = frame.buffer(
+            u64::from(cx1 - cx0) * u64::from(cy1 - cy0) * 4,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        )?;
+        let p = crate::video::ycbcr_params(&video.layout, crop);
+        let luma_view = luma
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let chroma_view = chroma
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        frame.dispatch_resources(
+            &self.kernels.ycbcr,
+            uniform_bytes(&p),
+            vec![
+                wgpu::BindingResource::TextureView(&luma_view),
+                wgpu::BindingResource::TextureView(&chroma_view),
+                out.as_entire_binding(),
+            ],
+            (cx1 - cx0, cy1 - cy0),
+        );
+        frame.keep.push(luma);
+        frame.keep.push(chroma);
         Ok(out)
     }
 
@@ -976,6 +1334,8 @@ impl Engine {
         let (bytes, kind) = match source {
             Source::Rgba(img) => (img.as_raw().as_slice(), 0),
             Source::Rgb(img) => (img.as_raw().as_slice(), 1),
+            #[cfg(target_os = "macos")]
+            Source::Video(video) => return self.write_f16_from_video(video, target),
             Source::Solid { .. } | Source::Gpu(_) => {
                 return Err(ComposeError::Gpu(
                     "only a decoded picture can be written to a half-float texture".to_string(),
@@ -1063,6 +1423,85 @@ impl Engine {
         }
     }
 
+    /// D-452 — [`Self::write_f16_texture`] for a decoded video frame: its
+    /// planes converted to RGBA on the GPU (`ycbcr.wgsl`, the conversion every
+    /// layer gets), then to half float, in one submission. Waits for it, so
+    /// the decoder's buffer can be recycled as soon as this returns.
+    #[cfg(target_os = "macos")]
+    fn write_f16_from_video(
+        &self,
+        video: &apelles_types::video_frame::VideoFrame,
+        target: &wgpu::Texture,
+    ) -> Result<(), ComposeError> {
+        let (w, h) = video.buffer.dimensions();
+        let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut frame = Frame {
+            engine: self,
+            encoder: self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("apelles-compositor video to_f16"),
+                }),
+            taken: Vec::new(),
+            keep: Keep::default(),
+        };
+        let rgba = match self.record_video(&mut frame, video, (0, 0, w, h)) {
+            Ok(b) => b,
+            Err(e) => {
+                drop(scope.pop());
+                self.give_back(frame.taken);
+                return Err(e);
+            }
+        };
+        let p = ToF16Params {
+            src_w: w,
+            kind: 0,
+            width: w,
+            height: h,
+        };
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        let half = self.half_of_u8.clone();
+        frame.dispatch_resources(
+            &self.kernels.to_f16,
+            uniform_bytes(&p),
+            vec![
+                rgba.as_entire_binding(),
+                wgpu::BindingResource::TextureView(&view),
+                half.as_entire_binding(),
+            ],
+            (w, h),
+        );
+        let Frame {
+            encoder,
+            taken,
+            keep,
+            ..
+        } = frame;
+        let index = self.queue.submit(Some(encoder.finish()));
+        if let Some(e) = pollster::block_on(scope.pop()) {
+            std::mem::forget(keep);
+            return Err(ComposeError::Gpu(e.to_string()));
+        }
+        match self.device.poll(wgpu::PollType::Wait {
+            submission_index: Some(index),
+            timeout: Some(GPU_TIMEOUT),
+        }) {
+            Ok(_) => {
+                self.give_back(taken);
+                drop(keep);
+                Ok(())
+            }
+            Err(wgpu::PollError::Timeout) => {
+                std::mem::forget(keep);
+                Err(ComposeError::Timeout(GPU_TIMEOUT))
+            }
+            Err(e) => {
+                std::mem::forget(keep);
+                Err(ComposeError::Gpu(e.to_string()))
+            }
+        }
+    }
+
     /// Copy a [`GpuImage`] back to the CPU, exactly, for the one caller that
     /// must draw on a graded picture before it is composited (a clip's
     /// highlighter strokes, D-396, rasterised on the CPU). Waits for the GPU.
@@ -1103,6 +1542,80 @@ impl Engine {
     }
 }
 
+/// **A submission in flight (D-452)**: what [`Engine::submit_with`] hands
+/// back. `Send`, so another thread can wait for it (the export's encoder
+/// thread waits for a frame written into its pixel buffer). Dropped without
+/// [`Self::wait`], it still waits (bounded by [`GPU_TIMEOUT`]) before its
+/// buffers return to the pool and what it keeps is released.
+pub struct PendingGpu {
+    engine: Arc<Engine>,
+    /// `None` once waited for, or taken apart.
+    index: Option<wgpu::SubmissionIndex>,
+    taken: Vec<PooledBuffer>,
+    keep: Keep,
+}
+
+impl PendingGpu {
+    /// Wait until the GPU has finished the submission.
+    pub fn wait(mut self) -> Result<(), ComposeError> {
+        let Some(index) = self.index.take() else {
+            return Ok(());
+        };
+        let waited = Instant::now();
+        let done = self.engine.device.poll(wgpu::PollType::Wait {
+            submission_index: Some(index),
+            timeout: Some(GPU_TIMEOUT),
+        });
+        if let Err(e) = done {
+            // Leaked, not released: the GPU may still be using them.
+            std::mem::forget(std::mem::take(&mut self.keep));
+            std::mem::forget(std::mem::take(&mut self.taken));
+            return Err(match e {
+                wgpu::PollError::Timeout => ComposeError::Timeout(GPU_TIMEOUT),
+                other => ComposeError::Gpu(other.to_string()),
+            });
+        }
+        add(&self.engine.counters.gpu_ns, waited);
+        self.engine.counters.frames.fetch_add(1, Ordering::Relaxed);
+        self.engine.give_back(std::mem::take(&mut self.taken));
+        self.keep = Keep::default();
+        self.engine.trim_shared();
+        Ok(())
+    }
+
+    /// The submission's parts, for a terminal that finishes it its own way
+    /// (the read-back's [`PendingFrame`]).
+    fn into_parts(mut self) -> (wgpu::SubmissionIndex, Vec<PooledBuffer>, Keep) {
+        let index = self
+            .index
+            .take()
+            .unwrap_or_else(|| unreachable!("a fresh submission has its index"));
+        (
+            index,
+            std::mem::take(&mut self.taken),
+            std::mem::take(&mut self.keep),
+        )
+    }
+}
+
+impl Drop for PendingGpu {
+    fn drop(&mut self) {
+        let Some(index) = self.index.take() else {
+            return;
+        };
+        let done = self.engine.device.poll(wgpu::PollType::Wait {
+            submission_index: Some(index),
+            timeout: Some(GPU_TIMEOUT),
+        });
+        if done.is_err() {
+            std::mem::forget(std::mem::take(&mut self.keep));
+            std::mem::forget(std::mem::take(&mut self.taken));
+            return;
+        }
+        self.engine.give_back(std::mem::take(&mut self.taken));
+    }
+}
+
 /// A frame handed to the GPU by [`Engine::submit`] and not yet read back.
 ///
 /// `Send` and `'static`, so the waiting can happen on another thread: the
@@ -1119,6 +1632,7 @@ struct Pending {
     staging: wgpu::Buffer,
     index: wgpu::SubmissionIndex,
     taken: Vec<PooledBuffer>,
+    keep: Keep,
     px: u64,
     size: (u32, u32),
     /// The staging buffer's map callback; `None` for a frame that failed
@@ -1165,6 +1679,10 @@ impl Drop for PendingFrame {
                 timeout: Some(GPU_TIMEOUT),
             });
             if done.is_err() {
+                // Leaked rather than released: the GPU may still be using
+                // the imported planes, and a decoder buffer recycled under it
+                // would be written while it is read.
+                std::mem::forget(p.keep);
                 return;
             }
             // The staging buffer's map was requested at submit; it must have

@@ -5,9 +5,11 @@ timeline frame, for the live preview, the Colorist's framed clip preview and
 the export alike. It runs on wgpu (Metal on Apple Silicon).
 
 - **Deps:** `apelles-gpu` (the headless device), `apelles-types`
-  (`AdjustmentOps`), `wgpu` 29 (the version the rest of the workspace is pinned
-  to), `pollster`, `bytemuck`, `image` (no codecs), `thiserror`, `log`. All of
-  these were already in the workspace's dependency tree. Dev: `half`, the
+  (`AdjustmentOps`, D-452's `video_frame`), `wgpu` 29 (the version the rest of
+  the workspace is pinned to), `pollster`, `bytemuck`, `image` (no codecs),
+  `thiserror`, `log`; on macOS `objc2`, `objc2-metal`, `objc2-core-foundation`
+  and `objc2-core-video` for the IOSurface interop (D-452; the same objc2
+  family `wgpu-hal`'s Metal backend uses). Dev: `half`, the
   Colorist's own f32 → f16 conversion, as the reference `to_f16` is tested
   against.
 - **What it is:** `Engine::render(&FramePlan) -> RgbaImage` (or `submit` →
@@ -29,6 +31,21 @@ the export alike. It runs on wgpu (Metal on Apple Silicon).
   a row stride), painted like any other layer, with no CPU read-back.
   `read_gpu_image` reads one back, exactly, for the one caller that must (clip
   highlights, drawn on the CPU).
+- **Video frames in and out without a CPU copy (D-452, `video.rs`).** A
+  `Source::Video` is a decoder's IOSurface `CVPixelBuffer`: its two Y'CbCr
+  planes are imported through a `CVMetalTextureCache` on the engine's own
+  `MTLDevice` and `wgpu::hal::metal::Device::texture_from_raw`, and
+  `ycbcr.wgsl` converts the layer's crop to RGBA with the source's matrix and
+  range (bilinear, centred chroma, measured within one code value of
+  swscale's precise conversion). On the way out there is one
+  step, `Engine::submit_with(plan, terminal)`: the frame is recorded, the
+  terminal records what happens to the finished `Canvas` on the same command
+  encoder (through a `FrameOutput`: the encoder, pooled scratch buffers, and a
+  keep-alive list), and one submission comes back as a `PendingGpu`. Its
+  terminals: a read-back (`submit` → `PendingFrame`), `submit_into` an
+  IOSurface `CVPixelBuffer` (`output.wgsl`: Rec.709 video-range NV12 or BGRA)
+  with no read-back, and D-451's native preview presenter (a pass into the
+  drawable, wired separately, roadmap 5c).
 - **What it does NOT do, on purpose:**
   - **Decide what is drawn.** No timeline, keyframe, fade, transition or
     geometry maths: `app/src-tauri`'s `chroma::edit` resolves each layer and

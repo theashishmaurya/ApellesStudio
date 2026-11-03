@@ -6,7 +6,9 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
 
 - **Deps:** `apelles-types`, `serde`/`serde_json`, `anyhow`, `log`,
   `once_cell`, `image`, `base64`, `blake3` + `walkdir` + `filetime` (the disk
-  cache). **No `tauri`, no `wgpu`, no `apelles-timeline`, no fork types.**
+  cache), and on macOS the objc2 bindings for Vision, AVFoundation, CoreMedia,
+  CoreVideo and VideoToolbox (D-397, D-452). **No `tauri`, no `wgpu`, no
+  `apelles-timeline`, no fork types.**
 - **Modules**, one per source file it was extracted from:
   - `scenes` (D-411) — `detect_scene_cuts`: picture-cut instants from ffmpeg's
     `scene` score on a 160 px decode (threshold 0.3), parsed from `showinfo`.
@@ -46,9 +48,30 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
     Deliberately reports **no** rate/duration/frame count — a still has none,
     and synthesising one belongs to the timeline, not here. Does not decode RAW
     (that is the fork's `image_loader`, above this layer) or animate a GIF.
-  - `decode_pipe` — the long-lived sequential-decode `ffmpeg` pipe pool, one
-    slot per playback stream, with the D-125 hardware-decode fallback. A still
-    never uses it: there is no stream to step and no process to hold (D-292).
+  - `vt_decode` (D-452) — **the media engine's decode**: `Reader`, one
+    sequential AVFoundation / VideoToolbox decode of a QuickTime-family file
+    (`.mov`, `.mp4`, `.m4v`) from nominal frame `N`, on its own thread with a
+    two-frame read-ahead, conformed to the D-228 grid in exact `CMTime`
+    arithmetic. Each frame is an IOSurface-backed, Metal-compatible
+    `CVPixelBuffer` in the source's own two-plane Y'CbCr layout (4:2:0 / 4:2:2
+    / 4:4:4, 8- or 10-bit, video or full range) with the matrix ffmpeg would
+    use for it (`YcbcrLayout`); the GPU engine converts it. No colour, no
+    scaling, no audio, no fallback.
+  - `vt_encode` (D-452) — **the media engine's encode**: `SegmentEncoder`, a
+    `VTCompressionSession` (hardware required) into an `AVAssetWriter`
+    writing a video-only `.mp4` / `.mov`. H.264 at D-446's measured quality
+    (VideoToolbox quality 0.70, High, no B-frames, key frame every 12) or
+    ProRes 422 HQ, tagged Rec.709, the frame clock exact at `n / fps`. The
+    caller fills buffers from the encoder's own pool on the GPU. No audio, no
+    joining (ffmpeg remuxes those in `chroma::edit_render`).
+  - `decode_pipe` — the pool of sequential decode streams, one per playback
+    slot and lane (D-125, D-360), with the cut-boundary prefetch (D-324,
+    D-330). A stream is a `vt_decode::Reader` for the QuickTime family, and the
+    long-lived `ffmpeg` pipe (with D-125's hardware-decode retry) for any
+    other container until the import-time conform replaces it (D-452). Frames
+    come back as `Decoded::Video` (full size, for the GPU) or `Decoded::Rgb`. A
+    repeat of the last frame (a hold, a slow ramp) is served without a seek. A
+    still never uses it: there is no stream to step (D-292).
   - `media_cache` — the persistent, source-keyed disk cache for derived
     artefacts (D-128): `blake3(path ‖ mtime ‖ len)` identity, atomic
     `write_blob`, LRU `prune_to_budget`.

@@ -250,11 +250,50 @@ pub fn probe(path: &Path) -> Result<VideoInfo> {
         pix_fmt: get("pix_fmt"),
         color_primaries: get("color_primaries"),
         color_transfer: get("color_transfer"),
-        color_space: get("color_space"),
+        color_space: stream_or_frame_color_space(path, get("color_space")),
         has_audio,
         audio_sample_rate,
         audio_channels,
     })
+}
+
+/// D-452 — the Y'CbCr matrix a source is decoded with. The container's tag
+/// when it has one; otherwise the first decoded frame's, which is where a
+/// codec that states its matrix in the bitstream (ProRes, in every frame
+/// header) says it, and what ffmpeg's own decoder and swscale go by. The media
+/// engine converts with this value (`vt_decode::YcbcrLayout`), so the probe has
+/// to report what ffmpeg would actually use, not only the container's view.
+fn stream_or_frame_color_space(path: &Path, stream: String) -> String {
+    if !stream.is_empty() && stream != "unknown" {
+        return stream;
+    }
+    let frame = ffmpeg_locate::ffprobe().ok().and_then(|mut cmd| {
+        cmd.args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-read_intervals",
+            "%+#1",
+            "-show_entries",
+            "frame=color_space",
+            "-of",
+            "csv=p=0",
+        ])
+        .arg(path)
+        .output()
+        .ok()
+    });
+    frame
+        .filter(|o| o.status.success())
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .next()
+                .map(|l| l.trim().to_string())
+        })
+        .filter(|c| !c.is_empty() && c != "unknown")
+        .unwrap_or(stream)
 }
 
 /// Whether an `ffprobe` stream object carries the `attached_pic` disposition

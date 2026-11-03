@@ -1614,3 +1614,101 @@ crosses the `@apelles/bridge` seam (D-447). The perf-300 harness results are in 
 | `app/src-tauri/src/chroma/edit.rs` | the CPU passes deleted; `paint_layer`; `composite_video_frame` builds a plan; `RenderedFrame` + `render_timeline_frame_deferred`; captions as plan layers (`caption_steps`) |
 | `app/src-tauri/src/chroma/edit_render.rs` | the writer waits for GPU frames (`Outgoing`); `RenderStages` gains the engine's counters |
 | `app/src-tauri/src/chroma/{colorist_view,grade_lut,highlight_draw,export_bench,mod}.rs` | callers moved to the engine; `apply_to_rgba` deleted; `for_each_row_mut` moved to its last user; the bench prints the GPU stages |
+
+---
+
+# 16. D-452 (2026-11-04): VideoToolbox decode and encode in process — the CPU hops on both media ends removed
+
+**Decision:** D-452. **Code:** `crates/apelles-media/src/vt_decode.rs`, `vt_encode.rs`, `decode_pipe.rs`;
+`crates/apelles-compositor/src/video.rs`, `kernels/ycbcr.wgsl`, `kernels/output.wgsl`, `engine.rs`
+(`submit_with`, `submit`, `submit_into`); `crates/apelles-types/src/video_frame.rs`.
+
+## 16.1 The shape
+
+```
+ AVAssetReader (VideoToolbox)          apelles-compositor (wgpu / Metal)                VTCompressionSession
+ ─────────────────────────────         ─────────────────────────────────                ───────────────────────
+ CVPixelBuffer (IOSurface, Y'CbCr) ─▶  CVMetalTextureCache → texture_from_raw            ┌─ pool buffer (IOSurface)
+   source's own layout, full size        ycbcr.wgsl: crop → RGBA (matrix, range)         │    420v / BGRA
+                                         … the D-449 plan, unchanged …                   │
+                                         submit_with ──┬─ submit: staging read-back      │  (preview JPEG, pictures)
+                                                       └─ submit_into ── output.wgsl ───▶┘  NV12 709 / BGRA, no read-back
+                                                                                         └─▶ AVAssetWriter (.mp4/.mov)
+```
+
+No decoded or finished pixel crosses the CPU on the media-engine path. ffmpeg stays where it is the right tool:
+probing (`ffprobe`), the audio mix and its remux into the finished picture (`-c:v copy`, D-197's argv), the
+loudness pass (D-401), thumbnails / filmstrips (`video::extract_thumb*`, batch extraction into the disk cache), and,
+until the import-time conform lands, decoding the containers AVFoundation does not open.
+
+## 16.2 Why `AVAssetReader`, and how the grid is kept
+
+`VTDecompressionSession` needs a demuxer and a presentation-order reorder buffer in front of it; `AVAssetReader`
+is Apple's own demuxer + decoder pipeline over the same decoders, delivers in presentation order, honours edit lists,
+and starts a read at a time by decoding forward from the preceding sync sample. It also hands out the frame whose
+presentation interval overlaps the start of the range, which is exactly what a hold needs (verified: the held
+frame of a VFR source is delivered when the read starts in the middle of the hold).
+
+The conform (`fps=N/D:start_time=0:round=up` + `select` in ffmpeg, D-228) is reimplemented in exact integer
+arithmetic on `CMTime`: slot `k` is the last frame with `pts · num ≤ k · den · timescale`, the first frame for a
+slot before it, and the stream ends at the track's time-range end (decoded samples carry no duration). The read
+starts at `(first − ½) / fps`, the same half-frame-early point `conform::from_frame` seeks to.
+
+Tests (`vt_decode::tests`): luma **bit-exact** against ffmpeg's conformed software decode on a CFR source from
+five start points, on a VFR source with a two-second hold from eight start points (before, at, inside and after the
+hold), and the same frame count to the end of the source. The VFR fixture has no B-frames: with B-frames and a
+two-second gap, ffmpeg's mp4 muxer writes composition offsets that ffmpeg and AVFoundation read back as different
+presentation times for the frames around the gap, so that file has no single right answer (the real VFR sources,
+macOS screen recordings, have no B-frames).
+
+## 16.3 The conversion, measured
+
+`compositor::video_tests::the_ycbcr_conversion_matches_swscale_within_a_code_value`, 640×360, frames 0 and 17,
+the engine against ffmpeg's rgb24 of the same nominal frame (the decode pipe's command):
+
+```text
+layout                           vs swscale precise (full_chroma_int+accurate_rnd)    vs the pipe's default conversion
+h264 4:2:0 8-bit bt709 tv        80.1–80.6 dB, max 1, 0% > 1 code                       30.5–30.7 dB, max 122–129
+h264 4:2:0 8-bit untagged tv     80.1–81.1 dB, max 1, 0% > 1                            31.1–31.3 dB
+h264 4:2:0 8-bit bt709 pc        77.0 dB, max 1, 0% > 1                                 30.7–30.9 dB
+hevc 4:2:0 10-bit bt709 tv       79.5–80.2 dB, max 1, 0% > 1                            30.7–30.9 dB
+prores 4:2:2 10-bit bt709 tv     74.3–74.4 dB, max 1, 0% > 1                            30.4–30.5 dB
+```
+
+**Tolerance: 1 code value** against swscale's precise conversion, asserted. The test chart (`testsrc2`) is all hard
+colour edges, which is the worst case for the chroma difference against the pipe's default conversion: swscale's
+unscaled fast path replicates each chroma sample over its 2×2 block and uses coarser fixed-point tables (flat
+BT.709 red decodes as 249 there, 251 here, 250.8 exactly). The engine reconstructs chroma bilinearly at the centred
+position swscale itself assumes. Natural footage is measured in §16.6.
+
+Matrix and range: the probed `color_space` (what ffmpeg converts by), BT.601 when untagged (swscale's default).
+The probe falls back to the first decoded frame's tag when the container has none, because ffmpeg's ProRes decoder
+reads the matrix from every frame header while the container may not carry a `colr` atom (VideoToolbox itself
+reports BT.601 for such a file, so its attachment cannot be used). Probe cache namespace `probe-v4`.
+
+## 16.4 What the stream does that the pipe could not
+
+- **A repeat is not a seek.** The frame last handed out is served again for the same index:
+  `engine_pipe_tests::a_held_frame_and_a_slow_ramp_are_served_without_a_seek` (30 repeats of a held frame return
+  the same IOSurface; a half-speed ramp `41, 41, 42, 42, …` reads forward). This is roadmap 5b's "no per-frame seek
+  for speed changes and Hold last frame": a ramp faster than real time was already a forward read, slower and held
+  frames were the per-frame seeks.
+- **Full size to the GPU.** The preview's long-edge cap no longer pre-scales the decode; the engine's Triangle
+  minify does it while painting the layer.
+- **A prime is a thread, not a process.** `sync_prefetch` opens a `Reader`, whose thread seeks and decodes two
+  frames ahead while the outgoing clip still plays; adopting it at the boundary is a channel receive.
+
+## 16.5 Encode
+
+`vt_encode::SegmentEncoder` reproduces the session ffmpeg's `h264_videotoolbox -q:v 70` built (read off a real
+ffmpeg encode: High profile, `has_b_frames=0`, a key frame every 12 frames) at VideoToolbox quality 0.70, so
+D-446's measurement (equal to libx264 CRF 18) is of the same encoder settings; ProRes 422 HQ (`apch`) is fed BGRA.
+Every file is tagged Rec.709 (ffmpeg's path wrote none, and converted RGB with swscale's BT.601 default: a player
+reading the untagged HD file as Rec.709 showed it slightly off). The writer's media and movie timescales are the
+rate's own (`30000` for 29.97), so frame `n` is at exactly `n · 1001 / 30000` and the file's duration is
+`frames / fps` (AVFoundation's default 600 rounded 29.97 onto a 20-tick grid). Tests: `vt_encode::tests` (frame
+count, profile, rate, tags, the decoded frames), `video_tests::a_frame_written_into_an_encoder_buffer_is_rec709_nv12_of_the_canvas`
+(within 1 code of an f64 reference, 1918 wide so neither plane's row is 256-byte aligned) and
+`…_for_prores_is_the_canvas_as_bgra` (exact).
+
+The export is wired to it in the next step of this wave; until then the export still encodes through ffmpeg.

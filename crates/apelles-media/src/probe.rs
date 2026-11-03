@@ -53,7 +53,10 @@ static PROBE_CACHE: Lazy<Mutex<HashMap<PathBuf, (String, VideoInfo)>>> =
 /// file's probe as a 90000-fps video, and an entry is only ever invalidated by
 /// the file changing — so the corrected probe needs a namespace the old answers
 /// are not in. `probe-v3` is B-368's: v2 held a silent AAC track as `has_audio`.
-const NS_PROBE: &str = "probe-v3";
+/// `probe-v4` is D-452's: v3 left `color_space` empty for a source whose matrix
+/// is only in its bitstream (untagged ProRes), which the media engine now
+/// converts by.
+const NS_PROBE: &str = "probe-v4";
 
 /// `path`'s [`VideoInfo`], from memory, then disk, then a real `ffprobe` pass.
 ///

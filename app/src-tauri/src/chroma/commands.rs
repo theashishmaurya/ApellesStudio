@@ -5,7 +5,7 @@ use crate::app_state::AppState;
 use crate::image_loader::LoadImageResult;
 
 use super::state::current_video;
-use super::{colorist_view, decode_pipe, load, video};
+use super::{colorist_view, decode_pipe, load};
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -138,10 +138,10 @@ pub async fn seek_and_install(
 
     let virtual_path = cv.path.to_string_lossy().to_string();
 
-    // Fast path: the persistent sequential-decode pipe (D-030). Cheap for a
-    // forward step / short scrub, a keyframe-seek respawn for a jump — always at
-    // least as fast as the old per-frame `ffmpeg` spawn. Any pipe error falls
-    // back to `video::decode_frame` (unchanged behaviour).
+    // The persistent sequential decode (D-030; the media engine since D-452):
+    // cheap for a forward step / short scrub, a keyframe seek for a jump. The
+    // frame is converted, and scaled to the preview size, by the GPU engine.
+    // A decode failure is reported, not retried a second way (D-452).
     let path = cv.path.clone();
     let info = cv.info.clone();
     let scale = scale_long_edge.and_then(|le| {
@@ -149,7 +149,7 @@ pub async fn seek_and_install(
     });
     let view_for_task = view.clone();
     let decoded = tokio::task::spawn_blocking(move || -> Result<image::DynamicImage, String> {
-        let img = decode_pipe::playback_frame_scaled(
+        let frame = decode_pipe::playback_frame_scaled(
             decode_pipe::PipeLane::LIVE,
             decode_pipe::PipeSlot::Current,
             &path,
@@ -157,11 +157,9 @@ pub async fn seek_and_install(
             decode_frame_index,
             scale,
         )
-        .or_else(|e| {
-            log::warn!("[chroma::seek] decode pipe fell back to single-frame decode: {e}");
-            video::decode_frame(&path, video::FramePos::Index(decode_frame_index), &info)
-        })
         .map_err(|e| e.to_string())?;
+        let size = scale.or(Some((info.resolution.width, info.resolution.height)));
+        let img = super::edit::decoded_picture(frame, size)?;
         // D-294 — the geometry pass, on the blocking thread with the decode it
         // belongs to (it is a CPU resize + rotate of a full frame). Free for an
         // untransformed clip: `apply_geometry` hands the buffer straight back.

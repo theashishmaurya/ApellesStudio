@@ -175,13 +175,15 @@ fn decode_scale(source_size: (u32, u32), max_long_edge: Option<u32>) -> Option<(
 /// frame in it. (Stated once here; it is equally true of
 /// [`decode_clip_picture`] below.)
 ///
-/// **The compositor's variant: the picture as the GPU engine takes it, shared
-/// where it can be.** A still's buffer comes straight back from
-/// `apelles_media::still`'s decode cache as the `Arc` that cache holds, with no
-/// copy at all, and the engine keeps it on the GPU while the cache does (the
-/// same path a rasterised title takes). A video frame is handed over as the RGB
-/// buffer `decode_pipe` produced; the engine widens it to RGBA on the GPU
-/// (D-449), so no CPU pass touches its pixels.
+/// **The picture as the GPU engine takes it, shared where it can be.** A
+/// still's buffer comes straight back from `apelles_media::still`'s decode
+/// cache as the `Arc` that cache holds, with no copy at all, and the engine
+/// keeps it on the GPU while the cache does (the same path a rasterised title
+/// takes). A video frame from the media engine is handed over still in the
+/// decoder's IOSurface, at the source's full size, and the engine converts and
+/// resamples it on the GPU (D-452); one from the ffmpeg pipe (a container the
+/// media engine does not open) as the RGB buffer it produced, widened to RGBA
+/// on the GPU (D-449). No CPU pass touches a decoded frame's pixels.
 fn decode_clip_rgba(
     source_path: &str,
     source_size: (u32, u32),
@@ -199,22 +201,32 @@ fn decode_clip_rgba(
     }
     let info = probe_cached(&path)?;
     decode_pipe::playback_frame_scaled(lane, slot, &path, &info, source_frame, scale)
-        .map(|img| match img {
-            DynamicImage::ImageRgb8(rgb) => apelles_compositor::Source::Rgb(Arc::new(rgb)),
-            other => apelles_compositor::Source::Rgba(Arc::new(other.into_rgba8())),
-        })
+        .map(decoded_source)
         .map_err(|e| format!("decode {source_path} @ src frame {source_frame}: {e}"))
 }
 
-/// **The single-layer fast path's variant: the picture as it decodes.**
-///
-/// A separate function from [`decode_clip_rgba`] rather than a wrapper over it,
-/// deliberately: this frame goes straight to `encode_preview_jpeg`, so forcing
-/// a decoded video frame through RGBA on the way would add a full-buffer
-/// conversion per frame to the path that exists precisely to avoid work. The
-/// still arm pays one copy here (its cached buffer is shared and a
-/// `DynamicImage` must own its pixels) — the trade the other way round, and the
-/// right one for each caller.
+/// A decoded frame as the GPU engine's layer source (D-452).
+pub(crate) fn decoded_source(frame: decode_pipe::Decoded) -> apelles_compositor::Source {
+    match frame {
+        decode_pipe::Decoded::Video(video) => apelles_compositor::Source::Video(video),
+        decode_pipe::Decoded::Rgb(rgb) => apelles_compositor::Source::Rgb(rgb),
+    }
+}
+
+/// A decoded frame as pixels on the CPU, at `scale` (its own size when
+/// `None`), through the GPU engine's conversion (D-452) — for the callers that
+/// need the picture itself rather than a layer of a timeline frame.
+pub(crate) fn decoded_picture(
+    frame: decode_pipe::Decoded,
+    scale: Option<(u32, u32)>,
+) -> Result<DynamicImage, String> {
+    super::gpu_compositor::picture(decoded_source(frame), scale).map(DynamicImage::ImageRgba8)
+}
+
+/// **One source frame as a picture on the CPU** — the two-up trim viewer's
+/// JPEG. Decoded exactly as a timeline layer is ([`decode_clip_rgba`]) and
+/// converted to pixels by the GPU engine at the preview size (D-452), so the
+/// trim viewer shows the same picture the preview does.
 fn decode_clip_picture(
     source_path: &str,
     source_size: (u32, u32),
@@ -223,16 +235,16 @@ fn decode_clip_picture(
     source_frame: u64,
     max_long_edge: Option<u32>,
 ) -> Result<DynamicImage, String> {
-    let path = PathBuf::from(source_path);
+    let source = decode_clip_rgba(
+        source_path,
+        source_size,
+        lane,
+        slot,
+        source_frame,
+        max_long_edge,
+    )?;
     let scale = decode_scale(source_size, max_long_edge);
-    if apelles_media::still::is_image_file(&path) {
-        return apelles_media::still::decode_scaled(&path, scale)
-            .map(|img| DynamicImage::ImageRgba8(img.as_ref().clone()))
-            .map_err(|e| format!("decode still {source_path}: {e}"));
-    }
-    let info = probe_cached(&path)?;
-    decode_pipe::playback_frame_scaled(lane, slot, &path, &info, source_frame, scale)
-        .map_err(|e| format!("decode {source_path} @ src frame {source_frame}: {e}"))
+    super::gpu_compositor::picture(source, scale).map(DynamicImage::ImageRgba8)
 }
 
 // --------------------------------------------------------------------------- //
@@ -1475,11 +1487,9 @@ pub(crate) fn render_timeline_frame(
         .transpose()
 }
 
-/// A frame as [`render_timeline_frame_deferred`] returns it: either a picture
-/// already in hand (the plain-decode fast path), or one the GPU engine is
-/// still drawing (D-449).
+/// A frame as [`render_timeline_frame_deferred`] returns it: one the GPU
+/// engine is still drawing (D-449). Every frame is (D-452).
 pub(crate) enum RenderedFrame {
-    Decoded(DynamicImage),
     Gpu(super::gpu_compositor::GpuFrame),
 }
 
@@ -1487,7 +1497,6 @@ impl RenderedFrame {
     /// The frame's pixels, waiting for the GPU if it is still drawing.
     pub(crate) fn finish(self) -> Result<DynamicImage, String> {
         match self {
-            RenderedFrame::Decoded(img) => Ok(img),
             RenderedFrame::Gpu(frame) => frame.wait().map(DynamicImage::ImageRgba8),
         }
     }
@@ -1556,129 +1565,20 @@ pub(crate) fn render_timeline_frame_deferred(
     }
     let comp = composition_size(settings, timeline)?;
 
-    // D-136 — the fast path's second condition. A lone clip may be returned as
-    // a plain decode only if it really *is* the whole composition: same pixel
-    // dimensions as the composition space, so the picture a plain decode
-    // produces and the picture the compositor would produce are the same
-    // framing (the preview `<img>` is `object-contain`, so the two differing in
-    // resolution alone is invisible — differing in framing is not). A 640×360
-    // clip in a 1920×1080 project is a third of the frame wide with black
-    // around it, and must go through the compositor to look like that; before
-    // D-136 it filled the preview edge to edge, which is the same class of
-    // defect as B-043's position drift and would have made the transform
-    // overlay draw a box in a place the picture disagrees with.
-    //
-    // D-226 — a layer carrying a transition alpha below 1.0 never takes it
-    // either, for exactly D-132/B-053's reason: the alpha is a real blend the
-    // plain decode cannot express, so a fast path that ignored it would show a
-    // hard cut where the document says there is a dissolve. (A cross dissolve
-    // resolves two layers and so already fails the single-layer arm; this guard
-    // is what covers the one-sided cases — a dangling transition, or a dip whose
-    // plate has been filtered away.)
-    let single_plain = match layers.as_slice() {
-        // D-211 — a lone TEXT clip never takes the plain-decode fast path:
-        // there is no source to decode, and its whole picture comes from the
-        // compositor's own rasterise-and-blend step.
-        [l] if l.alpha < 1.0 => false,
-        // D-230 — nor does a lone ADJUSTMENT clip: it decodes nothing, and the
-        // picture it produces (its correction applied to the black canvas
-        // beneath it) only exists once the compositor has run. Taking the fast
-        // path here would have tried to probe its empty `source_path`.
-        [
-            VisibleLayer {
-                source: LayerSource::Clip { clip, .. },
-                ..
-            },
-        ] if clip.is_text() || clip.is_adjustment() => false,
-        [
-            VisibleLayer {
-                source:
-                    LayerSource::Clip {
-                        clip, source_frame, ..
-                    },
-                ..
-            },
-        ] => {
-            // D-292 — `clip_source_size` covers a still here too: a lone still
-            // that really is the whole composition takes the plain-decode fast
-            // path exactly like a lone video clip does, which for a still is
-            // one cache hit per frame.
-            let size = clip_source_size(&clip.source_path)?;
-            resolve_clip_transform(clip, *source_frame).is_identity()
-                && size == comp
-                // D-256 — a clip carrying a real Colorist grade never takes the
-                // plain-decode fast path either, for exactly D-132/B-053's
-                // reason: the grade is a real transform of this clip's pixels
-                // that a raw decode cannot express, so a fast path that ignored
-                // it would show the ungraded picture while the document says the
-                // clip is graded. An UNGRADED clip (no grade file, or a grade
-                // that changes nothing — the overwhelmingly common case) still
-                // takes it, byte-identically to before, because
-                // `grade_for_clip` returns `None` for both and answers from its
-                // memo after the first frame (D-450).
-                && grade_pass::grade_for_clip(&clip.id).is_none()
-                // D-396 — nor does a clip carrying highlights: they are drawn by
-                // the compositor on the decoded picture, which a plain decode
-                // does not run.
-                && clip.highlights.is_empty()
-        }
-        _ => false,
-    };
-
-    // D-229 — captions go on last, over the finished picture, whatever the
-    // video z-order turned out to be. Since D-449 they are layers of the same
-    // GPU frame: a frame with a caption on it is composited (it never takes
-    // the plain-decode fast path below), with the captions painted after every
-    // video layer. A frame with none pays one empty `Vec`.
-    let has_captions = !timeline.resolve_visible_captions_at(pos as i64).is_empty();
-
-    let frame = match layers.as_slice() {
-        [] => return Ok(None),
-        [
-            VisibleLayer {
-                track,
-                source:
-                    LayerSource::Clip {
-                        clip,
-                        source_frame,
-                        role,
-                    },
-                ..
-            },
-        ] if single_plain && !has_captions => {
-            // Fast path: exactly one visible layer, with nothing to apply to
-            // it, needs no compositing at all.
-            //
-            // **The `is_identity()` guard is D-132/B-053.** Pre-D-132 this
-            // arm matched *every* single-layer frame unconditionally, so a
-            // lone clip's opacity / position / scale / rotation were silently
-            // ignored in the preview — the Inspector wrote them, the file
-            // stored them, and the picture never changed until a second video
-            // track happened to exist. That was already wrong for the D-082
-            // fields; shipping crop into it would have made it the first
-            // thing the owner tried ("crop one clip") and the first thing
-            // that appeared to do nothing. A clip that really has no
-            // transform still takes this path, so the overwhelmingly common
-            // case is byte-identical and no slower than before.
-            // `comp` IS this clip's source size — that is exactly what
-            // `single_plain` just checked — so no second probe is needed here.
-            RenderedFrame::Decoded(decode_clip_picture(
-                &clip.source_path,
-                comp,
-                lane,
-                pipe_slot(*track, *role),
-                (*source_frame).max(0) as u64,
-                max_long_edge,
-            )?)
-        }
-        _ => RenderedFrame::Gpu(composite_video_frame(
-            &layers,
-            max_long_edge,
-            comp,
-            lane,
-            |canvas| caption_steps(timeline, pos as i64, canvas),
-        )?),
-    };
+    // D-452 — every frame is drawn by the GPU engine, including a lone
+    // untransformed clip that is the whole composition. That frame used to
+    // skip the engine and go out as the decoder's own RGB (D-088's plain-decode
+    // fast path); a media-engine frame is Y'CbCr in an IOSurface, and the
+    // engine is the one place that converts it, so there is no cheaper picture
+    // to hand out and no second conversion to keep equal. Captions (D-229)
+    // are the frame's top layers.
+    let frame = RenderedFrame::Gpu(composite_video_frame(
+        &layers,
+        max_long_edge,
+        comp,
+        lane,
+        |canvas| caption_steps(timeline, pos as i64, canvas),
+    )?);
 
     // D-324 — prime the upcoming boundaries AFTER this frame is decoded, not
     // before.
@@ -2845,6 +2745,11 @@ fn composite_video_frame(
                 apelles_compositor::Source::Gpu(g) => Arc::new(super::gpu_compositor::settle(
                     super::gpu_compositor::engine()?.read_gpu_image(&g),
                 )?),
+                // D-452 — the strokes are drawn on the CPU, so the decoded frame
+                // is converted to pixels first, by the engine's own conversion.
+                video @ apelles_compositor::Source::Video(_) => {
+                    Arc::new(super::gpu_compositor::picture(video, None)?)
+                }
                 apelles_compositor::Source::Solid { .. } => {
                     unreachable!("a decoded clip is never a plate")
                 }
@@ -7278,9 +7183,9 @@ mod preview_adjustment_tests {
 ///    headline. Without it, "the code calls a function" is all that is known.
 /// 2. **An identity grade changes NOTHING, byte for byte** — the control, and
 ///    the reason assertion 1 is a measurement of the *grade* rather than of the
-///    mere presence of a grade file flipping the compositor onto a different
-///    code path (which it does: see `single_plain`). A build that ran any
-///    no-op grade through the shader fails here.
+///    mere presence of a grade file changing how the frame is drawn (it did,
+///    until D-452 removed the plain-decode fast path a lone ungraded clip
+///    took). A build that ran any no-op grade through the shader fails here.
 /// 3. **The same document renders the same bytes twice** — CLAUDE.md's
 ///    render-path invariant, on the new path.
 /// 4. **A grade belongs to its own clip id only** — the D-070 link, checked

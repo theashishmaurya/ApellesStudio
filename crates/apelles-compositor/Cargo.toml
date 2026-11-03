@@ -17,5 +17,16 @@ image = { version = "0.25.10", default-features = false }
 thiserror = { workspace = true }
 log = "0.4"
 
+# D-452 — decoded frames in and encoder targets out as IOSurface textures:
+# CoreVideo's Metal texture cache and the Metal types `wgpu-hal`'s Metal
+# backend already uses (same objc2 family and versions).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLPixelFormat", "MTLTexture", "MTLResource", "MTLDevice", "MTLAllocation"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std"] }
+objc2-core-video = { version = "0.3.2", default-features = false, features = ["std", "CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVReturn", "CVMetalTexture", "CVMetalTextureCache", "objc2", "objc2-metal"] }
+
 [dev-dependencies]
 half = "2.7" # the Colorist's own f32 -> f16 conversion, the reference the to_f16 kernel is tested against
+apelles-media = { path = "../apelles-media", features = ["test-support"] }
+tempfile = "3.27.0"
