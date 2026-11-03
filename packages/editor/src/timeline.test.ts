@@ -465,6 +465,18 @@ describe('trim_end (D-058)', () => {
 // moves that edge later in time, so on `end` it lengthens the clip.
 // -------------------------------------------------------------------------- //
 
+describe('trim delta sign (B-299 / B-337) — delta moves the EDGE, as editor_trim_clip documents', () => {
+  const one = () => tl([clip('a', 'A', { start_frame: 10, source_start: 20, duration: 60, source_len: 1000 })]);
+  it('end: positive extends, negative shortens', () => {
+    expect(applyOp(one(), { kind: 'trim_end', track: 0, clip: 0, delta: 5 }).tracks[0].clips[0].duration).toBe(65);
+    expect(applyOp(one(), { kind: 'trim_end', track: 0, clip: 0, delta: -5 }).tracks[0].clips[0].duration).toBe(55);
+  });
+  it('start: positive shortens (edge moves later), negative extends', () => {
+    expect(applyOp(one(), { kind: 'trim_start', track: 0, clip: 0, delta: 5 }).tracks[0].clips[0].duration).toBe(55);
+    expect(applyOp(one(), { kind: 'trim_start', track: 0, clip: 0, delta: -5 }).tracks[0].clips[0].duration).toBe(65);
+  });
+});
+
 describe('checkTrim (B-215) — a refused trim says why, instead of a silent no-op', () => {
   it('rejects B-215\'s own shape (last clip, no source left to extend into) and names the constraint', () => {
     // B-215 as reported: the last clip on its track, asked to extend its tail,
@@ -2380,6 +2392,57 @@ describe('audio-track placement for a dropped pair (D-129)', () => {
     const free = linkedPair();
     expect(ensureAudioTrackWithRoom(free, 500, 100)).toBe(1);
     expect(free.tracks).toHaveLength(2); // reused A1 — no pile-up of empty tracks
+  });
+
+  // B-305 — a camera clip's sound goes to a dialogue / partner track, never an
+  // SFX or music lane, whatever order the tracks sit in.
+  describe('linked-audio track choice (B-305)', () => {
+    const audioTrack = (name: string | null, linked = false): Track => ({
+      kind: 'audio',
+      name,
+      clips: linked ? [{ ...linkedPair().tracks[1].clips[0], start_frame: 1000 }] : [],
+      gain: 1,
+      sync_locked: true,
+    });
+    const withTracks = (...tracks: Track[]): Timeline => ({ ...linkedPair(), tracks: [linkedPair().tracks[0], ...tracks] });
+
+    it('skips an SFX track that sits before the dialogue track', () => {
+      const t = withTracks(audioTrack('SFX'), audioTrack('Dialogue'));
+      expect(audioTrackWithRoom(t, 0, 100)).toBe(2);
+    });
+
+    it('prefers a dialogue-named track over an earlier unnamed one', () => {
+      const t = withTracks(audioTrack(null), audioTrack('Voice-over'));
+      expect(audioTrackWithRoom(t, 0, 100)).toBe(2);
+    });
+
+    it('prefers the track already holding linked camera sound over an empty unnamed one', () => {
+      const t = withTracks(audioTrack(null), audioTrack('A2', true));
+      expect(audioTrackWithRoom(t, 0, 100)).toBe(2);
+    });
+
+    it('takes an empty unnamed track when nothing better exists', () => {
+      const t = withTracks(audioTrack(null));
+      expect(audioTrackWithRoom(t, 0, 100)).toBe(1);
+    });
+
+    it('never uses a music or SFX lane: a new audio track is created instead', () => {
+      const t = withTracks(audioTrack('Music bed'), audioTrack('SFX'));
+      expect(audioTrackWithRoom(t, 0, 100)).toBeNull();
+      expect(ensureAudioTrackWithRoom(t, 0, 100)).toBe(3);
+      expect(t.tracks[3]).toMatchObject({ kind: 'audio', clips: [] });
+    });
+
+    it('add_clip files a camera clip\'s sound on the dialogue track, not the SFX track', () => {
+      const base = withTracks(audioTrack('SFX'), audioTrack('Dialogue'));
+      const pair = linkedClipsFromDraggedMedia(
+        { id: 'm9', sourcePath: '/m/9.mov', name: 'Cam', frameCount: 50, hasAudio: true, fps: 24 },
+        24,
+      )!;
+      const out = applyOp(base, { kind: 'add_clip', track: 0, clip: pair.video, linkedAudio: pair.audio! });
+      expect(out.tracks[1].clips).toHaveLength(0);
+      expect(out.tracks[2].clips.map((c) => c.name)).toContain('Cam');
+    });
   });
 });
 

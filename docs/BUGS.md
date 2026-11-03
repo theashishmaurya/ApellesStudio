@@ -691,9 +691,12 @@ status: **fixed** (2026-10-28) · severity: **major** · area: `editor_move_clip
 
 ## B-305 — adding a camera clip to a video track put its linked audio on an audible SFX track instead of the muted partner track
 
-status: **open** · severity: **major** · area: `editor_add_clip` linked-audio placement
+status: **fixed 2026-11-03** · severity: **major** · area: `editor_add_clip` linked-audio placement
 
 - **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. Video track 3 → linked audio landed on track 8 (SFX), not track 7; the clips had to be muted by hand.
+- **root cause:** `audioTrackWithRoom` returned the FIRST unlocked audio track with room, whatever it was named or held, so a free SFX lane sitting before the dialogue lane took a camera clip's sound. Both the GUI drop and `editor_add_clip` (and `editor_edit_in`) go through the one `add_clip` / `edit_in` reducer, so one fix covers them.
+- **fix:** `audioTrackWithRoom` ranks the audio tracks with room (`linkedAudioTrackRank`, `packages/editor/src/timeline.ts`): a dialogue / voice / camera-named track first, then a track that already carries A/V-linked halves, then any other track; a track named SFX / FX / music / score / ambience / foley etc. is never used, and a new audio track is created when nothing else has room. Lowest index breaks ties. The Rust mirror (`Timeline::audio_track_with_room`, used by Motion placement) is unchanged.
+- **tests:** `timeline.test.ts` "linked-audio track choice (B-305)": SFX-before-dialogue, dialogue over unnamed, linked-partner over empty, empty unnamed fallback, music/SFX-only creates a new track, `add_clip` end to end.
 
 ## B-304 — emptying a track deletes it, silently renumbering every later track; clip indices stop being start-sorted after a move
 
@@ -731,9 +734,10 @@ status: **open** · severity: **major** · area: `crates/apelles-motion` render 
 
 ## B-299 — `editor_trim_clip edge=end`: a negative delta shortens the clip, the opposite of the documented sign
 
-status: **open** · severity: **minor** · area: `editor_trim_clip` op / its docstring
+status: **fixed 2026-11-03** (verified; docs fixed by B-337) · severity: **minor** · area: `editor_trim_clip` op / its docstring
 
 - **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Found in the Five Levels edit. Make the op and both MCP docstrings agree (and test the sign).
+- **verified 2026-11-03:** the reducer was always right (delta moves the edge: `end` + extends, `end` - shortens, `start` + shortens); only the docstring was wrong, fixed by B-337 identically in `mcp/server.py` and `crates/apelles-mcp/src/tools/edit.rs`. Sign now pinned by `timeline.test.ts` "trim delta sign (B-299 / B-337)" and `rippleEdits.e2e.dom.test.tsx` (`end`, -12 shortens 48 to 36).
 
 ## B-298 — an .mp3 with embedded cover art imports as VIDEO at 90000 fps
 
