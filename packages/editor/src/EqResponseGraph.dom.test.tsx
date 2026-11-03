@@ -60,6 +60,7 @@ let restoreResizeObserver: (() => void) | null = null;
 let restoreOffsetMetrics: (() => void) | null = null;
 let restorePointerCapture: (() => void) | null = null;
 let onBandChange: ReturnType<typeof vi.fn>;
+let onSelect: ReturnType<typeof vi.fn>;
 
 function point(el: Element): { x: number; y: number } {
   // jsdom's own `getBoundingClientRect` on an SVG circle is not derived from
@@ -79,10 +80,11 @@ function pointEl(index: number): SVGCircleElement {
   return el as unknown as SVGCircleElement;
 }
 
-async function render(bands: EqBand[], disabled = false) {
+async function render(bands: EqBand[], disabled = false, selected = 0) {
   onBandChange = vi.fn();
+  onSelect = vi.fn();
   mounted = mount(
-    React.createElement(EqResponseGraph, { bands, disabled, onBandChange }),
+    React.createElement(EqResponseGraph, { bands, disabled, onBandChange, selected, onSelect }),
     { strictMode: true },
   );
   await waitFrames(2);
@@ -103,6 +105,58 @@ afterEach(() => {
   restoreResizeObserver = null;
   restoreOffsetMetrics = null;
   restorePointerCapture = null;
+});
+
+describe('EqResponseGraph — v0.3.0 graph-as-control (B-365, D-442)', () => {
+  it('labels both axes: dB down the left, Hz along the bottom', async () => {
+    await render(fourBands());
+    const text = mounted?.container.textContent ?? '';
+    for (const label of ['+24', '+12', '0', '−12', '−24', '20', '100', '1k', '10k', '20k', 'dB', 'Hz']) {
+      expect(text).toContain(label);
+    }
+  });
+
+  it('a press on a dot selects that band, even on a locked track', async () => {
+    await render(fourBands(), true);
+    firePointerEvent(pointEl(2), 'pointerdown', point(pointEl(2)));
+    await waitFrames(1);
+    expect(onSelect).toHaveBeenCalledWith(2);
+    expect(onBandChange).not.toHaveBeenCalled();
+  });
+
+  it('the selected band’s dot is filled', async () => {
+    await render(fourBands(), false, 1);
+    const g = mounted?.container.querySelector('[data-chroma-eq-dot="1"]');
+    expect(g?.hasAttribute('data-selected')).toBe(true);
+    expect(mounted?.container.querySelector('[data-chroma-eq-dot="0"]')?.hasAttribute('data-selected')).toBe(false);
+  });
+
+  it('double-click puts a gain band back to 0 dB, and ignores a pass filter', async () => {
+    await render(fourBands());
+    actSync(() => {
+      pointEl(1).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    });
+    expect(onBandChange).toHaveBeenCalledWith(1, { gain_db: 0 });
+    onBandChange.mockClear();
+    actSync(() => {
+      pointEl(2).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    });
+    expect(onBandChange).not.toHaveBeenCalled();
+  });
+
+  it('shows the dragged band’s frequency and gain in words while dragging', async () => {
+    await render(fourBands());
+    const el = pointEl(1);
+    const start = point(el);
+    firePointerEvent(el, 'pointerdown', start);
+    await waitFrames(1);
+    firePointerEvent(window, 'pointermove', { x: freqToX(2_000, PLOT_WIDTH), y: dbToY(-9, PLOT_HEIGHT) });
+    await waitFrames(1);
+    expect(mounted?.container.querySelector('[data-chroma-eq-tip]')?.textContent).toBe('2 kHz · −9.0 dB');
+    firePointerEvent(window, 'pointerup', { x: freqToX(2_000, PLOT_WIDTH), y: dbToY(-9, PLOT_HEIGHT) });
+    await waitFrames(1);
+    expect(mounted?.container.querySelector('[data-chroma-eq-tip]')).toBeNull();
+  });
 });
 
 describe('EqResponseGraph (D-237)', () => {

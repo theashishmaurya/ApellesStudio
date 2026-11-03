@@ -32,6 +32,18 @@ export interface ClipSnap {
   /** v0.3.0 — the clip's opacity (1 when unset), for the Inspector slider
    *  scenarios. */
   opacity: number;
+  /** v0.3.0 panel redesign (D-443) — the stored transform the crop-in-the-
+   *  viewer scenario checks: the four insets, scale and top-left position. */
+  scale: number;
+  positionX: number;
+  positionY: number;
+  cropLeft: number;
+  cropTop: number;
+  cropRight: number;
+  cropBottom: number;
+  /** v0.3.0 (D-442) — the clip's stored EQ bands (`[]` = no EQ), for the
+   *  EQ dot-drag scenario: `eqBands.2.freq_hz`. */
+  eqBands: { kind: string; freq_hz: number; gain_db: number; q: number; enabled: boolean }[];
 }
 
 export interface TimelineSnap {
@@ -56,6 +68,14 @@ interface ClipDto {
   sourceStart?: number;
   linkGroup?: string | null;
   opacity?: number;
+  scale?: number;
+  positionX?: number;
+  positionY?: number;
+  cropLeft?: number;
+  cropTop?: number;
+  cropRight?: number;
+  cropBottom?: number;
+  eqBands?: ClipSnap['eqBands'];
 }
 
 interface TimelineDto {
@@ -85,6 +105,14 @@ export function timelineSnapshot(dto: unknown, names: Readonly<Record<string, st
         sourceStart: c.sourceStart ?? 0,
         linkGroup: c.linkGroup ?? null,
         opacity: c.opacity ?? 1,
+        scale: c.scale ?? 1,
+        positionX: c.positionX ?? 0,
+        positionY: c.positionY ?? 0,
+        cropLeft: c.cropLeft ?? 0,
+        cropTop: c.cropTop ?? 0,
+        cropRight: c.cropRight ?? 0,
+        cropBottom: c.cropBottom ?? 0,
+        eqBands: c.eqBands ?? [],
       };
       row.push(snap);
       clips[c.id] = snap;

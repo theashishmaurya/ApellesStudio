@@ -37,6 +37,13 @@
  * timeline per call, so a per-pointermove commit would be one undo entry per
  * pixel of mouse movement instead of one per real edit.
  *
+ * **v0.3.0 panel redesign (B-365, D-442): the graph IS the control.** The
+ * band cards are gone; the numbered dots are the bands. The plot carries its
+ * axes (dB down the left, +24 … −24 with 0 emphasised; Hz along the bottom,
+ * 20 … 20k), a press on a dot selects that band for the Inspector's one band
+ * row (`onSelect`), a double-click puts its gain back to 0 dB, and a drag
+ * shows a `3.5 kHz · +3.0 dB` tip beside the dot. The selected dot is filled.
+ *
  * **The scroll-wheel Q gesture gets its own short debounce**, unlike the
  * pointer drag's pure "commit on release": a wheel gesture has no discrete
  * "release" event (a trackpad can fire dozens of `wheel` events for one
@@ -48,7 +55,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { eqKindUsesGain, type EqBand } from './eq';
+import { formatDb, formatHzText } from './displayUnits';
+import { EQ_MAX_FREQ_HZ, EQ_MIN_FREQ_HZ, eqKindUsesGain, type EqBand } from './eq';
 import {
   EQ_DB_GRIDLINES,
   EQ_FREQ_GRIDLINES,
@@ -67,13 +75,26 @@ import {
  *  content — this is a small, fixed-proportion readout inside the Inspector's
  *  own scrolling column, the same posture every other EQ row already has, and
  *  Resolve's own graph is a fixed height in its Inspector too). */
-const GRAPH_HEIGHT_PX = 92;
+const GRAPH_HEIGHT_PX = 120;
+
+/** The axis gutters around the plot: dB labels on the left, Hz underneath. */
+const AXIS_LEFT_PX = 30;
+const AXIS_BOTTOM_PX = 14;
+
+/** The frequencies labelled under the plot (a subset of the gridlines, so
+ *  the labels never crowd at the Inspector's width). */
+const HZ_LABELS: readonly number[] = [EQ_MIN_FREQ_HZ, 50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, EQ_MAX_FREQ_HZ];
+
+/** `20`, `500`, `1k`, `20k`. */
+function hzAxisLabel(hz: number): string {
+  return hz >= 1_000 ? `${hz / 1_000}k` : String(hz);
+}
 
 /** A band's own point radius, and the larger transparent hit target around it
  *  — the same split `ClipCurveEditor.tsx`'s `HANDLE_DOT_R`/
  *  `HANDLE_HIT_RADIUS_PX` use, for the identical reason: a 4px dot is legible,
  *  but a 4px-radius hit area is nearly impossible to land a real pointer on. */
-const POINT_R = 4.5;
+const POINT_R = 7;
 const POINT_HIT_RADIUS_PX = 11;
 
 /** How long a scroll gesture may sit idle before its Q change commits — see
@@ -82,6 +103,11 @@ const POINT_HIT_RADIUS_PX = 11;
  *  wheel doesn't feel like it left the edit in limbo. */
 const EQ_Q_WHEEL_COMMIT_MS = 250;
 
+/** Movement under this is a click on a dot (select the band), not a drag:
+ *  without it a click re-derived the band's frequency from the pointer and
+ *  wrote a rounding change (2500 → 2497 Hz) as an undo step. */
+const CLICK_SLOP_PX = 3;
+
 /** The in-flight pointer drag — a ref, not state, for the same reason
  *  `ClipCurveEditor.tsx`'s `HandleDrag` is: the window listeners below are
  *  bound once per gesture and must see live values without being torn down
@@ -89,6 +115,11 @@ const EQ_Q_WHEEL_COMMIT_MS = 250;
 interface PointDrag {
   pointerId: number;
   index: number;
+  /** Where the press landed (client px): a release within
+   *  `CLICK_SLOP_PX` of it is a click that selects, not a drag that writes. */
+  pressX: number;
+  pressY: number;
+  moved: boolean;
   startFreq: number;
   startGain: number;
   usesGain: boolean;
@@ -111,9 +142,13 @@ export interface EqResponseGraphProps {
    *  `onEqBandChange` already is, so a drag here and a typed `PropertyRow`
    *  value write through the identical callback. */
   onBandChange: (band: number, patch: Partial<EqBand>) => void;
+  /** Which band the Inspector's band row is showing (its dot is filled). */
+  selected: number;
+  /** A press on a dot: show that band in the band row. */
+  onSelect: (band: number) => void;
 }
 
-export function EqResponseGraph({ bands, disabled, sampleRate, onBandChange }: EqResponseGraphProps) {
+export function EqResponseGraph({ bands, disabled, sampleRate, onBandChange, selected, onSelect }: EqResponseGraphProps) {
   const plotRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<PointDrag | null>(null);
   const qTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -175,12 +210,17 @@ export function EqResponseGraph({ bands, disabled, sampleRate, onBandChange }: E
   // ------------------------------------------------------------------ //
 
   const startDrag = (index: number) => (e: React.PointerEvent<SVGCircleElement>) => {
+    // Selecting a band is reading, not editing: allowed on a locked track.
+    onSelect(index);
     if (disabled) return;
     e.stopPropagation();
     const band = bands[index];
     dragRef.current = {
       pointerId: e.pointerId,
       index,
+      pressX: e.clientX,
+      pressY: e.clientY,
+      moved: false,
       startFreq: band.freq_hz,
       startGain: band.gain_db,
       usesGain: eqKindUsesGain(band.kind),
@@ -209,6 +249,8 @@ export function EqResponseGraph({ bands, disabled, sampleRate, onBandChange }: E
     const onMove = (e: PointerEvent) => {
       const g = dragRef.current;
       if (!g || e.pointerId !== g.pointerId) return;
+      if (!g.moved && Math.hypot(e.clientX - g.pressX, e.clientY - g.pressY) < CLICK_SLOP_PX) return;
+      g.moved = true;
       setDraft({ index: g.index, patch: patchAt(e.clientX, e.clientY, g) });
     };
 
@@ -217,6 +259,8 @@ export function EqResponseGraph({ bands, disabled, sampleRate, onBandChange }: E
       if (!g || e.pointerId !== g.pointerId) return;
       const next = patchAt(e.clientX, e.clientY, g);
       finish();
+      // A click (no movement past the slop) only selected the band.
+      if (!g.moved && Math.hypot(e.clientX - g.pressX, e.clientY - g.pressY) < CLICK_SLOP_PX) return;
       // A drag that ends where it began commits nothing — one undo entry per
       // real change, never per gesture, matching `ClipCurveEditor`'s own rule.
       const freqChanged = next.freq_hz !== undefined && next.freq_hz !== g.startFreq;
@@ -274,11 +318,72 @@ export function EqResponseGraph({ bands, disabled, sampleRate, onBandChange }: E
     }, EQ_Q_WHEEL_COMMIT_MS);
   };
 
+  /** Double-click: this band's gain back to 0 dB (a pass filter has none). */
+  const onDoubleClickAt = (index: number) => () => {
+    if (disabled) return;
+    const band = bands[index];
+    if (eqKindUsesGain(band.kind) && band.gain_db !== 0) onBandChange(index, { gain_db: 0 });
+  };
+
+  // The live tip while a dot is dragged: where it is, in words.
+  const tipBand = draft ? drawnBands[draft.index] : null;
+  const tipPoint = tipBand ? eqBandPoint(tipBand, size.width, size.height) : null;
+  const tipText = tipBand
+    ? `${formatHzText(tipBand.freq_hz)}${eqKindUsesGain(tipBand.kind) ? ` · ${formatDb(tipBand.gain_db)}` : ''}`
+    : null;
+
   return (
     <div
+      className="relative w-full select-none"
+      style={{ height: GRAPH_HEIGHT_PX + AXIS_BOTTOM_PX, paddingLeft: AXIS_LEFT_PX, paddingBottom: AXIS_BOTTOM_PX }}
+      title="Drag a dot: frequency and gain. Scroll on it: width (Q). Double-click: back to 0 dB."
+    >
+      {/* dB axis */}
+      {size.width > 0 &&
+        EQ_DB_GRIDLINES.map((db) => (
+          <span
+            key={`dbl-${db}`}
+            aria-hidden
+            className={`absolute -translate-y-1/2 pr-1 text-right font-mono text-[9px] leading-none ${db === 0 ? 'text-text-secondary' : 'text-text-tertiary'}`}
+            style={{ left: 0, width: AXIS_LEFT_PX, top: dbToY(db, size.height) }}
+          >
+            {db > 0 ? `+${db}` : db === 0 ? '0' : `−${Math.abs(db)}`}
+          </span>
+        ))}
+      {/* Hz axis */}
+      {size.width > 0 &&
+        HZ_LABELS.map((hz) => (
+          <span
+            key={`hzl-${hz}`}
+            aria-hidden
+            className="text-text-tertiary absolute font-mono text-[9px] leading-none"
+            style={{
+              top: GRAPH_HEIGHT_PX + 3,
+              left: AXIS_LEFT_PX + freqToX(hz, size.width),
+              transform: hz === EQ_MIN_FREQ_HZ ? 'none' : hz === EQ_MAX_FREQ_HZ ? 'translateX(-100%)' : 'translateX(-50%)',
+            }}
+          >
+            {hzAxisLabel(hz)}
+          </span>
+        ))}
+      {/* The unit sits between the +24 and +12 labels, clear of both. */}
+      <span
+        aria-hidden
+        className="text-text-tertiary absolute left-0 -translate-y-1/2 font-mono text-[9px] leading-none"
+        style={{ top: dbToY(18, size.height || GRAPH_HEIGHT_PX) }}
+      >
+        dB
+      </span>
+      <span
+        aria-hidden
+        className="text-text-tertiary absolute left-0 font-mono text-[9px] leading-none"
+        style={{ top: GRAPH_HEIGHT_PX + 3 }}
+      >
+        Hz
+      </span>
+    <div
       ref={plotRef}
-      className="relative w-full overflow-hidden rounded border border-border-color bg-bg-primary/40"
-      style={{ height: GRAPH_HEIGHT_PX }}
+      className="relative h-full w-full overflow-hidden rounded border border-border-color bg-bg-primary/40"
       data-chroma-eq-graph
     >
       {size.width > 0 && (
@@ -317,15 +422,17 @@ export function EqResponseGraph({ bands, disabled, sampleRate, onBandChange }: E
 
           {drawnBands.map((band, i) => {
             const p = eqBandPoint(band, size.width, size.height);
+            const isSelected = i === selected;
             return (
-              <g key={i}>
+              <g key={i} data-chroma-eq-dot={i} data-selected={isSelected ? '' : undefined}>
                 <circle
                   cx={p.x}
                   cy={p.y}
                   r={POINT_R}
-                  fill="var(--color-bg-primary)"
+                  fill={isSelected ? 'currentColor' : 'var(--color-bg-primary)'}
                   stroke="currentColor"
                   strokeOpacity={band.enabled ? 1 : 0.4}
+                  fillOpacity={isSelected && !band.enabled ? 0.4 : 1}
                   strokeWidth={1.5}
                   pointerEvents="none"
                 />
@@ -334,8 +441,8 @@ export function EqResponseGraph({ bands, disabled, sampleRate, onBandChange }: E
                   y={p.y}
                   textAnchor="middle"
                   dominantBaseline="central"
-                  fontSize={7}
-                  fill="currentColor"
+                  fontSize={8}
+                  fill={isSelected ? 'var(--color-button-text)' : 'currentColor'}
                   fillOpacity={band.enabled ? 1 : 0.4}
                   pointerEvents="none"
                 >
@@ -353,13 +460,25 @@ export function EqResponseGraph({ bands, disabled, sampleRate, onBandChange }: E
                   className={disabled ? undefined : 'cursor-grab'}
                   onPointerDown={startDrag(i)}
                   onWheel={onWheelAt(i)}
+                  onDoubleClick={onDoubleClickAt(i)}
                   data-chroma-eq-point={i}
+                  aria-label={`Band ${i + 1}`}
                 />
               </g>
             );
           })}
         </svg>
       )}
+      {tipText && tipPoint && (
+        <div
+          className="bg-bg-primary/90 text-text-primary pointer-events-none absolute rounded px-1.5 py-0.5 font-mono text-[10px] whitespace-nowrap"
+          style={{ left: Math.min(tipPoint.x + 10, Math.max(0, size.width - 96)), top: Math.max(0, tipPoint.y - 24) }}
+          data-chroma-eq-tip
+        >
+          {tipText}
+        </div>
+      )}
+    </div>
     </div>
   );
 }

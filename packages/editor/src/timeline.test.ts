@@ -12,6 +12,9 @@ import {
   eqBandsForDisplay,
   eqResponseDb,
   EQ_BAND_COUNT,
+  EQ_PRESET_NAMES,
+  matchEqPreset,
+  resolveEqPreset,
   EQ_MAX_FREQ_HZ,
   EQ_MAX_GAIN_DB,
   EQ_MIN_Q,
@@ -3383,6 +3386,45 @@ describe('per-clip parametric EQ — the model (D-224)', () => {
     expect(bands?.filter((b) => b.gain_db !== 0)).toHaveLength(1);
     // The neighbouring clip is completely unaffected.
     expect(after.tracks[0].clips[1].eq_bands).toBeUndefined();
+  });
+
+  // v0.3.0 (B-365, D-442) — presets: one table, one op.
+  it('a preset (`bands`) replaces the whole strip in ONE op, clamped, and a repeat is a no-op', () => {
+    const voice = resolveEqPreset('Voice clarity');
+    expect(voice).toHaveLength(EQ_BAND_COUNT);
+    const after = applyOp(eqTl(), { kind: 'set_clip_eq', track: 0, clip: 0, bands: voice ?? [] });
+    expect(after.tracks[0].clips[0].eq_bands).toEqual(voice);
+    expect(applyOp(after, { kind: 'set_clip_eq', track: 0, clip: 0, bands: voice ?? [] })).toBe(after);
+    const cleared = applyOp(after, { kind: 'set_clip_eq', track: 0, clip: 0, bands: [] });
+    expect('eq_bands' in cleared.tracks[0].clips[0]).toBe(false);
+    const wild = applyOp(eqTl(), {
+      kind: 'set_clip_eq',
+      track: 0,
+      clip: 0,
+      bands: [{ kind: 'peak', freq_hz: 5, gain_db: 99, q: 0, enabled: true }],
+    });
+    expect(wild.tracks[0].clips[0].eq_bands?.[0]).toMatchObject({ freq_hz: 20, gain_db: 24, q: 0.1 });
+  });
+
+  it('presets resolve by name loosely and every one is recognised back by matchEqPreset', () => {
+    expect(EQ_PRESET_NAMES).toEqual([
+      'Flat',
+      'Voice clarity',
+      'Warm voice',
+      'Cut rumble',
+      'Reduce mud',
+      'Tame harshness',
+      'Music under voice',
+    ]);
+    expect(resolveEqPreset('voice_clarity')).toEqual(resolveEqPreset('Voice clarity'));
+    expect(resolveEqPreset('nope')).toBeNull();
+    for (const name of EQ_PRESET_NAMES) expect(matchEqPreset(resolveEqPreset(name))).toBe(name);
+    expect(matchEqPreset(undefined)).toBe('Flat');
+    const edited = resolveEqPreset('Warm voice') ?? [];
+    edited[1].gain_db = 4;
+    expect(matchEqPreset(edited)).toBeNull();
+    // A preset is a copy: editing it never changes the table.
+    expect(resolveEqPreset('Warm voice')?.[1].gain_db).toBe(3);
   });
 
   it('patches ONE field at a time, leaving every other field on that band alone', () => {

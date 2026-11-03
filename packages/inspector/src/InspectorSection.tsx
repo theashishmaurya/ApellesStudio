@@ -66,8 +66,14 @@ export function InspectorSection({ label, children, id, open, onOpenChange, meta
           ) : (
             <CaretRightIcon size={10} className="text-text-secondary shrink-0" />
           )}
-          <span className="text-text-primary truncate text-sm font-semibold">{label}</span>
-          {meta != null && <span className="text-text-secondary ml-auto truncate pl-2 font-mono text-xs">{meta}</span>}
+          {/* The title never truncates for its summary: the summary gives way
+              (v0.3.0 — a long Transform summary cut the title to "Transf…"). */}
+          <span className="text-text-primary shrink-0 text-sm font-semibold">{label}</span>
+          {meta != null && (
+            <span className="text-text-secondary ml-auto min-w-0 truncate pl-2 font-mono text-xs" title={typeof meta === 'string' ? meta : undefined}>
+              {meta}
+            </span>
+          )}
         </button>
         {actions}
       </div>

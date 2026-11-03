@@ -12,6 +12,10 @@
  * exact value, typing writes full precision, and an external write (undo) wins
  * over a pinned draft immediately (B-135).
  *
+ * v0.3.0 (D-443) — values now read in display units (crop in %, Position in
+ * px from the centre, Opacity in %); the same five properties hold in those
+ * units, with the stored fraction untouched.
+ *
  * jsdom has no layout engine, so what this file proves is the rendered value
  * STRING and the declared row geometry (92 px label column, 80 px slot), not
  * pixels; the visual proof is `scratch/ui-redesign-p4/`.
@@ -122,10 +126,11 @@ describe('the Inspector’s numeric field (B-113 → D-432)', () => {
   it('rests on a rounded value of a real dragged crop, short enough to read', async () => {
     await render();
     const shown = field('Crop left').value;
-    expect(shown).toBe('0.052');
-    expect(Number(shown)).not.toBe(REAL_CROP_VALUE);
-    expect(field('Crop top').value).toBe('0.123');
-    expect(field('Position X').value).toBe('-0.523');
+    expect(shown).toBe('5');
+    expect(Number(shown)).not.toBe(REAL_CROP_VALUE * 100);
+    expect(field('Crop top').value).toBe('12');
+    // −0.523212 of a 1920 px frame, measured from the centre of a 1 × 1 box.
+    expect(field('Position X').value).toBe('-1005');
   });
 
   it('is a spinbutton with no native number input behind it (nothing to paint spinner arrows)', async () => {
@@ -133,13 +138,13 @@ describe('the Inspector’s numeric field (B-113 → D-432)', () => {
     const input = field('Crop left');
     expect(input.getAttribute('role')).toBe('spinbutton');
     expect(input.type).toBe('text');
-    expect(input.getAttribute('aria-valuenow')).toBe(String(REAL_CROP_VALUE));
+    expect(input.getAttribute('aria-valuenow')).toBe('5.2212');
     expect(input.getAttribute('aria-label')).toBe('Crop left');
   });
 
   it('has the declared row geometry: a 92 px label column and an 80 px keyframe slot', async () => {
     await render();
-    const row = field('Crop left').closest('[data-slot="inspector-row"]') as HTMLElement;
+    const row = field('Position X').closest('[data-slot="inspector-row"]') as HTMLElement;
     expect(row.className).toContain(`grid-cols-[${INSPECTOR_ROW.LABEL_PX}px_minmax(0,1fr)_${INSPECTOR_ROW.SLOT_PX}px]`);
     expect(row.querySelector('[data-slot="inspector-slot"]')).toBeTruthy();
   });
@@ -147,17 +152,17 @@ describe('the Inspector’s numeric field (B-113 → D-432)', () => {
   it('focusing the field shows the exact stored value back — nothing is lost', async () => {
     await render();
     const input = field('Crop left');
-    expect(input.value).toBe('0.052');
+    expect(input.value).toBe('5');
 
     actSync(() => input.focus());
     await waitFrames(1);
     // The rounding is a DISPLAY rounding: the moment the user is in the field,
-    // the number they can edit is the real one.
-    expect(input.value).toBe(String(REAL_CROP_VALUE));
+    // the number they can edit is the real one (in %).
+    expect(input.value).toBe('5.2212');
 
     actSync(() => input.blur());
     await waitFrames(1);
-    expect(input.value).toBe('0.052');
+    expect(input.value).toBe('5');
     // …and the clip never changed underneath any of that.
     expect(currentClip().crop_left).toBe(REAL_CROP_VALUE);
   });
@@ -165,19 +170,19 @@ describe('the Inspector’s numeric field (B-113 → D-432)', () => {
   it('the tooltip carries the exact value', async () => {
     await render();
     const wrapper = field('Crop left').closest('[data-slot="number-scrubber"]');
-    expect(wrapper?.getAttribute('title')).toBe(`Crop left: ${REAL_CROP_VALUE}`);
+    expect(wrapper?.getAttribute('title')).toBe('Crop left: 5.2212 % of the source');
   });
 
   it('typing still writes full precision — the rounding is display-only', async () => {
     await render();
-    typeNumber(field('Crop left'), '0.123456');
+    typeNumber(field('Crop left'), '12.3456');
     await waitFrames(1);
     expect(currentClip().crop_left).toBe(0.123456);
   });
 
-  it('accepts arithmetic against the stored value (+0.1 on 0.052212)', async () => {
+  it('accepts arithmetic against the shown value (+10 on 5.2212 %)', async () => {
     await render();
-    typeNumber(field('Crop left'), '+0.1');
+    typeNumber(field('Crop left'), '+10');
     await waitFrames(1);
     expect(currentClip().crop_left).toBeCloseTo(0.152212, 6);
   });
@@ -192,11 +197,11 @@ describe('B-135: an external value change reaches a focused field immediately, n
     // Type without committing: this leaves a draft behind.
     actSync(() => input.focus());
     actSync(() => {
-      setter?.call(input, '0.35');
+      setter?.call(input, '35');
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
     await waitFrames(1);
-    expect(input.value).toBe('0.35');
+    expect(input.value).toBe('35');
 
     // An external write to the SAME property — exactly what undo does.
     actSync(() => {
@@ -209,6 +214,6 @@ describe('B-135: an external value change reaches a focused field immediately, n
       });
     });
     await waitFrames(1);
-    expect(input.value).toBe('0.5');
+    expect(input.value).toBe('50');
   });
 });

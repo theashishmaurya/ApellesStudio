@@ -96,6 +96,13 @@ export interface NumberScrubberProps {
   precision?: number;
   /** A short inline prefix (`X`, `W`) for paired fields. */
   prefix?: string;
+  /** Display text for a value at rest (and while scrubbing), replacing the
+   *  plain number and `unit`: Pan's `L 40` / `Center`, a frequency's `3.5`
+   *  + `kHz`. Display only; `value` and `onChange` stay plain numbers. */
+  format?: (value: number) => { text: string; unit?: string };
+  /** Reads typed text the `format` side shows (`L 40`, `3.5k`) back into a
+   *  value, before the arithmetic parser is tried. `null` = not this format. */
+  parse?: (text: string) => number | null;
   disabled?: boolean;
   /** Accessible name — required in practice; the visible label lives outside. */
   'aria-label'?: string;
@@ -114,6 +121,8 @@ function NumberScrubber({
   unit,
   precision,
   prefix,
+  format: formatValue,
+  parse,
   disabled = false,
   'aria-label': ariaLabel,
   title,
@@ -144,14 +153,17 @@ function NumberScrubber({
   const [scrubbing, setScrubbing] = React.useState(false);
 
   // Handlers registered imperatively for the gesture must read current props.
-  const latest = React.useRef({ value, step, min, max, unit, onChange, onScrubStart, onScrubEnd });
-  latest.current = { value, step, min, max, unit, onChange, onScrubStart, onScrubEnd };
+  const latest = React.useRef({ value, step, min, max, unit, parse, onChange, onScrubStart, onScrubEnd });
+  latest.current = { value, step, min, max, unit, parse, onChange, onScrubStart, onScrubEnd };
 
   const stopGesture = React.useRef<() => void>(() => {});
   React.useEffect(() => () => stopGesture.current(), []);
 
   const decimals = precision ?? displayDecimals(step);
   const format = (v: number): string => (precision != null ? v.toFixed(precision) : String(tidy(v, decimals)));
+  /** Typed text → value: the caller's own format first, then arithmetic. */
+  const evaluate = (text: string, current: number): number | null =>
+    latest.current.parse?.(text) ?? evaluateNumberExpression(text, current, latest.current.unit);
   const shownValue = live ?? value;
 
   const clamp = (v: number): number => clampNumber(v, min, max);
@@ -164,7 +176,7 @@ function NumberScrubber({
     const text = draftRef.current;
     setDraft(null);
     if (text === null) return;
-    const result = evaluateNumberExpression(text, latest.current.value, latest.current.unit);
+    const result = evaluate(text, latest.current.value);
     if (result === null) return; // not arithmetic: the field snaps back
     const next = clamp(tidy(result, keepDecimals));
     if (next !== latest.current.value) latest.current.onChange(next);
@@ -172,7 +184,7 @@ function NumberScrubber({
 
   const stepBy = (direction: 1 | -1, modifiers: { shiftKey: boolean; altKey: boolean }) => {
     const text = draftRef.current;
-    const typed = text === null ? null : evaluateNumberExpression(text, value, unit);
+    const typed = text === null ? null : evaluate(text, value);
     const base = typed ?? value;
     const next = clamp(tidy(base + direction * step * scrubberFactor(modifiers), keepDecimals));
     if (text !== null) setDraft(String(next));
@@ -303,8 +315,16 @@ function NumberScrubber({
 
   // ---- render ----------------------------------------------------------------
 
-  const shown = focused ? (draft ?? String(value)) : format(shownValue);
-  const valueText = `${format(shownValue)}${unit ?? ''}`;
+  const formatted = formatValue?.(shownValue);
+  const shownUnit = formatted ? formatted.unit : unit;
+  const restText = formatted ? formatted.text : format(shownValue);
+  // Editing starts from the formatted text when there is one (`L 40`), so
+  // the caller's `parse` reads back what the field showed.
+  const editText = formatted ? formatted.text : String(value);
+  const shown = focused ? (draft ?? editText) : restText;
+  const valueText = formatted
+    ? `${formatted.text}${formatted.unit ? ` ${formatted.unit}` : ''}`
+    : `${format(shownValue)}${unit ?? ''}`;
 
   return (
     <div
@@ -352,7 +372,7 @@ function NumberScrubber({
           'selection:bg-accent selection:text-button-text',
         )}
       />
-      {unit && <span className="text-text-tertiary text-xs">{unit}</span>}
+      {shownUnit && <span className="text-text-tertiary text-xs">{shownUnit}</span>}
     </div>
   );
 }

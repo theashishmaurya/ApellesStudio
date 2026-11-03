@@ -115,6 +115,7 @@ export type {
   BiquadCoeffs,
   EqBand,
   EqBandKind,
+  EqPreset,
 } from './eq';
 // D-229 — re-exported here so a consumer working with the edit model does not
 // have to know which file the caption types came from, exactly as the EQ types
@@ -139,6 +140,7 @@ export {
 } from './caption';
 export {
   EQ_BAND_COUNT,
+  EQ_BAND_KIND_DESCRIPTIONS,
   EQ_BAND_KIND_LABELS,
   EQ_BAND_KINDS,
   EQ_DEFAULT_Q,
@@ -148,6 +150,8 @@ export {
   EQ_MAX_Q,
   EQ_MIN_FREQ_HZ,
   EQ_MIN_Q,
+  EQ_PRESETS,
+  EQ_PRESET_NAMES,
   biquadResponseDb,
   clampEqBand,
   defaultEqBands,
@@ -158,6 +162,8 @@ export {
   eqResponseDb,
   hasActiveEq,
   isEqBandActive,
+  matchEqPreset,
+  resolveEqPreset,
 } from './eq';
 
 export interface Rational {
@@ -4325,13 +4331,20 @@ export type EditOp =
    *
    *  `clear: true` drops the whole set back to no EQ — the section-level reset,
    *  and the only way back to a clip that serialises no `eq_bands` key at all.
-   *  It ignores `band`/the patch fields. */
+   *  It ignores `band`/the patch fields.
+   *
+   *  v0.3.0 (B-365, D-442) — `bands` REPLACES the whole strip in one op (one
+   *  undo step): an EQ preset (`EQ_PRESETS`, picked in the Inspector or passed
+   *  as `editor_set_clip_eq preset`) writes all four bands at once. Each band
+   *  is clamped like a patched one; an empty list is a `clear`. `bands` wins
+   *  over `band`/`patch`; `clear` wins over both. */
   | {
       kind: 'set_clip_eq';
       track: number;
       clip: number;
       band?: number;
       patch?: Partial<EqBand>;
+      bands?: EqBand[];
       clear?: boolean;
     }
   /** D-396 — REPLACE a clip's whole phrase-highlight list ("highlighter pen"
@@ -4815,7 +4828,9 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       // same reason `set_track_duck`'s off-case is.
       return op.clear
         ? `Clear ${clipLabel(before, op.track, op.clip)} EQ`
-        : `EQ band ${(op.band ?? 0) + 1} on ${clipLabel(before, op.track, op.clip)}`;
+        : op.bands
+          ? `EQ preset on ${clipLabel(before, op.track, op.clip)}`
+          : `EQ band ${(op.band ?? 0) + 1} on ${clipLabel(before, op.track, op.clip)}`;
     case 'set_clip_highlights':
       return op.highlights.length === 0
         ? `Clear ${clipLabel(before, op.track, op.clip)} highlights`
@@ -6577,6 +6592,25 @@ function applyOpCopy(tl: Timeline, op: EditOp): Timeline {
       // "back to no EQ" should leave the clip exactly as it was before the
       // feature was ever touched.
       delete next.tracks[op.track].clips[op.clip].eq_bands;
+      return next;
+    }
+    if (op.bands) {
+      if (op.bands.length === 0) return applyOpCopy(tl, { kind: 'set_clip_eq', track: op.track, clip: op.clip, clear: true });
+      const replaced = op.bands.map(clampEqBand);
+      const prior = c.eq_bands ?? [];
+      const unchanged =
+        prior.length === replaced.length &&
+        prior.every(
+          (b, i) =>
+            b.kind === replaced[i].kind &&
+            b.freq_hz === replaced[i].freq_hz &&
+            b.gain_db === replaced[i].gain_db &&
+            b.q === replaced[i].q &&
+            b.enabled === replaced[i].enabled,
+        );
+      if (unchanged) return tl;
+      const next = clone(tl);
+      next.tracks[op.track].clips[op.clip].eq_bands = replaced;
       return next;
     }
     const band = op.band;

@@ -68,6 +68,17 @@
  * (Phase 1's documented multi-select fallback, `docs/notes/multi-select.md`)
  * unchanged — showing Project Settings there would misreport "nothing is
  * selected" when several clips actually are.
+ *
+ * v0.3.0 panel redesign (B-365 / B-366, D-442 / D-443) — four more things
+ * derived here for the redesigned panel: the clip's painted box at the
+ * playhead (`paintedBox`, for Position in px from the centre), the nearest
+ * keyframe of any property each side of the playhead (`keyframeNav`), the
+ * crop write (`applyCrop` → `cropEditOp`, which keeps the picture in place)
+ * with the viewer's crop mode (`timelineStore.cropEdit`), and the EQ preset
+ * write (`applyEqPreset`, one `set_clip_eq { bands }` op). An Inspector Scale
+ * edit on a clip whose position is not keyframed now scales about the box's
+ * centre (the readout is centre-relative, so the picture must not walk off
+ * while you scale), and a multi-property reset writes ONE op.
  */
 import { useDeferredValue } from 'react';
 import {
@@ -80,8 +91,11 @@ import {
   paramValueAt,
   removeClipKeyframe,
   removeClipKeyframeParam,
+  resolveClipBoxTransform,
   type ClipKeyframe,
 } from './clipKeyframes';
+import { cropEditOp, type CropEdge, type CropInsetValues } from './cropInPlace';
+import { paintedClipBox } from './transformGeometry';
 import { ClipInspectorPanel, type FadePatch, type TransformPatch } from './ClipInspectorPanel';
 import { ProjectSettingsPanel } from './ProjectSettingsPanel';
 import {
@@ -99,6 +113,7 @@ import {
   EASE_PRESETS,
   easePresetName,
   isClipAudioParam,
+  resolveEqPreset,
   timelineFps,
   type ClipAudioParam,
   type ClipKeyframeParam,
@@ -161,6 +176,10 @@ export function EditorInspectorPanel() {
   // by `DynamicZoomOverlay`. Store state, never persisted — see its field doc.
   const dynamicZoom = useEditorTimelineStore((s) => s.dynamicZoom);
   const setDynamicZoom = useEditorTimelineStore((s) => s.setDynamicZoom);
+  // D-443 — the viewer's crop mode, armed from the Crop header's button and
+  // drawn by `CropOverlay`. Store state like `dynamicZoom`.
+  const cropEdit = useEditorTimelineStore((s) => s.cropEdit);
+  const setCropEdit = useEditorTimelineStore((s) => s.setCropEdit);
   // D-246 — which Inspector tab is showing. Store state, not this component's
   // own `useState`, for the two reasons its field doc gives: the panel below
   // is remounted per clip selection, and the debug op drives the same state
@@ -300,6 +319,35 @@ export function EditorInspectorPanel() {
     applyOp({ kind: 'set_clip_eq', track: audioTarget.track, clip: audioTarget.index, clear: true });
   };
 
+  // D-442 — a named preset writes all four bands in ONE op, from the same
+  // table `editor_set_clip_eq preset` reads (`EQ_PRESETS`).
+  const applyEqPreset = (name: string) => {
+    const bands = resolveEqPreset(name);
+    if (!audioTarget || !bands) return;
+    applyOp({ kind: 'set_clip_eq', track: audioTarget.track, clip: audioTarget.index, bands });
+  };
+
+  // D-443 — the clip's painted box at the playhead, and its scale-1 footprint:
+  // what Position in px from the centre, the centre-keeping Scale edit and the
+  // crop write all measure.
+  const natural = geometry ? { width: geometry.naturalWidth, height: geometry.naturalHeight } : null;
+  const effectiveBox = selectedClip ? resolveClipBoxTransform(selectedClip, ctxVideo.sourceFrame) : null;
+  const paintedBox = selectedClip && natural && effectiveBox ? paintedClipBox(selectedClip, natural, effectiveBox) : null;
+
+  // D-443 — one crop edit (the L · R · T · B row, the header's reset) is one
+  // op that keeps the picture where it is (`cropEditOp`); `CropOverlay` writes
+  // the same op for a drag.
+  const applyCrop = (next: CropInsetValues, moved?: CropEdge) => {
+    if (!videoTarget) return;
+    const op = cropEditOp(videoTarget, liveSourceFrame(videoTarget), natural, next, moved);
+    if (op) applyOp(op);
+  };
+  const cropArmed = !!cropEdit && !!selectedClip && cropEdit.clipId === selectedClip.id;
+  const armCrop = (armed: boolean) => {
+    if (!selectedClip) return;
+    setCropEdit(armed ? { clipId: selectedClip.id } : null);
+  };
+
   // D-208 — every keyframeable property's static (un-animated) value, read
   // once here through `CLIP_KEYFRAME_DEFAULTS` instead of eleven scattered
   // `?? 1` / `?? 0` fallbacks that could each drift from the backend's own
@@ -317,8 +365,23 @@ export function EditorInspectorPanel() {
     // D-193 — editing `scale` also clears any independent Width/Height
     // override, so that field stays a real "back to plain uniform scale"
     // affordance rather than one that silently does nothing.
-    else if (param === 'scale') applyTransform({ scale: value, box_width: null, box_height: null });
+    else if (param === 'scale') applyTransform({ scale: value, box_width: null, box_height: null, ...centreKeepingPosition(value) });
     else applyTransform({ [param]: value });
+  };
+
+  /** D-443 — the position that keeps the box's CENTRE where it is when Scale
+   *  becomes `nextScale` (FCP / Resolve scale about the centre, and Position
+   *  reads from the centre). `{}` — leave position alone — when the position
+   *  is keyframed (moving it would need a key per frame) or the geometry is
+   *  not known yet. The stored `position_*` stays the box's top-left (D-338). */
+  const centreKeepingPosition = (nextScale: number): Partial<TransformPatch> => {
+    if (!selectedClip || !natural || !effectiveBox || !paintedBox) return {};
+    const keys = selectedClip.chroma_keyframes;
+    if (hasParamKeyframes(keys, 'position_x') || hasParamKeyframes(keys, 'position_y')) return {};
+    const next = paintedClipBox(selectedClip, natural, { ...effectiveBox, scale: nextScale, box_width: null, box_height: null });
+    const dx = paintedBox.left + paintedBox.width / 2 - (next.left + next.width / 2);
+    const dy = paintedBox.top + paintedBox.height / 2 - (next.top + next.height / 2);
+    return { position_x: (selectedClip.position_x ?? 0) + dx, position_y: (selectedClip.position_y ?? 0) + dy };
   };
 
   // D-208 — one write of a `set_clip_keyframes` op, so every per-property
@@ -453,7 +516,12 @@ export function EditorInspectorPanel() {
     if (params.length === 0) return;
     const ctx = ctxOf(params[0]);
     if (!ctx.target) return;
-    for (const p of params) staticWrite(p, CLIP_KEYFRAME_DEFAULTS[p]);
+    // ONE static write for the whole set (v0.3.0): each `applyTransform`
+    // restates the clip's other fields from this render's clip, so two
+    // separate writes would have the second put the first one's field back.
+    const defaults = Object.fromEntries(params.map((p) => [p, CLIP_KEYFRAME_DEFAULTS[p]]));
+    if (paramFacet(params[0]) === 'audio') applyAudio(defaults);
+    else applyTransform(params.includes('scale') ? { ...defaults, box_width: null, box_height: null } : defaults);
     const animated = params.filter((p) => hasParamKeyframes(ctx.keyframes, p));
     if (animated.length > 0) {
       const values = Object.fromEntries(animated.map((p) => [p, CLIP_KEYFRAME_DEFAULTS[p]]));
@@ -565,6 +633,20 @@ export function EditorInspectorPanel() {
   // instead of the generic "Select a clip" message; see this file's own
   // module doc for why a multi-selection deliberately does NOT take this
   // branch.
+  // v0.3.0 — the Keyframes section's ‹ ›: the nearest key of ANY property
+  // each side of the playhead, as timeline frames.
+  const keySourceFrame = Math.round(ctxVideo.sourceFrame);
+  const keyBefore = clipKeyframes.reduce<number | null>(
+    (best, k) => (k.frame < keySourceFrame && (best === null || k.frame > best) ? k.frame : best),
+    null,
+  );
+  const keyAfter = clipKeyframes.reduce<number | null>(
+    (best, k) => (k.frame > keySourceFrame && (best === null || k.frame < best) ? k.frame : best),
+    null,
+  );
+  const toTimelineFrame = (f: number | null) => (f === null || !videoTarget ? null : clipTimelineFrame(videoTarget.clip, f, fps));
+  const keyframeNav = { prev: toTimelineFrame(keyBefore), next: toTimelineFrame(keyAfter) };
+
   if (selection.length === 0) {
     return <ProjectSettingsPanel />;
   }
@@ -579,16 +661,23 @@ export function EditorInspectorPanel() {
       key={`${selectedClip?.id ?? 'none'}|${audioTarget?.clip.id ?? 'none'}`}
       clip={selectedClip}
       audioClip={audioTarget?.clip ?? null}
+      audioTrack={audioTarget?.track ?? -1}
       trackLocked={selectedTrackLocked}
       audioTrackLocked={audioTrackLocked}
       geometry={geometry}
+      paintedBox={paintedBox}
       clipKeyframes={clipKeyframes}
       keyedHere={keyedHere}
+      keyframeNav={keyframeNav}
       paramStates={paramStates}
       onTransformChange={applyTransform}
+      onCropChange={applyCrop}
+      cropArmed={cropArmed}
+      onCropArm={armCrop}
       onFadeChange={applyFade}
       onSpeedChange={applySpeed}
       onEqBandChange={applyEqBand}
+      onEqPreset={applyEqPreset}
       onEqClear={clearEq}
       onParamChange={applyParam}
       onKeyframeToggle={toggleParamKeyframes}
@@ -599,6 +688,7 @@ export function EditorInspectorPanel() {
       onUpsertKeyframe={doUpsertKeyframe}
       onRemoveKeyframeHere={doRemoveKeyframeHere}
       onClearKeyframes={doClearKeyframes}
+      onGoToFrame={setPlayhead}
       dynamicZoomArmed={dynamicZoomArmed}
       dynamicZoomEasePreset={dynamicZoomEasePreset}
       dynamicZoomWouldReplace={dynamicZoomWouldReplace(clipKeyframes)}

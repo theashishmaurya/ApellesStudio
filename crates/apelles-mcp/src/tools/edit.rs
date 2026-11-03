@@ -1042,6 +1042,8 @@ pub struct EditorSetClipEqArgs {
     pub q: Option<f64>,
     #[serde(default)]
     pub enabled: Option<bool>,
+    #[serde(default)]
+    pub preset: Option<String>,
     #[serde(default = "default_editor_set_clip_eq_clear")]
     pub clear: bool,
 }
@@ -4995,8 +4997,9 @@ impl ApellesMcp {
 
     #[tool(
         name = "editor_set_clip_eq",
-        description = r#"Set ONE BAND of one clip's parametric EQ (D-224). `track` and `clip` are
-    the 0-based indices from get_timeline; `band` is 0..3.
+        description = r#"Set ONE BAND of one clip's parametric EQ (D-224), or all four from a
+    named `preset`. `track` and `clip` are the 0-based indices from
+    get_timeline; `band` is 0..3.
 
     This is the tool for shaping a clip's TONE, as distinct from its LEVEL
     (editor_set_clip_audio) and its track's fader (editor_set_track_gain). The
@@ -5028,6 +5031,13 @@ impl ApellesMcp {
     `enabled` -- per-band bypass. False keeps the band's settings but takes it
       out of the chain -- the only way to bypass a pass filter, which has no
       gain to zero.
+    `preset` -- one of "Flat", "Voice clarity", "Warm voice", "Cut rumble",
+      "Reduce mud", "Tame harshness", "Music under voice": writes ALL FOUR
+      bands at once (one undo step), from the same table the Inspector's EQ
+      preset menu uses (D-442). Pass it alone, with no `band` and no band
+      field; adjust a band afterwards with a second call. What it writes is
+      an ordinary EQ: the Inspector names the preset until a band changes,
+      then shows "Custom".
     `clear=True` -- remove the clip's EQ entirely, back to unfiltered. Ignores
       every other field.
 
@@ -5089,7 +5099,8 @@ impl ApellesMcp {
             .put("freq_hz", p.freq_hz)
             .put("gain_db", p.gain_db)
             .put("q", p.q)
-            .put("enabled", p.enabled);
+            .put("enabled", p.enabled)
+            .put("preset", p.preset);
         let env = self.op("editor_set_clip_eq", args).await?;
         Ok(render::json_text(&env))
     }

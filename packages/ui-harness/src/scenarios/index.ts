@@ -6,6 +6,7 @@
 import type { Scenario } from '../scenario.ts';
 import { EDIT_TOOL_SCENARIOS } from './editTools.ts';
 import { PERF_300_SCENARIOS } from './perf300.ts';
+import { PANEL_REDESIGN_SCENARIOS } from './panelRedesign.ts';
 import { REDESIGN_SCENARIOS } from './redesign.ts';
 import { TIMELINE_SCENARIOS } from './timeline.ts';
 
@@ -15,5 +16,7 @@ export const SCENARIOS: readonly Scenario[] = [
   ...TIMELINE_SCENARIOS,
   // v0.3.0 — the mockup gap closure: Inspector slider, target track, zoom slider.
   ...REDESIGN_SCENARIOS,
+  // v0.3.0 panel redesign (D-442 / D-443): crop in the viewer, the EQ dot drag.
+  ...PANEL_REDESIGN_SCENARIOS,
   ...PERF_300_SCENARIOS,
 ];

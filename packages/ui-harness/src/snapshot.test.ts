@@ -39,6 +39,8 @@ describe('timelineSnapshot', () => {
 
   it('reports clip opacity (1 when unset) and the target track (v0.3.0)', () => {
     expect(snap.clips.a.opacity).toBe(1);
+    // v0.3.0 panel redesign — the transform and EQ the Inspector scenarios read.
+    expect(snap.clips.a).toMatchObject({ scale: 1, positionX: 0, cropLeft: 0, cropBottom: 0, eqBands: [] });
     expect(snap.targetTrack).toBe(1);
     expect(timelineSnapshot({ tracks: [{ index: 0, clips: [] }] }).targetTrack).toBeNull();
   });

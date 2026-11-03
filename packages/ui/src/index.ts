@@ -159,7 +159,7 @@ export { NumberScrubber, NUMBER_SCRUBBER, scrubberFactor, scrubberValue } from '
 export type { NumberScrubberProps } from './components/ui/number-scrubber';
 export { InspectorRow, INSPECTOR_ROW } from './components/ui/inspector-row';
 export type { InspectorRowProps } from './components/ui/inspector-row';
-export { InlineSlider, SliderField, SLIDER_FIELD } from './components/ui/slider-field';
+export { InlineSlider, SliderField, SLIDER_FIELD, snapToDetent } from './components/ui/slider-field';
 export type { InlineSliderProps, SliderFieldProps } from './components/ui/slider-field';
 export { evaluateNumberExpression } from './lib/number-expression';
 export { TreeView, TreeItem } from './tree-view';

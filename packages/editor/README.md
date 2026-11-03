@@ -185,10 +185,25 @@ dragging a pool item in from the shell's Sources panel.
   preview-vs-render divergence. The two are pinned by one shared response table
   that each side measures through its own engine. `timeline.ts` re-exports the
   type and the helpers, so nothing else has to know which file they came from.
+  v0.3.0 (D-442): also `EQ_PRESETS`, the one preset table the Inspector's EQ
+  menu and `editor_set_clip_eq preset` both resolve through.
+- `displayUnits.ts` (v0.3.0, D-443) — the Inspector's one stored ↔ display
+  conversion module (%, dB, s, `L 40 / Center / R 40`, Hz / kHz, px from the
+  frame's centre, plain ease names, collapsed-header summaries); `PropertyRow`
+  converts at the field's edge with it. Stores nothing, changes no stored unit.
+- `cropInPlace.ts` + `CropOverlay.tsx` (v0.3.0, D-443) — crop that keeps the
+  picture where it is (`cropEditOp`: the insets plus the scale / position that
+  leave the kept part on the same pixels, one op), and the viewer's crop mode
+  (`timelineStore.cropEdit`): four edge handles, the outside dimmed.
+- `ClipAudioTab.tsx`, `ClipEqSection.tsx`, `ClipDynamicZoomSection.tsx` (v0.3.0,
+  D-442 / D-443) — the Inspector's Audio tab (Level, Fades / Ducking summaries,
+  the EQ with its graph as the control and one selected-band row) and the
+  Dynamic zoom section (box preview), split out of `ClipInspectorPanel.tsx`.
 - `eqCurve.ts` + `EqResponseGraph.tsx` (D-237, roadmap item 27) — the response
   graph D-224 deliberately deferred: Resolve's ±24 dB / log-frequency plot,
   with a numbered, draggable point per band and the combined response drawn as
-  a filled/stroked line, rendered above the Inspector's four EQ band blocks.
+  a filled/stroked line (v0.3.0: with dB / Hz axes, a selected dot, double-click
+  for 0 dB, and it is the EQ's main control above one selected-band row).
   `eqCurve.ts` is the pure geometry (log-frequency/±24 dB screen mapping, the
   sampled curve, a band's own point, drag-to-patch, the scroll-wheel-to-Q
   mapping) — it computes no response value itself, importing `eqResponseDb`

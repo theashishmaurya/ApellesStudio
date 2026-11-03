@@ -33,6 +33,12 @@ import { NumberScrubber, type NumberScrubberProps } from './number-scrubber';
  * its own `min` / `max`, so a typed `6` is legal and simply pins the thumb at
  * the end.
  *
+ * **The detent** (v0.3.0 Inspector redesign, B-366): a slider given a
+ * `detent` (the property's default: Scale 100 %, Rotation 0°, Opacity 100 %,
+ * Volume 0 dB) draws a hairline tick there and snaps a drag that passes
+ * within {@link SLIDER_FIELD.DETENT_SNAP_FRACTION} of the span onto it, as
+ * Final Cut's and Logic's faders catch unity. Typing is never snapped.
+ *
  * **What it does NOT do.** Hold a value (controlled only), know what the
  * number means, or animate anything.
  */
@@ -45,7 +51,16 @@ export const SLIDER_FIELD = {
   THUMB_PX: 12,
   /** `w-14` value field */
   FIELD_PX: 56,
+  /** A drag this close to the detent (as a fraction of the slider span)
+   *  lands exactly on it: 2 % is ~2 px on the Inspector's ~100 px track. */
+  DETENT_SNAP_FRACTION: 0.02,
 } as const;
+
+/** `value` snapped onto `detent` when within the snap band of `[min, max]`. */
+export function snapToDetent(value: number, detent: number | undefined, min: number, max: number): number {
+  if (detent === undefined || !Number.isFinite(value)) return value;
+  return Math.abs(value - detent) <= Math.abs(max - min) * SLIDER_FIELD.DETENT_SNAP_FRACTION ? detent : value;
+}
 
 export interface InlineSliderProps {
   value: number;
@@ -59,6 +74,8 @@ export interface InlineSliderProps {
   onValueCommitted?: () => void;
   /** Double-click: back to the default. */
   onReset?: () => void;
+  /** The default value: a tick on the track and a snap point for a drag. */
+  detent?: number;
   disabled?: boolean;
   'aria-label'?: string;
   /** What a screen reader hears for the value (`"112 %"`). */
@@ -76,6 +93,7 @@ function InlineSlider({
   onValueChange,
   onValueCommitted,
   onReset,
+  detent,
   disabled = false,
   'aria-label': ariaLabel,
   getAriaValueText,
@@ -83,6 +101,7 @@ function InlineSlider({
   'data-testid': testId,
 }: InlineSliderProps) {
   const shown = Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
+  const detentPct = detent !== undefined && max > min && detent >= min && detent <= max ? ((detent - min) / (max - min)) * 100 : null;
   return (
     <SliderPrimitive.Root
       data-slot="inline-slider"
@@ -93,7 +112,7 @@ function InlineSlider({
       step={step}
       largeStep={largeStep ?? step * 10}
       disabled={disabled}
-      onValueChange={(v) => onValueChange(Array.isArray(v) ? (v[0] as number) : (v as number))}
+      onValueChange={(v) => onValueChange(snapToDetent(Array.isArray(v) ? (v[0] as number) : (v as number), detent, min, max))}
       onValueCommitted={() => onValueCommitted?.()}
       className={cn('group/inline-slider min-w-0 flex-1', className)}
     >
@@ -105,6 +124,14 @@ function InlineSlider({
           data-slot="inline-slider-track"
           className="bg-border-color relative h-[3px] w-full rounded-full"
         />
+        {detentPct !== null && (
+          <span
+            aria-hidden
+            data-slot="inline-slider-detent"
+            className="bg-text-tertiary pointer-events-none absolute top-1/2 h-2 w-px -translate-x-1/2 -translate-y-1/2"
+            style={{ left: `${detentPct}%` }}
+          />
+        )}
         <SliderPrimitive.Thumb
           data-slot="inline-slider-thumb"
           aria-label={ariaLabel}
@@ -124,6 +151,8 @@ export interface SliderFieldProps extends NumberScrubberProps {
   sliderStep?: number;
   /** Double-click on the slider. */
   onReset?: () => void;
+  /** The default value: a tick on the track, and a drag snaps onto it. */
+  detent?: number;
 }
 
 function SliderField({
@@ -131,6 +160,7 @@ function SliderField({
   sliderMax,
   sliderStep,
   onReset,
+  detent,
   className,
   ...field
 }: SliderFieldProps) {
@@ -212,6 +242,7 @@ function SliderField({
         onValueChange={onSliderChange}
         onValueCommitted={end}
         onReset={onReset}
+        detent={detent}
         aria-label={field['aria-label'] ? `${field['aria-label']} slider` : undefined}
         getAriaValueText={(v) => `${v}${unit ?? ''}`}
       />

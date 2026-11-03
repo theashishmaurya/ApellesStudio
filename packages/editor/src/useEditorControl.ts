@@ -156,8 +156,11 @@ import {
   DEFAULT_TEXT_FONT,
   DEFAULT_TITLE_SECONDS,
   EQ_BAND_KINDS,
+  EQ_PRESET_NAMES,
   isGeneratedClip,
   describeEqBand,
+  matchEqPreset,
+  resolveEqPreset,
   eqBandsForDisplay,
   eqKindUsesGain,
   eqResponseDb,
@@ -5395,9 +5398,30 @@ export function useEditorControl(): void {
           return report('EQ removed — this clip is unfiltered again');
         }
 
+        // v0.3.0 (B-365, D-442) — a named preset writes the whole strip in one
+        // op, through the SAME table (`EQ_PRESETS`) the Inspector's preset
+        // dropdown uses. It is exclusive with the per-band fields: a preset is
+        // a starting point, and a band edit is a second call.
+        if (a?.preset != null) {
+          const bands = resolveEqPreset(a.preset);
+          if (!bands) {
+            return { error: `preset must be one of ${EQ_PRESET_NAMES.join(', ')}, got ${String(a.preset)}` };
+          }
+          if (a?.band != null || a?.kind != null || a?.freq_hz != null || a?.gain_db != null || a?.q != null || a?.enabled != null) {
+            return { error: 'preset replaces all four bands — pass it alone, then adjust a band with a second call' };
+          }
+          useEditorTimelineStore.getState().applyOp({
+            kind: 'set_clip_eq',
+            track: found.track,
+            clip: found.clip,
+            bands,
+          });
+          return report(`preset "${matchEqPreset(bands) ?? String(a.preset)}" written to all four bands; the EQ applies before this clip’s volume, fade and duck`);
+        }
+
         const band = Math.round(Number(a?.band));
         if (!Number.isFinite(band) || band < 0) {
-          return { error: 'band must be a 0-based band index (or pass clear: true to remove the EQ)' };
+          return { error: 'band must be a 0-based band index (or pass preset, or clear: true to remove the EQ)' };
         }
         // The strip a clip with no EQ yet is ABOUT to get, so an out-of-range
         // index is reported against the real band count rather than against 0.
@@ -5430,7 +5454,7 @@ export function useEditorControl(): void {
         }
         if (a?.enabled != null) patch.enabled = a.enabled !== false;
         if (Object.keys(patch).length === 0) {
-          return { error: 'set at least one of kind, freq_hz, gain_db, q, enabled — or pass clear: true' };
+          return { error: 'set at least one of kind, freq_hz, gain_db, q, enabled — or pass preset, or clear: true' };
         }
 
         useEditorTimelineStore.getState().applyOp({

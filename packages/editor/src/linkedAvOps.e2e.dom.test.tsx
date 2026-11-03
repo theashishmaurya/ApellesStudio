@@ -48,7 +48,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 import { useHistoryStore } from '@apelles/history';
 import { useEditorTimelineStore } from './timelineStore';
 import { useEditorControl } from './useEditorControl';
-import type { Clip, Timeline } from './timeline';
+import { resolveEqPreset, type Clip, type Timeline } from './timeline';
 
 interface OpEnvelope {
   ok: boolean;
@@ -161,6 +161,25 @@ describe.each([
     expect(r.result).toMatchObject({ ok: true, ...SOUND });
     expect(current(SOUND).eq_bands?.[0]?.gain_db).toBe(4);
     expect(current(PICTURE).eq_bands).toBeUndefined();
+  });
+
+  // v0.3.0 (B-365, D-442) — the same preset table the Inspector's menu uses.
+  it('editor_set_clip_eq preset writes all four bands on the audio partner, as one undo step', async () => {
+    useHistoryStore.getState().clear();
+    const r = await callOp('editor_set_clip_eq', { ...at, preset: 'Voice clarity' });
+    expect(r.error).toBeNull();
+    expect(r.result).toMatchObject({ ok: true, ...SOUND, eqActive: true });
+    expect(current(SOUND).eq_bands).toEqual(resolveEqPreset('Voice clarity'));
+    expect(current(PICTURE).eq_bands).toBeUndefined();
+    expect(useHistoryStore.getState().undoStack).toHaveLength(1);
+  });
+
+  it('editor_set_clip_eq refuses an unknown preset, and a preset mixed with band fields', async () => {
+    const bad = await callOp('editor_set_clip_eq', { ...at, preset: 'Loud' });
+    expect(JSON.stringify(bad)).toContain('preset must be one of Flat, Voice clarity');
+    const mixed = await callOp('editor_set_clip_eq', { ...at, preset: 'Flat', band: 0, gain_db: 3 });
+    expect(JSON.stringify(mixed)).toContain('pass it alone');
+    expect(current(SOUND).eq_bands).toBeUndefined();
   });
 
   it('editor_set_clip_transform writes the picture, never the audio half', async () => {
