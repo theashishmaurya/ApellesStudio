@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-03** — **B-300 fixed:** a Motion video's default render scale is 2x only while the result stays within UHD (`scripts/renderScale.mts`), so a 3840x2160 manifest renders at 3840x2160, not 7680x4320; a 1080p manifest still comes out 4K.
+
 - **2026-11-03** — **B-361 fixed:** clicking a caption preset now captions the video. It restyles existing captions, or generates them from the transcript, or transcribes first (with progress and Cancel). The placeholder sample is an explicit option. MCP `editor_add_caption_preset` gains `mode` (auto / sample).
 - **2026-11-03** — **B-362 fixed:** browser panels no longer scroll horizontally. The shared `SelectTrigger` can now shrink (`min-w-0` + a truncating value), the Clipper and Music Edits long labels get tooltips, and the browser tab body has an overflow guard. All 8 tabs were measured at 280 and 220 px.
 - **2026-11-03** — **B-368 fixed:** a Motion video render is muted (no audio stream) unless the manifest has a soundtrack with `render: true` (`scripts/renderAudio.mts`), and the media probe reports an audio stream that is digital silence (mean and peak under -80 dBFS, ffmpeg `volumedetect`, sources up to 10 minutes) as `hasAudio: false`, so existing renders and silent screen recordings stop getting a linked audio half. The probe cache namespace is now `probe-v3`. Rust tests are written but not run (the disk filled).

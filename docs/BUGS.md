@@ -725,7 +725,11 @@ status: **fixed** (2026-10-28) · severity: **minor** · area: MCP answer shapes
 
 ## B-300 — Motion render of a 1920×1080 manifest is right, but a 3840×2160 manifest renders at 7680×4320 (2× scale applied on top of a 4K manifest)
 
-status: **open** · severity: **major** · area: `crates/apelles-motion` render scale (D-342 `setScale(2)`)
+status: **fixed** (2026-11-03) · severity: **major** · area: `packages/motion-engine/scripts/render.mts` render scale (D-342 `setScale(2)`)
+
+- **cause:** `render.mts` applied the D-342 default `scale = 2` to every video whatever the manifest's size, so a manifest already at UHD doubled to 8K.
+- **fix:** `scripts/renderScale.mts` `defaultVideoScale(width, height)`: 2x only while the long edge stays within 3840 px, else 1x (the output is the manifest's own size). A whole-number scale keeps the output an exact multiple of the manifest. An explicit `--scale` (preview stills) is unchanged.
+- **tests:** `scripts/render.test.ts` (1080p -> 2, 3840x2160 -> 1, vertical 1080x1920 -> 2 and 2160x3840 -> 1, 1252x1016 -> 2, 2560x1440 -> 1; the config/runner agreement test now pins `MAX_VIDEO_SCALE`). No 4K render was run (disk budget).
 
 - **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Five Levels edit: setting the Motion manifest to the project's 4K size produced 8K scene renders; the workaround was a 1920×1080 manifest. Expected: render at the manifest's own size (or a documented output-scale option).
 
