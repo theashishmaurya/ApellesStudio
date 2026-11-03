@@ -1,7 +1,6 @@
 # UI redesign: an FCP-style Edit tab (research + spec)
 
-**Status: accepted (D-432). P1 (tokens and type) and P2 (clip block, handles, edit-tool feedback, playhead, layer scale) done 2026-10-31; P3 (track headers, per-track height, ruler, markers, snapping / skimming, two-up viewer) done 2026-11-01; P4 (Inspector) done 2026-11-01; P5 not started.**
-**Status: accepted (D-432). P1 (tokens and type) and P2 (clip block, handles, edit-tool feedback, playhead, layer scale) done 2026-10-31; P3 (track headers, per-track height, ruler, markers, snapping / skimming, two-up viewer) done 2026-11-01; P5 (chrome and layout: full-width timeline, browser tabs, viewer header and transport, top bar) done 2026-11-01, ahead of P4; P4 not started.**
+**Status: accepted (D-432). P1 (tokens and type) and P2 (clip block, handles, edit-tool feedback, playhead, layer scale) done 2026-10-31; P3 (track headers, per-track height, ruler, markers, snapping / skimming, two-up viewer), P5 (chrome and layout) and P4 (Inspector) done 2026-11-01; the v0.3.0 gap closure against the approved mockup (B-359, B-354: §6e) done 2026-11-03.**
 This note is the research trail, the design system, the per-component spec, the list of
 concrete CSS defects in today's components, and the phased plan. The look is shown in
 the static mockup `scratch/ui-redesign-mockup.html` (not app code; `scratch/` is
@@ -1084,9 +1083,10 @@ leftovers, closed against the approved mockup (owner: "loved the design",
 - Browser, no media: the grid is a dashed `border-color` `--radius-md` zone
   with `FilmStrip` 24 px and "Import media"; a press opens the picker.
 - Inspector: no selection already shows the timeline / project settings
-  (P4, never blank). Several clips selected shows `InspectorEmptyState`, now
-  `text-xs text-secondary` with a `CursorClick` glyph: "Select one clip to
-  edit its properties." (the shared component gained an optional `icon`).
+  (P4, never blank). A selection that resolves to no single clip shows
+  `InspectorEmptyState`, now `text-xs text-secondary` with a `CursorClick`
+  glyph: "Select a clip to edit its properties." (the shared component gained
+  an optional `icon`).
 - No project: the same copy with a `FolderOpen` glyph, on the type scale.
 - Deviations: the spec's "press E to append" and the browser zone's "⌘I" are
   not shown, because neither shortcut exists yet; the line names the drag
@@ -1107,6 +1107,34 @@ window) shows / hides the Inspector, as in Final Cut, through the same
 `debug_set_editor_inspector` write. Conflict-checked: Cmd+1..3 are the global
 tab switches, Colorist's colour label is Shift+4, and `conflictingIds({})`
 does not list it (pinned in `store.test.ts`).
+
+**Verification (2026-11-03).**
+- Unit / DOM: editor 3142 (the two `editJournal` B-274 cases timed out only
+  while a Rust build saturated the machine; they pass alone), app 117, ui 19,
+  keymap 112, motion 1047, ui-harness 95, debug 127, player 39; tsc editor 3 /
+  app 65 (baselines); `cargo test -p apelles-mcp` (parity, 272 tools) and
+  `apelles-timeline`'s new round-trip test; clippy clean.
+- Live, a `tauri build --debug` bundle (`studio.apelles.perf3`, control port
+  19797): the three new harness scenarios pass, and the full default suite is
+  60/61 (only `zoom-trackpad-pinch`, the known second-instance magnify issue,
+  roadmap 00r item 5).
+- Screenshots, in the main checkout's `scratch/ui-compare/after-v030/`:
+  `rest.png` (compare with `../mockup-rest.png`), `inspector-info.png`,
+  `empty-timeline.png`. Taken on a synthetic demo project (the harness's test
+  media): the owner's projects reference `~/Downloads`, which macOS blocks
+  for a new bundle id until access is granted, so a copy of them could not
+  open in the test bundle (its probes wait on that permission; not an app
+  bug).
+- Two defects seen only live and fixed: the empty line wrapped one word per
+  row (a `@container` on a shrink-wrapped box), and the active Inspector tab
+  had no `bg-secondary` chip (the line variant's group selector won, a P4
+  leftover). A screenshot of an occluded window freezes CSS transitions, so
+  the shots were taken with the bundle briefly frontmost
+  (`debug_activate_app`, then restored).
+- Known look difference, not fixed: at the default 320 px Inspector the
+  inline sliders are short (about 40 px), because the row keeps P4's 80 px
+  keyframe slot (the spec's is 36) beside the 56 px field. Widening the
+  Inspector widens them; a narrower slot belongs to B-366's pass.
 
 ## 7. Human + AI parity
 
@@ -1209,12 +1237,12 @@ Screenshots: `scratch/ui-compare/app-now.png` (the live dev app, "Nemotron Trans
 - terracotta accent instead of the mock's blue (owner, D-432);
 - Inspector sections collapsed by default (owner, 2026-11-01).
 
-**Gaps, open as B-359:**
-1. The Inspector header lacks the clip duration timecode on the right, and has 2 icon tabs (Video / Audio) where the mock has 4 (Video / Audio / Speed / Info). P4 deviation.
-2. Inspector rows: the mock pairs Position X / Y on one row and gives Scale / Rotation / Opacity inline sliders next to the value; the app uses one field per row and has no sliders. P4 deviation.
-3. Browser: the app has an extra "SOURCES · Select · + Import" header row. The mock puts `+ Import` on the tab row and shows "All media · N items" as a single row, so the app has less room for thumbnails.
-4. Timeline toolbar: the mock's grouping is tools | markers | snapping/link/waveform | a zoom slider. The app has more loose icons, the "128 BPM" text and `− 20% +` instead of a slider. This is B-354's regroup.
-5. Track headers: the mock highlights the target track's badge (accent V1) and shows the track's own name. The app's tracks are still "Video 1 / Audio 1" (the project's data), and there is no target-track concept yet. P3 deviation.
+**Gaps, open as B-359 — all closed 2026-11-03 (§6e has what was built and each deviation; the after screenshots are in `scratch/ui-compare/after-v030/`):**
+1. The Inspector header lacks the clip duration timecode on the right, and has 2 icon tabs (Video / Audio) where the mock has 4 (Video / Audio / Speed / Info). P4 deviation. **Closed:** duration on the right, four tabs (Speed = the retime, Info = read-only facts).
+2. Inspector rows: the mock pairs Position X / Y on one row and gives Scale / Rotation / Opacity inline sliders next to the value; the app uses one field per row and has no sliders. P4 deviation. **Closed:** a paired Position row, `SliderField` on Scale / Rotation / Opacity.
+3. Browser: the app has an extra "SOURCES · Select · + Import" header row. The mock puts `+ Import` on the tab row and shows "All media · N items" as a single row, so the app has less room for thumbnails. **Closed:** Import on the tab row, "N items" and Select on the All media row.
+4. Timeline toolbar: the mock's grouping is tools | markers | snapping/link/waveform | a zoom slider. The app has more loose icons, the "128 BPM" text and `− 20% +` instead of a slider. This is B-354's regroup. **Closed:** the three-column regroup, a zoom slider, the BPM inside a Beat grid popover.
+5. Track headers: the mock highlights the target track's badge (accent V1) and shows the track's own name. The app's tracks are still "Video 1 / Audio 1" (the project's data), and there is no target-track concept yet. P3 deviation. **Closed:** the target track (D-440), the accent pill; names were already the user's own when set.
 6. **The playhead is off screen after a seek through MCP:** `editor_set_playhead` to 0:06 left the timeline scrolled at 3:55–5:05 with zoom at 20 %. The view doesn't follow a programmatic seek, and the zoom a harness run left behind persists in the session's view store. To check: does the view follow a seek (the B-326 follow covers playback), and should the zoom be per timeline? **Fixed 2026-11-03 (B-359 item 6):** a paused jump outside the view centres it; zoom and scroll are per timeline.
-7. Faint vertical lines run through the lanes at marker positions in the app; the mock has none. Decide whether markers should draw through the lanes; FCP draws them in the ruler only.
-8. Empty states and the volume popover are still missing (B-354).
+7. Faint vertical lines run through the lanes at marker positions in the app; the mock has none. Decide whether markers should draw through the lanes; FCP draws them in the ruler only. **Closed:** they were the beat grid's downbeat lines, now in the ruler and marker band only.
+8. Empty states and the volume popover are still missing (B-354). **Closed:** §4.13 empty states, the volume popover, Cmd+4.

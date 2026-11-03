@@ -594,11 +594,12 @@ export function ClipInspectorPanel({
   const [ratioLocked, setRatioLocked] = useState(() => clip?.box_width == null && clip?.box_height == null);
 
   if (!clip) {
-    // v0.3.0 (§4.13) — reached with several clips selected (no selection shows
-    // the timeline settings instead): say what to do, with a glyph.
+    // v0.3.0 (§4.13) — reached when the selection resolves to no single clip
+    // (several selected, or one the open timeline does not hold); no selection
+    // at all shows the timeline settings instead. Say what to do, with a glyph.
     return (
       <InspectorEmptyState icon={<CursorClickIcon aria-hidden />}>
-        Select one clip to edit its properties.
+        Select a clip to edit its properties.
       </InspectorEmptyState>
     );
   }
