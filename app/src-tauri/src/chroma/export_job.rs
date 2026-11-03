@@ -108,10 +108,6 @@ impl CancelGuard {
     pub fn is_cancelled(&self) -> bool {
         self.handle.is_cancelled()
     }
-
-    pub fn attach(&self, child: &Arc<SharedChild>) {
-        self.handle.attach(child);
-    }
 }
 
 impl Drop for CancelGuard {
@@ -288,8 +284,8 @@ mod tests {
         let guard = register(Some("job-kill")).expect("register");
         let a = sleeper();
         let b = sleeper();
-        guard.attach(&a);
-        guard.attach(&b);
+        guard.handle().attach(&a);
+        guard.handle().attach(&b);
         let out = cancel("job-kill");
         assert!(out.was_running);
         assert!(guard.is_cancelled());
@@ -307,7 +303,7 @@ mod tests {
         let guard = register(Some("job-late")).expect("register");
         cancel("job-late");
         let late = sleeper();
-        guard.attach(&late);
+        guard.handle().attach(&late);
         assert!(
             late.wait_timeout(std::time::Duration::from_secs(5))
                 .expect("wait")
