@@ -168,6 +168,8 @@ pub struct AddShotsArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct OpenProjectArgs {
     pub name_or_path: String,
+    #[serde(default)]
+    pub include_grade: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -175,6 +177,8 @@ pub struct NewProjectArgs {
     pub name: String,
     #[serde(default)]
     pub media_paths: Option<Vec<String>>,
+    #[serde(default)]
+    pub include_grade: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -749,8 +753,11 @@ impl ApellesMcp {
         description = r#"Open a saved project by name (see list_projects) or absolute `.chroma`
     path. Loads its shots into the session, restores each shot's grade, and puts
     the app in the editor. A shot whose source file is missing is flagged "media
-    offline" — not fatal; relink it in the app. Returns {opened: {name, path},
-    shots}.
+    offline" — not fatal; relink it in the app. Returns the compact
+    {opened: {name, path}, shotCount, timelines: [{id, name, active}]} (B-319:
+    it used to attach the active shot's whole grade document and histogram,
+    ~10 KB). Pass `include_grade=True` for the old shape: {opened, shots} plus
+    the rendered frame, grade and histogram.
 
     Switches the WHOLE app, every tab: the Edit tab reloads this project's own
     timeline and media pool, and the Motion tab its manifest (B-083). Their
@@ -771,9 +778,11 @@ impl ApellesMcp {
         } else {
             "name"
         };
-        let env = self
-            .op("open_project", WireArgs::new().set(key, arg))
-            .await?;
+        // `include_grade` is sent only when true: the false default is the handler's own.
+        let args = WireArgs::new()
+            .set(key, arg)
+            .put("include_grade", p.include_grade.filter(|on| *on));
+        let env = self.op("open_project", args).await?;
         Ok(render::json_text(&env))
     }
 
@@ -799,8 +808,9 @@ impl ApellesMcp {
         name = "new_project",
         description = r#"Create a new `<name>.chroma` project in the projects folder from the given
     media (absolute paths; may be empty and added later), then open it in the
-    editor. Media is referenced in place, never copied. Returns {created:
-    {name, path}}.
+    editor. Media is referenced in place, never copied. Returns the compact
+    {created: {name, path}, shotCount, timelines: [{id, name, active}]} (B-319);
+    `include_grade=True` also attaches the rendered frame, grade and histogram.
 
     B-171: `media_paths` lands in the Edit tab's media pool only — NOT placed
     on the timeline. Follow with editor_add_clip (per path, in whatever order
@@ -819,7 +829,8 @@ impl ApellesMcp {
             // An omitted media list is sent as an empty one, not left out: "create it
             // with nothing in it yet" is a documented call, and the handler reads the
             // key rather than defaulting it.
-            .set("media_paths", p.media_paths.unwrap_or_default());
+            .set("media_paths", p.media_paths.unwrap_or_default())
+            .put("include_grade", p.include_grade.filter(|on| *on));
         let env = self.op("new_project", args).await?;
         Ok(render::json_text(&env))
     }

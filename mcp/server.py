@@ -860,7 +860,7 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "top-left corner, and 0.5,0.5 puts the box's top-left corner at "
             "the canvas centre) — not pixels, not fractions of the clip's own "
             "source resolution, and NOT an offset from the canvas centre. "
-            "crop_left/top/right/bottom are fractions (0..1) of the CLIP "
+            "TITLES AND TEXT CLIPS follow the same rule, it just looks different (B-295): a title's layer is the WHOLE CANVAS with the text already centred in it, so its top-left corner is the canvas's and position (0, 0) leaves the text centred; position_x/position_y then move the text's centre away from the canvas centre by that fraction of the width/height. To put a title's centre at (cx, cy) pass position (cx - 0.5, cy - 0.5). A picture clip smaller than the canvas has its own smaller box, so its (0, 0) is the canvas's top-left corner. crop_left/top/right/bottom are fractions (0..1) of the CLIP "
             "trimmed off each edge, applied before scale. D-338 (fixes B-201, "
             "2026-09-16) made this true of the LIVE PREVIEW as well as the "
             "export: before it the Rust compositor centred a layer and read "
@@ -2858,7 +2858,7 @@ def editor_add_text_clip(
 
     **What else you can do to a title:** its OPACITY and POSITION are
     ordinary clip properties — `editor_set_clip_transform` with
-    `position_x`/`position_y` (fractions of the frame, 0,0 = centred) and
+    `position_x`/`position_y` (fractions of the frame; **a title's (0, 0) is CENTRED**, and the values offset the text's centre from the frame's centre, so to centre it on (cx, cy) pass (cx - 0.5, cy - 0.5); this is the same top-left-corner rule picture clips follow, because a title's layer is the whole canvas with the text centred in it, see `editor_get_capabilities` `position_and_crop_units`) and
     `opacity`, and `editor_set_clip_keyframes` animates either of them, the
     same way it animates a video clip's. `editor_set_clip_fade` fades it in
     and out.
@@ -6842,12 +6842,15 @@ def list_projects() -> str:
 
 
 @mcp.tool()
-def open_project(name_or_path: str) -> str:
+def open_project(name_or_path: str, include_grade: bool | None = None) -> str:
     """Open a saved project by name (see list_projects) or absolute `.chroma`
     path. Loads its shots into the session, restores each shot's grade, and puts
     the app in the editor. A shot whose source file is missing is flagged "media
-    offline" — not fatal; relink it in the app. Returns {opened: {name, path},
-    shots}.
+    offline" — not fatal; relink it in the app. Returns the compact
+    {opened: {name, path}, shotCount, timelines: [{id, name, active}]} (B-319:
+    it used to attach the active shot's whole grade document and histogram,
+    ~10 KB). Pass `include_grade=True` for the old shape: {opened, shots} plus
+    the rendered frame, grade and histogram.
 
     Switches the WHOLE app, every tab: the Edit tab reloads this project's own
     timeline and media pool, and the Motion tab its manifest (B-083). Their
@@ -6857,7 +6860,10 @@ def open_project(name_or_path: str) -> str:
 
     arg = name_or_path
     key = "path" if ("/" in arg or arg.endswith(".chroma")) else "name"
-    return json.dumps(_op("open_project", **{key: arg}), indent=2, default=str)
+    args: dict = {key: arg}
+    if include_grade:
+        args["include_grade"] = True
+    return json.dumps(_op("open_project", **args), indent=2, default=str)
 
 
 @mcp.tool()
@@ -6878,11 +6884,14 @@ def close_project() -> str:
 
 
 @mcp.tool()
-def new_project(name: str, media_paths: list[str] | None = None) -> str:
+def new_project(
+    name: str, media_paths: list[str] | None = None, include_grade: bool | None = None
+) -> str:
     """Create a new `<name>.chroma` project in the projects folder from the given
     media (absolute paths; may be empty and added later), then open it in the
-    editor. Media is referenced in place, never copied. Returns {created:
-    {name, path}}.
+    editor. Media is referenced in place, never copied. Returns the compact
+    {created: {name, path}, shotCount, timelines: [{id, name, active}]} (B-319);
+    `include_grade=True` also attaches the rendered frame, grade and histogram.
 
     B-171: `media_paths` lands in the Edit tab's media pool only — NOT placed
     on the timeline. Follow with editor_add_clip (per path, in whatever order
@@ -6893,11 +6902,10 @@ def new_project(name: str, media_paths: list[str] | None = None) -> str:
     (B-083), a beat behind this call's return."""
     import json
 
-    return json.dumps(
-        _op("new_project", name=name, media_paths=media_paths or []),
-        indent=2,
-        default=str,
-    )
+    args: dict = {"name": name, "media_paths": media_paths or []}
+    if include_grade:
+        args["include_grade"] = True
+    return json.dumps(_op("new_project", **args), indent=2, default=str)
 
 
 @mcp.tool()

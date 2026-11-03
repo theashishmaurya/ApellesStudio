@@ -3337,7 +3337,7 @@ impl ApellesMcp {
 
     **What else you can do to a title:** its OPACITY and POSITION are
     ordinary clip properties — `editor_set_clip_transform` with
-    `position_x`/`position_y` (fractions of the frame, 0,0 = centred) and
+    `position_x`/`position_y` (fractions of the frame; **a title's (0, 0) is CENTRED**, and the values offset the text's centre from the frame's centre, so to centre it on (cx, cy) pass (cx - 0.5, cy - 0.5); this is the same top-left-corner rule picture clips follow, because a title's layer is the whole canvas with the text centred in it, see `editor_get_capabilities` `position_and_crop_units`) and
     `opacity`, and `editor_set_clip_keyframes` animates either of them, the
     same way it animates a video clip's. `editor_set_clip_fade` fades it in
     and out.

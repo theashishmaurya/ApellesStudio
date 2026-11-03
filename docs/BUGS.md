@@ -589,7 +589,7 @@ status: **open** · severity: **medium** · area: Motion engine (`primitives/Tex
 
 ## B-319 — `new_project` (and `open_project`) still answer with the whole grade document
 
-status: **open** · severity: **minor** · found 2026-10-28 (live check of B-296's fix)
+status: **fixed 2026-11-03** · severity: **minor** · found 2026-10-28 (live check of B-296's fix)
 
 `new_project` returned the full Colorist `adjustments` object (every curve, HSL band and lens
 field, ~10 KB) plus null image/histogram/scopes keys, when the caller only needs
@@ -601,6 +601,8 @@ through the grading reply wrapper instead of the bridge op class B-296 changed. 
   answered `{projects, folder}` wrapped in the full `adjustments` object plus null
   histogram keys (~10 KB of grade the caller never asked for). `new_project` still does it too.
   Same fix applies: list_projects answers `{projects, folder}` only.
+
+- **fix 2026-11-03:** `open_project` / `new_project` are result-only on the Colorist bridge unless `include_grade` is passed (`bridgeOpClasses.isResultOnlyOp(op, args)`, `wantsGrade`), and `list_projects` is result-only always. Default answers: `open_project` `{opened: {name, path}, shotCount, timelines: [{id, name, active}]}`, `new_project` `{created: {name, path}, shotCount, timelines}` (`projectSummary.ts`). `include_grade=true` restores the old shape (`{opened, shots}` / `{created}` plus the rendered frame, grade and histogram). New parameter on both servers (`mcp/server.py`, `colorist.rs`), corpus re-captured, 270 tools unchanged. Tests: `bridgeOpClasses.test.ts`, `projectSummary.test.ts`.
 
 ## B-323 — a new project's Edit timeline is 24 fps and no MCP tool can change it; `set_project_settings(fps=30)` does not reach it
 
@@ -774,9 +776,11 @@ status: **fixed** (2026-10-28) · severity: **minor** · area: MCP answer shapes
 
 ## B-295 — title/text clip `position_x/y` are offsets from the centre while image/video use a different convention, undocumented
 
-status: **open** · severity: **minor** · area: `editor_set_clip_transform` docs / `editor_get_capabilities`
+status: **fixed 2026-11-03 (documented; there is one convention, not two)** · severity: **minor** · area: `editor_set_clip_transform` docs / `editor_get_capabilities`
 
 - **found:** 2026-10-28 by the agent editing "Five Levels of Claude Code" in the live app. Document (or unify) the convention.
+- **finding:** there is only ONE rule, applied to two differently-sized boxes. Since D-338, `position_x/y` is always the TOP-LEFT corner of the clip's layer box, as a fraction of the canvas. A title's layer is rasterised canvas-sized with the text centred in it (`text.rs` `render_text_layer`, one compositor path for both kinds), so its top-left corner IS the canvas corner and position (0, 0) leaves the text centred; the values then offset the text's centre from the frame's centre. A picture clip smaller than the canvas has its own smaller box, so its (0, 0) is the canvas's top-left corner. Migrating titles to a "centre = position" reading would re-key every stored title and keyframe and fork the one compositor path for no gain, so the convention stays and is documented instead.
+- **fix:** stated in `editor_get_capabilities` `position_and_crop_units` and in `editor_add_text_clip`'s docstring (centre a title on (cx, cy) with position (cx - 0.5, cy - 0.5)), in both servers (`mcp/server.py`, `capabilities.json` + `edit.rs`), corpus re-captured.
 
 ## B-294 — Openverse calls fail often: cold `editor_search_audio` 35-55 s then 504; record endpoint intermittent 500; an `editor_import_audio` timed out at 120 s but finished later (file + credit written, clip not placed)
 
