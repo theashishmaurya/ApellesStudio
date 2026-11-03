@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-03** — **B-369 logged** (owner): project open is slow and shows only a generic spinner. Measure the open per phase, then cut the long poles, plus a branded Apelles loader with phase and progress. Added to v0.3.0.
 - **2026-11-03** — **v0.3.0 scope widened** (owner): the major bugs plus the Motion minors join the release; roadmap 00h added (a built-in chat over the user's own Claude Code / Codex CLI subscription, ToS-checked, for v0.4.0).
 - **2026-11-03** — **B-336 fixed:** a Clipper short built from a timeline source now carries every track of the chosen stretch (picture reframed for 9:16, demo sound, music, titles, Motion cards, linked pairs kept), tightened across all tracks, and captioned from the voice even when it sits on an audio track. A voice-only build is captioned too.
 - **2026-11-03** — **B-335 fixed:** every `editor_export` is its own export-queue job with its own id (`jobId` in the answer); a second export while one runs queues behind it and reports its own output. `editor_export_status` takes `job_id` (queued / running / done / failed per job); the MCP bridge-timeout poll follows its own job. Python and Rust servers updated, corpus re-captured, 269 tools unchanged.

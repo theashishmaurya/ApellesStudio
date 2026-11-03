@@ -4,6 +4,16 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-369 — opening a project is slow, and the wait shows only a generic spinner ("Opening…"); there's no branded, informative loader
+
+status: open (owner, 2026-11-03: "this loading and loading timeline etc. takes a lot of time, we need an Apelles logo branded loader") · severity: medium (first impression on every launch) · area: the project launcher card's open state, the Edit tab's timeline load, `useSessionStore.openProject`, media reprobe and thumbnail/waveform warm-up
+
+- **Seen:** the owner's screenshot `scratch/bug-refs/2026-11-03-opening-loader.png`: a project card dimmed with a small spinner and "Opening…", which then takes a long time.
+- **Two halves:**
+  1. **Make it faster, measured first:** time each phase of an open (read project.json, media pool reprobe, timeline hydrate, thumbnails/peaks, Motion manifest, grade load, the first preview frame) with the S0 perf marks, on a big project like Nemotron (288 clips). Then cut the long poles: lazy or parallel reprobe; show the timeline before thumbnails and peaks arrive; defer the Motion and Colorist loads until their tab is opened.
+  2. **A branded loader:** a full-window (or card-level) Apelles loader using the **real Apelles mark** (the app icon / logo asset; never a hand-drawn SVG, per CLAUDE.md), with the phase in words ("Reading project…", "Loading 288 clips…", "Preparing previews…") and determinate progress where the phase count is known. Calm motion, using P1 tokens with the terracotta accent; reduced-motion respected. The same component for project open, the timeline switch and other long waits.
+- **AI parity:** `editor_get_state` reports the open phase and progress, so an agent waiting on an open can see where it is.
+
 ## B-368 — placing a Motion render on the timeline adds a linked audio clip, though the render has no sound (it carries a silent AAC track)
 
 status: fixed (2026-11-03; the Rust probe tests are written but were not run, see Fixed) · severity: medium (every Motion card adds a junk audio clip, clutters the audio tracks, and its silent "audio" can trigger ducking or loudness logic) · area: `packages/motion-engine/scripts/render.mts` (`renderMedia` options), the media probe's `hasAudio` (D-129), `linkedClipsFromDraggedMedia`
