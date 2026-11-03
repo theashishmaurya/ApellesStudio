@@ -462,6 +462,31 @@ reproduced, not as a defect.
   exist, with the production web bundle), start that app with `CHROMA_CONTROL_PORT=<free port>`
   if the dev app is running, and point the harness at it with `--port`. See "Baseline recipe" below for
   the exact commands (D-437 S0c).
+- **Attributing a release (D-437 S11, B-374).** The marks say how long, not what. Arm the
+  release tracer before the run (`curl -s -X POST 127.0.0.1:<port>/op -d
+  '{"op":"debug_perf_entries","args":{"prefix":"x","traceReleaseMs":250},"timeout_ms":3000}'`),
+  run the scenario, then read `{"prefix":"apelles:trace:"}`: every forced layout after the
+  commit with its caller, every timer / rAF / message / observer callback, and the gaps where
+  the main thread was held by something unwrapped. A `layout` row is the cost of the style and
+  layout that the read forced; to measure the style + layout a change leaves behind, a
+  throwaway `document.body.offsetWidth` read right after it does the same (that is how the
+  descendant cursor rule was found). Which components rendered needs React's profiling build:
+  for an exploration bundle only, alias `react-dom/client` to `react-dom/profiling` in the Vite
+  config and wrap the root in a `<Profiler>`; the tracer then turns React's
+  `console.timeStamp` component track into `react|…` rows. Timer resolution in WKWebView is
+  1 ms.
+- **The release phase is every frame after the `pointerup`,** not only the commit's frame, so a
+  heavy frame one or two frames later (the Inspector mounting for the newly selected clip, a
+  filmstrip decode landing) is the `releaseMaxMs` too.
+- **The perf app's window.** A `tauri build --debug` app opens at the 1280×720 default, where
+  `perf-300-move-clip`'s target on track 4 is below the viewport ("outside the 1280×720
+  viewport"). Size it like the dev app before a run: `osascript -e 'tell application "System
+  Events" to tell (first process whose bundle identifier is "studio.apelles.perf") to set size
+  of window 1 to {1470, 923}'`. A different window size mounts a different number of clips,
+  so compare runs at the same size.
+- **Machine load moves every number.** With other builds running (load average 25–40 on 10
+  cores) the same bundle's release frames doubled. Record `sysctl -n vm.loadavg` with each run
+  and A/B two bundles interleaved, not hours apart.
 
 ### Baseline recipe (D-437 S0c: the 300-clip perf run, dev and production bundle)
 

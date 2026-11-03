@@ -292,6 +292,18 @@ several rounds of the owner's own screenshots before an agent could even confirm
      phases, `app/src/store/useOpenProgressStore.ts`) and `apelles:load:*` (a timeline
      load's hydrate / paint / first preview frame / first filmstrip / first waveform,
      `@apelles/editor`'s `loadPerf.ts`); see `docs/notes/project-open.md`.
+     **Release tracer (B-374, D-437 S11):** `traceReleaseMs` arms `releaseTrace.ts` (0
+     disarms). From each following `apelles:edit:commit` mark, for that many ms, it writes
+     `apelles:trace:<kind>|<label>` measures: `layout` (a `getBoundingClientRect` /
+     `offset*` / `client*` / `scroll*` read or `scrollLeft` write that took time, i.e. a forced
+     layout, labelled with its caller's frames), `timeout` / `raf` / `message` /
+     `ResizeObserver` / `MutationObserver` / `IntersectionObserver` callbacks (labelled with
+     where they were registered), `listener` (listeners added after arming), `react` (React's
+     profiling-build component track, when the bundle uses `react-dom/profiling` under a
+     `<Profiler>`), `gap` (a back-to-back `MessageChannel` probe that could not run: someone
+     else held the main thread, or a rendering update ran) and `frame` (rAF). The Tauri
+     internals are frozen, so `invoke` is not wrapped (`trace.unwrapped` says so). Wrappers
+     stay installed for the page's life once armed; the op is debug-only like the rest.
    - **`debug_set_occlusion_throttling`** (native control op): WebKit's
      `_setWindowOcclusionDetectionEnabled:`, so a covered window keeps running rAF.
      This is the first tool aimed at the throttling wall the sections below keep

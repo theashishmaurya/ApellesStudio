@@ -119,6 +119,7 @@ import {
 import { customProxyStore } from '@apelles/motion/src/customProxyStore';
 
 import { describeOpenDialogs, serializeDomTree } from './domTree';
+import { armReleaseTrace } from './releaseTrace';
 import {
   fpsOverlayState,
   OVERLAY_CORNERS,
@@ -427,8 +428,14 @@ export const DEBUG_OPS: Record<string, OpHandler> = {
       if (!Number.isFinite(ms) || ms < 0) return { error: "'waitIdleMs' must be a non-negative number of milliseconds" };
       idle = await waitForIdle(browserIdleDeps(), ms);
     }
+    let trace: ReturnType<typeof armReleaseTrace> | undefined;
+    if (a?.traceReleaseMs !== undefined && a.traceReleaseMs !== null) {
+      const ms = Math.round(Number(a.traceReleaseMs));
+      if (!Number.isFinite(ms) || ms < 0) return { error: "'traceReleaseMs' must be a non-negative number of milliseconds" };
+      trace = armReleaseTrace(ms);
+    }
     const entries = readPerfEntries(performance, prefix, a?.clear === true);
-    return { ok: true, prefix, entries, build: { dev: import.meta.env.DEV, perfMarks: import.meta.env.APELLES_PERF_MARKS === 'true', debugTools: import.meta.env.APELLES_DEBUG_TOOLS === 'true' }, ...(idle ? { idle } : {}) };
+    return { ok: true, prefix, entries, ...(trace ? { trace } : {}), build: { dev: import.meta.env.DEV, perfMarks: import.meta.env.APELLES_PERF_MARKS === 'true', debugTools: import.meta.env.APELLES_DEBUG_TOOLS === 'true' }, ...(idle ? { idle } : {}) };
   },
 
   debug_set_fps_overlay: (a) => {

@@ -215,6 +215,8 @@ pub struct DebugPerfEntriesArgs {
     pub clear: bool,
     #[serde(default)]
     pub wait_idle_ms: Option<i64>,
+    #[serde(default)]
+    pub trace_release_ms: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -995,9 +997,15 @@ impl ApellesMcp {
         wait_idle_ms: before reading, wait until the page has been idle (frames
             on time, no long task) for about this long, at most five seconds;
             use it between building a fixture and measuring.
+        trace_release_ms: arm the release tracer (`releaseTrace.ts`, B-374):
+            from every following `apelles:edit:commit` for this many ms
+            (0 disarms, at most 2000), forced layouts, timer / rAF / message /
+            observer callbacks, listeners added after arming and main-thread
+            gaps are written as `apelles:trace:<kind>|<label>` measures, read
+            back with `prefix: "apelles:trace:"`.
 
     Returns {entries: [{name, entryType, startTime, duration}], build: {dev},
-    idle?: {waitedMs, reached}}."#
+    idle?: {waitedMs, reached}, trace?: {armed, windowMs, unwrapped}}."#
     )]
     pub async fn debug_perf_entries(
         &self,
@@ -1005,7 +1013,8 @@ impl ApellesMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let mut args = WireArgs::new()
             .put("prefix", p.prefix)
-            .put("waitIdleMs", p.wait_idle_ms);
+            .put("waitIdleMs", p.wait_idle_ms)
+            .put("traceReleaseMs", p.trace_release_ms);
         if p.clear {
             args = args.set("clear", Value::Bool(true));
         }
