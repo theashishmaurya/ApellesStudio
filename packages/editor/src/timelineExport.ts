@@ -109,7 +109,7 @@ import {
   resolveDuckForTrack,
   type AudioRef,
 } from './timelineExportAudio';
-import { audioCodecArgs, filterVideoCodecArgs, type ExportFormat } from './exportFormat';
+import { audioCodecArgs, filterVideoCodecArgs, type ExportEncoder, type ExportFormat } from './exportFormat';
 
 // --------------------------------------------------------------------------- //
 // keyframeExprAt — piecewise-linear ffmpeg expression generator
@@ -1123,6 +1123,10 @@ export interface TimelineExportOptions {
   /** D-441 — the file format (`exportFormat.ts`). Absent = `h264`, the
    *  only format before D-441, so every existing caller compiles the same argv. */
   format?: ExportFormat;
+  /** D-446 — the encoder (`exportFormat.ts`). Absent = `software`, the only
+   *  encoder before D-446, so a caller that names none compiles the same argv
+   *  it always did; `compileEditorExportArgs` passes `hardware` by default. */
+  encoder?: ExportEncoder;
 }
 
 // --------------------------------------------------------------------------- //
@@ -2831,9 +2835,10 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
     `[${lastLabel}]`,
   ];
   if (audioMapArg) args.push('-map', audioMapArg);
-  // D-441 — the format's codecs (nothing for H.264: ffmpeg's `.mp4` default).
+  // D-441 — the format's codecs (nothing for software H.264: ffmpeg's `.mp4`
+  // default); D-446 — on the encoder the caller chose.
   const format = opts.format ?? 'h264';
-  args.push(...filterVideoCodecArgs(format));
+  args.push(...filterVideoCodecArgs(format, opts.encoder ?? 'software'));
   if (audioMapArg) args.push(...audioCodecArgs(format));
   args.push('-r', String(opts.fps), '-t', String(totalDurationSec), outPath);
   return args;

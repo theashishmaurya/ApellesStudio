@@ -4,17 +4,19 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
-## B-380 — exports are slower than real time (1080p ≈ 1.1× the video's length) and 4K export time has never been measured
+## B-380 — exports are slower than real time, and 4K export time had never been measured
 
-status: open (owner, 2026-11-03: "did we fix the export performance on 4K ones? Time taking and all?") · severity: medium-high (the owner's real footage is 4K) · area: `app/src-tauri/src/chroma/edit_render.rs` (segmented render), `crates/apelles-media/src/decode_pipe.rs`, D-350/D-351/D-360/D-373, `docs/notes/export-gpu-compositor.md`
+status: **open, in progress** (owner, 2026-11-03: "did we fix the export performance on 4K ones? Time taking and all?"; a v0.3.0 blocker, roadmap 00r 5a). **Measured and hardware encode landed 2026-11-03 (D-446, worktree)**; 4K is still slower than real time · severity: medium-high (the owner's real footage is 4K) · area: `packages/editor/src/exportFormat.ts`, `app/src-tauri/src/chroma/edit_render.rs` (+ `export_bench.rs`), `crates/apelles-media/src/decode_pipe.rs`, D-350/D-360/D-363/D-373/D-446, `docs/notes/export-gpu-compositor.md` §13
 
-- **Measured so far (1080p fixture, best of 3):** 1 segment 1.81× runtime → 4 segments **1.10×** (D-360). Never under 1×.
-- **4K: unmeasured end to end.** The export notes say so (§10.5 caveat). B-340 (2026-11-03) only bounds memory; it does not change speed.
-- **Known levers, in order of cost:**
-  1. **Hardware encode** (`h264_videotoolbox` / `hevc_videotoolbox`) per segment instead of libx264. It frees the CPU for compositing and is close to a parameter change. Check the determinism contract first: the render's pixels must stay deterministic; whether the *encoded bitstream* must also be bit-identical needs a written decision.
-  2. **The serial `image::imageops::resize`** inside a frame.
-  3. **GPU compositing** (D-350's unfinished half): the largest unclaimed factor.
-- **First step:** measure a real 4K export end to end (the owner's footage, a copy) at 1/2/4/6 segments; record wall time ÷ video length and peak memory; then do lever 1 and re-measure. The numbers go into `docs/perf/README.md` as an export floor.
+- **Measured (2026-11-03):** a reproducible benchmark, `measure_export_benchmark`. It runs a 60 s explainer-shaped fixture at 1080p and 4K, on both renderers and both encoders, and times each stage. Numbers are in `docs/perf/README.md` "Export"; the raw report is beside it.
+- **The biggest cost was the CPU encoder.** At 4K, libx264 alone ran at 7.6× real time on a piped clip, and in the compositor export the workers spent 109 s blocked on it. The loudness pass (about 1 s) and the final resize (0 s) were measured as negligible and left alone.
+- **Fixed by D-446:** VideoToolbox encode is now the default (H.264 at q 70, measured equal to CRF 18 on PSNR, SSIM and VMAF; ProRes via `prores_videotoolbox` fed `bgra`, which scores at or above `prores_ks`). Software stays one setting away (`encoder: "software"`, More settings → Encoder).
+  - 4K: filter path 2.78× → 2.46×; compositor path 4.06× → **1.38×**.
+  - 1080p: filter path 0.58× → 0.49×; compositor path 0.88× → **0.35×**.
+- **Still open:** 4K under 1× on the default path.
+  - The filter path is held by its own B-229/B-230 thread caps: 21% CPU, and 2.36× with no encoder at all.
+  - The compositor path is held by the CPU blend (about 58% of busy samples) and the decode pipes' reads (about 28%).
+  - Next, in order (`docs/notes/export-gpu-compositor.md` §13.3): make the compositor the default renderer (owner call: it changes the default picture path; it needs a fallback for the Clip exceptions), then D-363's GPU compositor.
 
 ## B-376 — the move drag at 300 clips still spikes to 49–66 ms on some runs (before release)
 

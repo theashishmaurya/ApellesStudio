@@ -20,7 +20,7 @@ about to try to parallelise this loop. **Section 10 is phase 3**, which is the
 parallelisation §9.2 says IS correct, and §10.5 is the honest measurement of how
 far it got (1.64x, and still not under 1x) — including why a single timing run
 on this machine is worthless and what the harness does about it. **Section 11
-is the plan for what comes next** — moving the compositor itself onto the GPU
+is the plan for what comes next**, and **§13 (B-380, D-446, 2026-11-03)** is its wave 0: the measured 4K stage split, the hardware encoder pulled forward, and the plan re-ordered by payoff — moving the compositor itself onto the GPU
 — scoped but explicitly deferred; start there, not from scratch, when this is
 picked back up.
 
@@ -1264,3 +1264,59 @@ guessing, and both tool descriptions say so outright.
 | `packages/editor/src/editorExport.ts` | `TimelineExportStatus`, `readTimelineExportStatus`, `runCompiledExport` passes the output path |
 | `packages/editor/src/exportQueueStore.ts` | `ExportJob.progress`, `followProgress` and its stale-`jobId` guard |
 | `packages/editor/src/EditorExportDialog.tsx` | `JobProgress` — the real bar, percentage, frame and segment counts, ETA |
+
+---
+
+# 13. B-380 (2026-11-03): where the 4K time goes, the hardware encoder, and the GPU plan updated
+
+**Decision:** D-446 (VideoToolbox encode by default). **Numbers:** `docs/perf/README.md` "Export" and
+`docs/perf/2026-11-03-export-benchmark-report.md`. **Harness:** `app/src-tauri/src/chroma/export_bench.rs`
+(`measure_export_benchmark`, `#[ignore]`d), fixture `tests/fixtures/export-bench.json` from
+`packages/editor/src/exportBenchFixture.test.ts`.
+
+§11.4 wave 0 asked for a per-phase measurement before any GPU code. This is that measurement, on a synthetic
+60 s explainer-shaped timeline rather than the owner's project (the task allowed fixtures only), with grain and
+motion so the encoders do real work. The renderer now reports its stages itself (`RenderStages` on
+`TimelineRenderOutcome`: decode + composite, resize, waiting on the encoder, concat, loudness), so the split no
+longer has to be inferred from totals.
+
+## 13.1 What the split said
+
+At 4K with libx264 (2 segments, 4.06x real time), the two workers spent **109 s blocked handing frames to the
+encoder** against 329 s in decode + composite. §11.3 modelled that encode would be ~20%. It was larger than
+that, so wave 4's hardware encode was pulled forward and done first (D-446). With VideoToolbox the wait drops
+to 2 s and the export to **1.38x**. The resize term is **0**: `canvas_plan` composites straight at the output
+size whenever the aspect ratio matches, which every fixture case does.
+
+## 13.2 What is left at 4K, measured
+
+- **Segments do not scale past 2 at 4K.** 2 → 1.37x, 3 → 1.76x, 4 → 1.64x, 6 → 1.99x, with CPU at 50–58%
+  throughout. Per-worker frame time grows with the lane count, so the shared limit is the decode pipes and
+  memory bandwidth (each lane reads 4K RGB frames, about 25 MB each, through a pipe), not cores. The planner's
+  answer (2 for this 3-video-track timeline) is the fastest measured.
+- **A `sample` profile of the hardware-encode render** (15 s, single lane, busy samples only): `blend_layer_sampled`
+  about 58%, `read` on the decode pipes about 28%, writes to the encoder about 10%, `to_rgba8_parallel` about 2%.
+  That run measured 3.92x at 1 lane against 1.37x at 2. Part of that gap is the profiler pausing the process and
+  a load average above 30, so the 1-lane number is a profile, not a floor.
+- **The decode floor** for one 4K track (VideoToolbox → rgb24 pipe, the `decode_pipe` shape) is 18.7 s per
+  60 s, 0.31x. Two overlapping tracks put about 0.5x of the budget in decode before any compositing.
+
+## 13.3 What would reach under 1x, in order of measured payoff
+
+1. **Make the compositor the default renderer.** The Export panel and `editor_export` default to the filter
+   path (`DEFAULT_EXPORT_RENDERER = 'filter'`), which at 4K is 2.46x even with hardware encode and 2.36x with no
+   encoder at all. Its `-threads 1` per input and `-filter_complex_threads 2` (B-229/B-230 memory caps) hold it
+   to 21% CPU. The compositor path is 1.38x on the same timeline. What blocks the flip is D-350 phase 1's
+   refusals (`speedOverrides` / `fitOverrides` / `freezeOverrides`, the panel's "Clip exceptions"). An
+   automatic fallback to the filter path when those are set would be a small change, but it changes which
+   pixels the default export draws, so it is the owner's call.
+2. **§11's GPU compositor, waves 1–3.** It removes the ~58% blend share. Under §11.3's own bandwidth arithmetic
+   (pipelined readback, ~6 ms per 4K frame), the model is: the 2-lane render's ~45 ms per frame of wall time
+   minus most of its blend share is about 25–30 ms, about 0.8x. That is modelled, not measured, the same caveat
+   §11.3 carries.
+3. **`nv12` out of `decode_pipe`** (wave 4's second half): half the pipe bytes of rgb24, and the conversion moves
+   to the GPU with the compositor. This goes after 2, because it only pays once the compositor runs on the GPU.
+
+Hardware encode (D-446) is wave 4's first half, done. It changes output bytes, and parity is measured at the
+picture level (PSNR 44–47 dB, SSIM 0.988–0.992 against the libx264 file on the same path), as §11.4 wave 4
+said it would be.

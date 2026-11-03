@@ -489,6 +489,11 @@ LoudnessPreset = Literal["youtube", "broadcast", "podcast", "off"]
 # .mp4 (the delivery file) or Apple ProRes 422 HQ in a .mov (the master).
 ExportFormat = Literal["h264", "prores_hq"]
 
+# `editor_export`'s `encoder` (D-446): Apple's VideoToolbox media engine (the
+# default -- 4-6x faster at equal measured quality) or the CPU encoders
+# (libx264 / prores_ks, the pre-D-446 output).
+ExportEncoder = Literal["hardware", "software"]
+
 # `editor_save_export_preset`'s `loudness` (D-441): a named platform spec, off,
 # or "custom" with `loudness_lufs` / `true_peak_dbtp`.
 PresetLoudness = Literal["off", "youtube", "broadcast", "podcast", "custom"]

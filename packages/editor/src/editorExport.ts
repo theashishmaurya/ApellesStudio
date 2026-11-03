@@ -49,7 +49,14 @@ import { loadTextFonts, textFontPaths } from './textFonts';
 // the Rust normaliser answers with.
 import { resolveLoudnessTarget, type LoudnessReport, type LoudnessTarget } from './loudness';
 // D-441 — the file format (H.264 delivery or the ProRes master).
-import { formatPathMismatch, isExportFormat, type ExportFormat } from './exportFormat';
+import {
+  DEFAULT_EXPORT_ENCODER,
+  formatPathMismatch,
+  isExportEncoder,
+  isExportFormat,
+  type ExportEncoder,
+  type ExportFormat,
+} from './exportFormat';
 // D-243 — the per-word advances an animated caption is laid out from.
 import { captionMetricsSnapshot, warmCaptionMetrics } from './captionMetrics';
 import { captionLayout, captionLines } from './caption';
@@ -124,6 +131,8 @@ export interface CompiledExport {
   loudness?: LoudnessTarget;
   /** D-441 — the file format the argv writes. */
   format: ExportFormat;
+  /** D-446 — the encoder the argv compresses the picture with. */
+  encoder: ExportEncoder;
 }
 
 export interface CompileError {
@@ -358,6 +367,8 @@ export function compileEditorExportArgs(
   truePeakDbtp?: unknown;
   /** D-441 — `"h264"` (default) or `"prores_hq"` (`exportFormat.ts`). */
   format?: unknown;
+  /** D-446 — `"hardware"` (default, VideoToolbox) or `"software"`. */
+  encoder?: unknown;
   },
   timeline?: Timeline,
 ): CompiledExport | CompileError {
@@ -384,6 +395,11 @@ export function compileEditorExportArgs(
   const format: ExportFormat = isExportFormat(a?.format) ? a.format : 'h264';
   const mismatch = formatPathMismatch(format, outPath);
   if (mismatch) return { error: mismatch };
+  // D-446 — the encoder: VideoToolbox unless the caller asks for software.
+  if (a?.encoder !== undefined && !isExportEncoder(a.encoder)) {
+    return { error: 'encoder must be "hardware" (VideoToolbox, the default) or "software" (libx264 / prores_ks)' };
+  }
+  const encoder: ExportEncoder = isExportEncoder(a?.encoder) ? a.encoder : DEFAULT_EXPORT_ENCODER;
   // D-411 Phase 0 — omitted sizes default to this timeline's own composition.
   const warmedComp = compositionSizeSnapshot(snapshotId);
   const sizeGiven = a?.width !== undefined && a?.width !== null && a?.height !== undefined && a?.height !== null;
@@ -542,6 +558,7 @@ export function compileEditorExportArgs(
     captionMetrics,
     gradeLutPaths,
     format,
+    encoder,
   };
   if (renderer === 'compositor') {
     // D-350 — refused, not silently ignored: each of these changes a clip's
@@ -575,11 +592,12 @@ export function compileEditorExportArgs(
       },
       loudness,
       format,
+      encoder,
     };
   }
 
   const args = buildExportFfmpegArgs(tl, outPath, opts);
-  return { ok: true, outPath, args, renderer, timelineId: tl.id, width, height, loudness, format };
+  return { ok: true, outPath, args, renderer, timelineId: tl.id, width, height, loudness, format, encoder };
 }
 
 /**

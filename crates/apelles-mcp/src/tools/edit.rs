@@ -23,8 +23,8 @@ use crate::args::WireArgs;
 use crate::render;
 use crate::schemas::{
     CaptionScope, ClipHighlightSpec, ClipKeyframe, ClipSelector, CurveSpec, DynamicZoomFraming,
-    ExportFormat, ExportRenderer, FitMode, GapSelector, LoudnessPreset, PresetLoudness,
-    SpeedRampPoint,
+    ExportEncoder, ExportFormat, ExportRenderer, FitMode, GapSelector, LoudnessPreset,
+    PresetLoudness, SpeedRampPoint,
 };
 use crate::server::ApellesMcp;
 
@@ -1120,6 +1120,9 @@ pub struct EditorExportArgs {
     /// D-441 — `"h264"` or `"prores_hq"`.
     #[serde(default)]
     pub format: Option<ExportFormat>,
+    /// D-446 — `"hardware"` (VideoToolbox, the default) or `"software"`.
+    #[serde(default)]
+    pub encoder: Option<ExportEncoder>,
     /// D-411 Phase 0 — optional now: omitted (with `height`), the export is
     /// written at the timeline's own frame size.
     #[serde(default)]
@@ -5466,7 +5469,11 @@ impl ApellesMcp {
     rate, loudness and format; any of those you ALSO pass explicitly wins over
     the preset's value. **`format`** is `"h264"` (default; an .mp4) or
     `"prores_hq"` (Apple ProRes 422 HQ, 10-bit 4:2:2, 24-bit PCM audio — the
-    master; `out_path` must then end in `.mov`). **`out_path` is optional**:
+    master; `out_path` must then end in `.mov`). **`encoder`** (D-446) is
+    `"hardware"` (default: Apple's VideoToolbox media engine -- H.264 at a
+    constant quality measured equal to libx264 CRF 18, or ProRes 422 HQ -- 4-6x
+    faster and it leaves the CPU to compositing) or `"software"` (libx264 /
+    prores_ks on the CPU, the pre-D-446 output, much slower at 4K). **`out_path` is optional**:
     omitted, the file goes where the Export panel's pre-filled "Save as" puts it,
     `~/Movies/<project>/<timeline name>.mp4` (or `.mov`), never over an existing
     file. The answer carries `outPath`. **A running export can be stopped** with
@@ -5593,6 +5600,7 @@ impl ApellesMcp {
             .put("outPath", p.out_path)
             .put("preset", p.preset)
             .put("format", p.format)
+            .put("encoder", p.encoder)
             .put("width", p.width)
             .put("height", p.height)
             .put("timelineId", p.timeline_id)

@@ -50,6 +50,7 @@ from schemas import (
     EaseCurve,
     ExportRenderer,
     LoudnessPreset,
+    ExportEncoder,
     ExportFormat,
     PresetLoudness,
     FitMode,
@@ -4965,6 +4966,7 @@ def editor_export(
     out_path: str | None = None,
     preset: str | None = None,
     format: ExportFormat | None = None,
+    encoder: ExportEncoder | None = None,
     width: int | None = None,
     height: int | None = None,
     fps: float | None = None,
@@ -4992,7 +4994,11 @@ def editor_export(
     rate, loudness and format; any of those you ALSO pass explicitly wins over
     the preset's value. **`format`** is `"h264"` (default; an .mp4) or
     `"prores_hq"` (Apple ProRes 422 HQ, 10-bit 4:2:2, 24-bit PCM audio — the
-    master; `out_path` must then end in `.mov`). **`out_path` is optional**:
+    master; `out_path` must then end in `.mov`). **`encoder`** (D-446) is
+    `"hardware"` (default: Apple's VideoToolbox media engine -- H.264 at a
+    constant quality measured equal to libx264 CRF 18, or ProRes 422 HQ -- 4-6x
+    faster and it leaves the CPU to compositing) or `"software"` (libx264 /
+    prores_ks on the CPU, the pre-D-446 output, much slower at 4K). **`out_path` is optional**:
     omitted, the file goes where the Export panel's pre-filled "Save as" puts it,
     `~/Movies/<project>/<timeline name>.mp4` (or `.mov`), never over an existing
     file. The answer carries `outPath`. **A running export can be stopped** with
@@ -5118,6 +5124,8 @@ def editor_export(
         args["preset"] = preset
     if format is not None:
         args["format"] = format
+    if encoder is not None:
+        args["encoder"] = encoder
     if width is not None:
         args["width"] = width
     if height is not None:
