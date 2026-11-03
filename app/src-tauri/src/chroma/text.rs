@@ -710,6 +710,38 @@ impl TextInk {
     }
 }
 
+/// Faces tried, in order, for a character the chosen face has no glyph for
+/// (B-302). Broad-coverage system faces: Arial Unicode MS and Arial carry the
+/// arrows, math operators and box-drawing a title is likely to use; DejaVu Sans
+/// is the Linux equivalent. Single-face `.ttf` only, like [`TEXT_FONTS`].
+const FALLBACK_FACES: &[&str] = &[
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/Library/Fonts/Arial Unicode.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/Library/Fonts/Arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+];
+
+/// The fallback face (and its scale at `px`) that draws `ch` when `primary` has
+/// no glyph for it; `None` when `primary` has one, when `ch` is whitespace or a
+/// control character (no outline is wanted), or when no fallback face has it
+/// either (the primary face's own `.notdef` is then drawn, as before).
+fn fallback_glyph_face(primary: &FontVec, ch: char, px: u32) -> Option<(Arc<FontVec>, PxScale)> {
+    if ch.is_whitespace() || ch.is_control() || primary.glyph_id(ch).0 != 0 {
+        return None;
+    }
+    FALLBACK_FACES
+        .iter()
+        .map(Path::new)
+        .filter(|p| p.is_file())
+        .filter_map(|p| load_font(p).ok())
+        .find(|face| face.glyph_id(ch).0 != 0)
+        .map(|face| {
+            let scale = freetype_equivalent_scale(&face, px as f32);
+            (face, scale)
+        })
+}
+
 /// Lay `layer`'s content out at `px` and measure its ink box.
 ///
 /// `Ok(None)` — not an error — when there is nothing to draw: empty or
@@ -732,6 +764,20 @@ fn lay_out_text(layer: &TextLayer, px: u32) -> Result<Option<TextInk>, String> {
     let mut prev: Option<GlyphId> = None;
     let mut outlines = Vec::new();
     for ch in layer.content.chars() {
+        // B-302 - a character the chosen face does not have (Georgia has no
+        // arrows) is drawn from a fallback face at the same size instead of
+        // the face's `.notdef` box. Kerning does not cross faces.
+        if let Some((face, face_scale)) = fallback_glyph_face(&font, ch, px) {
+            let id = face.glyph_id(ch);
+            if let Some(outlined) =
+                face.outline_glyph(id.with_scale_and_position(face_scale, point(pen_x, 0.0)))
+            {
+                outlines.push(outlined);
+            }
+            pen_x += face.as_scaled(face_scale).h_advance(id);
+            prev = None;
+            continue;
+        }
         let id = font.glyph_id(ch);
         if let Some(p) = prev {
             pen_x += scaled.kern(p, id);
@@ -859,6 +905,51 @@ fn rasterise(layer: &TextLayer, key: &LayerKey) -> Result<RgbaImage, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// B-302 - Georgia (the `serif` faces) has no `U+2192`; the layout draws it
+    /// from a fallback face, not Georgia's `.notdef` box.
+    #[test]
+    fn an_arrow_missing_from_the_serif_face_comes_from_a_fallback_face() {
+        let Ok(georgia) = resolve_font_path("serif-bold").and_then(|p| load_font(&p)) else {
+            return; // no usable serif face on this machine
+        };
+        if georgia.glyph_id('A').0 == 0 {
+            return;
+        }
+        let arrow = '\u{2192}';
+        if georgia.glyph_id(arrow).0 != 0 {
+            return; // this machine's serif face has the arrow: nothing to fall back from
+        }
+        let (face, _) = fallback_glyph_face(&georgia, arrow, 40)
+            .expect("a system face with arrows (Arial) should back up a serif face");
+        assert_ne!(face.glyph_id(arrow).0, 0);
+        // A letter the face has, and whitespace, never fall back.
+        assert!(fallback_glyph_face(&georgia, 'A', 40).is_none());
+        assert!(fallback_glyph_face(&georgia, ' ', 40).is_none());
+        // A character no face has keeps the primary face's own glyph.
+        assert!(fallback_glyph_face(&georgia, '\u{E000}', 40).is_none());
+
+        // The laid-out arrow is not the `.notdef` box: its ink differs from
+        // what an unmapped character (which nothing can draw) gives.
+        let layout = |content: &str| {
+            let layer = TextLayer {
+                content: content.into(),
+                font: "serif-bold".into(),
+                size: 0.1,
+                ..Default::default()
+            };
+            text_layer_ink_fraction(&layer, 1000, 1000)
+                .unwrap()
+                .unwrap()
+        };
+        let (aw, ah) = layout("\u{2192}");
+        let (bw, bh) = layout("\u{E000}");
+        assert!(aw > 0.0 && ah > 0.0);
+        assert!(
+            (aw - bw).abs() > 1e-4 || (ah - bh).abs() > 1e-4,
+            "arrow drew the .notdef box"
+        );
+    }
 
     /// B-130/D-262 — a title's measured footprint is a SMALL BOX, not the
     /// frame.

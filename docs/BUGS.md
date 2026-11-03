@@ -684,7 +684,7 @@ status: **fixed** (2026-11-03) · severity: **major** · area: `packages/motion-
 
 ## B-308 — Motion has no time-varying stacking order (z-order is list order only)
 
-status: **open** · severity: **minor** · area: Motion engine layers
+status: **open (deferred to v0.4.0 as a feature, 2026-11-03: `docs/04-roadmap.md`)** · severity: **minor** · area: Motion engine layers
 
 - **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. A book pulled forward off a shelf needs to be on top only while raised; the workaround was moving it last for the whole scene.
 
@@ -729,9 +729,12 @@ status: **open** · severity: **minor** · area: text clip source length
 
 ## B-302 — the Edit 'serif-bold' font has no '→' glyph (renders a box)
 
-status: **open** · severity: **minor** · area: Edit text fonts
+status: **fixed** (2026-11-03) · severity: **minor** · area: Edit text fonts
 
 - **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. Found in the white-theme pass; the caption was reworded.
+- **cause:** the Edit text rasteriser (`chroma/text.rs` `lay_out_text`) drew every character from the one chosen face; Georgia (`serif`, `serif-bold`, ...) has no U+2192, so glyph id 0 (`.notdef`, a box) was drawn.
+- **fix:** a character the chosen face has no glyph for is drawn from the first face in `FALLBACK_FACES` that has it (Arial Unicode, Arial, DejaVu Sans), at the same visual size, with the pen advanced by the fallback glyph's own advance (kerning does not cross faces). Whitespace and control characters never fall back; a character no face has still gets the chosen face's own glyph. Titles measure and draw through the same layout, so the selection box includes the arrow. Not covered: the legacy ffmpeg `drawtext` export path (the compositor export uses this rasteriser) and caption words, which still use their single face.
+- **tests:** `chroma::text::tests::an_arrow_missing_from_the_serif_face_comes_from_a_fallback_face` (the fallback exists and is not used for a letter, a space or an unmapped code point; the arrow's ink is not the `.notdef` box's).
 
 ## B-301 — `editor_detect_beats` / `motion_get_state` return 40-68 KB every call
 

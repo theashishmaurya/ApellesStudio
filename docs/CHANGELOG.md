@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-03** — **B-302 fixed:** an Edit title in a face without the glyph (Georgia has no `→`) draws it from a fallback face instead of a `.notdef` box.
 - **2026-11-03** — **B-322 fixed:** `motion_set_layer_field(key="props")` on a custom layer no longer warns "not a known field"; the written props are checked against the embedded definition and issues come back in the reply.
 - **2026-11-03** — **B-316 fixed:** `refresh_media` (a Motion scene re-rendered) now updates clips on locked tracks too, so a shorter re-render clamps every placed clip and its trim ceiling.
 - **2026-11-03** — **B-324 fixed:** the `counter` primitive takes `pad` (minimum integer digits, zero-filled), so a timer reads `0:09.00`; it is in the Inspector too.
