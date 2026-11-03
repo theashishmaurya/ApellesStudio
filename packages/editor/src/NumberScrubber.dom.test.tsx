@@ -49,6 +49,8 @@ function render(opts: {
   unit?: string;
   precision?: number;
   disabled?: boolean;
+  format?: (v: number) => { text: string; unit?: string };
+  parse?: (text: string) => number | null;
 }): Harness {
   const committed: number[] = [];
   const events: string[] = [];
@@ -65,6 +67,8 @@ function render(opts: {
         max={opts.max}
         unit={opts.unit}
         precision={opts.precision}
+        format={opts.format}
+        parse={opts.parse}
         disabled={opts.disabled}
         onScrubStart={() => events.push('start')}
         onScrubEnd={() => events.push('end')}
@@ -320,5 +324,43 @@ describe('NumberScrubber — keyboard and ARIA', () => {
     const { wrapper, field } = render({ initial: 2, step: 1, unit: '°', precision: 1 });
     expect(field.value).toBe('2.0');
     expect(wrapper.textContent).toContain('°');
+  });
+});
+
+// v0.3.0 panel redesign (B-365, D-442): display text in place of the number.
+describe('NumberScrubber — format / parse', () => {
+  const pan = {
+    format: (v: number) => ({ text: v === 0 ? 'Center' : `${v < 0 ? 'L' : 'R'} ${Math.abs(v)}` }),
+    parse: (t: string) => {
+      const m = /^([lr])\s*(\d+)$/i.exec(t.trim());
+      if (t.trim().toLowerCase() === 'center') return 0;
+      return m ? (m[1].toLowerCase() === 'l' ? -1 : 1) * Number(m[2]) : null;
+    },
+  };
+
+  it('shows the formatted text at rest and as the aria value text', () => {
+    const h = render({ initial: -40, ...pan });
+    expect(h.field.value).toBe('L 40');
+    expect(h.field.getAttribute('aria-valuetext')).toBe('L 40');
+    expect(h.field.getAttribute('aria-valuenow')).toBe('-40');
+  });
+
+  it('edits from the formatted text and reads it back through parse, else arithmetic', () => {
+    const h = render({ initial: 0, ...pan });
+    focus(h.field);
+    expect(h.field.value).toBe('Center');
+    type(h.field, 'R 25');
+    key(h.field, 'Enter');
+    expect(h.committed).toEqual([25]);
+    focus(h.field);
+    type(h.field, '-10');
+    key(h.field, 'Enter');
+    expect(h.committed).toEqual([25, -10]);
+  });
+
+  it('a formatted unit replaces the plain unit suffix', () => {
+    const h = render({ initial: 3, unit: 'x', format: (v) => ({ text: String(v * 1000), unit: 'Hz' }) });
+    expect(h.wrapper.textContent).toContain('Hz');
+    expect(h.wrapper.textContent).not.toContain('x');
   });
 });

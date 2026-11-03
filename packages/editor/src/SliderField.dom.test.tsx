@@ -12,7 +12,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import React from 'react';
-import { SLIDER_FIELD, SliderField } from '@apelles/ui';
+import { SLIDER_FIELD, SliderField, snapToDetent } from '@apelles/ui';
 
 import {
   actSync,
@@ -67,7 +67,7 @@ interface Harness {
   value: () => number;
 }
 
-function render(opts: { initial: number; min?: number; max?: number; onReset?: boolean }): Harness {
+function render(opts: { initial: number; min?: number; max?: number; onReset?: boolean; detent?: number }): Harness {
   const events: string[] = [];
   let current = opts.initial;
   restore.push(installPointerCaptureStub());
@@ -83,6 +83,7 @@ function render(opts: { initial: number; min?: number; max?: number; onReset?: b
         max={opts.max}
         sliderMin={0}
         sliderMax={1}
+        detent={opts.detent}
         onScrubStart={() => events.push('start')}
         onScrubEnd={() => events.push('end')}
         onReset={
@@ -110,7 +111,7 @@ function render(opts: { initial: number; min?: number; max?: number; onReset?: b
 describe('SliderField', () => {
   it('draws the spec geometry: a 3 px track, a 12 px thumb and a 56 px field', () => {
     const h = render({ initial: 0.5 });
-    expect(SLIDER_FIELD).toEqual({ TRACK_PX: 3, THUMB_PX: 12, FIELD_PX: 56 });
+    expect(SLIDER_FIELD).toEqual({ TRACK_PX: 3, THUMB_PX: 12, FIELD_PX: 56, DETENT_SNAP_FRACTION: 0.02 });
     const track = h.root.querySelector('[data-slot="inline-slider-track"]') as HTMLElement;
     const thumb = h.root.querySelector('[data-slot="inline-slider-thumb"]') as HTMLElement;
     const field = h.root.querySelector('[data-slot="number-scrubber"]') as HTMLElement;
@@ -187,5 +188,39 @@ describe('SliderField', () => {
     });
     expect(h.value()).toBe(3);
     expect(h.thumbInput.getAttribute('aria-valuenow') ?? h.thumbInput.value).toBe('1');
+  });
+
+  // v0.3.0 panel redesign (B-366, D-443) — the detent at the default.
+  it('draws a detent tick at the default, and none without one', () => {
+    const plain = render({ initial: 0.5 });
+    expect(plain.root.querySelector('[data-slot="inline-slider-detent"]')).toBeNull();
+    mounted?.unmount();
+    const h = render({ initial: 0.5, detent: 1 });
+    const tick = h.root.querySelector('[data-slot="inline-slider-detent"]') as HTMLElement;
+    expect(tick).not.toBeNull();
+    expect(tick.style.left).toBe('100%');
+  });
+
+  it('a drag that passes within 2 % of the span of the detent lands exactly on it', async () => {
+    stubTrackRect();
+    const h = render({ initial: 0.5, detent: 0.7 });
+    const control = h.thumbInput.closest('[data-slot="inline-slider"]')?.firstElementChild as HTMLElement;
+    firePointerEvent(control, 'pointerdown', { x: TRACK.left + 100, y: 6 });
+    await nextFrame();
+    // 0.71 of the 200 px track: one hundredth past the detent.
+    firePointerEvent(document, 'pointermove', { x: TRACK.left + 142, y: 6 });
+    await nextFrame();
+    firePointerEvent(document, 'pointerup', { x: TRACK.left + 142, y: 6 });
+    firePointerEvent(window, 'pointerup', { x: TRACK.left + 142, y: 6 });
+    await nextFrame();
+    expect(h.value()).toBe(0.7);
+  });
+
+  it('snapToDetent: inside the band snaps, outside does not, no detent leaves the value', () => {
+    expect(snapToDetent(98.5, 100, 0, 400)).toBe(100);
+    expect(snapToDetent(91, 100, 0, 400)).toBe(91);
+    expect(snapToDetent(0.3, undefined, -1, 1)).toBe(0.3);
+    expect(snapToDetent(-1.5, 0, -60, 12)).toBe(-1.5);
+    expect(snapToDetent(-1.4, 0, -60, 12)).toBe(0);
   });
 });
