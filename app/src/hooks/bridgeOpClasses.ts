@@ -40,3 +40,36 @@ export function isResultOnlyOp(op: string, args?: Record<string, unknown>): bool
   if (RESULT_ONLY_OPS.has(op)) return true;
   return PROJECT_SWITCH_OPS.has(op) && !wantsGrade(args);
 }
+
+/** D-439 (B-369) — Colorist ops that do not need the active shot's frame on the
+ *  canvas: they pick, list or replace shots and projects, step the shared
+ *  history, or ask the human. Every OTHER op this bridge answers first decodes
+ *  the frame a project open left for its first use (`ensureColoristFrame`). */
+const COLORIST_FRAME_FREE_OPS: ReadonlySet<string> = new Set([
+  'open',
+  'list_shots',
+  'set_active_shot',
+  'add_shots',
+  'list_projects',
+  'open_project',
+  'new_project',
+  'close_project',
+  'save_project',
+  'set_project_settings',
+  'request_human',
+  'undo',
+  'redo',
+  'export_progress',
+]);
+
+/** Whether `op` needs the Colorist frame decoded BEFORE it runs. */
+export function needsColoristFrameBefore(op: string): boolean {
+  return !COLORIST_FRAME_FREE_OPS.has(op);
+}
+
+/** Whether `op` needs it AFTER it runs: a project switch asked to answer with
+ *  the new project's rendered frame (`include_grade`), which only exists once
+ *  the switch has happened. */
+export function needsColoristFrameAfter(op: string, args?: Record<string, unknown>): boolean {
+  return PROJECT_SWITCH_OPS.has(op) && wantsGrade(args);
+}

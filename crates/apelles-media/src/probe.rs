@@ -127,6 +127,62 @@ pub fn source_resolution(path: &Path) -> Result<apelles_types::Resolution, Strin
     probe_cached(path).map(|i| i.resolution)
 }
 
+/// The most probes [`probe_cached_many`] runs at once. A cold probe is two
+/// `ffprobe` processes, so this bounds the processes a project open spawns.
+pub const MAX_PARALLEL_PROBES: usize = 8;
+
+/// [`probe_cached`] for many paths at once, results in input order (B-369).
+///
+/// A project open probes every video clip's source; on a cold cache (a first
+/// open, a new machine, a changed file) each one is an `ffprobe` pass of ~0.75 s,
+/// which in series made the open's media phase grow with the clip count. This
+/// runs them on up to [`MAX_PARALLEL_PROBES`] scoped threads (bounded by the
+/// machine's parallelism) and calls `on_done(n)` with the number finished so far
+/// after each one, from whichever thread finished it. A warm cache answers each
+/// path with a `stat` and a lookup, so this changes nothing for it but the
+/// thread count. Both cache layers are already thread-safe.
+pub fn probe_cached_many(
+    paths: &[PathBuf],
+    on_done: impl Fn(usize) + Sync,
+) -> Vec<Result<VideoInfo, String>> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    if paths.is_empty() {
+        return Vec::new();
+    }
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .clamp(1, MAX_PARALLEL_PROBES)
+        .min(paths.len());
+    let next = AtomicUsize::new(0);
+    let finished = AtomicUsize::new(0);
+    let slots: Vec<Mutex<Option<Result<VideoInfo, String>>>> =
+        paths.iter().map(|_| Mutex::new(None)).collect();
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(path) = paths.get(i) else { break };
+                    let result = probe_cached(path);
+                    *slots[i].lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
+                    on_done(finished.fetch_add(1, Ordering::Relaxed) + 1);
+                }
+            });
+        }
+    });
+    slots
+        .into_iter()
+        .zip(paths)
+        .map(|(slot, path)| {
+            slot.into_inner()
+                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(|| Err(format!("probe {}: not run", path.display())))
+        })
+        .collect()
+}
+
 fn remember(path: &Path, key: &str, info: &VideoInfo) {
     PROBE_CACHE
         .lock()
@@ -280,5 +336,49 @@ mod tests {
     #[test]
     fn a_path_that_was_never_probed_is_an_error() {
         assert!(probe_cached(Path::new("/definitely/not/here.mov")).is_err());
+    }
+
+    /// B-369 — the parallel probe answers in input order, reports every
+    /// finished path once, and keeps a failure in its own slot.
+    #[test]
+    fn probe_cached_many_keeps_order_and_counts_every_path() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("chroma_probe_many_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let sizes = ["160x120", "320x240", "640x480"];
+        let mut paths: Vec<PathBuf> = sizes
+            .iter()
+            .enumerate()
+            .map(|(i, size)| {
+                let p = dir.join(format!("clip{i}.mp4"));
+                synth(&p, size, "1", "24");
+                p
+            })
+            .collect();
+        paths.insert(1, PathBuf::from("/definitely/not/here.mov"));
+
+        let calls = std::sync::Mutex::new(Vec::new());
+        let results = probe_cached_many(&paths, |n| {
+            calls.lock().unwrap_or_else(|e| e.into_inner()).push(n)
+        });
+
+        assert_eq!(results.len(), 4);
+        let widths: Vec<Option<u32>> = results
+            .iter()
+            .map(|r| r.as_ref().ok().map(|i| i.resolution.width))
+            .collect();
+        assert_eq!(widths, vec![Some(160), None, Some(320), Some(640)]);
+        let mut seen = calls.into_inner().unwrap_or_else(|e| e.into_inner());
+        seen.sort_unstable();
+        assert_eq!(
+            seen,
+            vec![1, 2, 3, 4],
+            "on_done counts each path exactly once"
+        );
+        assert!(probe_cached_many(&[], |_| {}).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -59,6 +59,7 @@ import { trackEvent } from '@apelles/bridge';
 // holds. See `packages/store/README.md`.
 import { createSharedStore, registerProjectIdentityAuthority } from '@apelles/store';
 import { useEditorTimelineStore, writeProjectSettings, type ProjectSettingsValue } from '@apelles/editor';
+import { useShellStore } from '@apelles/shell';
 
 import { useEditorStore } from './useEditorStore';
 import { useChromaStore, ChromaVideoInfo } from './useChromaStore';
@@ -71,6 +72,19 @@ import {
   type SessionLockHandle,
 } from './sessionLock';
 import { Adjustments, INITIAL_ADJUSTMENTS, normalizeLoadedAdjustments } from '../utils/adjustments';
+import { advanceOpen, beginOpen, endOpen, followOpenToReady } from './useOpenProgressStore';
+
+/** D-439 (B-369) — an open leaves the Colorist canvas's frame decode to its
+ *  first use unless the Colorist tab is the one on screen. */
+const deferColoristFrame = (): boolean => useShellStore.getState().activeTab !== 'colorist';
+
+let coloristFrameInFlight: Promise<{ ok: boolean; error?: string }> | null = null;
+
+/** `/x/Name.chroma` -> `Name`, for the loader's title before the project is read. */
+export function projectNameFromPath(path: string): string {
+  const base = path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path;
+  return base.replace(/\.chroma$/i, '');
+}
 
 /** The raw per-shot shape `chroma_session_list`/`_set_active`/`_add`/`_remove`
  *  return (mirrors `chroma::session::ShotDto`). D-306: it now carries the
@@ -154,6 +168,10 @@ export interface ProjectOpenDto {
   shots: ProjectShotDto[];
   activeShot: number;
   settings: ProjectSettings;
+  /** B-369 — the active shot's frame facts when the open installed its frame for
+   *  Colorist (so it is not decoded a second time here); null when the open
+   *  deferred that decode (D-439) or nothing is online. */
+  loaded?: LoadImageResult | null;
 }
 export interface OfflineShot {
   id: string;
@@ -267,6 +285,13 @@ interface SessionState {
   /** per-project output spec (D-038): resolution / fps / colour space. null for
    *  an Untitled session or a project with no explicit settings. */
   projectSettings: ProjectSettings | null;
+  /** D-439 (B-369) — the open left the Colorist canvas's frame undecoded (it
+   *  opened on another tab); `ensureColoristFrame` decodes it on first use. */
+  coloristFramePending: boolean;
+  /** D-439 — decode + apply the active shot's Colorist frame if the open
+   *  deferred it. Called when the Colorist tab is shown and before every
+   *  Colorist MCP op; a no-op when nothing is pending. */
+  ensureColoristFrame: () => Promise<{ ok: boolean; error?: string }>;
 
   markDirty: () => void;
   /** merge a partial output spec into the loaded project's settings (writes
@@ -471,6 +496,7 @@ export const useSessionStore = createSharedStore<SessionState>('app.session', (s
   projectName: null,
   gradeDir: null,
   offlineShots: [],
+  coloristFramePending: false,
   dirty: false,
   projectSettings: null,
 
@@ -746,15 +772,32 @@ export const useSessionStore = createSharedStore<SessionState>('app.session', (s
         dirty: false,
       });
 
-      if (shotsWithId.length > 0) {
-        // decode + install the active shot's frame into the editor and apply its grade
+      if (shotsWithId.length > 0 && dto.loaded) {
+        // B-369 — the open already decoded + installed the active shot's frame
+        // (`ColoristFrame::Install`); apply its facts and grade without decoding
+        // the same frame again through `chroma_session_set_active`.
+        const active = shotsWithId[list.active];
+        set({ coloristFramePending: false });
+        applyLoaded(active, dto.loaded, grades[active.id] ?? { ...INITIAL_ADJUSTMENTS });
+      } else if (shotsWithId.length > 0 && dto.loaded === null) {
+        // D-439 — the open deferred the Colorist frame: the active shot is
+        // chosen, its pixels are decoded by `ensureColoristFrame` on first use.
+        // The Colorist editor holds nothing of the previous project meanwhile.
+        set({ coloristFramePending: true });
+        useEditorStore.getState().setEditor({ selectedImage: null });
+        useChromaStore.getState().setVideoInfo(null);
+        useAgentStore.getState().scopeToShot(shotsWithId[list.active]?.path ?? null);
+      } else if (shotsWithId.length > 0) {
+        // a caller whose command does not report `loaded` (an older shape):
+        // decode + install the active shot's frame and apply its grade
         const sw = await invoke<SessionSwitchDto>('chroma_session_set_active', { index: list.active });
         const activeShots = reattachIds(sw.session.shots, shotsWithId);
-        set({ shots: activeShots, activeIndex: sw.session.active });
+        set({ shots: activeShots, activeIndex: sw.session.active, coloristFramePending: false });
         const active = activeShots[sw.session.active];
         applyLoaded(active, sw.loaded, grades[active.id] ?? { ...INITIAL_ADJUSTMENTS });
       } else {
         // every shot offline — nothing to show
+        set({ coloristFramePending: false });
         useEditorStore.getState().setEditor({ selectedImage: null });
         useChromaStore.getState().setVideoInfo(null);
         useAgentStore.getState().scopeToShot(null);
@@ -849,18 +892,57 @@ export const useSessionStore = createSharedStore<SessionState>('app.session', (s
   openProject: async (path) => {
     const held = acquire(set, get, 'openProject');
     if (!held.ok) return { ok: false, error: held.error };
+    // B-369 — the branded loader's phases; see `useOpenProgressStore.ts`.
+    const openId = await beginOpen('open', projectNameFromPath(path));
+    let ok = false;
     try {
       const flushed = await flushEditTimeline();
       if (!flushed.ok) return flushed;
-      const dto = await invoke<ProjectOpenDto>('chroma_project_open', { path });
+      const dto = await invoke<ProjectOpenDto>('chroma_project_open', {
+        path,
+        openId,
+        deferColoristFrame: deferColoristFrame(),
+      });
+      advanceOpen(openId, 'grades');
       await get()._hydrateOpenDto(dto, held.lock);
       trackEvent('project_open', { shotCount: get().shots.length });
+      ok = true;
       return { ok: true, hasShots: get().shots.length > 0 || get().offlineShots.length > 0 };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
     } finally {
       held.lock.release();
+      if (ok) void followOpenToReady(openId, selectProjectKey(get()));
+      else endOpen(openId, false);
     }
+  },
+
+  ensureColoristFrame: async () => {
+    if (!get().coloristFramePending) return { ok: true };
+    // One decode however many callers ask at once (the tab activating and an
+    // agent's `get_state` landing together).
+    if (coloristFrameInFlight) return coloristFrameInFlight;
+    const run = async (): Promise<{ ok: boolean; error?: string }> => {
+      const held = acquire(set, get, 'ensureColoristFrame');
+      if (!held.ok) return { ok: false, error: held.error };
+      try {
+        if (!get().coloristFramePending) return { ok: true };
+        const sw = await invoke<SessionSwitchDto>('chroma_session_set_active', { index: get().activeIndex });
+        const activeShots = reattachIds(sw.session.shots, get().shots);
+        set({ shots: activeShots, activeIndex: sw.session.active, coloristFramePending: false });
+        const active = activeShots[sw.session.active];
+        if (active) applyLoaded(active, sw.loaded, get().grades[active.id] ?? { ...INITIAL_ADJUSTMENTS });
+        return { ok: true };
+      } catch (e: any) {
+        return { ok: false, error: String(e?.message || e) };
+      } finally {
+        held.lock.release();
+      }
+    };
+    coloristFrameInFlight = run().finally(() => {
+      coloristFrameInFlight = null;
+    });
+    return coloristFrameInFlight;
   },
 
   closeProject: async () => {
@@ -912,6 +994,7 @@ export const useSessionStore = createSharedStore<SessionState>('app.session', (s
       projectName: null,
       gradeDir: null,
       offlineShots: [],
+      coloristFramePending: false,
       dirty: false,
       projectSettings: null,
     });
@@ -924,19 +1007,30 @@ export const useSessionStore = createSharedStore<SessionState>('app.session', (s
   newProject: async (name, mediaPaths) => {
     const held = acquire(set, get, 'newProject');
     if (!held.ok) return { ok: false, error: held.error };
+    const openId = await beginOpen('new', name);
+    let ok = false;
     try {
       const flushed = await flushEditTimeline();
       if (!flushed.ok) return flushed;
-      const dto = await invoke<ProjectOpenDto>('chroma_project_new', { name, mediaPaths });
+      const dto = await invoke<ProjectOpenDto>('chroma_project_new', {
+        name,
+        mediaPaths,
+        openId,
+        deferColoristFrame: deferColoristFrame(),
+      });
+      advanceOpen(openId, 'grades');
       await get()._hydrateOpenDto(dto, held.lock);
       trackEvent('project_new', { mediaCount: mediaPaths.length });
       // write an initial thumb.jpg from the active shot
       void get().saveProject({ force: true });
+      ok = true;
       return { ok: true };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
     } finally {
       held.lock.release();
+      if (ok) void followOpenToReady(openId, selectProjectKey(get()));
+      else endOpen(openId, false);
     }
   },
 

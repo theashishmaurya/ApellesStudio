@@ -176,7 +176,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { CircleNotchIcon } from '@phosphor-icons/react';
+import { BrandedLoader } from '@apelles/ui';
 import { Player, useContentBox, type PlayerProps } from '@apelles/player';
 import { useShortcut } from '@apelles/keymap';
 
@@ -207,6 +207,7 @@ import {
   steppedZoom,
 } from './previewZoom';
 import { recordPreviewSpan, recordPreviewTiming } from './previewTiming';
+import { notifyPreviewFrameShown } from './loadPerf';
 import { nextAudioSeq } from './audioTransport';
 import { beginScrub, endScrub, isScrubbing, updateScrub } from './scrubAudio';
 import { ScrubWaveform } from './ScrubWaveform';
@@ -520,6 +521,8 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
       setHasFrame(true);
     }
     if (previous) URL.revokeObjectURL(previous);
+    // B-369 — the open's loader waits for this (and a debug build measures it).
+    notifyPreviewFrameShown();
   }, []);
 
   /** The `<img>`'s callback ref — the one place a newly mounted element is
@@ -1148,10 +1151,8 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
               <TwoUpViewer />
             </div>
           ) : timeline ? (
-            <div className="flex flex-col items-center gap-2 text-text-secondary">
-              <CircleNotchIcon className="size-5 animate-spin" />
-              <span className="text-xs">Loading preview…</span>
-            </div>
+            // B-369 — the branded loader while the first frame decodes.
+            <BrandedLoader variant="compact" label="Loading preview…" />
           ) : (
             <div className="text-sm text-text-secondary">no frame</div>
           )

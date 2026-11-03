@@ -18,8 +18,11 @@ import { FolderOpenIcon, PlusIcon, FilmStripIcon, CircleNotchIcon, XIcon, TrashI
 import { toast } from 'react-toastify';
 
 import { MediaThumbnail } from '@apelles/editor';
+import { BrandedLoader } from '@apelles/ui';
 
 import { useSessionStore } from '../../store/useSessionStore';
+import { openProgressView } from '../../store/openProgress';
+import { useOpenProgressStore } from '../../store/useOpenProgressStore';
 import ConfirmModal from '../modals/ConfirmModal';
 
 const VIDEO_EXTS = ['mov', 'mp4', 'm4v', 'mkv', 'webm', 'avi', 'mts', 'm2ts', 'mxf', 'braw', 'r3d'];
@@ -205,9 +208,11 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
 // error toast — technically harmless (the first open still completes), but
 // a scary, confusing symptom that read as a real failure. `opening` disables
 // every card (not just the clicked one — a second project shouldn't be
-// openable while the first is mid-open either) and shows a spinner + "Opening…"
-// on the one actually being opened, the same `CircleNotch` affordance this file's
-// own "Create" button already uses.
+// openable while the first is mid-open either) and shows the open's progress
+// on the one actually being opened: B-369 replaced the bare spinner + "Opening…"
+// with `@apelles/ui`'s `BrandedLoader` (the Apelles mark, the phase in words,
+// the media count as a bar), the same component the full-window overlay shows
+// once the workspace is up (`ProjectOpenOverlay`).
 // The hover-revealed delete button (below) is a real `<button>` nested
 // inside this card, so the card itself can no longer BE a `<button>` — a
 // button cannot validly contain another interactive element, and browsers
@@ -215,6 +220,13 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
 // tsx`'s own card already uses for its hover-revealed Trash2/Plus buttons: a
 // `<div role="button" tabIndex>` for the primary (open) action, with a real
 // nested `<button>` for the secondary (delete) one — not a new pattern.
+/** B-369 — the live open's phase on the clicked card. */
+function OpeningCardLoader() {
+  const view = useOpenProgressStore((s) => (s.active ? s : null));
+  const shown = view ? openProgressView(view) : null;
+  return <BrandedLoader variant="compact" label={shown?.label ?? 'Opening…'} progress={shown?.fraction ?? null} />;
+}
+
 function ProjectCard({
   p,
   onOpen,
@@ -242,13 +254,14 @@ function ProjectCard({
       }}
       title={p.path}
       className={`group flex flex-col rounded-lg overflow-hidden border border-border-color bg-surface text-left transition-colors ${
-        disabled ? 'opacity-60 pointer-events-none' : 'hover:border-accent cursor-pointer'
+        // B-369 — the card being opened stays at full strength: it carries the loader.
+        disabled ? `pointer-events-none ${opening ? '' : 'opacity-60'}` : 'hover:border-accent cursor-pointer'
       }`}
     >
       <MediaThumbnail kind="video" src={p.thumb} className="bg-bg-primary rounded-none">
         {opening && (
-          <div className="absolute inset-0 bg-bg-primary/70 flex items-center justify-center gap-1.5 text-text-primary text-xs font-medium">
-            <CircleNotchIcon size={14} className="animate-spin" /> Opening…
+          <div className="absolute inset-0 bg-bg-primary/80 flex items-center justify-center">
+            <OpeningCardLoader />
           </div>
         )}
         {/* Same hover-reveal + destructive-token convention as `SourcesPanel.

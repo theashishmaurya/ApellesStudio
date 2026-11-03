@@ -2242,6 +2242,12 @@ export function useEditorControl(): void {
           openProject: s.openProjectKey,
           status: s.status,
           error: s.error,
+          // B-369 — while a project opens: the phase the branded loader shows
+          // (`reading` → `media` n/N → `preview` → `grades` → `timeline` →
+          // `previews`), its words and count; null once the workspace is up.
+          openProgress: s.openProgress,
+          // B-369 — the timeline a switch is loading (the loader's subject), or null.
+          switchingTimeline: s.switchingTimeline,
           playhead: s.playhead,
           // B-348 — the In / Out marks (`editor_set_marks`); null when unset.
           inPoint: s.inPoint,

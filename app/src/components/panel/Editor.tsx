@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect, useImperativeHandle } from 'react';
 import { Crop, PercentCrop } from 'react-image-crop';
-import { CircleNotchIcon, XIcon } from '@phosphor-icons/react';
+import { XIcon } from '@phosphor-icons/react';
+import { BrandedLoader } from '@apelles/ui';
 import clsx from 'clsx';
 import { invoke } from '@tauri-apps/api/core';
 import debounce from 'lodash.debounce';
@@ -2159,7 +2160,8 @@ export default function Editor({ onContextMenu, onImageSelect, transformWrapperR
               isLoaderVisible ? 'opacity-100' : 'opacity-0 pointer-events-none',
             )}
           >
-            <CircleNotchIcon size={48} className="animate-spin text-accent" />
+            {/* B-369 — the branded loader, as on a project open. */}
+            <BrandedLoader variant="compact" label="Loading frame…" />
           </div>
         )}
 

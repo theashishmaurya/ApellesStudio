@@ -70,6 +70,7 @@ Pinned in `package.json`:
 | `Slider` | `@base-ui/react/slider` | Base UI drives the thumb — real animation, no framer-motion |
 | `ScrubBar` | `@base-ui/react/slider` | D-432 P5 — a media position bar: a 3 px track filled in `--color-playhead`, a knob only on hover / focus / drag, a 12 px hit area; Base UI's keyboard (arrows, Shift / PageUp ×10, Home / End). Single number value. |
 | `Progress` | `@base-ui/react/progress` | determinate progress bar — Root+Track+Indicator in one component, `value={null}` for indeterminate. Added D-362 for the Edit tab's export queue |
+| `BrandedLoader` | (own, `branded-loader.tsx`) | B-369 — the Apelles loading state: the real mark (`assets/apelles-mark-256.png`, exported from `brand/`), the step in words, a determinate `Progress` or an indeterminate sweep; `overlay` / `inline` / `compact`; loops only under `motion-safe:`. Also at the `@apelles/ui/branded-loader` subpath (for Motion, D-253) |
 | `Switch` | `@base-ui/react/switch` | the **bare** shadcn switch |
 | `ScrollArea`, `ScrollBar` | `@base-ui/react/scroll-area` | |
 | `Separator` | `@base-ui/react/separator` | |

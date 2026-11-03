@@ -39,6 +39,8 @@
 //! - `load`     — load a video as one decoded frame into the existing image pipeline
 //! - `commands` — tauri commands for the transport (`chroma_video_info`, `chroma_seek`)
 //! - `session`  — multi-shot session: add / list / switch / remove shots (D-033)
+//! - `open_progress` — a project open's phase/progress events
+//!   (`chroma://project-open-progress`) and its per-phase timing log (B-369)
 //! - `project`  — the saved `<name>.chroma` project: list / open / new / save
 //!   (D-037); since D-148 just `open_manifest` + the 20 commands (all of which
 //!   take `tauri::State<AppState>`) — the model is `apelles-project`
@@ -185,6 +187,7 @@ pub mod motion_presets;
 pub mod motion_recovery;
 pub mod motion_runtime;
 pub mod ocr;
+pub mod open_progress;
 pub mod page_session;
 pub mod playback;
 pub mod project;

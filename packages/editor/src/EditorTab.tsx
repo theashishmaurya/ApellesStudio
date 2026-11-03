@@ -44,6 +44,7 @@
 
 import { useCallback, useEffect, useRef, type ReactNode } from 'react';
 import {
+  BrandedLoader,
   Button,
   PanelErrorBoundary,
   ResizableHandle,
@@ -63,6 +64,7 @@ import { TextClipInspectorPanel } from './TextClipInspectorPanel';
 import { AdjustmentClipInspectorPanel } from './AdjustmentClipInspectorPanel';
 import { TimelinePane } from './TimelinePane';
 import { TimelineSwitcher } from './TimelineSwitcher';
+import { TimelineSwitchOverlay } from './TimelineSwitchOverlay';
 import { PlayheadTimecode } from './PlayheadTimecode';
 import { useEditorTimelineStore } from './timelineStore';
 import { useEditorControl } from './useEditorControl';
@@ -210,138 +212,143 @@ export function EditorTab({ mediaPool }: EditorTabProps) {
   }
 
   if (!hasTimeline) {
+    // B-369 — the branded loader, the same one a project open shows.
     return (
-      <div className="h-full w-full flex flex-col items-center justify-center gap-2 bg-bg-primary text-center px-6">
-        <p className="text-sm text-text-secondary">Loading timeline…</p>
+      <div className="h-full w-full bg-bg-primary">
+        <BrandedLoader variant="inline" label="Loading timeline…" />
       </div>
     );
   }
 
   return (
-    <ResizablePanelGroup
-      orientation="vertical"
-      className="h-full w-full min-h-0 bg-bg-primary"
-      onLayoutChanged={layout.onVerticalLayoutChanged}
-    >
-      <ResizablePanel
-        id={PANEL_ID.upper}
-        data-chroma-panel="edit-upper"
-        minSize={UPPER_MIN_HEIGHT}
-        className="flex min-h-0 flex-col"
+    <div className="relative h-full w-full min-h-0">
+      <ResizablePanelGroup
+        orientation="vertical"
+        className="h-full w-full min-h-0 bg-bg-primary"
+        onLayoutChanged={layout.onVerticalLayoutChanged}
       >
-        <ResizablePanelGroup
-          orientation="horizontal"
-          className="min-h-0 flex-1"
-          onLayoutChanged={layout.onHorizontalLayoutChanged}
+        <ResizablePanel
+          id={PANEL_ID.upper}
+          data-chroma-panel="edit-upper"
+          minSize={UPPER_MIN_HEIGHT}
+          className="flex min-h-0 flex-col"
         >
-          {browserOpen && (
-            <>
-              <ResizablePanel
-                id={PANEL_ID.browser}
-                // The docked library column's long-standing hook (D-219), kept
-                // for every debug recipe that asks for "sources".
-                data-chroma-panel="sources"
-                panelRef={layout.browserRef}
-                onResize={layout.onBrowserResize}
-                defaultSize={layout.initial.browserWidth}
-                minSize={BROWSER_WIDTH.min}
-                maxSize={BROWSER_WIDTH.max}
-                className="h-full min-h-0 overflow-hidden bg-surface"
-              >
-                <EditBrowser mediaPool={mediaPool} />
-              </ResizablePanel>
-              <ResizableHandle className="bg-divider" />
-            </>
-          )}
-          <ResizablePanel
-            id={PANEL_ID.viewer}
-            data-chroma-panel="edit-viewer"
-            minSize={VIEWER_MIN_WIDTH}
-            className="flex min-h-0 min-w-0 flex-col"
+          <ResizablePanelGroup
+            orientation="horizontal"
+            className="min-h-0 flex-1"
+            onLayoutChanged={layout.onHorizontalLayoutChanged}
           >
-            {/* B-292 — each pane crashes alone. `useEditorControl()` above is
-                deliberately OUTSIDE every pane boundary, so the `editor_*` ops
-                keep answering while a pane shows its fallback. */}
-            <PanelErrorBoundary panel="Preview">
-              <PreviewPane
-                headerStart={
-                  <PanelToggle
-                    label={browserOpen ? 'Hide the browser' : 'Show the browser'}
-                    pressed={browserOpen}
-                    onToggle={() => setBrowserOpen(!browserOpen)}
-                  />
-                }
-                headerEnd={
-                  // D-118 — the Inspector's opener, now in the viewer header's
-                  // right group (spec §4.11) rather than a chip floating over
-                  // the picture's corner.
-                  <PanelToggle
-                    label="Inspector"
-                    pressed={inspectorOpen}
-                    onToggle={() => setInspectorOpen(!inspectorOpen)}
-                    mirrored
-                  />
-                }
-              />
-            </PanelErrorBoundary>
-          </ResizablePanel>
-          {inspectorOpen && (
-            <>
-              <ResizableHandle className="bg-divider" />
-              <ResizablePanel
-                id={PANEL_ID.inspector}
-                // D-219 — a stable, human-readable hook for `debug_dom_tree`.
-                data-chroma-panel="editor-inspector"
-                panelRef={layout.inspectorRef}
-                onResize={layout.onInspectorResize}
-                defaultSize={layout.initial.inspectorWidth}
-                minSize={INSPECTOR_WIDTH.min}
-                maxSize={INSPECTOR_WIDTH.max}
-                className="h-full overflow-hidden bg-surface"
-              >
-                {/* D-211 / D-229 / D-230 — a title's, a caption's or an
-                    adjustment clip's own section stacks ABOVE the shared
-                    geometry Inspector; each renders `null` for any other
-                    selection, and they are mutually exclusive by construction. */}
-                <PanelErrorBoundary panel="Inspector">
-                  <div className="flex h-full min-h-0 flex-col">
-                    <TextClipInspectorPanel />
-                    <CaptionInspectorPanel />
-                    <AdjustmentClipInspectorPanel />
-                    <div className="min-h-0 flex-1">
-                      <EditorInspectorPanel />
+            {browserOpen && (
+              <>
+                <ResizablePanel
+                  id={PANEL_ID.browser}
+                  // The docked library column's long-standing hook (D-219), kept
+                  // for every debug recipe that asks for "sources".
+                  data-chroma-panel="sources"
+                  panelRef={layout.browserRef}
+                  onResize={layout.onBrowserResize}
+                  defaultSize={layout.initial.browserWidth}
+                  minSize={BROWSER_WIDTH.min}
+                  maxSize={BROWSER_WIDTH.max}
+                  className="h-full min-h-0 overflow-hidden bg-surface"
+                >
+                  <EditBrowser mediaPool={mediaPool} />
+                </ResizablePanel>
+                <ResizableHandle className="bg-divider" />
+              </>
+            )}
+            <ResizablePanel
+              id={PANEL_ID.viewer}
+              data-chroma-panel="edit-viewer"
+              minSize={VIEWER_MIN_WIDTH}
+              className="flex min-h-0 min-w-0 flex-col"
+            >
+              {/* B-292 — each pane crashes alone. `useEditorControl()` above is
+                  deliberately OUTSIDE every pane boundary, so the `editor_*` ops
+                  keep answering while a pane shows its fallback. */}
+              <PanelErrorBoundary panel="Preview">
+                <PreviewPane
+                  headerStart={
+                    <PanelToggle
+                      label={browserOpen ? 'Hide the browser' : 'Show the browser'}
+                      pressed={browserOpen}
+                      onToggle={() => setBrowserOpen(!browserOpen)}
+                    />
+                  }
+                  headerEnd={
+                    // D-118 — the Inspector's opener, now in the viewer header's
+                    // right group (spec §4.11) rather than a chip floating over
+                    // the picture's corner.
+                    <PanelToggle
+                      label="Inspector"
+                      pressed={inspectorOpen}
+                      onToggle={() => setInspectorOpen(!inspectorOpen)}
+                      mirrored
+                    />
+                  }
+                />
+              </PanelErrorBoundary>
+            </ResizablePanel>
+            {inspectorOpen && (
+              <>
+                <ResizableHandle className="bg-divider" />
+                <ResizablePanel
+                  id={PANEL_ID.inspector}
+                  // D-219 — a stable, human-readable hook for `debug_dom_tree`.
+                  data-chroma-panel="editor-inspector"
+                  panelRef={layout.inspectorRef}
+                  onResize={layout.onInspectorResize}
+                  defaultSize={layout.initial.inspectorWidth}
+                  minSize={INSPECTOR_WIDTH.min}
+                  maxSize={INSPECTOR_WIDTH.max}
+                  className="h-full overflow-hidden bg-surface"
+                >
+                  {/* D-211 / D-229 / D-230 — a title's, a caption's or an
+                      adjustment clip's own section stacks ABOVE the shared
+                      geometry Inspector; each renders `null` for any other
+                      selection, and they are mutually exclusive by construction. */}
+                  <PanelErrorBoundary panel="Inspector">
+                    <div className="flex h-full min-h-0 flex-col">
+                      <TextClipInspectorPanel />
+                      <CaptionInspectorPanel />
+                      <AdjustmentClipInspectorPanel />
+                      <div className="min-h-0 flex-1">
+                        <EditorInspectorPanel />
+                      </div>
                     </div>
-                  </div>
-                </PanelErrorBoundary>
-              </ResizablePanel>
-            </>
-          )}
-        </ResizablePanelGroup>
-      </ResizablePanel>
+                  </PanelErrorBoundary>
+                </ResizablePanel>
+              </>
+            )}
+          </ResizablePanelGroup>
+        </ResizablePanel>
 
-      <ResizableHandle className="bg-divider" />
+        <ResizableHandle className="bg-divider" />
 
-      <ResizablePanel
-        id={PANEL_ID.timeline}
-        data-chroma-panel="edit-timeline"
-        panelRef={layout.timelineRef}
-        onResize={layout.onTimelineResize}
-        defaultSize={layout.initial.timelineHeight ?? `${TIMELINE_DEFAULT_PERCENT}%`}
-        minSize={TIMELINE_HEIGHT.min}
-        className="flex min-h-0 flex-col"
-      >
-        <PanelErrorBoundary panel="Timeline">
-          {!hasTracks && (
-            <div className="flex h-9 shrink-0 items-center justify-center border-b border-border-color bg-surface">
-              <TimelineToolbarCenter />
+        <ResizablePanel
+          id={PANEL_ID.timeline}
+          data-chroma-panel="edit-timeline"
+          panelRef={layout.timelineRef}
+          onResize={layout.onTimelineResize}
+          defaultSize={layout.initial.timelineHeight ?? `${TIMELINE_DEFAULT_PERCENT}%`}
+          minSize={TIMELINE_HEIGHT.min}
+          className="flex min-h-0 flex-col"
+        >
+          <PanelErrorBoundary panel="Timeline">
+            {!hasTracks && (
+              <div className="flex h-9 shrink-0 items-center justify-center border-b border-border-color bg-surface">
+                <TimelineToolbarCenter />
+              </div>
+            )}
+            <div className="min-h-0 flex-1">
+              <TimelinePane toolbarCenter={<TimelineToolbarCenter />} />
             </div>
-          )}
-          <div className="min-h-0 flex-1">
-            <TimelinePane toolbarCenter={<TimelineToolbarCenter />} />
-          </div>
-        </PanelErrorBoundary>
-      </ResizablePanel>
-    </ResizablePanelGroup>
+          </PanelErrorBoundary>
+        </ResizablePanel>
+      </ResizablePanelGroup>
+      {/* B-369 — the branded loader over the tab while a timeline switch loads. */}
+      <TimelineSwitchOverlay />
+    </div>
   );
 }
 

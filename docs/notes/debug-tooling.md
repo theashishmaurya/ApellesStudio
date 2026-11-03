@@ -288,7 +288,10 @@ several rounds of the owner's own screenshots before an agent could even confirm
      ways: `commit-rendered` (layout effects), `commit-effects` (passive effects),
      `commit-frame` (next rAF, before that frame's paint) and `commit-painted` (rAF then a
      `MessageChannel` task, after the frame rendered); `painted - frame` is the paint+composite
-     estimate.
+     estimate. B-369 added two more families: `apelles:open:<phase>` (a project open's
+     phases, `app/src/store/useOpenProgressStore.ts`) and `apelles:load:*` (a timeline
+     load's hydrate / paint / first preview frame / first filmstrip / first waveform,
+     `@apelles/editor`'s `loadPerf.ts`); see `docs/notes/project-open.md`.
    - **`debug_set_occlusion_throttling`** (native control op): WebKit's
      `_setWindowOcclusionDetectionEnabled:`, so a covered window keeps running rAF.
      This is the first tool aimed at the throttling wall the sections below keep

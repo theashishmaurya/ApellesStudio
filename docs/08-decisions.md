@@ -38120,3 +38120,18 @@ the reason (the surface's shape is what step 4's numbers decide).
   5. Repeat at 2x (`editor_set_playback_rate 2`).
 
   By ear: the cut should be heard within ~0.2 s, with no click, no doubled voice and no dropout. `debug_frame_timing` should show no preview stall caused by the splice.
+
+---
+
+## D-439 — a project open leaves the Colorist canvas's frame undecoded until Colorist is first used
+
+**decided (2026-11-03)** · fixes B-369 (with the loader) · extends D-129 (register, don't decode), D-071 (Colorist resync on tab focus)
+
+- **Context.** B-369's per-phase measurement (`docs/notes/project-open.md`): every open decoded the active shot's full-resolution frame for the Colorist canvas (250–500 ms on a warm cache, a VideoToolbox decode pipe) before returning, and `_hydrateOpenDto` then decoded the same frame again through `chroma_session_set_active`. Opens land on the Edit tab, where neither decode is used, and the decodes competed with the Edit preview's own first frame.
+- **Options.**
+  1. Keep decoding at open, drop only the duplicate (the open returns the frame facts it already has).
+  2. Decode at open but off the critical path (return first, install later): the Colorist ops would race an install that may not have happened.
+  3. Defer the decode to the first Colorist use, with one explicit gate every Colorist path goes through.
+- **Choice: (1) always, plus (3) when the open is made from Edit or Motion.** `chroma_project_open`/`_new` take `defer_colorist_frame`; with it, Rust registers the shots and selects the active one but decodes nothing (`ColoristFrame::Defer`), and `useSessionStore.coloristFramePending` records it. `ensureColoristFrame()` decodes once (concurrent callers share the decode, under the session lock) when the Colorist tab is shown and before every Colorist MCP op except the frame-free ones (`bridgeOpClasses.ts`). An open made from Colorist installs the frame and returns its facts (`ProjectOpenDto.loaded`), so nothing decodes twice either way. The other `open_manifest` callers (relink, add/remove a shot) are Colorist actions and still install.
+- **Why.** The decode is Colorist's, so Colorist pays it, once, behind its own branded "Loading frame…" (~480 ms measured). One gate in the Colorist bridge (`useChromaControl`) means an agent cannot tell the difference: `get_state` right after `open_project` returns the frame as before.
+- **Cost, stated.** The first Colorist view or op after an open waits for the decode. Until then the Colorist editor store holds no image (rather than the previous project's), which no visible surface reads.

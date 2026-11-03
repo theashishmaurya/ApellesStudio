@@ -46,5 +46,9 @@ D-267 in `docs/08-decisions.md` for the exact sizes and why they were
 chosen, and `website/tests/palette.test.ts`'s favicon describe block, which
 fails loudly if a declared size drifts from what is actually on disk.
 
+The app's loader mark (B-369) is a 256 px export of the transparent medallion, made with
+`sips -Z 256 brand/apelles-mark-transparent.png --out packages/ui/src/assets/apelles-mark-256.png`
+(run from the repo root); rerun it whenever the master changes.
+
 This directory holds source art only — nothing here is read by the running
 app or the built website directly; both consume the generated outputs.
