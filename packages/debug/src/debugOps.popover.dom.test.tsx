@@ -30,8 +30,11 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import React, { act } from 'react';
 import * as ReactDOMClient from 'react-dom/client';
 
+// The Export dialog runs the grade pre-flight when it opens (B-381); answer it
+// with the real command's shape (no graded clips) rather than `null`, which
+// the backend never returns.
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async () => null,
+  invoke: async (cmd: string) => (cmd === 'chroma_timeline_grade_luts' ? { graded: [], warnings: [] } : null),
 }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: async () => null,
