@@ -205,6 +205,11 @@ describe('conflict detection', () => {
     expect(conflicts.has('toggle_masks')).toBe(false);
   });
 
+  it('Cmd+4 (show / hide the Inspector, v0.3.0) conflicts with nothing out of the box', () => {
+    const conflicts = conflictingIds({});
+    expect(conflicts.has('edit.toggle_inspector')).toBe(false);
+  });
+
   it('reports a tab action shadowed by a global one', () => {
     const conflicts = conflictingIds({});
     expect(conflicts.has('zoom_100')).toBe(true);

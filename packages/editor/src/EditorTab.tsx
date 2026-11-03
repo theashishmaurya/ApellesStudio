@@ -55,6 +55,7 @@ import {
   type PanelSize,
 } from '@apelles/ui';
 import { SidebarSimpleIcon } from '@phosphor-icons/react';
+import { useShortcut } from '@apelles/keymap';
 
 import { EditorInspectorPanel } from './EditorInspectorPanel';
 import { EditBrowser } from './EditBrowser';
@@ -174,6 +175,11 @@ export function EditorTab({ mediaPool, browserActions }: EditorTabProps) {
   // — `EditorTab`, like every other tab body, stays mounted from boot
   // (B-007). No arguments — see that hook's own doc comment for why.
   useEditorControl();
+
+  // v0.3.0 (B-354) — Cmd+4 shows / hides the Inspector, as in Final Cut: the
+  // same store flag the viewer header's toggle and `debug_set_editor_inspector`
+  // write.
+  useShortcut('edit.toggle_inspector', () => setInspectorOpen(!inspectorOpen), { enabled: projectOpen });
 
   // D-416 — this tab's brand applier (captions and titles, one undo step).
   useEffect(() => registerBrandApplier('edit', applyBrandToEdit), []);

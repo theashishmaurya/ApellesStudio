@@ -1100,6 +1100,14 @@ leftovers, closed against the approved mockup (owner: "loved the design",
 slid out on hover and could not be reached from the keyboard. A `Player`
 given only `onMuteToggle` keeps a plain mute button.
 
+**Cmd+4 (B-354, §4.1).** `edit.toggle_inspector` (⌘4 / Ctrl+4, new Edit
+"View" category in `@apelles/keymap`, rebindable in the Keyboard Shortcuts
+window) shows / hides the Inspector, as in Final Cut, through the same
+`inspectorOpen` flag the viewer header's toggle and
+`debug_set_editor_inspector` write. Conflict-checked: Cmd+1..3 are the global
+tab switches, Colorist's colour label is Shift+4, and `conflictingIds({})`
+does not list it (pinned in `store.test.ts`).
+
 ## 7. Human + AI parity
 
 Every new GUI capability gets its MCP surface in the same phase (standing rule):

@@ -41,6 +41,7 @@ vi.mock('./AdjustmentClipInspectorPanel', () => ({ AdjustmentClipInspectorPanel:
 vi.mock('./EditLibraryPanel', () => ({ EditLibraryPanel: () => null }));
 
 import { installResizeObserverStub, stubOffsetMetrics } from './testUtils/pointerHarness';
+import { useKeymapStore } from '@apelles/keymap';
 import { EditorTab } from './EditorTab';
 import { useEditorTimelineStore } from './timelineStore';
 import { DEFAULT_EDIT_LAYOUT, useEditLayoutStore } from './editLayout';
@@ -173,5 +174,22 @@ describe('D-432 P5 — the Final Cut arrangement', () => {
     const switchers = document.querySelectorAll('[data-testid="timeline-switcher"]');
     expect(switchers).toHaveLength(2); // the row above, and the (empty) slot the pane ignores
     expect(q('[data-chroma-panel="edit-timeline"]')!.firstElementChild!.querySelector('[data-testid="timeline-switcher"]')).not.toBeNull();
+  });
+});
+
+describe('v0.3.0 (B-354) — Cmd+4 shows / hides the Inspector', () => {
+  it('toggles the same store flag the viewer header toggle writes', async () => {
+    useKeymapStore.setState({ overrides: {}, activeScope: 'edit', osPlatform: 'macos' });
+    await mountTab();
+    expect(q('[data-chroma-panel="editor-inspector"]')).not.toBeNull();
+    const press = () =>
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Digit4', key: '4', metaKey: true, bubbles: true }));
+      });
+    press();
+    expect(useEditorTimelineStore.getState().inspectorOpen).toBe(false);
+    expect(q('[data-chroma-panel="editor-inspector"]')).toBeNull();
+    press();
+    expect(useEditorTimelineStore.getState().inspectorOpen).toBe(true);
   });
 });
