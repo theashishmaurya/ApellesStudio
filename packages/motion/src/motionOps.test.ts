@@ -2350,6 +2350,26 @@ describe('D-403 — motion_validate', () => {
     expect((await h.runAsync('motion_validate', { scene: {}, layers: [] })).error).toMatch(/at most one/);
   });
 
+  it('B-309 — flags text overflowing its container shape, per layer, in every input form', async () => {
+    const h = harness();
+    const layers = [
+      { use: 'shape', shape: 'rect', x: 100, y: 100, w: 170, h: 270 },
+      { use: 'text', text: 'thumbnails', size: 30, font: 'IBM Plex Mono', x: 185, y: 200, align: 'center' },
+    ];
+    const r = await h.runAsync('motion_validate', { layers });
+    expect(r.ok).toBe(false);
+    expect(r.issues).toEqual([expect.objectContaining({ path: 'layers[1]', code: 'text_overflow' })]);
+
+    const scene = await h.runAsync('motion_validate', { scene: { id: 's', dur: 2, layers }, scene_index: 0 });
+    expect(scene.issues).toEqual([expect.objectContaining({ path: 'scenes[0].layers[1]', code: 'text_overflow' })]);
+
+    const manifest = await h.runAsync('motion_validate', { manifest: { title: 't', width: 1920, height: 1080, fps: 30, scenes: [{ id: 's', dur: 2, layers }] } });
+    expect(manifest.issues).toEqual([expect.objectContaining({ path: 'scenes[0].layers[1]', code: 'text_overflow' })]);
+
+    const fitting = [layers[0], { ...layers[1], size: 20 }];
+    expect((await h.runAsync('motion_validate', { layers: fitting })).issues).toEqual([]);
+  });
+
   it('never commits', async () => {
     const h = harness();
     await h.runAsync('motion_validate', { manifest: { title: 'x' } });

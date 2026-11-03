@@ -179,6 +179,8 @@ import {
 
 export type { MotionRefusal };
 import { layerLabel, type Selection } from './LayerList';
+import { textOverflowIssues } from '@apelles/motion-engine/src/engine/textFit';
+import { canvasTextMeasurer } from './textMeasure';
 import { sceneDurationFrames, sceneStartFrame, totalFrames } from '@apelles/motion-engine/src/engine/build';
 import { manifestSchema, type Cam2dKey, type Cam3dKey, type Manifest, type Soundtrack, type ThemeName, type TransformKey } from '@apelles/motion-engine/src/engine/schema';
 import type { FileBeats } from '@apelles/beats';
@@ -2121,22 +2123,36 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       const which = given[0];
       // D-405 — plus the semantic pass a schema cannot make: icon names that
       // exist in the installed library (loaded only when there is an icon).
-      const withIcons = async (data: unknown, result: ValidationResult, root: (string | number)[]) => {
+      // B-309 — and text that overflows its container (advisory: it sets `ok`
+      // false so it is not missed, but no mutating op refuses on it).
+      const withIcons = async (
+        data: unknown,
+        result: ValidationResult,
+        root: (string | number)[],
+        canvas?: { w: number; h: number },
+      ) => {
         const icons = await iconNamesFor(data);
-        return icons ? withIssues(result, iconIssues(data, icons, root)) : result;
+        const checked = icons ? withIssues(result, iconIssues(data, icons, root)) : result;
+        return withIssues(checked, textOverflowIssues(data, root, { canvas, measure: canvasTextMeasurer }));
       };
-      if (which === 'manifest') return { checked: 'manifest', ...(await withIcons(a.manifest, validateManifest(a.manifest), [])) };
+      const canvasOf = (m: unknown) => {
+        const { width, height } = (m ?? {}) as { width?: unknown; height?: unknown };
+        return typeof width === 'number' && typeof height === 'number' ? { w: width, h: height } : undefined;
+      };
+      if (which === 'manifest') return { checked: 'manifest', ...(await withIcons(a.manifest, validateManifest(a.manifest), [], canvasOf(a.manifest))) };
       if (which === 'scene') {
         const raw = arg(a, 'scene_index', 'sceneIndex');
         const sceneIndex = raw === undefined || raw === null ? undefined : Math.round(Number(raw));
         const root = sceneIndex === undefined ? ['scene'] : ['scenes', sceneIndex];
-        return { checked: 'scene', ...(await withIcons(a.scene, validateScene(a.scene, sceneIndex), root)) };
+        // A bare scene has no canvas of its own: the open document's, when there is one.
+        const open = api().manifest;
+        return { checked: 'scene', ...(await withIcons(a.scene, validateScene(a.scene, sceneIndex), root, canvasOf(open))) };
       }
       if (which === 'layers') return { checked: 'layers', ...(await withIcons(a.layers, validateLayers(a.layers), ['layers'])) };
       const cur = api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
-      return { checked: 'live manifest', ...(await withIcons(guard.manifest, validateManifest(guard.manifest), [])) };
+      return { checked: 'live manifest', ...(await withIcons(guard.manifest, validateManifest(guard.manifest), [], canvasOf(guard.manifest))) };
     },
 
     /**

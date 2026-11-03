@@ -1846,6 +1846,16 @@ impl ApellesMcp {
     Every mutating `motion_*` tool returns this same `issues` list when it
     refuses, so you can fix a call from its answer alone.
 
+    **Text that does not fit is reported too (B-309):** a `text` layer with an
+    `x` and a `y` whose box (its measured width, wrapped at `maxWidth`, times
+    its line count) sticks out of the smallest `shape` layer that holds its
+    anchor, or out of the canvas when no shape does, is a `text_overflow`
+    issue on that layer, naming the sides and by how many px. Unlike the
+    others it is ADVISORY: it makes `ok` false so you do not miss it, but
+    `motion_insert_layers` and the other authoring tools do not refuse on it.
+    Text with no `x`/`y` (in the flow), and the layer's `transform` / `anim`
+    moves, are not checked.
+
     Args:
         manifest: a whole manifest `{title, width?, height?, fps?, scenes}`.
         scene: one scene `{id?, dur, layers?, camera?, scene3d?, bg?, ...}`.

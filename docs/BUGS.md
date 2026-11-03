@@ -665,9 +665,12 @@ status: **fixed** (2026-10-28) · severity: **critical** · area: `editor_ripple
 
 ## B-309 — `motion_validate` does not flag text overflowing its container
 
-status: **open** · severity: **major** · area: `packages/motion-engine` validation (D-403)
+status: **fixed** (2026-11-03) · severity: **major** · area: `packages/motion-engine` validation (D-403)
 
 - **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. A 30 px IBM Plex Mono text 'thumbnails' centred in a 170 px-wide shape overflowed visibly (the owner caught it); validate returned `issues: []`. Repro: shape `{w:170,h:270}` + centred text `{size:30, font:'IBM Plex Mono', text:'thumbnails'}` inside it.
+- **cause:** `motion_validate` was a pure schema check; nothing compared a text's size with its box. The engine has no text measurement to reuse (Text.tsx leaves layout to CSS; `chatLayout.ts` only estimates for chat), so the check brings its own.
+- **fix:** `engine/textFit.ts` `textOverflowIssues`: for each `text` layer with `x` and `y`, builds its box the way `Text.tsx` places it (align, `maxWidth` wrap, line height 1.15, letter spacing) and compares it with the smallest sibling `shape` (rect, roundrect, ellipse bounds) holding its anchor, else the canvas. A `text_overflow` issue per layer names the sides and px, with a hint. Widths come from a canvas measurer on loaded fonts in the webview (`textMeasure.ts`); otherwise from the glyph advance (monospace exact at 0.6 em, other faces only flagged past 12% slack). Wired into `motion_validate` for a manifest, a scene, layers and the live document. Advisory: it sets `ok` false but no authoring op refuses on it; the tool docstring (both MCP servers, parity re-captured) says so.
+- **tests:** `engine/textFit.test.ts` (13: the exact repro, fits, wrap, height overflow, smallest container, canvas, estimate slack, measurer, groups); `motionOps.test.ts` "B-309" (layers / scene / manifest forms). Not run against the live app's fonts.
 
 ## B-308 — Motion has no time-varying stacking order (z-order is list order only)
 
