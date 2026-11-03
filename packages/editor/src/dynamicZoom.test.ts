@@ -24,7 +24,6 @@ import {
   type DynamicZoomFraming,
 } from './dynamicZoom';
 import { paramValueAt, type ClipKeyframe } from './clipKeyframes';
-import { keyframeExprAt } from './timelineExport';
 import { EASE_PRESETS } from './timeline';
 
 const LINEAR = EASE_PRESETS[0].curve;
@@ -253,23 +252,6 @@ describe('preview and export agree — because there is nothing new to agree abo
       { frame: 99, params: { position_x: 0.1, position_y: -0.05, scale: 1.5 } },
     ];
     expect(baked).toEqual(handAuthored);
-  });
-
-  it('compiles to the same ffmpeg expression the export builds for hand-authored keys', () => {
-    // `keyframeExprAt` is the EXPORT side's own evaluator (the ffmpeg
-    // piecewise-linear expression), and `paramValueAt` mirrors the PREVIEW
-    // side's Rust `interpolate_param`. Running the baked keys through both and
-    // getting the hand-authored answer is the end-to-end version of the claim.
-    const baked = applyDynamicZoom(undefined, AT_REST, PUSHED, 0, 99, LINEAR);
-    const handAuthored: ClipKeyframe[] = [
-      { frame: 0, params: { scale: 1 } },
-      { frame: 99, params: { scale: 1.5 } },
-    ];
-    const fps = 30;
-    expect(keyframeExprAt(baked, 'scale', 1, fps)).toBe(keyframeExprAt(handAuthored, 'scale', 1, fps));
-    for (const f of [0, 25, 50, 75, 99]) {
-      expect(paramValueAt(baked, 'scale', f, 1)).toBe(paramValueAt(handAuthored, 'scale', f, 1));
-    }
   });
 
   it('an EASED bake is still ordinary keys — no per-key easing field is invented', () => {

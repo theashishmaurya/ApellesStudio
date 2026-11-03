@@ -1,5 +1,5 @@
 //! **The export benchmark (B-380): how long an export takes, stage by stage,
-//! on a realistic timeline, on both export paths and both encoders.**
+//! on a realistic timeline, on both encoders.**
 //!
 //! What it is: one `#[ignore]`d measurement,
 //! [`measure_export_benchmark`], over the fixture
@@ -12,17 +12,15 @@
 //! encoder), runs each configuration end to end, and prints, per run:
 //!
 //! - wall time and the export-to-runtime ratio (the number B-380 is about);
-//! - the stages — for the compositor path the renderer's own
-//!   [`super::RenderStages`] (decode + composite, resize, waiting on the
-//!   encoder, concat, loudness), for the filter path the same argv with the
-//!   encoder removed (decode + composite + scale) against the whole run;
+//! - the stages — the renderer's own [`super::RenderStages`] (decode +
+//!   composite, resize, waiting on the encoder, concat, loudness);
 //! - average CPU use over the run (this process plus every ffmpeg child, from
 //!   `getrusage`), average and peak GPU use (`ioreg`'s IOAccelerator "Device
 //!   Utilization %", which covers the GPU, not the separate media engine), and
 //!   the peak resident memory of the whole process tree;
 //! - the output's frame count, video vs audio duration (A/V sync), and — when
-//!   both encoders of one path ran — PSNR / SSIM of the hardware file against the
-//!   software one.
+//!   both encoders ran — PSNR / SSIM of the hardware file against the software
+//!   one.
 //!
 //! What it does NOT do: assert anything (it samples a live, shared machine — a
 //! measurement to read, as every `measure_*` in `edit_render` is), or keep files:
@@ -37,13 +35,12 @@
 //!
 //! Environment:
 //! - `APELLES_BENCH_SIZE` — `1080p` (default) or `4k`.
-//! - `APELLES_BENCH_CONFIGS` — comma list from `filter-software`,
-//!   `filter-hardware`, `compositor-software`, `compositor-hardware`
-//!   (default: all four, in that order).
+//! - `APELLES_BENCH_CONFIGS` — comma list from `compositor-software`,
+//!   `compositor-hardware` (default: both, in that order). D-448 deleted the
+//!   `filter-*` configurations with the filter-graph export.
 //! - `APELLES_BENCH_SEGMENTS` — compositor segment counts to sweep, comma list;
 //!   `auto` (default) is what the app itself would plan on this machine.
 //! - `APELLES_BENCH_REPEATS` — runs per configuration, best kept (default 1).
-//! - `APELLES_BENCH_SPLIT=1` — also run the filter path without its encoder.
 //! - `APELLES_BENCH_LOUDNESS=1` — run the D-401 loudness pass (-14 LUFS /
 //!   -1 dBTP) on each output and time it.
 //! - `APELLES_BENCH_MEDIA_DIR` — generate (or reuse) the media there.
@@ -76,7 +73,6 @@ use super::{
 struct BenchCase {
     width: u32,
     height: u32,
-    filter_args: Vec<String>,
     pipe_args: Vec<String>,
     pipe_frames: u64,
     segment_args: Vec<String>,
@@ -114,12 +110,12 @@ fn load_fixture() -> BenchFixture {
     serde_json::from_str(&raw).expect("export-bench.json is not valid JSON")
 }
 
-pub(super) fn env_or(name: &str, default: &str) -> String {
+fn env_or(name: &str, default: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| default.to_string())
 }
 
 /// Free bytes on the volume holding `dir` (`statvfs`).
-pub(super) fn free_bytes(dir: &Path) -> u64 {
+fn free_bytes(dir: &Path) -> u64 {
     let Ok(c) = std::ffi::CString::new(dir.to_string_lossy().as_bytes()) else {
         return 0;
     };
@@ -132,7 +128,7 @@ pub(super) fn free_bytes(dir: &Path) -> u64 {
     u64::from(st.f_bavail).saturating_mul(st.f_frsize)
 }
 
-pub(super) fn require_disk(dir: &Path) {
+fn require_disk(dir: &Path) {
     let min_gb: u64 = env_or("APELLES_BENCH_MIN_FREE_GB", "15")
         .parse()
         .unwrap_or(15);
@@ -282,31 +278,6 @@ fn localise(args: &[String], dir: &Path, out: &Path) -> Vec<String> {
         .collect()
 }
 
-/// The filter argv with its encoder removed and its output sent to the null
-/// muxer (which takes decoded frames as they are): what decode + composite +
-/// scale cost on their own. Drops `-c:v …` up to the `-r` that follows it.
-fn without_encoder(args: &[String]) -> Vec<String> {
-    let mut out = Vec::with_capacity(args.len());
-    let mut skipping = false;
-    for (i, a) in args.iter().enumerate() {
-        if a == "-c:v" {
-            skipping = true;
-        }
-        if skipping && a == "-r" {
-            skipping = false;
-        }
-        if skipping {
-            continue;
-        }
-        if i == args.len() - 1 {
-            out.extend(["-f", "null", "-"].map(String::from));
-        } else {
-            out.push(a.clone());
-        }
-    }
-    out
-}
-
 /// CPU seconds (user + system) used so far by this process and its reaped
 /// children.
 fn cpu_seconds() -> f64 {
@@ -383,7 +354,7 @@ fn sampled<T>(f: impl FnOnce() -> T) -> (T, Probe, Duration, f64) {
 
 /// Video and audio stream durations, seconds (A/V sync: they should agree to
 /// within a frame).
-pub(super) fn stream_durations(path: &Path) -> (f64, f64) {
+fn stream_durations(path: &Path) -> (f64, f64) {
     let read = |sel: &str| -> f64 {
         ffmpeg_locate::ffprobe()
             .ok()
@@ -575,14 +546,13 @@ fn measure_export_benchmark() {
     let size = env_or("APELLES_BENCH_SIZE", "1080p");
     let configs = env_or(
         "APELLES_BENCH_CONFIGS",
-        "filter-software,filter-hardware,compositor-software,compositor-hardware",
+        "compositor-software,compositor-hardware",
     );
     let segments_plan = env_or("APELLES_BENCH_SEGMENTS", "auto");
     let repeats: usize = env_or("APELLES_BENCH_REPEATS", "1")
         .parse()
         .unwrap_or(1)
         .max(1);
-    let split = std::env::var("APELLES_BENCH_SPLIT").as_deref() == Ok("1");
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let media_dir = std::env::var("APELLES_BENCH_MEDIA_DIR")
@@ -657,12 +627,6 @@ fn measure_export_benchmark() {
                 require_disk(&out_dir);
                 let out = out_dir.join(format!("{config}-{segs}-{rep}.mp4"));
                 let (stages, probe, wall, cpu) = match path_kind {
-                    "filter" => {
-                        let args = localise(&case.filter_args, &media_dir, &out);
-                        let ((), probe, wall, cpu) =
-                            sampled(|| run_ffmpeg(&args).expect("the filter path"));
-                        (String::new(), probe, wall, cpu)
-                    }
                     "compositor" => {
                         let plan = SegmentedEncodePlan {
                             segment_args: localise(&case.segment_args, &media_dir, &out),
@@ -678,6 +642,7 @@ fn measure_export_benchmark() {
                             loudness: None,
                             timeline_id: None,
                             cancel_token: None,
+                            timeline: None,
                         };
                         let (outcome, probe, wall, cpu) = sampled(|| {
                             if segs == "auto" {
@@ -745,23 +710,6 @@ fn measure_export_benchmark() {
                 let _ = std::fs::remove_file(&out);
             }
         }
-        if path_kind == "filter" && split {
-            let out = out_dir.join(format!("{config}-null"));
-            let args = without_encoder(&localise(&case.filter_args, &media_dir, &out));
-            let ((), probe, wall, cpu) =
-                sampled(|| run_ffmpeg(&args).expect("the filter path without its encoder"));
-            print_run(
-                &RunReport {
-                    label: format!("{config} (no encode)"),
-                    wall,
-                    cpu_pct: cpu_pct(cpu, wall),
-                    probe,
-                    stages: "decode + composite + scale only".to_string(),
-                },
-                runtime,
-                baseline_rss,
-            );
-        }
     }
     if let Some((_, old)) = reference.take() {
         let _ = std::fs::remove_file(old);
@@ -784,37 +732,6 @@ fn seg_list_first(plan: &str, path_kind: &str) -> String {
     } else {
         "-".to_string()
     }
-}
-
-#[test]
-fn without_encoder_drops_the_codec_tail_and_writes_to_null() {
-    let args: Vec<String> = [
-        "-i",
-        "a.mp4",
-        "-map",
-        "[outv]",
-        "-c:v",
-        "h264_videotoolbox",
-        "-q:v",
-        "70",
-        "-pix_fmt",
-        "yuv420p",
-        "-r",
-        "30",
-        "-t",
-        "60",
-        "OUT",
-    ]
-    .map(String::from)
-    .to_vec();
-    assert_eq!(
-        without_encoder(&args),
-        [
-            "-i", "a.mp4", "-map", "[outv]", "-r", "30", "-t", "60", "-f", "null", "-"
-        ]
-        .map(String::from)
-        .to_vec()
-    );
 }
 
 #[test]

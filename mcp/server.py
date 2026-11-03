@@ -48,8 +48,7 @@ from schemas import (
     CurveSpec,
     DynamicZoomFraming,
     EaseCurve,
-    ExportRenderer,
-    LoudnessPreset,
+        LoudnessPreset,
     ExportEncoder,
     ExportFormat,
     PresetLoudness,
@@ -915,31 +914,28 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "keyframed moves position so the box's centre stays put."
         ),
         "corner_radius": (
-            "corner_radius (D-344) rounds a clip's placement box, and is the "
-            "one geometry field measured in OUTPUT-CANVAS PIXELS rather than "
-            "as a fraction of it — a human means '16 px of round', and does "
-            "not want that rescaled when the box moves or resizes, which is "
-            "the same unit every reference uses (CSS border-radius, Premiere's "
-            "Rounded Corners, Resolve's Rounded Corner). 0 (the default, and "
-            "every pre-D-344 clip) is square corners and renders "
-            "byte-identically to a build without the feature in BOTH engines — "
-            "neither emits any masking work for it. Applied AFTER crop and "
-            "scale and BEFORE rotation, so a rotated clip's rounded corners "
-            "rotate with it; it MULTIPLIES the existing alpha rather than "
-            "replacing it, so it composes with crop, opacity, fades and "
-            "dissolves rather than overriding any of them. A radius larger "
-            "than half the box's shorter side clamps to that — a pill, or a "
-            "circle on a square box — rather than degenerating. Keyframeable "
-            "under the same name via editor_set_clip_keyframes (the exporter's "
-            "mask is re-evaluated per frame, so an animated radius is a "
-            "picture both engines can genuinely produce — unlike a title's "
-            "scale, see text_title_clips). It does NOT apply to a text/title "
-            "clip or an adjustment clip and editor_set_clip_transform refuses "
-            "a non-default value for one rather than storing something that "
-            "renders nothing. The live preview and the ffmpeg export agree to "
-            "within ffmpeg's own 1/255 alpha quantisation, measured against "
-            "real output on both sides rather than asserted — see "
-            "docs/notes/rounded-corners.md."
+            "corner_radius (D-344) rounds a clip's placement box, and is "
+            "the one geometry field measured in OUTPUT-CANVAS PIXELS rather "
+            "than as a fraction of it — a human means '16 px of round', and "
+            "does not want that rescaled when the box moves or resizes, "
+            "which is the same unit every reference uses (CSS "
+            "border-radius, Premiere's Rounded Corners, Resolve's Rounded "
+            "Corner). 0 (the default, and every pre-D-344 clip) is square "
+            "corners and renders byte-identically to a build without the "
+            "feature — no masking work is done for it. Applied AFTER crop "
+            "and scale and BEFORE rotation, so a rotated clip's rounded "
+            "corners rotate with it; it MULTIPLIES the existing alpha "
+            "rather than replacing it, so it composes with crop, opacity, "
+            "fades and dissolves rather than overriding any of them. A "
+            "radius larger than half the box's shorter side clamps to that "
+            "— a pill, or a circle on a square box — rather than "
+            "degenerating. Keyframeable under the same name via "
+            "editor_set_clip_keyframes. It does NOT apply to a text/title "
+            "clip or an adjustment clip and editor_set_clip_transform "
+            "refuses a non-default value for one rather than storing "
+            "something that renders nothing. The live preview and the "
+            "export are drawn by the same compositor (D-448), so they agree "
+            "by construction — see docs/notes/rounded-corners.md."
         ),
         "z_order": (
             "Track index 0 is painted LAST — topmost, on top of every other "
@@ -955,21 +951,19 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "track-level or whole-timeline keyframe concept."
         ),
         "keyframe_segments_are_linear_until_you_ease_them": (
-            "D-232: every keyframe segment interpolates LINEARLY by default — "
-            "constant rate, and a dead stop at the next key. That is usually "
-            "the single biggest reason a generated move looks generated. "
-            "editor_set_keyframe_ease sets a real cubic-bezier ease on ONE "
-            "property's segment (the one STARTING at the frame you name), "
-            "taking the same preset names and control points as "
-            "editor_set_clip_fade's curves. Easing warps the RATE only: both "
-            "endpoints still hit their authored values exactly, so it can "
-            "never move a keyframe. `y` outside 0..1 is legal and means "
-            "overshoot. The live preview solves the curve exactly per frame; "
-            "editor_export approximates each eased segment as 20 linear steps "
-            "(ffmpeg has no bezier solver), which is below one output "
-            "quantisation step — the two agree on every authored keyframe "
-            "exactly. editor_set_curve_editor opens the same curve in the GUI "
-            "so a human can see and redrag it."
+            "D-232: every keyframe segment interpolates LINEARLY by default "
+            "— constant rate, and a dead stop at the next key. That is "
+            "usually the single biggest reason a generated move looks "
+            "generated. editor_set_keyframe_ease sets a real cubic-bezier "
+            "ease on ONE property's segment (the one STARTING at the frame "
+            "you name), taking the same preset names and control points as "
+            "editor_set_clip_fade's curves. Easing warps the RATE only: "
+            "both endpoints still hit their authored values exactly, so it "
+            "can never move a keyframe. `y` outside 0..1 is legal and means "
+            "overshoot. The live preview and editor_export both solve the "
+            "curve exactly per frame (one compositor, D-448). "
+            "editor_set_curve_editor opens the same curve in the GUI so a "
+            "human can see and redrag it."
         ),
         "a_keyframe_overrides_the_static_field_per_property": (
             "PER PROPERTY, a keyframe wins over the value "
@@ -1038,20 +1032,18 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
         ),
         "clip_highlights": (
             "D-396: a clip's `highlights` (editor_set_clip_highlights) are "
-            "highlighter-pen sweeps drawn on the clip's OWN PICTURE, in image "
-            "space, before its crop, scale, rotation and keyframes -- so each "
-            "box stays on the words it was authored over through every "
-            "push-in. `box` is [x0,y0,x1,y1] as fractions of the SOURCE image "
-            "(0..1, top-left origin); `at` is the clip SOURCE frame the sweep "
-            "starts on (the axis editor_set_clip_keyframes uses) and `dur` the "
-            "frames it takes; a swept highlight stays for the rest of the "
-            "clip. Colour defaults to a yellow-ochre (#F2B63A) at 0.45 "
-            "opacity, blended normally (not multiplied) so it reads on white "
-            "and dark pages alike. The live preview, the compositor export "
-            "and the ffmpeg export draw the same stroke (measured against "
-            "real ffmpeg output); the ffmpeg path costs one per-pixel `geq` "
-            "node per highlight, so it is slow on large frames. Video and "
-            "still clips only."
+            "highlighter-pen sweeps drawn on the clip's OWN PICTURE, in "
+            "image space, before its crop, scale, rotation and keyframes -- "
+            "so each box stays on the words it was authored over through "
+            "every push-in. `box` is [x0,y0,x1,y1] as fractions of the "
+            "SOURCE image (0..1, top-left origin); `at` is the clip SOURCE "
+            "frame the sweep starts on (the axis editor_set_clip_keyframes "
+            "uses) and `dur` the frames it takes; a swept highlight stays "
+            "for the rest of the clip. Colour defaults to a yellow-ochre "
+            "(#F2B63A) at 0.45 opacity, blended normally (not multiplied) "
+            "so it reads on white and dark pages alike. The live preview "
+            "and the export draw the same stroke (one compositor, D-448). "
+            "Video and still clips only."
         ),
         "selection_gated_surfaces": (
             "D-216: you do NOT need a selection to edit anything — every "
@@ -1199,13 +1191,14 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "(editor_set_timeline_output, or width/height on "
             "editor_create_timeline), overriding the project's settings for "
             "that timeline only: a 1080x1920 short in a 1920x1080 project. "
-            "`output: null` means it follows the project. The preview canvas, "
-            "the transform handles, both export renderers and FCPXML use it; "
+            "`output: null` means it follows the project. The preview "
+            "canvas, the transform handles, the export and FCPXML use it; "
             "editor_export and editor_export_fcpxml default to it when you "
-            "omit width/height. Sizes must be even and 16..8192. Changing it "
-            "moves no clip: position/scale are fractions of the frame, so a "
-            "16:9 layout is simply measured against the new frame (reframe "
-            "the clips yourself, e.g. scale up and offset position_x)."
+            "omit width/height. Sizes must be even and 16..8192. Changing "
+            "it moves no clip: position/scale are fractions of the frame, "
+            "so a 16:9 layout is simply measured against the new frame "
+            "(reframe the clips yourself, e.g. scale up and offset "
+            "position_x)."
         ),
         "timeline_frame_rate": (
             "B-323/D-424: every timeline has its own frame rate "
@@ -1306,14 +1299,21 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "wheels, HSL, and an applied .cube. It is carried as a 33-cube "
             "3D LUT baked by running an identity lattice through the "
             "Colorist's own GPU pipeline once, so the Edit preview and the "
-            "ffmpeg export apply the identical numbers (measured equal to "
-            "the code, not approximately). What a 3D LUT CANNOT carry is "
-            "anything spatial: mask/local layers, the Colorist crop, and "
-            "depth relight are dropped, and each drop is reported — as a "
-            "warning in editor_get_grade_status, in the Export dialog, and "
-            "in the app log. If editor_get_grade_status lists warnings for a "
-            "clip, the exported file will legitimately differ from what the "
-            "Colorist tab shows for it; nothing else will."
+            "export apply the identical numbers (one compositor, D-448). "
+            "What a 3D LUT CANNOT carry is anything spatial: mask/local "
+            "layers, the Colorist crop, depth relight, and the effects that "
+            "read neighbouring pixels or the frame position (sharpening, "
+            "clarity, structure, dehaze, centre, noise reduction, vignette, "
+            "grain, chromatic aberration, glow, halation, flare, lens blur; "
+            "B-381). Each is left out and reported — as a warning in "
+            "editor_get_grade_status, in the Export panel before you "
+            "export, and in the app log. Contrast, shadows, highlights, "
+            "whites and blacks are local operators in the Colorist: the LUT "
+            "carries their flat-area response, so textured areas can differ "
+            "a little, and that is warned too. If editor_get_grade_status "
+            "lists warnings for a clip, the Edit preview and the exported "
+            "file will legitimately differ from what the Colorist tab shows "
+            "for it; nothing else will."
         ),
         "identity_is_nothing": (
             "A clip that was never graded, or whose grade was reset, has NO "
@@ -4626,10 +4626,7 @@ def editor_set_clip_highlights(track: int, clip: int, highlights: list[ClipHighl
     adjustment clip has no picture of its own and is refused. Unlocked tracks
     only. A clip with no highlights renders byte-identically to before.
 
-    Preview and export agree: the live preview, the compositor export and the
-    ffmpeg filter-graph export all draw the same stroke (measured against real
-    ffmpeg output). The ffmpeg path costs one per-pixel `geq` node per
-    highlight, so prefer the compositor renderer for large frames.
+    Preview and export agree: both are drawn by the same compositor (D-448).
 
     Don't know where the words are? editor_suggest_clip_highlights reads the
     picture's text and the narration over it and returns ready-to-apply entries.
@@ -4789,9 +4786,8 @@ def editor_set_keyframe_ease(
     "ease-out" on the last one. Set it and then look: `editor_set_curve_editor`
     opens this exact curve in the GUI so a human can see and redrag it.
 
-    The live preview and `editor_export` interpret the curve identically (the
-    export approximates it as 20 linear steps per segment, well under one
-    output quantisation step, because ffmpeg has no bezier solver).
+    The live preview and `editor_export` interpret the curve identically: one
+    compositor draws both (D-448).
 
     Undoable: same store action and same undo stack as the GUI's own curve
     editor, so a human can Cmd+Z it."""
@@ -4973,7 +4969,6 @@ def editor_export(
     speed_overrides: dict[str, float] | None = None,
     fit_overrides: dict[str, FitMode] | None = None,
     freeze_overrides: dict[str, bool] | None = None,
-    renderer: ExportRenderer | None = None,
     loudness_preset: LoudnessPreset | None = None,
     loudness_lufs: float | None = None,
     true_peak_dbtp: float | None = None,
@@ -5070,14 +5065,11 @@ def editor_export(
     round trip — which is expected, and is not the export failing** (D-362,
     fixes B-231). A minutes-long export outlives that budget, so the bridge
     answers `ok: false` with a "no reply from the frontend" error while the
-    render carries on and succeeds. On the `"compositor"` renderer this tool
-    handles that for you: it then polls `editor_export_status` until the
+    render carries on and succeeds. This tool handles that for you: it then polls `editor_export_status` until the
     render really settles, and returns THAT outcome, so what you get back is
     the export's own answer rather than the timeout's. Call
     `editor_export_status` yourself at any point to watch progress, or to pick
-    a render back up if this call is interrupted. The `"filter"` renderer
-    reports no progress at all — nothing outside ffmpeg knows where it is — so
-    there a timeout really does leave the output file as your only signal.
+    a render back up if this call is interrupted.
 
     **Loudness target (D-401) — `loudness_preset` / `loudness_lufs` /
     `true_peak_dbtp`.** By default the mix is written at whatever level the
@@ -5093,24 +5085,15 @@ def editor_export(
     re-encoded; only the audio is rewritten (AAC 192k). The result's
     `loudness` object reports `before` and `after` (`integratedLufs`,
     `truePeakDbtp`, `loudnessRangeLu`), `gainDb`, `attempts` and `targetMet`;
-    on the `"compositor"` renderer `editor_export_status` shows a
+    `editor_export_status` shows a
     `normalising` phase and carries the same `loudness` report. A silent or
     audio-less export is left untouched and says so in `loudness.skipped`.
 
-    **`renderer` (D-350) — which engine composites the picture.**
-    `"compositor"` renders every frame through the app's OWN live-preview
-    compositor and pipes it into one ffmpeg process that only compresses and
-    muxes; `"filter"` (the default, and everything described above) compiles
-    the whole composite into an ffmpeg `-filter_complex` graph with one `-i`
-    per clip. Prefer `"compositor"` for a HEAVILY CUT timeline — the filter
-    path's memory and thread use both scale with the clip count
-    (B-228/B-229/B-230: a real ~79-clip 4K project reached 56 GB and 3,065
-    threads on one process), while the render path opens exactly one input
-    whatever the clip count, and it is by construction the same picture the
-    Edit tab previews. It is opt-in while it is phase 1: it does NOT yet
-    support `speed_overrides`, `fit_overrides` or `freeze_overrides` (all
-    EXPORT-TIME-ONLY knobs the live compositor has no notion of) and REFUSES
-    rather than silently ignoring one."""
+    **One image engine (D-448).** Every frame is drawn by the app's own
+    compositor — the same one the Edit tab previews with — and piped into one
+    ffmpeg process that only encodes and muxes. `speed_overrides`,
+    `fit_overrides` ("Stretch to fill") and `freeze_overrides` ("Hold last
+    frame") are applied as clip data on the copy of the timeline it draws."""
     import json
     import uuid
 
@@ -5140,8 +5123,6 @@ def editor_export(
         args["fitOverrides"] = fit_overrides
     if freeze_overrides is not None:
         args["freezeOverrides"] = freeze_overrides
-    if renderer is not None:
-        args["renderer"] = renderer
     if loudness_preset is not None:
         args["loudnessPreset"] = loudness_preset
     if loudness_lufs is not None:
@@ -5186,8 +5167,8 @@ def editor_export_status(job_id: str | None = None) -> str:
     `queued` (waiting behind another export, with `queuePosition`), `running`,
     `done` or `failed`, always with that job's own `outPath`. A second export
     started while one runs is queued, never mistaken for it. Without `job_id`
-    this reads the compositor renderer's running — or most recently finished
-    — render, whichever job it belongs to.
+    this reads the running — or most recently finished — render, whichever
+    job it belongs to.
 
     **Read `state` first.** `running` (still going; poll again), `done` (the
     file is written and finalised), `failed` (`error` says why), `stalled`
@@ -5212,11 +5193,7 @@ def editor_export_status(job_id: str | None = None) -> str:
     same overall and are very different situations. `etaMs` is a rough
     estimate taken from the slowest unfinished segment (a render ends when its
     last worker does). While `phase` is `concatenating` every frame is already
-    rendered and the segments are being joined and the audio muxed.
-
-    **Only the `"compositor"` renderer reports progress.** The `"filter"`
-    renderer hands the whole job to one ffmpeg and learns nothing until it
-    exits, so an export run that way is invisible here."""
+    rendered and the segments are being joined and the audio muxed."""
     import json
 
     args: dict = {}
@@ -5231,8 +5208,7 @@ def editor_cancel_export(job_id: str) -> str:
     the Export queue's Cancel button in the top bar.
 
     A job still `queued` (waiting behind another export) leaves the queue at
-    once. A `running` one is stopped for real on either renderer: its ffmpeg /
-    segment encoders and the concat step are killed and the partial output file
+    once. A `running` one is stopped for real: its segment encoders and the concat step are killed and the partial output file
     (and any loudness-pass scratch file) is removed; `editor_export_status(
     job_id)` reads `cancelled` once the run has unwound (usually well under a
     second; a cancel during the short loudness pass is honoured when that pass

@@ -32,17 +32,19 @@
 //!
 //! Baking sidesteps both. The shader stays the *only* implementation of the
 //! grade maths — it is what renders the lattice — and what crosses into the
-//! other two engines is 3×33³ numbers. The Edit preview interpolates them on
-//! the CPU (`apelles_types::Lut3d::sample_trilinear`); the ffmpeg export hands
-//! the very same lattice, written as a `.cube`, to ffmpeg's own `lut3d` filter
-//! with `interp=trilinear`. Preview and export therefore agree *by
-//! construction*.
+//! compositor is 3×33³ numbers, interpolated per pixel
+//! (`apelles_types::Lut3d::sample_trilinear`). The Edit preview and the export
+//! are drawn by that one compositor (D-448), so they agree *by construction*.
+//! (Until D-448 an ffmpeg filter-graph export read the same lattice as a
+//! `.cube` through `lut3d`; that path is gone.)
 //!
 //! ## What a LUT cannot carry
 //!
 //! A 3D LUT is a pure per-pixel `RGB → RGB` function. Everything **spatial** in
 //! a grade is outside that by definition: mask layers / local adjustments,
-//! crop, rotation/flips, and depth-driven relight. [`bake_lut3d`] strips those
+//! crop, rotation/flips, depth-driven relight, and (B-381) every effect that
+//! reads a pixel's neighbours or its place in the frame ([`SPATIAL_EFFECTS`]:
+//! sharpening, clarity, vignette, grain …). [`bake_lut3d`] strips those
 //! before baking (they would also distort the lattice image itself — a crop
 //! applied to a 33×1089 lattice is meaningless) and returns a warning naming
 //! each one it dropped, which [`lut_for_clip`] logs once per bake rather than
@@ -82,6 +84,30 @@ use super::state;
 /// The `.cube` `TITLE` written for a baked clip grade, and the `caller_id` the
 /// render is tagged with in the GPU profiler.
 const BAKE_CALLER: &str = "grade_lut";
+
+/// B-381 — the grade's adjustments (by `grade.json` key, with the Colorist
+/// panel's own name for the warning) that depend on a pixel's neighbours or its
+/// position in the frame, and so cannot be part of a per-pixel 3D LUT. Every
+/// other adjustment the primary panel offers is a per-pixel colour function and
+/// is baked exactly. `lensBlurEnabled` is a toggle; the rest are amounts whose
+/// neutral value is 0.
+const SPATIAL_EFFECTS: &[(&str, &str)] = &[
+    ("sharpness", "sharpening"),
+    ("clarity", "clarity"),
+    ("structure", "structure"),
+    ("dehaze", "dehaze"),
+    ("centré", "centre"),
+    ("lumaNoiseReduction", "luma noise reduction"),
+    ("colorNoiseReduction", "colour noise reduction"),
+    ("vignetteAmount", "vignette"),
+    ("grainAmount", "grain"),
+    ("chromaticAberrationRedCyan", "chromatic aberration"),
+    ("chromaticAberrationBlueYellow", "chromatic aberration"),
+    ("glowAmount", "glow"),
+    ("halationAmount", "halation"),
+    ("flareAmount", "flare"),
+    ("lensBlurEnabled", "lens blur"),
+];
 
 /// A baked grade: the lattice, plus what baking had to drop (see the module
 /// doc's "What a LUT cannot carry").
@@ -147,7 +173,7 @@ impl BakeSession {
                 .count();
             if visible > 0 {
                 warnings.push(format!(
-                    "grade has {visible} masked/local layer(s); a 3D LUT is global-only — baked the primary grade, dropped the masks"
+                    "its Colorist grade has {visible} mask layer(s); the Edit tab and the export apply the clip's overall grade only, not the masked adjustments"
                 ));
             }
         }
@@ -166,13 +192,48 @@ impl BakeSession {
         }
         if primary.get("crop").is_some_and(|c| !c.is_null()) {
             warnings.push(
-                "grade has a Colorist crop; a 3D LUT is colour-only — the crop was not baked"
+                "its Colorist grade has a crop; the Edit tab and the export frame the clip with its own crop instead"
                     .into(),
             );
         }
         for k in ["masks", "lutPath", "crop"] {
             if let Some(obj) = primary.as_object_mut() {
                 obj.remove(k);
+            }
+        }
+        // B-381 — the neighbourhood and position effects. Each of these reads
+        // a pixel's neighbours or its place in the frame, so run over the
+        // lattice image they would bake its layout into the colours (a
+        // vignette darkening the lattice's edge entries, grain adding noise to
+        // single entries). They are zeroed for the bake and named, never
+        // baked wrongly or dropped silently.
+        let spatial: Vec<&str> = SPATIAL_EFFECTS
+            .iter()
+            .filter(|(key, _)| {
+                primary.get(*key).is_some_and(|v| {
+                    v.as_f64().is_some_and(|n| n.abs() > f64::EPSILON) || v.as_bool() == Some(true)
+                })
+            })
+            .map(|(_, label)| *label)
+            .collect();
+        if let Some(w) = local_tone_warning(&primary) {
+            warnings.push(w);
+        }
+        if !spatial.is_empty() {
+            warnings.push(format!(
+                "its Colorist grade uses {}; these work on neighbouring pixels or the frame position, so the Edit tab and the export show the grade without them",
+                spatial.join(", ")
+            ));
+            if let Some(obj) = primary.as_object_mut() {
+                for (key, _) in SPATIAL_EFFECTS {
+                    if let Some(v) = obj.get_mut(*key) {
+                        *v = if v.is_boolean() {
+                            json!(false)
+                        } else {
+                            json!(0)
+                        };
+                    }
+                }
             }
         }
         if let Some(obj) = primary.as_object_mut() {
@@ -260,6 +321,40 @@ impl BakeSession {
             warnings,
         })
     }
+}
+
+/// B-381 — contrast, shadows, highlights, whites and blacks are LOCAL tone
+/// operators in the grade shader: each reads a blur of the pixel's
+/// neighbourhood (`tonal_blur_texture`). A 3D LUT carries their response on a
+/// flat area of each colour exactly (`the_lattice_matches_the_grade_shader_on_
+/// flat_colour`), but not the part that depends on the detail around a pixel,
+/// so on textured footage the Edit tab and the export differ from the
+/// Colorist. They stay in the bake (dropping them would be further from the
+/// Colorist, not nearer); the warning says what is approximated.
+fn local_tone_warning(adjustments: &Value) -> Option<String> {
+    const LOCAL_TONE: [(&str, &str); 5] = [
+        ("contrast", "contrast"),
+        ("shadows", "shadows"),
+        ("highlights", "highlights"),
+        ("whites", "whites"),
+        ("blacks", "blacks"),
+    ];
+    let used: Vec<&str> = LOCAL_TONE
+        .iter()
+        .filter(|(k, _)| {
+            adjustments
+                .get(*k)
+                .and_then(Value::as_f64)
+                .is_some_and(|v| v.abs() > f64::EPSILON)
+        })
+        .map(|(_, label)| *label)
+        .collect();
+    (!used.is_empty()).then(|| {
+        format!(
+            "its Colorist grade uses {}, which the Colorist applies with local detail; the Edit tab and the export apply their flat-area response, so textured areas can look a little different",
+            used.join(", ")
+        )
+    })
 }
 
 /// One-shot bake — a [`BakeSession`] used once. See [`BakeSession::bake`].
@@ -384,7 +479,7 @@ pub fn lut_for_clip(clip_id: &str) -> Option<Arc<Lut3d>> {
 /// round trip could still shift a value. Same "an untouched effect emits
 /// nothing" property D-230's adjustment clip has in both engines.
 ///
-/// `session` lets a batch caller (the export's [`bake_luts_for_clips`]) share
+/// `session` lets a batch caller (the export's [`check_clip_grades`]) share
 /// one GPU device across every clip instead of creating one per bake; `None`
 /// makes a throwaway session, which is what the single-clip preview path wants.
 pub fn resolve_clip_lut(clip_id: &str, session: Option<&BakeSession>) -> Resolved {
@@ -443,82 +538,57 @@ pub fn bake_clip_grade(
 }
 
 // --------------------------------------------------------------------------- //
-// the export side: the same lattice, written where ffmpeg's `lut3d` can read it
+// the export side: every graded clip baked, and what a LUT cannot carry named
 // --------------------------------------------------------------------------- //
 
-/// Where a baked `.cube` for the export lives: `<project>/cache/grade-luts/`.
-///
-/// Inside the `.chroma` bundle rather than a system temp dir on purpose. An
-/// export is queued now and may run minutes later (D-198), and its argv — which
-/// names this file by path — is deliberately frozen at enqueue time; a temp
-/// directory a cleaner can empty in between would turn that into an export that
-/// fails, or worse, silently loses a grade. It is also plainly inspectable next
-/// to the `grades/` documents it was derived from.
-fn lut_cache_dir(project_dir: &Path) -> PathBuf {
-    project_dir.join("cache").join("grade-luts")
-}
-
-/// What [`bake_luts_for_clips`] hands the frontend.
+/// What [`check_clip_grades`] hands the frontend.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GradeLutPaths {
-    /// `clip id → absolute .cube path`, containing an entry ONLY for a clip
-    /// that has a real, non-identity grade. A clip absent from this map has
-    /// nothing to apply, which is exactly what the preview does for it too.
-    pub luts: HashMap<String, String>,
-    /// Everything baking had to drop (masks, a Colorist crop), already prefixed
-    /// with the clip name — surfaced in the Export dialog rather than only
-    /// logged, because these are the cases where the exported file legitimately
-    /// will NOT match the Colorist tab and the user has to know.
+pub struct GradeCheck {
+    /// The clips that have a real, non-identity grade — the ones the
+    /// compositor will grade. A clip absent from this list has nothing to
+    /// apply, which is exactly what the preview does for it too.
+    pub graded: Vec<String>,
+    /// Everything baking had to leave out (masks, a Colorist crop, the spatial
+    /// effects), already prefixed with the clip — shown in the Export panel
+    /// before the export runs, because these are the cases where the file
+    /// legitimately will NOT match the Colorist tab and the user has to know.
     pub warnings: Vec<String>,
 }
 
-/// Bake every graded clip in `clip_ids` and write each lattice as a `.cube`
-/// ffmpeg's `lut3d` filter can read.
+/// Bake every graded clip in `clip_ids` into the process-wide lattice cache
+/// the compositor reads ([`resolve_clip_lut`]), and report what each grade
+/// could not carry — the export's pre-flight (D-256; D-448 dropped the `.cube`
+/// files the deleted ffmpeg filter path read).
 ///
 /// **One [`BakeSession`] for the whole batch**: `init_gpu_context` is the
 /// expensive part of a bake, and a 30-clip timeline must not mean 30 GPU
 /// devices.
 ///
-/// **Content-addressed filenames** (`<clip id>-<hash of the lattice>.cube`).
-/// Two reasons, both real: a queued export's frozen argv keeps pointing at the
-/// exact lattice that was current when it was queued even if the user re-grades
-/// the clip while it waits (D-198's snapshot guarantee, which a
-/// `<clip id>.cube` overwritten in place would quietly break), and two clips
-/// carrying the same grade share one file.
-///
 /// Errors rather than skipping. A clip that HAS a grade whose bake failed comes
-/// back as `Err`, so `compileEditorExportArgs` can refuse the export instead of
-/// shipping a file that silently disagrees with the preview.
-pub fn bake_luts_for_clips(clip_ids: &[String]) -> Result<GradeLutPaths, String> {
+/// back as `Err`, so the export is refused instead of shipping a file that
+/// silently disagrees with the preview; the render checks again before it
+/// draws ([`super::edit_render`]'s grade pre-flight), for a grade edited while
+/// the job waited in the queue.
+pub fn check_clip_grades(clip_ids: &[String]) -> Result<GradeCheck, String> {
     let Some(project) = state::current_project() else {
-        return Ok(GradeLutPaths {
-            luts: HashMap::new(),
+        return Ok(GradeCheck {
+            graded: Vec::new(),
             warnings: Vec::new(),
         });
     };
     // Nothing to do at all unless at least one clip actually has a grade file —
     // the common case, and worth not creating a GPU device for.
-    let graded: Vec<&String> = clip_ids
+    let with_file: Vec<&String> = clip_ids
         .iter()
         .filter(|id| grade_file_for(&project.path, id).is_file())
         .collect();
-    if graded.is_empty() {
-        return Ok(GradeLutPaths {
-            luts: HashMap::new(),
-            warnings: Vec::new(),
-        });
-    }
-
-    let dir = lut_cache_dir(&project.path);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     // Built lazily: every clip may already be memoised from the preview, in
     // which case this whole call touches no GPU at all.
     let mut session: Option<BakeSession> = None;
-    let mut luts = HashMap::new();
+    let mut graded = Vec::new();
     let mut warnings = Vec::new();
-
-    for clip_id in graded {
+    for clip_id in with_file {
         if session.is_none() && !is_memoised(&project.path, clip_id) {
             session = Some(BakeSession::new()?);
         }
@@ -530,19 +600,11 @@ pub fn bake_luts_for_clips(clip_ids: &[String]) -> Result<GradeLutPaths, String>
                 .iter()
                 .map(|w| format!("clip {clip_id}: {w}")),
         );
-        let Some(lut) = grade.lut else {
-            continue; // graded, but the grade is a no-op — nothing for ffmpeg to do
-        };
-        let text = lut.to_cube_text(&format!("Apelles clip grade {clip_id}"));
-        let path = dir.join(format!("{clip_id}-{:016x}.cube", stable_hash(&text)));
-        // Content-addressed, so an existing file with this name IS this lattice.
-        if !path.is_file() {
-            std::fs::write(&path, &text).map_err(|e| format!("write {}: {e}", path.display()))?;
+        if grade.lut.is_some() {
+            graded.push(clip_id.clone());
         }
-        luts.insert(clip_id.clone(), path.to_string_lossy().to_string());
     }
-
-    Ok(GradeLutPaths { luts, warnings })
+    Ok(GradeCheck { graded, warnings })
 }
 
 /// Is this clip's grade already memoised at its current fingerprint? Only used
@@ -559,30 +621,15 @@ fn is_memoised(project_dir: &Path, clip_id: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// A stable content hash for the `.cube` filename.
-///
-/// `DefaultHasher` is explicitly **not** guaranteed stable across Rust
-/// releases, which would be a bug in a persisted key — so this is a plain
-/// FNV-1a written out, four lines, deterministic forever. It names a cache
-/// file; it is not security-relevant.
-fn stable_hash(s: &str) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in s.as_bytes() {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x100_0000_01b3);
-    }
-    h
-}
-
-/// Bake the `.cube` files an Edit-tab export needs, for the clips the caller
-/// names. See [`bake_luts_for_clips`].
+/// Bake the grades an Edit-tab export draws, for the clips the caller names,
+/// and report what they cannot carry. See [`check_clip_grades`].
 ///
 /// Off the Tauri main thread (`spawn_blocking`) for `chroma_timeline_frame`'s
 /// reason — a cold batch is real GPU work and the window's event loop must not
 /// wait on it.
 #[tauri::command]
-pub async fn chroma_timeline_grade_luts(clip_ids: Vec<String>) -> Result<GradeLutPaths, String> {
-    tokio::task::spawn_blocking(move || bake_luts_for_clips(&clip_ids))
+pub async fn chroma_timeline_grade_luts(clip_ids: Vec<String>) -> Result<GradeCheck, String> {
+    tokio::task::spawn_blocking(move || check_clip_grades(&clip_ids))
         .await
         .map_err(|e| format!("grade lut bake task: {e}"))?
 }
@@ -674,6 +721,58 @@ mod tests {
         );
     }
 
+    /// B-381 — the lattice IS the shader on a flat area. Contrast, shadows,
+    /// highlights, whites and blacks read a blur of the neighbourhood; on a
+    /// flat patch of one colour that blur is the colour itself, so the shader's
+    /// answer there is exactly what a per-pixel LUT has to reproduce. (On
+    /// textured footage the Colorist's answer also depends on the detail
+    /// around each pixel, which no LUT can carry — the warning
+    /// `local_tone_warning` names.)
+    #[test]
+    fn the_lattice_matches_the_grade_shader_on_flat_colour() {
+        if !gpu_or_skip("the_lattice_matches_the_grade_shader_on_flat_colour") {
+            return;
+        }
+        let grade = json!({
+            "exposure": 0.35, "contrast": 18, "saturation": 22, "temperature": 12,
+            "highlights": -25, "shadows": 15, "whites": 10, "blacks": -10,
+        });
+        let session = BakeSession::new().expect("gpu");
+        let baked = session.bake(&grade, DEFAULT_SIZE, true).expect("bake");
+        let adjustments = get_all_adjustments_from_json(&grade, false, None);
+        let mut worst = 0i32;
+        for (i, c) in [[30u8, 40, 50], [128, 100, 80], [200, 190, 170], [90, 160, 60]]
+            .into_iter()
+            .enumerate()
+        {
+            let patch = RgbImage::from_pixel(64, 64, image::Rgb(c));
+            let shaded = render_core::render(
+                &session.ctx,
+                session.caches.as_ref(),
+                &DynamicImage::ImageRgb8(patch),
+                (i + 1) as u64,
+                RenderRequest {
+                    adjustments,
+                    mask_bitmaps: &[],
+                    lut: None,
+                    roi: None,
+                },
+                BAKE_CALLER,
+                false,
+                None,
+            )
+            .expect("render")
+            .to_rgb8();
+            let want = shaded.get_pixel(32, 32).0;
+            let got = baked.lut.apply_rgb8(c);
+            for ch in 0..3 {
+                worst = worst.max((i32::from(want[ch]) - i32::from(got[ch])).abs());
+            }
+        }
+        // The lattice's own trilinear interpolation between 33 entries.
+        assert!(worst <= 3, "the baked LUT is {worst} codes from the shader on flat colour");
+    }
+
     /// CLAUDE.md's render-path invariant at the bake's own level.
     #[test]
     fn baking_the_same_grade_twice_gives_the_same_lattice() {
@@ -702,7 +801,7 @@ mod tests {
         });
         let baked = bake_lut3d(&js, DEFAULT_SIZE, true).expect("bake");
         assert!(
-            baked.warnings.iter().any(|w| w.contains("masked/local")),
+            baked.warnings.iter().any(|w| w.contains("mask layer")),
             "no mask warning: {:?}",
             baked.warnings
         );
@@ -713,6 +812,25 @@ mod tests {
         );
         // and the crop did NOT reach the lattice geometry
         assert_eq!(baked.lut.size(), DEFAULT_SIZE);
+    }
+
+    /// B-381 — a vignette and grain are named and left out of the lattice,
+    /// which comes out exactly as the same grade without them: the lattice
+    /// image's layout must not leak into the colours.
+    #[test]
+    fn spatial_effects_are_named_and_kept_out_of_the_lattice() {
+        if !gpu_or_skip("spatial_effects_are_named_and_kept_out_of_the_lattice") {
+            return;
+        }
+        let plain = json!({ "exposure": 0.3, "contrast": 15 });
+        let with =
+            json!({ "exposure": 0.3, "contrast": 15, "vignetteAmount": -60, "grainAmount": 40 });
+        let a = bake_lut3d(&plain, DEFAULT_SIZE, true).expect("bake");
+        let b = bake_lut3d(&with, DEFAULT_SIZE, true).expect("bake");
+        let w = b.warnings.join(" ");
+        assert!(w.contains("vignette") && w.contains("grain"), "{w}");
+        assert!(!a.warnings.iter().any(|w| w.contains("vignette")), "{:?}", a.warnings);
+        assert_eq!(a.lut.data(), b.lut.data());
     }
 
     /// `apply_to_rgba` leaves alpha alone (the compositor owns it) and really

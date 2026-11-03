@@ -23,8 +23,8 @@ use crate::args::WireArgs;
 use crate::render;
 use crate::schemas::{
     CaptionScope, ClipHighlightSpec, ClipKeyframe, ClipSelector, CurveSpec, DynamicZoomFraming,
-    ExportEncoder, ExportFormat, ExportRenderer, FitMode, GapSelector, LoudnessPreset,
-    PresetLoudness, SpeedRampPoint,
+    ExportEncoder, ExportFormat, FitMode, GapSelector, LoudnessPreset, PresetLoudness,
+    SpeedRampPoint,
 };
 use crate::server::ApellesMcp;
 
@@ -1137,13 +1137,6 @@ pub struct EditorExportArgs {
     pub fit_overrides: Option<BTreeMap<String, FitMode>>,
     #[serde(default)]
     pub freeze_overrides: Option<BTreeMap<String, bool>>,
-    /// D-350 — which engine composites the PICTURE: `"compositor"` (the app's
-    /// own live-preview compositor, rendered headlessly and piped into one
-    /// ffmpeg process) or `"filter"` (the original one-`-i`-per-clip
-    /// `-filter_complex` graph). Omitted = `"filter"` while the render path is
-    /// phase 1. See the tool doc.
-    #[serde(default)]
-    pub renderer: Option<ExportRenderer>,
     /// D-401 — the delivery spec the finished mix is normalised to. See the
     /// tool doc. Omitted = `"off"`.
     #[serde(default)]
@@ -5177,10 +5170,7 @@ impl ApellesMcp {
     adjustment clip has no picture of its own and is refused. Unlocked tracks
     only. A clip with no highlights renders byte-identically to before.
 
-    Preview and export agree: the live preview, the compositor export and the
-    ffmpeg filter-graph export all draw the same stroke (measured against real
-    ffmpeg output). The ffmpeg path costs one per-pixel `geq` node per
-    highlight, so prefer the compositor renderer for large frames.
+    Preview and export agree: both are drawn by the same compositor (D-448).
 
     Don't know where the words are? editor_suggest_clip_highlights reads the
     picture's text and the narration over it and returns ready-to-apply entries.
@@ -5338,9 +5328,8 @@ impl ApellesMcp {
     "ease-out" on the last one. Set it and then look: `editor_set_curve_editor`
     opens this exact curve in the GUI so a human can see and redrag it.
 
-    The live preview and `editor_export` interpret the curve identically (the
-    export approximates it as 20 linear steps per segment, well under one
-    output quantisation step, because ffmpeg has no bezier solver).
+    The live preview and `editor_export` interpret the curve identically: one
+    compositor draws both (D-448).
 
     Undoable: same store action and same undo stack as the GUI's own curve
     editor, so a human can Cmd+Z it."#
@@ -5545,14 +5534,11 @@ impl ApellesMcp {
     round trip — which is expected, and is not the export failing** (D-362,
     fixes B-231). A minutes-long export outlives that budget, so the bridge
     answers `ok: false` with a "no reply from the frontend" error while the
-    render carries on and succeeds. On the `"compositor"` renderer this tool
-    handles that for you: it then polls `editor_export_status` until the
+    render carries on and succeeds. This tool handles that for you: it then polls `editor_export_status` until the
     render really settles, and returns THAT outcome, so what you get back is
     the export's own answer rather than the timeout's. Call
     `editor_export_status` yourself at any point to watch progress, or to pick
-    a render back up if this call is interrupted. The `"filter"` renderer
-    reports no progress at all — nothing outside ffmpeg knows where it is — so
-    there a timeout really does leave the output file as your only signal.
+    a render back up if this call is interrupted.
 
     **Loudness target (D-401) — `loudness_preset` / `loudness_lufs` /
     `true_peak_dbtp`.** By default the mix is written at whatever level the
@@ -5568,24 +5554,15 @@ impl ApellesMcp {
     re-encoded; only the audio is rewritten (AAC 192k). The result's
     `loudness` object reports `before` and `after` (`integratedLufs`,
     `truePeakDbtp`, `loudnessRangeLu`), `gainDb`, `attempts` and `targetMet`;
-    on the `"compositor"` renderer `editor_export_status` shows a
+    `editor_export_status` shows a
     `normalising` phase and carries the same `loudness` report. A silent or
     audio-less export is left untouched and says so in `loudness.skipped`.
 
-    **`renderer` (D-350) — which engine composites the picture.**
-    `"compositor"` renders every frame through the app's OWN live-preview
-    compositor and pipes it into one ffmpeg process that only compresses and
-    muxes; `"filter"` (the default, and everything described above) compiles
-    the whole composite into an ffmpeg `-filter_complex` graph with one `-i`
-    per clip. Prefer `"compositor"` for a HEAVILY CUT timeline — the filter
-    path's memory and thread use both scale with the clip count
-    (B-228/B-229/B-230: a real ~79-clip 4K project reached 56 GB and 3,065
-    threads on one process), while the render path opens exactly one input
-    whatever the clip count, and it is by construction the same picture the
-    Edit tab previews. It is opt-in while it is phase 1: it does NOT yet
-    support `speed_overrides`, `fit_overrides` or `freeze_overrides` (all
-    EXPORT-TIME-ONLY knobs the live compositor has no notion of) and REFUSES
-    rather than silently ignoring one."#
+    **One image engine (D-448).** Every frame is drawn by the app's own
+    compositor — the same one the Edit tab previews with — and piped into one
+    ffmpeg process that only encodes and muxes. `speed_overrides`,
+    `fit_overrides` ("Stretch to fill") and `freeze_overrides` ("Hold last
+    frame") are applied as clip data on the copy of the timeline it draws."#
     )]
     pub async fn editor_export(
         &self,
@@ -5608,7 +5585,6 @@ impl ApellesMcp {
             .put("speedOverrides", p.speed_overrides)
             .put("fitOverrides", p.fit_overrides)
             .put("freezeOverrides", p.freeze_overrides)
-            .put("renderer", p.renderer)
             .put("loudnessPreset", p.loudness_preset)
             .put("loudnessLufs", p.loudness_lufs)
             .put("truePeakDbtp", p.true_peak_dbtp);
@@ -5642,8 +5618,8 @@ impl ApellesMcp {
     `queued` (waiting behind another export, with `queuePosition`), `running`,
     `done` or `failed`, always with that job's own `outPath`. A second export
     started while one runs is queued, never mistaken for it. Without `job_id`
-    this reads the compositor renderer's running — or most recently finished
-    — render, whichever job it belongs to.
+    this reads the running — or most recently finished — render, whichever
+    job it belongs to.
 
     **Read `state` first.** `running` (still going; poll again), `done` (the
     file is written and finalised), `failed` (`error` says why), `stalled`
@@ -5668,11 +5644,7 @@ impl ApellesMcp {
     same overall and are very different situations. `etaMs` is a rough
     estimate taken from the slowest unfinished segment (a render ends when its
     last worker does). While `phase` is `concatenating` every frame is already
-    rendered and the segments are being joined and the audio muxed.
-
-    **Only the `"compositor"` renderer reports progress.** The `"filter"`
-    renderer hands the whole job to one ffmpeg and learns nothing until it
-    exits, so an export run that way is invisible here."#
+    rendered and the segments are being joined and the audio muxed."#
     )]
     pub async fn editor_export_status(
         &self,
@@ -5693,8 +5665,7 @@ impl ApellesMcp {
     the Export queue's Cancel button in the top bar.
 
     A job still `queued` (waiting behind another export) leaves the queue at
-    once. A `running` one is stopped for real on either renderer: its ffmpeg /
-    segment encoders and the concat step are killed and the partial output file
+    once. A `running` one is stopped for real: its segment encoders and the concat step are killed and the partial output file
     (and any loudness-pass scratch file) is removed; `editor_export_status(
     job_id)` reads `cancelled` once the run has unwound (usually well under a
     second; a cancel during the short loudness pass is honoured when that pass

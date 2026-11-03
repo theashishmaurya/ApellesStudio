@@ -330,13 +330,10 @@ fn rasterise_caption(
 /// whole LINE to one glyph run and lets its advance decide the line's width.
 /// This path positions every WORD itself — one level further down the same
 /// move D-229 made for lines, for the same reason: it is the only way this
-/// rasteriser and ffmpeg's `drawtext` put a word in the same place. Each word
-/// is an independent single-word draw at an x this function computes, so
-/// neither engine is ever asked to lay out a run of words.
-///
-/// The measurement it uses (`ab_glyph` advance + kern) is the same one
-/// `chroma::text::chroma_measure_caption_words` hands the export compiler, so
-/// both sides compute the identical x from the identical advances.
+/// rasteriser and ffmpeg's `drawtext` put a word in the same place (the
+/// filter-graph export D-448 deleted). Each word is an independent single-word
+/// draw at an x this function computes from `ab_glyph` advance + kern, so no
+/// engine is ever asked to lay out a run of words.
 fn rasterise_animated_caption(
     lines: &[&str],
     style: &CaptionStyle,
@@ -747,8 +744,8 @@ pub struct CaptionBoundsFraction {
 /// The frontend already HAS the resolved style (it renders the Inspector from
 /// it) and the composition size; the only thing it cannot compute is the glyph
 /// measurement. So it passes everything else in and asks only for that — the
-/// same "the compiler stays pure, the caller supplies what only it can know"
-/// split (D-197) [`chroma_measure_caption_words`] already uses for the export.
+/// same "the pure part is given what only the caller can know" split (D-197)
+/// the rest of the caption code uses.
 ///
 /// `style` arrives with every field present (`resolveCaptionStyle` on the TS
 /// side fills the per-cue-override → track-style → defaults chain, the same

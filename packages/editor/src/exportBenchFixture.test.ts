@@ -1,8 +1,8 @@
 // @apelles/editor — **the TypeScript half of the export benchmark (B-380).**
 //
 // What it is: the compiled ffmpeg argvs for one realistic timeline, at 1080p
-// and at 4K, on both export paths (the filter graph and the compositor pipe)
-// and both encoders (D-446: VideoToolbox `hardware`, libx264 `software`),
+// and at 4K, on the export's one renderer (the compositor pipe, D-448) and
+// both encoders (D-446: VideoToolbox `hardware`, libx264 `software`),
 // frozen into `app/src-tauri/tests/fixtures/export-bench.json`. The Rust half,
 // `chroma::export_bench::measure_export_benchmark`, generates the media, runs
 // every configuration and reports the time per stage. Same "two languages, one
@@ -12,7 +12,7 @@
 //
 // What it does NOT do: time anything (vitest has no business measuring ffmpeg),
 // or carry a text clip. A title clip's font must be resolved from the app's
-// font cache, which a fixture cannot provide on both paths; the overlay layer
+// font cache, which a fixture cannot provide; the overlay layer
 // here is a still graphic plus a moving picture-in-picture "motion" clip, which
 // exercises the same compositing branches (alpha still, keyframed transform).
 //
@@ -22,7 +22,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ExportEncoder } from './exportFormat';
-import { buildExportFfmpegArgs, exportTotalDurationSec, type TimelineExportOptions } from './timelineExport';
+import { exportTotalDurationSec, type TimelineExportOptions } from './exportTimeline';
 import { buildPipeExportPlan } from './timelinePipeExport';
 import type { Clip, ClipKeyframe, Timeline, Track } from './timeline';
 
@@ -179,21 +179,17 @@ export function benchTimeline(): Timeline {
 const SIZES = { '1080p': [1920, 1080], '4k': [3840, 2160] } as const;
 type SizeKey = keyof typeof SIZES;
 
-/** Each source's pixel size relative to the composition (`sourceFootprints`,
- *  what `editorExport.ts` resolves from the media pool). The lower-third PNG is
- *  generated at half the composition's width and an eighth of its height. */
+/** The export options for one size and encoder. Only the A-roll carries
+ *  sound. */
 function benchOpts(size: SizeKey, encoder: ExportEncoder): TimelineExportOptions {
   const [width, height] = SIZES[size];
   const tl = benchTimeline();
-  const footprint = (c: Clip) =>
-    c.source_path === MEDIA.still ? { width: 0.5, height: 0.125 } : { width: 1, height: 1 };
   const videoClips = tl.tracks.filter((t) => t.kind === 'video').flatMap((t) => t.clips);
   return {
     fps: FPS,
     width,
     height,
     encoder,
-    sourceFootprints: Object.fromEntries(videoClips.map((c) => [c.id, footprint(c)])),
     // Only the A-roll carries sound; the other picture sources are silent.
     hasAudioOverrides: Object.fromEntries(videoClips.map((c) => [c.id, c.source_path === MEDIA.aroll])),
   };
@@ -203,7 +199,6 @@ interface BenchCase {
   width: number;
   height: number;
   encoder: ExportEncoder;
-  filterArgs: string[];
   pipeArgs: string[];
   pipeFrames: number;
   segmentArgs: string[];
@@ -233,7 +228,6 @@ function buildFixture(): BenchFixture {
         width: opts.width,
         height: opts.height,
         encoder,
-        filterArgs: buildExportFfmpegArgs(timeline, 'OUT', opts),
         pipeArgs: plan.args,
         pipeFrames: plan.frames,
         segmentArgs: plan.segments.segmentArgs,
@@ -270,8 +264,7 @@ describe('B-380 — the export benchmark fixture the Rust harness runs', () => {
     for (const c of Object.values(cases)) expect(c.pipeFrames).toBe(FRAMES);
     const strip = (args: string[]) => {
       const i = args.indexOf('-c:v');
-      // The software filter path names no codec (ffmpeg's `.mp4` default).
-      if (i < 0) return args.filter((a) => a !== '-c:v');
+      if (i < 0) return args;
       const end = args.indexOf('yuv420p', i) + 1;
       return [...args.slice(0, i), ...args.slice(end)];
     };
@@ -280,7 +273,6 @@ describe('B-380 — the export benchmark fixture the Rust harness runs', () => {
       const hw = cases[`${size}-hardware`];
       expect(strip(hw.pipeArgs)).toEqual(strip(sw.pipeArgs));
       expect(strip(hw.segmentArgs)).toEqual(strip(sw.segmentArgs));
-      expect(strip(hw.filterArgs)).toEqual(strip(sw.filterArgs));
       expect(hw.pipeArgs).toContain('h264_videotoolbox');
       expect(sw.pipeArgs).toContain('libx264');
     }

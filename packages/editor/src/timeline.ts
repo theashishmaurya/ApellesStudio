@@ -480,6 +480,16 @@ export interface Clip {
    *  draw on; the reducer refuses it on a title, caption or adjustment clip. See
    *  `clipHighlights.ts` and the Rust module for the model. */
   highlights?: ClipHighlight[];
+  /** D-448 — "Stretch to fill": the box keeps the uncropped source's shape, so
+   *  a crop stretches into it. Mirrors `apelles_timeline::Clip::stretch`.
+   *  Written only by `clipExceptions.ts` onto the copy of the timeline an
+   *  export renders, from the Export panel's Clip exceptions. */
+  stretch?: boolean;
+  /** D-448 — "Hold last frame": draw this clip's last frame, frozen, until this
+   *  TIMELINE frame (exclusive), where nothing else on its track covers it.
+   *  Picture only. Mirrors `apelles_timeline::Clip::hold_until_frame`; written
+   *  the same way as {@link Clip.stretch}. */
+  hold_until_frame?: number | null;
 }
 
 /** The five-parameter primary correction an adjustment clip carries (D-230) —
@@ -1248,8 +1258,13 @@ function rampSegmentsOf(c: RampedClipRef) {
  *  than clamping — the caller decides what to do about a frame that isn't in
  *  the file. */
 export function clipSourceFrameAt(c: RampedClipRef, timelineFrame: number, fps: number): number {
-  const outputPos = timelineFramesToSource(c, timelineFrame - c.start_frame, fps);
-  if (normalizeSpeedPoints(c.speed_points).length === 0) return c.source_start + outputPos;
+  // B-382 — the exact source position, floored below: the frame on screen at
+  // that instant, not the next one (`timelineFramesToSource` rounds, which is
+  // right for a length). Snapped to a millionth of a frame, as in Rust, so a
+  // whole-number product does not floor to the frame before it.
+  const srcFps = c.source_fps && c.source_fps > 0 ? c.source_fps : fps;
+  const outputPos = Math.round((((timelineFrame - c.start_frame) * srcFps) / fps) * 1e6) / 1e6;
+  if (normalizeSpeedPoints(c.speed_points).length === 0) return c.source_start + Math.floor(outputPos);
   // FLOOR, not round — see `apelles_timeline::Clip::source_frame_at`'s own
   // note: a frame owns the half-open source interval `[n, n+1)`, and the
   // export's `setpts` floors by construction, so rounding here would put the

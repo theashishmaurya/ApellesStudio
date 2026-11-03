@@ -521,9 +521,7 @@ pub fn snapshot() -> ExportStatus {
             output: None,
             error: None,
             stall_timeout_secs: STALL_TIMEOUT.as_secs(),
-            note: "no compositor export has run in this session — start one with editor_export \
-                   (renderer: \"compositor\"). Note that the filter-graph renderer reports no \
-                   progress at all; only the compositor path does."
+            note: "no export has run in this session — start one with editor_export."
                 .to_string(),
         };
     };

@@ -2367,6 +2367,9 @@ pub(super) struct ClipTransform {
     /// gets a named conversion rather than an ad-hoc multiply at the point of
     /// use.
     corner_radius: f64,
+    /// D-448 — `Clip::stretch` ("Stretch to fill"): the box keeps the
+    /// uncropped source's shape. See [`Self::effective_size`].
+    stretch: bool,
 }
 
 impl ClipTransform {
@@ -2505,6 +2508,11 @@ impl ClipTransform {
     /// number for every clip that is not cropped (every clip in every project
     /// authored before B-218, which is why nothing had ever diverged), and a
     /// wrong, too-short one for every clip that is.
+    ///
+    /// **D-448 — with `stretch` ("Stretch to fill") the height ignores the
+    /// crop**: `natural.1 * scale`, the uncropped source's own height, so the
+    /// crop's remainder is stretched into the uncropped box (the B-074
+    /// `'stretch'` reading). `box_height` still wins.
     fn effective_size(&self, natural: (f64, f64), canvas: (u32, u32)) -> (f64, f64) {
         let scale = self.scale.max(0.0);
         let (cw, ch) = canvas;
@@ -2513,6 +2521,9 @@ impl ClipTransform {
             .map(|bw| bw * cw as f64)
             .unwrap_or(natural.0 * scale);
         let h = self.box_height.map(|bh| bh * ch as f64).unwrap_or_else(|| {
+            if self.stretch {
+                return natural.1 * scale;
+            }
             let (kept_w, kept_h) = self.kept_fraction();
             let cropped_w = natural.0 * kept_w;
             if cropped_w <= 0.0 {
@@ -2604,6 +2615,7 @@ fn resolve_text_clip_transform(clip: &Clip, source_frame: i64) -> ClipTransform 
         // so a preview that rounded one would be showing a picture the export
         // cannot produce.
         corner_radius: 0.0,
+        stretch: false,
     }
 }
 
@@ -2625,6 +2637,7 @@ pub(super) fn resolve_clip_transform_unfaded(clip: &Clip, source_frame: i64) -> 
         crop_right: clip.crop_right,
         crop_bottom: clip.crop_bottom,
         corner_radius: clip.corner_radius,
+        stretch: clip.stretch,
     };
     let Some(kf_value) = &clip.chroma_keyframes else {
         return base;
@@ -2685,6 +2698,7 @@ pub(super) fn resolve_clip_transform_unfaded(clip: &Clip, source_frame: i64) -> 
         // engines can produce — which is the test D-211's pinned text fields
         // fail and this one passes.
         corner_radius: f64_or("corner_radius", base.corner_radius),
+        stretch: base.stretch,
     }
 }
 
@@ -2731,6 +2745,7 @@ fn plate_transform(alpha: f64) -> ClipTransform {
         // dip-to-colour is. The export overlays a full-frame `color` source
         // with no mask, so this pin is also what keeps the two engines equal.
         corner_radius: 0.0,
+        stretch: false,
     }
 }
 
@@ -3711,6 +3726,7 @@ mod composite_tests {
             crop_right: 0.0,
             crop_bottom: 0.0,
             corner_radius: 18.0,
+            stretch: false,
         };
         let natural = natural_of(&layer);
         let once = {
@@ -3749,6 +3765,7 @@ mod composite_tests {
             crop_right: 0.0,
             crop_bottom: 0.0,
             corner_radius: 0.0,
+            stretch: false,
         }
     }
 
@@ -4504,6 +4521,32 @@ mod composite_tests {
         assert!(
             (h - 480.0 * 1080.0 / kept_w).abs() < 1e-6,
             "height must follow the cropped aspect ratio, got {h}"
+        );
+    }
+
+    /// **D-448 — "Stretch to fill" keeps the uncropped box**: the same cropped
+    /// clip as above is `natural.1 * scale` tall (the B-074 `'stretch'`
+    /// height), and an explicit `box_height` still wins over it.
+    #[test]
+    fn effective_size_with_stretch_ignores_the_crop_for_the_height() {
+        let t = ClipTransform {
+            crop_left: 1.0 / 3.0,
+            crop_right: 1.0 / 3.0,
+            scale: 0.25,
+            stretch: true,
+            ..identity_transform()
+        };
+        assert_eq!(
+            t.effective_size((1920.0, 1080.0), (1920, 1080)),
+            (480.0, 270.0)
+        );
+        let boxed = ClipTransform {
+            box_height: Some(0.5),
+            ..t
+        };
+        assert_eq!(
+            boxed.effective_size((1920.0, 1080.0), (1920, 1080)),
+            (480.0, 540.0)
         );
     }
 
@@ -7986,16 +8029,12 @@ mod grade_bridge_tests {
         super::state::set_project(None);
     }
 
-    /// **The export half of the same lattice.** `bake_luts_for_clips` must hand
-    /// the ffmpeg compiler a real, readable `.cube` for a graded clip — and
-    /// nothing at all for an ungraded one, so an un-graded timeline compiles to
-    /// exactly the argv it always did.
-    ///
-    /// Asserts on the FILE, not just the map: the `.cube` is the actual
-    /// interface with ffmpeg, and a path in a map pointing at a file that does
-    /// not parse is the failure this is here to catch.
+    /// **The export's grade pre-flight.** `check_clip_grades` lists a clip as
+    /// graded only when its grade really moves pixels: an ungraded clip and an
+    /// identity grade are both "nothing to apply", exactly as the preview
+    /// treats them.
     #[test]
-    fn the_export_bake_writes_a_real_cube_only_for_graded_clips() {
+    fn the_export_grade_check_lists_only_really_graded_clips() {
         if !have_gpu() {
             eprintln!("skip: no GPU adapter, cannot bake a grade");
             return;
@@ -8011,127 +8050,22 @@ mod grade_bridge_tests {
         let dir = project_dir();
         let ids = vec!["A".to_string()];
 
-        // 1. ungraded — no entry, no file, no GPU device created
-        let none = grade_lut::bake_luts_for_clips(&ids).expect("bake (ungraded)");
-        assert!(none.luts.is_empty(), "an ungraded clip must produce no LUT");
-        assert!(none.warnings.is_empty());
+        let none = grade_lut::check_clip_grades(&ids).expect("check (ungraded)");
+        assert!(none.graded.is_empty() && none.warnings.is_empty());
 
-        // 2. an identity grade — a grade FILE exists, but it bakes to a no-op,
-        //    so still no `lut3d` node in the export (mirrors the preview).
         write_grade(&dir, serde_json::json!({}));
-        let identity = grade_lut::bake_luts_for_clips(&ids).expect("bake (identity)");
+        let identity = grade_lut::check_clip_grades(&ids).expect("check (identity)");
         assert!(
-            identity.luts.is_empty(),
-            "an identity grade must not put a lut3d node in the export"
+            identity.graded.is_empty(),
+            "an identity grade grades nothing"
         );
 
-        // 3. a real grade — a real .cube, parseable by the app's own reader
-        //    (which is what ffmpeg's `lut3d` will also have to do).
         write_grade(&dir, serde_json::json!({ "exposure": 1.5 }));
-        let graded = grade_lut::bake_luts_for_clips(&ids).expect("bake (graded)");
-        let path = graded
-            .luts
-            .get("A")
-            .expect("a graded clip must produce a LUT path");
+        let graded = grade_lut::check_clip_grades(&ids).expect("check (graded)");
+        assert_eq!(graded.graded, ids);
         assert!(
-            std::path::Path::new(path).is_file(),
-            "the .cube path does not exist: {path}"
-        );
-        let parsed = crate::lut_processing::parse_lut_file(path).expect("ffmpeg-readable .cube");
-        assert_eq!(parsed.size, apelles_types::lut3d::DEFAULT_SIZE);
-
-        // 4. content-addressed: baking again is byte-identical and reuses the
-        //    same filename, which is what lets a QUEUED export's frozen argv
-        //    keep pointing at the lattice it was compiled against.
-        let again = grade_lut::bake_luts_for_clips(&ids).expect("bake (repeat)");
-        assert_eq!(
-            again.luts.get("A"),
-            Some(path),
-            "the .cube name is not stable"
-        );
-
-        super::state::set_project(None);
-    }
-
-    /// **The parity claim itself, measured.**
-    ///
-    /// Everything else in this file checks one engine. This checks that the two
-    /// engines agree: the SAME clip, the SAME grade, rendered once by the CPU
-    /// preview compositor and once by ffmpeg's own `lut3d` reading the `.cube`
-    /// the export path writes — and the two pictures must be the same colour.
-    ///
-    /// That is the entire justification for D-256's baked-lattice design over
-    /// the alternatives (a second CPU implementation of the grading stack, or
-    /// preview-only with a documented export gap), so it is checked rather than
-    /// asserted. `apelles_types::adjustment`'s header called this parity
-    /// structurally unreachable; this test is what says otherwise, in pixels.
-    ///
-    /// The tolerance absorbs one h264/yuv420p round trip plus the RGB↔YUV
-    /// conversions `lut3d` forces — the same ±14 the sibling TypeScript ffmpeg
-    /// suites use, and far tighter than the ~100-code move being measured.
-    #[test]
-    fn the_preview_and_the_ffmpeg_export_render_the_same_graded_colour() {
-        if !have_ffmpeg() {
-            eprintln!("skip: ffmpeg not on PATH");
-            return;
-        }
-        if !have_gpu() {
-            eprintln!("skip: no GPU adapter, cannot bake a grade");
-            return;
-        }
-        const TOL: i32 = 14;
-        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        grade_lut::clear_cache();
-
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let clip = tmp.path().join("grey.mp4");
-        grey_clip(&clip);
-        open_one_clip_project(tmp.path(), &clip);
-        let dir = project_dir();
-        write_grade(&dir, serde_json::json!({ "exposure": 1.5 }));
-
-        // Engine 1 — the live Edit preview (CPU trilinear over the lattice).
-        let (preview_px, _) = preview(12);
-
-        // Engine 2 — ffmpeg's own `lut3d`, over the `.cube` the export writes.
-        let baked = grade_lut::bake_luts_for_clips(&["A".to_string()]).expect("bake");
-        let cube = baked
-            .luts
-            .get("A")
-            .expect("a graded clip must produce a LUT");
-        let out = apelles_media::ffmpeg_locate::ffmpeg()
-            .expect("an ffmpeg to build the fixture")
-            .args(["-v", "error", "-i"])
-            .arg(&clip)
-            .arg("-vf")
-            // Same interpolation the preview's sampler uses — NOT lut3d's
-            // tetrahedral default. See `timelineExport.ts`'s own node.
-            .arg(format!(
-                "lut3d=file={}:interp=trilinear",
-                cube.replace(':', "\\:")
-            ))
-            .args(["-vframes", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
-            .output()
-            .expect("spawn ffmpeg");
-        assert!(
-            out.status.success() && out.stdout.len() >= 3,
-            "ffmpeg lut3d produced no pixel: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let export_px = [out.stdout[0], out.stdout[1], out.stdout[2]];
-
-        for (i, ch) in ["R", "G", "B"].iter().enumerate() {
-            assert!(
-                (preview_px[i] as i32 - export_px[i] as i32).abs() <= TOL,
-                "{ch}: the Edit preview and the ffmpeg export disagree on the graded \
-                 colour — preview {preview_px:?}, export {export_px:?}"
-            );
-        }
-        // And the thing they agree on is actually a grade, not the source: a
-        // build that applied nothing anywhere would satisfy the loop above.
-        assert!(
-            preview_px[0] as i32 > GREY + 30,
-            "both engines agree, but on the UNGRADED colour: {preview_px:?}"
+            !dir.join("cache").join("grade-luts").exists(),
+            "D-448: no .cube is written any more"
         );
 
         super::state::set_project(None);
@@ -8162,16 +8096,16 @@ mod grade_bridge_tests {
                 "masks": [{ "visible": true, "adjustments": { "exposure": -2.0 } }],
             }),
         );
-        let baked = grade_lut::bake_luts_for_clips(&["A".to_string()]).expect("bake");
+        let baked = grade_lut::check_clip_grades(&["A".to_string()]).expect("bake");
         assert!(
-            baked.luts.contains_key("A"),
+            baked.graded.iter().any(|c| c == "A"),
             "the primary must still export"
         );
         assert!(
             baked
                 .warnings
                 .iter()
-                .any(|w| w.contains("clip A") && w.contains("masked/local")),
+                .any(|w| w.contains("clip A") && w.contains("mask layer")),
             "a dropped mask must be reported to the user, not only logged: {:?}",
             baked.warnings
         );

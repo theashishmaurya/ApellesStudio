@@ -422,14 +422,17 @@ function installInvokeStub(): void {
     chroma_audio_scrub_begin: () => undefined,
     chroma_audio_scrub_update: () => undefined,
     chroma_audio_scrub_end: () => undefined,
-    // D-198 / D-441 — the Export sheet's Export -> `chroma_run_editor_export`
-    // path. A real-looking success DTO — this harness never actually spawns
+    // D-198 / D-441 / D-448 — the Export sheet's Export -> the compositor
+    // render (`chroma_render_timeline_export`), with the status poll and the
+    // grade pre-flight beside it. A real-looking success DTO — this harness never actually spawns
     // ffmpeg, and doesn't need to for a sheet/queue-state check (queue
     // transitions are unit-tested for real in `exportQueueStore.test.ts`;
     // this is for SEEING the sheet and the queue). The default "Save as"
     // resolves ~/Movies through the path plugin and names the file through
     // `chroma_unused_export_path`; Cancel calls `chroma_cancel_editor_export`.
-    chroma_run_editor_export: () => ({ ok: true, cancelled: false, stdout_tail: '', stderr_tail: '' }),
+    chroma_render_timeline_export: () => ({ ok: true, cancelled: false, frames: 1, segments: 1, ms: 1, stderr_tail: '' }),
+    chroma_editor_export_status: () => ({ state: 'idle', jobId: 0 }),
+    chroma_timeline_grade_luts: () => ({ graded: [], warnings: [] }),
     chroma_unused_export_path: (args) => {
       const { dir, stem, ext } = args as { dir: string; stem: string; ext: string };
       return `${dir}/${stem}.${ext}`;

@@ -26,7 +26,7 @@ const invokeMock = vi.hoisted(() =>
       case 'chroma_text_fonts':
         return [];
       case 'chroma_timeline_grade_luts':
-        return { luts: {}, warnings: [] };
+        return { graded: [], warnings: [] };
       case 'chroma_timeline_composition_size': {
         // The real command's reading: the project has no settings, so the size
         // comes from a still on a video track, if the PERSISTED timeline has one.

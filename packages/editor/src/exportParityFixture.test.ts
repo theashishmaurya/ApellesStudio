@@ -1,26 +1,23 @@
-// @apelles/editor — **the TypeScript half of D-350's old-vs-new pixel-parity
-// harness.**
+// @apelles/editor — **the TypeScript half of the export render-path tests
+// (D-350, D-448).**
 //
-// The two export paths live in two languages: the OLD one is an ffmpeg argv
-// this package compiles (`buildExportFfmpegArgs`), the NEW one is a Rust
-// compositor loop (`app/src-tauri/src/chroma/edit_render.rs`). A single test
-// spanning both would have to run `cargo` from vitest or a TypeScript compiler
-// from `cargo` — so instead this file FREEZES the comparison's inputs into one
-// committed JSON file, and `edit_render.rs`'s `render_path_matches_the_filter_
-// graph_path_pixel_for_pixel` consumes it. Same "two tests, one written-down
-// shared fact" shape D-338/B-201's placement-parity pair already uses, with a
-// whole compiled argv and a whole timeline as the shared fact instead of a
-// rectangle.
+// The export's argv is compiled here (`buildPipeExportPlan`) and run by a Rust
+// compositor loop (`app/src-tauri/src/chroma/edit_render.rs`). A test spanning
+// both would have to run `cargo` from vitest or a TypeScript compiler from
+// `cargo` — so instead this file FREEZES the inputs into one committed JSON
+// file, and `edit_render.rs`'s `parity_tests` consume it: the piped stream,
+// the segmented render, the stall watchdog, the status counters, determinism.
+// Same "two tests, one written-down shared fact" shape D-338/B-201's
+// placement-parity pair uses. (Until D-448 the file also carried the deleted
+// ffmpeg filter-graph path's argv, which the compositor was compared against.)
 //
-// **The fixture cannot go stale silently**, which is the only thing that makes
-// this sound: this file recompiles the parity timeline with the CURRENT
-// compilers on every run and asserts the committed JSON still matches. Change
-// `buildExportFfmpegArgs` and this test fails with the one command that
-// regenerates it. (`docs/notes/export-gpu-compositor.md` §5.)
+// **The fixture cannot go stale silently**: this file recompiles the timelines
+// with the CURRENT compiler on every run and asserts the committed JSON still
+// matches. (`docs/notes/export-gpu-compositor.md` §5.)
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { buildExportFfmpegArgs, exportTotalDurationSec, type TimelineExportOptions } from './timelineExport';
+import { exportTotalDurationSec, type TimelineExportOptions } from './exportTimeline';
 import {
   buildPipeExportPlan,
   CONCAT_LIST_TOKEN,
@@ -223,24 +220,6 @@ export function parityOpts(): TimelineExportOptions {
     fps: FPS,
     width: COMP_W,
     height: COMP_H,
-    // B-208/D-353 — what `editorExport.ts`'s `resolveSourceFootprints` would
-    // compute for this timeline from the media pool's probed dimensions: each
-    // source's size over the composition's. Written out for every clip rather
-    // than only the one that is not 1:1, because that is what a real export of
-    // this timeline actually passes, and the whole value of this fixture is
-    // that it is the real compiler's real input.
-    sourceFootprints: Object.fromEntries(
-      [
-        ['c-pip', MEDIA.pip],
-        ['c-round', MEDIA.rounded],
-        ['c-crop', MEDIA.cropped],
-        ['c-scaled', MEDIA.scaled],
-        ['c-base', MEDIA.base],
-      ].map(([clipId, media]) => [
-        clipId,
-        { width: SOURCE_SIZES[media][0] / COMP_W, height: SOURCE_SIZES[media][1] / COMP_H },
-      ]),
-    ),
   };
 }
 
@@ -324,11 +303,9 @@ interface ParityFixture {
   sampleFrames: number[];
   durationSec: number;
   timeline: Timeline;
-  /** The OLD path's complete argv, with `OUT` standing in for the output path
+  /** The export's complete argv, with `OUT` standing in for the output path
    *  and each media name standing in for the generated file — the Rust half
    *  substitutes its own temp paths. */
-  filterArgs: string[];
-  /** The NEW path's complete argv, same substitution rules. */
   pipeArgs: string[];
   pipeFrames: number;
   /** D-360 — the per-segment encode + concat argvs, same substitution rules,
@@ -336,12 +313,8 @@ interface ParityFixture {
    *  placeholders which the Rust half fills with this run's temp files. */
   segmentArgs: string[];
   concatArgs: string[];
-  /** The many-clip resource case — same substitution rules, its own comp size.
-   *  Consumed by `measure_resource_use_against_the_filter_graph_path`, which is
-   *  `#[ignore]`d: it measures a live process and so reports rather than
-   *  asserts (B-230's own write-up names the absence of such a harness as why
-   *  both halves of that blowup were found by a human watching Activity
-   *  Monitor). */
+  /** The many-clip case — same substitution rules, its own comp size. The
+   *  throughput and segment-balance measurements render it. */
   stress: {
     clips: number;
     width: number;
@@ -350,7 +323,6 @@ interface ParityFixture {
     sourceFrames: number;
     durationSec: number;
     timeline: Timeline;
-    filterArgs: string[];
     pipeArgs: string[];
     pipeFrames: number;
     segmentArgs: string[];
@@ -376,7 +348,6 @@ function buildFixture(): ParityFixture {
     sampleFrames: SAMPLE_FRAMES,
     durationSec,
     timeline,
-    filterArgs: buildExportFfmpegArgs(timeline, 'OUT', opts),
     pipeArgs: plan.args,
     pipeFrames: plan.frames,
     segmentArgs: plan.segments.segmentArgs,
@@ -398,7 +369,6 @@ function buildStress(): ParityFixture['stress'] {
     sourceFrames: STRESS_CLIPS * STRESS_CLIP_FRAMES,
     durationSec,
     timeline,
-    filterArgs: buildExportFfmpegArgs(timeline, 'OUT', opts),
     pipeArgs: plan.args,
     pipeFrames: plan.frames,
     segmentArgs: plan.segments.segmentArgs,
@@ -406,7 +376,7 @@ function buildStress(): ParityFixture['stress'] {
   };
 }
 
-describe('D-350 — the export-parity fixture the Rust render path is measured against', () => {
+describe('D-350 — the export fixture the Rust render-path tests read', () => {
   it('matches the committed fixture the Rust half reads', () => {
     const built = buildFixture();
     if (process.env.WRITE_EXPORT_PARITY_FIXTURE === '1') {
@@ -425,9 +395,8 @@ describe('D-350 — the export-parity fixture the Rust render path is measured a
   });
 
   it('the render path emits no video filter graph at all', () => {
-    // The load-bearing property, asserted directly rather than inferred from
-    // the pixel comparison: D-350 is only closed if the picture stops going
-    // through ffmpeg's compositor. A `-filter_complex` may still be present
+    // The load-bearing property, asserted directly: the picture never goes
+    // through an ffmpeg compositor. A `-filter_complex` may still be present
     // for the audio mix, but it must contain no video node.
     const { pipeArgs } = buildFixture();
     const fc = pipeArgs[pipeArgs.indexOf('-filter_complex') + 1] ?? '';
@@ -441,20 +410,16 @@ describe('D-350 — the export-parity fixture the Rust render path is measured a
     expect(pipeArgs.filter((a) => a === '-i')).toHaveLength(1);
   });
 
-  it('the render path opens one input for a 20-clip timeline too, where the old path opens 21', () => {
+  it('the render path opens one input for a 20-clip timeline too', () => {
     // The multiplication B-228/B-229/B-230 all were, stated as an argv fact:
-    // the old path's input count (and therefore its decoder frame-thread pools)
-    // grows with the clip count; the render path's does not.
+    // one `-i` per clip would grow decoder thread pools with the clip count.
     const { stress } = buildFixture();
-    const inputs = (args: string[]) => args.filter((a) => a === '-i').length;
-    expect(inputs(stress.filterArgs)).toBe(STRESS_CLIPS + 1);
-    expect(inputs(stress.pipeArgs)).toBe(1);
+    expect(stress.pipeArgs.filter((a) => a === '-i')).toHaveLength(1);
   });
 
-  it('both paths agree on how long the export is', () => {
-    const { filterArgs, pipeArgs, durationSec, pipeFrames } = buildFixture();
+  it('the argv and the frame count agree on how long the export is', () => {
+    const { pipeArgs, durationSec, pipeFrames } = buildFixture();
     const tOf = (args: string[]) => args[args.lastIndexOf('-t') + 1];
-    expect(tOf(filterArgs)).toBe(String(durationSec));
     expect(tOf(pipeArgs)).toBe(String(durationSec));
     expect(pipeFrames).toBe(Math.round(durationSec * FPS));
   });

@@ -55,7 +55,6 @@
   "packages/editor/src/PreviewPane.tsx",
   "packages/editor/src/TwoUpViewer.tsx",
   "packages/editor/src/Waveform.tsx",
-  "packages/editor/src/captionMetrics.ts",
   "packages/editor/src/clipThumbs.ts",
   "packages/editor/src/clipper/clipperOps.ts",
   "packages/editor/src/clipper/clipperStore.ts",

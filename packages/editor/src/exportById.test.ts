@@ -49,7 +49,7 @@ const invokeMock = vi.hoisted(() =>
       case 'chroma_text_fonts':
         return [];
       case 'chroma_timeline_grade_luts':
-        return { luts: {}, warnings: [] };
+        return { graded: [], warnings: [] };
       case 'chroma_timeline_get_by_id': {
         const id = args?.id;
         if (id === 'short') return structuredClone(SHORT);
@@ -91,7 +91,7 @@ beforeEach(() => {
 
 describe('editor_export(timeline_id) — D-411 Phase 0', () => {
   it('renders the named timeline at its own size, without switching the view', async () => {
-    const result = await runEditorExport({ outPath: '/tmp/short.mp4', timelineId: 'short', renderer: 'compositor' });
+    const result = await runEditorExport({ outPath: '/tmp/short.mp4', timelineId: 'short' });
     if (!('ok' in result)) throw new Error(result.error);
     expect(result).toMatchObject({ ok: true, timelineId: 'short', width: 1080, height: 1920 });
 
@@ -103,17 +103,18 @@ describe('editor_export(timeline_id) — D-411 Phase 0', () => {
     expect(useEditorTimelineStore.getState().timeline?.id).toBe('long');
   });
 
-  it('compiles the named timeline’s clips, not the open one’s (filter path)', async () => {
+  it('draws the named timeline’s clips, not the open one’s (D-448: the document rides in the request)', async () => {
     const result = await runEditorExport({ outPath: '/tmp/short.mp4', timelineId: 'short' });
     if (!('ok' in result)) throw new Error(result.error);
-    const argv = (lastCall('chroma_run_editor_export')?.args?.args as string[]).join(' ');
-    expect(argv).toContain('/media/short-source.mov');
-    expect(argv).not.toContain('/media/long-source.mov');
-    expect(argv).toContain('1080x1920');
+    const req = lastCall('chroma_render_timeline_export')?.args?.req as { args: string[]; timeline: Timeline };
+    const drawn = JSON.stringify(req.timeline);
+    expect(drawn).toContain('/media/short-source.mov');
+    expect(drawn).not.toContain('/media/long-source.mov');
+    expect(req.args.join(' ')).toContain('1080x1920');
   });
 
   it('still exports the open timeline when no id is given, and an explicit size still wins', async () => {
-    const result = await runEditorExport({ outPath: '/tmp/long.mp4', width: 1280, height: 720, renderer: 'compositor' });
+    const result = await runEditorExport({ outPath: '/tmp/long.mp4', width: 1280, height: 720 });
     if (!('ok' in result)) throw new Error(result.error);
     const req = lastCall('chroma_render_timeline_export')?.args?.req as Record<string, unknown>;
     // The compiled timeline's id rides along even for the active one, so a
@@ -129,7 +130,7 @@ describe('editor_export(timeline_id) — D-411 Phase 0', () => {
   });
 
   it('a queued job carries the id it was compiled for', async () => {
-    const args = { outPath: '/tmp/short-q.mp4', timelineId: 'short', renderer: 'compositor' };
+    const args = { outPath: '/tmp/short-q.mp4', timelineId: 'short' };
     const prepared = await prepareEditorExport(args);
     if ('error' in prepared) throw new Error(prepared.error);
     expect(prepared.timeline.id).toBe('short');

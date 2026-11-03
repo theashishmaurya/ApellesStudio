@@ -18,7 +18,7 @@ const LONG: Timeline = {
   ],
 };
 
-type FfmpegOutcome = { ok: boolean; stdout_tail: string; stderr_tail: string };
+type RenderOutcome = { ok: boolean; frames: number; segments: number; ms: number; stderr_tail: string };
 const gate = vi.hoisted(() => ({ pending: [] as Array<(o: unknown) => void> }));
 
 const invokeMock = vi.hoisted(() =>
@@ -29,12 +29,14 @@ const invokeMock = vi.hoisted(() =>
       case 'chroma_text_fonts':
         return [];
       case 'chroma_timeline_grade_luts':
-        return { luts: {}, warnings: [] };
+        return { graded: [], warnings: [] };
       case 'chroma_timeline_composition_size':
         return { compWidth: 1920, compHeight: 1080, naturalWidth: 1, naturalHeight: 1 };
       case 'chroma_unused_export_path':
         return '/Users/me/Movies/Five Levels/Long-form.mov';
-      case 'chroma_run_editor_export':
+      case 'chroma_editor_export_status':
+        return { state: 'idle', jobId: 0 };
+      case 'chroma_render_timeline_export':
         // Held open until the test releases it, so "a job is running" is a fact.
         return await new Promise((resolve) => gate.pending.push(resolve));
       default:
@@ -52,8 +54,8 @@ const { useMediaPoolStore } = await import('@apelles/bridge');
 
 const finish = (ok: boolean, stderr = '') => {
   const resolve = gate.pending.shift();
-  if (!resolve) throw new Error('no ffmpeg run is waiting');
-  resolve({ ok, stdout_tail: '', stderr_tail: stderr } satisfies FfmpegOutcome);
+  if (!resolve) throw new Error('no render is waiting');
+  resolve({ ok, frames: 1, segments: 1, ms: 1, stderr_tail: stderr } satisfies RenderOutcome);
 };
 
 beforeEach(() => {

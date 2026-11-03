@@ -4,6 +4,13 @@ Built 2026-09-09. Read `docs/08-decisions.md` **D-256** for the decision itself;
 this note is the worked-out detail — the investigation that preceded it, the
 exact plumbing, the measurements, and what is deliberately still missing.
 
+**Update 2026-11-03 (D-448, B-381).** The ffmpeg export path that read the lattice as a `.cube` through
+`lut3d` is deleted: the export is the compositor's, which applies the same lattice in memory, and no
+`.cube` is written any more (`check_clip_grades`). The bake now also leaves out the neighbourhood /
+position effects (vignette, grain, sharpening …) instead of mis-baking them, and the warnings name the local
+tone operators (contrast, shadows, highlights, whites, blacks) whose local part a LUT cannot carry. Measured
+against the Colorist's own render: `docs/perf/2026-11-03-export-parity-report.md`.
+
 ---
 
 ## 1. The gap, as it actually was

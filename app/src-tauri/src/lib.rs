@@ -2373,7 +2373,6 @@ pub fn run() {
             chroma::edit::chroma_timeline_unlink_clip,
             chroma::edit::chroma_timeline_link_clips,
             chroma::text::chroma_text_fonts,
-            chroma::text::chroma_measure_caption_words,
             chroma::subtitles::chroma_import_subtitles,
             chroma::subtitles::chroma_export_subtitles,
             chroma::filmstrip::chroma_clip_thumbnails,
@@ -2400,7 +2399,6 @@ pub fn run() {
             chroma::export::chroma_bake_lut,
             // D-441 — the Edit export's filter-graph run, cancellable, and the
             // cancel itself (either renderer). See `chroma::export_job`.
-            chroma::ffmpeg_run::chroma_run_editor_export,
             chroma::export_job::chroma_cancel_editor_export,
             chroma::export_job::chroma_unused_export_path,
             // D-350 — the Edit tab's headless timeline render path: composite

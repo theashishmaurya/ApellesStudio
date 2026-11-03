@@ -47,21 +47,22 @@ The budget (`docs/notes/ui-harness.md`) is ≤ 50 ms for any single frame and �
 - **B-378:** the first preview frame after an app launch takes 1–2 s (ffmpeg/VideoToolbox decoder start-up, about 350–800 ms per new pipe).
 - **B-379:** the Inspector re-mounts for the newly selected clip a frame or two after the release: 10–20 ms, including a forced layout from a Base UI `scrollIntoViewIfNeeded`.
 - **B-375 follow-up:** pinch zoom at 300 clips was 66–109 ms worst frame before the proportional-pinch fix. It is not re-measured since.
-- **B-380:** 4K export is still slower than real time: 2.46× on the default (filter) path and 1.38× on the compositor path, after D-446's hardware encode. See "Export" below for the floor and what is left.
+- **B-380:** 4K export is still slower than real time: 1.38× on the compositor, the only export renderer since D-448 (the deleted filter path was 2.46×). See "Export" below for the floor and what is left.
 - **Live re-check owed:** the B-374 release numbers and the B-369 open numbers were measured in the agents' own bundles, not yet in the owner's dev app. Re-measure after the next restart and update this table.
 
-## Export (B-380, D-446)
+## Export (B-380, D-446, D-448)
 
 **How it is measured.** `measure_export_benchmark` (`app/src-tauri/src/chroma/export_bench.rs`, `#[ignore]`d)
 runs a 60 s explainer-shaped fixture (`tests/fixtures/export-bench.json`: 3 video tracks, 15 clips, jump-cut
 A-roll with its voice, rounded PIP, crop, keyframed slide, alpha PNG, moving overlay, music). Its media is
-textured and grainy, so the encoders do real work. Each export runs end to end, on both renderers and both
-encoders, and the run reports wall time, the renderer's own stages, CPU, GPU, peak memory, frame count, A/V
-drift, loudness and PSNR / SSIM. Each output is deleted once it has been measured.
+textured and grainy, so the encoders do real work. Each export runs end to end on both encoders, and the run
+reports wall time, the renderer's own stages, CPU, GPU, peak memory, frame count, A/V drift, loudness and
+PSNR / SSIM. Each output is deleted once it has been measured. Since D-448 there is one renderer (the
+compositor); the filter-path rows below are the deleted path's last measurement, kept for the comparison.
 
 ```sh
 CHROMA_FFMPEG=$PWD/target/debug/ffmpeg CHROMA_FFPROBE=$PWD/target/debug/ffprobe \
-APELLES_BENCH_SIZE=4k APELLES_BENCH_SPLIT=1 APELLES_BENCH_LOUDNESS=1 \
+APELLES_BENCH_SIZE=4k APELLES_BENCH_LOUDNESS=1 \
 cargo test -p apelles --lib chroma::edit_render::export_bench -- --ignored --nocapture
 ```
 
@@ -70,9 +71,9 @@ video's length, so under 1.00 is faster than real time.
 
 | Export of the 60 s fixture | 1080p before → after D-446 | 4K before → after D-446 |
 |---|---|---|
-| **Filter path** (the Export panel's and `editor_export`'s default renderer) | 0.58× → **0.49×** | 2.78× → **2.46×** |
+| Filter path (deleted by D-448; the default until then) | 0.58× → 0.49× | 2.78× → 2.46× |
 | └ the same with no encoder at all (decode + composite + scale) | 0.49× | 2.36× |
-| **Compositor path** (`renderer: "compositor"`, 2 segments) | 0.88× → **0.35×** | 4.06× → **1.38×** |
+| **Compositor** (the only export renderer since D-448, 2 segments) | 0.88× → **0.35×** | 4.06× → **1.38×** |
 | └ workers' time blocked on the encoder | 23.8 s → 0.8 s | 109.1 s → 2.2 s |
 | Peak memory over the host (compositor path) | 3.2 → 1.9 GB | 6.7 → 4.0 GB |
 | Loudness pass (−14 LUFS / −1 dBTP, on target, 1 attempt) | 0.6–1.1 s | 0.9–1.6 s |
@@ -88,18 +89,17 @@ fastest measured.
 
 | Measure | Floor |
 |---|---|
-| 1080p export, filter path, hardware encode | **≤ 0.49×** runtime |
-| 1080p export, compositor path, hardware encode | **≤ 0.35×** runtime |
-| 4K export, filter path, hardware encode | **≤ 2.46×** runtime |
-| 4K export, compositor path, hardware encode | **≤ 1.38×** runtime |
+| 1080p export (the default: compositor, hardware encode) | **≤ 0.35×** runtime |
+| 4K export (the default: compositor, hardware encode) | **≤ 1.38×** runtime |
 | Loudness pass on a 60 s export | **≤ 2 s** |
 | Hardware H.264 quality vs libx264 CRF 18 (encoder sweep) | **equal or better** PSNR / SSIM / VMAF (q 70) |
 
-**Not at budget yet (B-380 stays open).** 4K is not under real time on either path. The default filter path is
-held by its own thread caps (21% CPU, decode + composite + scale alone is 2.36×). The compositor path's remaining
-time is the CPU blend (`blend_layer_sampled`, about 58% of busy samples) and the decode pipes' reads (about 28%).
-The re-ordered plan is in `docs/notes/export-gpu-compositor.md` §13: compositor as the default renderer, then the
-GPU compositor (D-363).
+**Not at budget yet (B-380 stays open).** 4K is not under real time. The compositor's remaining time is the CPU
+blend (`blend_layer_sampled`, about 58% of busy samples) and the decode pipes' reads (about 28%); the next step is
+D-363's GPU compositor (`docs/notes/export-gpu-compositor.md` §13–§14). Step 1 of §13.3, the compositor as the
+default, is done: D-448 made it the only renderer after the real-project parity check
+(`2026-11-03-export-parity-report.md`), where on the owner's c040 project a 3 s range took 12 s on the
+compositor and 1033 s on the deleted filter path.
 
 ## Keeping the floor
 

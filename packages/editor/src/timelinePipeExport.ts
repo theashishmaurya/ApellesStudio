@@ -30,14 +30,14 @@
  * clip's own `[source_start, +duration)` window — which is the same audio, by a
  * shorter route, with no `atrim` needed. `docs/notes/export-gpu-compositor.md` §4.
  *
- * Phase 1 deliberately refuses `speedOverrides` / `freezeOverrides` /
- * `fitOverrides`: those are export-time-only knobs the live preview's compositor
- * has no notion of, so honouring them in the sound while the picture ignored
- * them would desync the two. See `pipeExportUnsupported`.
+ * The export-time Clip exceptions (`speedOverrides` / `fitOverrides` /
+ * `freezeOverrides`) never reach this compiler: `clipExceptions.ts` writes them
+ * into the timeline it is handed as ordinary clip data (D-448), and the
+ * compositor draws that same document.
  */
 import type { Clip, Timeline } from './timeline';
 import { resolveSpeedSegments } from './speedRamp';
-import type { TimelineExportOptions } from './timelineExport';
+import type { TimelineExportOptions } from './exportTimeline';
 import { audioCodecArgs, pipeVideoCodecArgs } from './exportFormat';
 import {
   audioRefBracket,
@@ -80,28 +80,6 @@ export function pipeVideoInputArgs(width: number, height: number, fps: number): 
 /** The video input's index in the compiled argv — always 0, since the pipe is
  *  always the first `-i`. Audio inputs therefore start at 1. */
 const PIPE_VIDEO_INPUT_IDX = 0;
-
-/**
- * Which of this export's requested options the D-350 path cannot honour yet, by
- * name — empty for a timeline it can render exactly.
- *
- * Each of these changes a clip's on-timeline FOOTPRINT or framing at export
- * time only. The compositor renders the document as the Edit tab shows it, so
- * an option the preview has never heard of would move the sound (compiled here)
- * relative to the picture (compiled there). Refusing is the only honest answer
- * until the model itself carries them; `docs/04-roadmap.md`'s D-350 phase-2
- * line tracks it.
- *
- * A clip's OWN persisted speed ramp (D-236) is NOT in this list: the preview
- * resolves it (`Clip::source_frame_at`), so both halves already agree about it.
- */
-export function pipeExportUnsupported(opts: TimelineExportOptions): string[] {
-  const named: string[] = [];
-  if (opts.speedOverrides && Object.keys(opts.speedOverrides).length > 0) named.push('speedOverrides');
-  if (opts.freezeOverrides && Object.values(opts.freezeOverrides).some(Boolean)) named.push('freezeOverrides');
-  if (opts.fitOverrides && Object.keys(opts.fitOverrides).length > 0) named.push('fitOverrides');
-  return named;
-}
 
 /** One clip's own trim window as an `-ss`/`-t` input pair, in OUTPUT seconds at
  *  the clip's own native rate (B-075: `source_start`/`duration` are SOURCE
@@ -160,9 +138,9 @@ function buildPipeAudioGraph(timeline: Timeline, opts: TimelineExportOptions): A
       clip,
       clipFps,
       gain,
-      // No `speedOverrides` — `pipeExportUnsupported` has already refused any
-      // export carrying one, so this is the clip's own persisted ramp (D-236)
-      // or nothing, which is exactly what the picture is retimed by.
+      // The clip's own ramp (D-236), which is also where an export-time speed
+      // override lives by now (D-448, `clipExceptions.ts`) — exactly what the
+      // picture is retimed by.
       speedSegments: resolveSpeedSegments(clip, undefined),
       startSec: clip.start_frame / opts.fps,
       duck: duckForTrack(trackIndex),
@@ -264,6 +242,10 @@ export interface TimelineRenderPlan {
   /** D-360. Absent on a job frozen before D-360 existed, which then renders
    *  as a single stream exactly as it was queued to. */
   segments?: PipeExportSegments;
+  /** D-448 — the document the compositor draws: the timeline this plan's sound
+   *  was compiled from, Clip exceptions applied. Frozen into a queued job with
+   *  the argv, so the picture and the sound come from one copy. */
+  timeline?: Timeline;
 }
 
 export interface PipeExportPlan {

@@ -1,9 +1,10 @@
 # Export through the app's own compositor (D-350) — phases 1, 2, 3 and the GPU plan
 
 **Status:** phase 1 (correctness + memory) and phase 2 (speed, §9) shipped
-2026-09-18; phase 3 (contiguous segments, §10) shipped 2026-09-19. All opt-in
-(`renderer: "compositor"`) — the old filter-graph path is still the default and
-is still present. **§11 is a PLAN, not shipped work** — a real GPU compositor
+2026-09-18; phase 3 (contiguous segments, §10) shipped 2026-09-19. **Since
+D-448 (2026-11-03, §14) this is the only export renderer** — the old
+filter-graph path was compared on the owner's projects and deleted; the
+sections below that compare against it are history. **§11 is a PLAN, not shipped work** — a real GPU compositor
 (D-363) was scoped 2026-09-19 in response to B-234 (phase 3's real-world gain
 being far smaller than its benchmark) but deliberately not built yet; read §11
 before picking this effort back up.
@@ -276,14 +277,9 @@ every pixel in userspace, per frame.
 
 ## 7. What phase 1 defers — explicitly, not silently
 
-1. **`speedOverrides` / `fitOverrides` / `freezeOverrides`.** Export-time-only
-   knobs that change a clip's on-timeline footprint or framing; the live
-   compositor has no notion of them. The render path **refuses** an export
-   carrying one (`pipeExportUnsupported`) rather than honouring it in the sound
-   while the picture ignores it. A clip's *own persisted* speed ramp (D-236) is
-   fully supported — the preview resolves it, so both halves already agree.
-2. **Deleting the old path.** It remains the default. `renderer` is a temporary
-   parameter, documented as such in `editorExport.ts` and on both MCP surfaces.
+1. **`speedOverrides` / `fitOverrides` / `freezeOverrides`.** Refused here in
+   phase 1; **drawn by the compositor since D-448** as clip data (§14).
+2. **Deleting the old path.** Done by D-448 (§14).
 3. **Progress reporting.** `render_timeline` knows exactly which frame it is on —
    this path can report real progress, where the old one could only parse ffmpeg
    stderr. Not wired to an event yet.
@@ -1320,3 +1316,52 @@ size whenever the aspect ratio matches, which every fixture case does.
 Hardware encode (D-446) is wave 4's first half, done. It changes output bytes, and parity is measured at the
 picture level (PSNR 44–47 dB, SSIM 0.988–0.992 against the libx264 file on the same path), as §11.4 wave 4
 said it would be.
+
+---
+
+# 14. D-448 (2026-11-03): one renderer — the parity check, the Clip exceptions, and what grading carries
+
+**Decision:** D-448. **Numbers:** `docs/perf/2026-11-03-export-parity-report.md`.
+
+## 14.1 The check
+
+Copies of three of the owner's projects were exported both ways through the real compiler with the same
+encoder, and compared per frame and per sample (the harness, `export_parity_real`, is in history at the
+commit before D-448's). The sound, length, A/V offset and loudness were identical in every case. Every
+picture difference above encoder noise was the filter path drawing something other than the Edit preview
+(three projects), the filter path failing outright, one-frame clip-end / mixed-rate conventions, or a
+compositor defect (B-382, fixed). §13.3's step 1 is therefore done, and with the owner's direction ("I don't
+wanna keep multiple paths") the filter path is deleted rather than kept behind a switch.
+
+## 14.2 The Clip exceptions, as layer data
+
+`clipExceptions.ts` writes the export-time exceptions onto the copy of the timeline the export draws, and the
+compiler sends that document with the render request (`TimelineRenderRequest.timeline`):
+
+| Exception | Clip data | Where the compositor reads it |
+|---|---|---|
+| speed override | a one-run `speed_points` ramp | `Clip::source_frame_at`, `Clip::end_frame_at` (and the audio compiler's `resolveSpeedSegments`) |
+| Stretch to fill | `Clip.stretch` | `ClipTransform::effective_size` (height = uncropped `natural.1 × scale`) |
+| Hold last frame | `Clip.hold_until_frame` | `Track::held_clip_at`, from `Track::push_layers_at` only (the mixer's `clip_at` is unchanged) |
+
+All three are inputs to the shared layer model (`VisibleLayer`, `ClipTransform`), so D-363's GPU blend gets
+them with no work of its own. Functions changed for that merge: `Track::push_layers_at` (one line: the held
+clip when nothing covers the position), `Track::held_clip_at` (new), `Track::duration` (counts a hold),
+`Clip::source_frame_at` (B-382's floor), `ClipTransform::effective_size` (`stretch`), and the
+`ClipTransform` literals (`stretch` field). Nothing in the blend or the layer drawing was touched.
+
+**Known cost.** A speed change or a held frame on a 4K source makes the decode pipe seek per frame
+(18–41 s for 3 s in the check). The fix belongs in `decode_pipe`: stream through a constant-speed run, and
+hand back a held frame from the last decode instead of seeking.
+
+## 14.3 What grading carries
+
+Both renderers applied the same per-pixel lattice (D-256), so nothing was lost by deleting one. Measured:
+the lattice equals the grade shader on flat colour within 3 codes. Not carried, and now said in the Export
+panel before Export, in `editor_get_grade_status` and in the capabilities note: masks, the Colorist crop,
+relight, the neighbourhood / position effects (left out of the bake since B-381 instead of mis-baked), and
+the local part of contrast / shadows / highlights / whites / blacks. Against the Colorist's own render of a
+real frame both exports measured about 20 dB, partly that local part and partly a warmer cast not yet
+root-caused (B-381, open). **The real fix for all of it is to run the grade shader per frame instead of a
+LUT, which is what a GPU compositor makes affordable** — it belongs with D-363's waves, not in the CPU blend.
+

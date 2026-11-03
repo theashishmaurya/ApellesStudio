@@ -114,6 +114,15 @@ pub struct TimelineRenderRequest {
     /// its partial output removed. `None` (a direct caller) cannot be cancelled.
     #[serde(default, rename = "cancelToken")]
     pub cancel_token: Option<String>,
+    /// **D-448 — the document to draw.** The compiler hands over the timeline
+    /// it compiled this request's sound from — with the export's Clip
+    /// exceptions (`clipExceptions.ts`) already written into it as clip data —
+    /// so the picture and the sound come from one copy. `None` (a job queued
+    /// before D-448, or a direct caller) draws the stored timeline named by
+    /// [`Self::timeline_id`]. The project settings are read from the project
+    /// either way.
+    #[serde(default)]
+    pub timeline: Option<Timeline>,
 }
 
 /// The two extra argvs a segmented render needs, compiled by
@@ -599,6 +608,7 @@ pub fn render_timeline(
     // refused.
     let comp = edit::derived_composition_size(settings, timeline)?.unwrap_or(out);
     let canvas = canvas_plan(comp, out);
+    grade_preflight(timeline)?;
     let started = Instant::now();
 
     // D-441 — registered before anything spawns, so a job cancelled while it
@@ -723,6 +733,30 @@ pub fn render_timeline(
             Err(e)
         }
     }
+}
+
+/// D-448 — every graded clip's grade, baked before the first frame. The
+/// preview's per-frame lookup (`grade_lut::lut_for_clip`) shows a clip ungraded
+/// when its bake fails, which is the right degrade on screen and the wrong one
+/// in a file: here a failed bake refuses the render, naming the clip, instead
+/// of exporting it without its grade. Memoised, so a timeline whose grades the
+/// export pre-flight (`chroma_timeline_grade_luts`) already baked costs a
+/// cache lookup per clip.
+fn grade_preflight(timeline: &Timeline) -> Result<(), String> {
+    for track in &timeline.tracks {
+        if !matches!(track.kind, apelles_timeline::TrackKind::Video) {
+            continue;
+        }
+        for clip in track.clips.iter().filter(|c| !c.is_generated()) {
+            super::grade_lut::resolve_clip_lut(&clip.id, None).map_err(|e| {
+                format!(
+                    "clip {}'s Colorist grade could not be baked, so it was not exported: {e}",
+                    clip.name
+                )
+            })?;
+        }
+    }
+    Ok(())
 }
 
 /// D-441 — what a render that was cancelled before it started answers.
@@ -1218,9 +1252,11 @@ pub async fn chroma_render_timeline_export(
     req: TimelineRenderRequest,
 ) -> Result<TimelineRenderOutcome, String> {
     tokio::task::spawn_blocking(move || {
-        let (timeline, settings) =
+        let (stored, settings) =
             edit::resolve_timeline_by_id_and_settings(req.timeline_id.as_deref())?;
-        render_timeline(&timeline, &settings, &req)
+        // D-448 — the compiled copy when the compiler sent one.
+        let timeline = req.timeline.as_ref().unwrap_or(&stored);
+        render_timeline(timeline, &settings, &req)
     })
     .await
     .map_err(|e| format!("timeline render task: {e}"))?
@@ -1682,35 +1718,23 @@ mod tests {
     }
 }
 
-/// **D-350's decisive verification: the old ffmpeg-filter-graph path and the new
-/// compositor render path, rendered from one document and compared PIXEL BY
-/// PIXEL.**
+/// **The render path end to end: real media, real `ffmpeg`, real decoded
+/// frames** — skipped (not failed) when `ffmpeg`/`ffprobe` are not on PATH, so a
+/// missing binary cannot break an otherwise-green run.
 ///
-/// Everything in here spawns real `ffmpeg`, generates real media and decodes
-/// real frames — and is skipped (not failed) when `ffmpeg`/`ffprobe` are not on
-/// PATH, matching `timelineExport.ffmpeg.test.ts`'s own convention so a missing
-/// binary cannot break an otherwise-green run.
-///
-/// The document, and BOTH compiled argvs, come from
+/// The documents and the compiled argvs come from
 /// `app/src-tauri/tests/fixtures/export-parity.json`, which
 /// `packages/editor/src/exportParityFixture.test.ts` writes and — on every one
-/// of its own runs — re-asserts against the live TypeScript compilers. So this
-/// test is measuring today's old path, not a snapshot of it: the fixture cannot
-/// drift without that test failing first. See
-/// `docs/notes/export-gpu-compositor.md` §5.
+/// of its own runs — re-asserts against the live TypeScript compiler, so the
+/// fixture cannot drift without that test failing first. (Until D-448 this
+/// module also compared the output pixel by pixel with the deleted ffmpeg
+/// filter-graph export; `docs/notes/export-gpu-compositor.md` §5 and §14.)
 /// B-380 — the export benchmark (decode / composite / encode / mux / loudness,
-/// both paths, both encoders). A child of this module so it can drive
+/// both encoders). A child of this module so it can drive
 /// [`render_segmented`] at a chosen segment count, as the D-360 sweep does.
 #[cfg(test)]
 #[path = "export_bench.rs"]
 mod export_bench;
-
-/// B-380 — the real-project parity check: the filter path against the
-/// compositor path on a copy of one of the owner's projects (the oracle for
-/// making the compositor the only export renderer).
-#[cfg(test)]
-#[path = "export_parity_real.rs"]
-mod export_parity_real;
 
 #[cfg(test)]
 mod parity_tests {
@@ -2227,6 +2251,7 @@ mod parity_tests {
                         loudness: None,
                         timeline_id: None,
                         cancel_token: None,
+                        timeline: None,
                     },
                     &plan,
                     ranges,
@@ -2299,6 +2324,7 @@ mod parity_tests {
                     loudness: None,
                     timeline_id: None,
                     cancel_token: None,
+                    timeline: None,
                 },
             )
         } else {
@@ -2319,6 +2345,7 @@ mod parity_tests {
                     loudness: None,
                     timeline_id: None,
                     cancel_token: None,
+                    timeline: None,
                 },
                 &plan,
                 segments,
@@ -2343,7 +2370,6 @@ mod parity_tests {
         colors: std::collections::HashMap<String, [u8; 3]>,
         source_frames: u32,
         timeline: Timeline,
-        filter_args: Vec<String>,
         pipe_args: Vec<String>,
         pipe_frames: u64,
         segment_args: Vec<String>,
@@ -2363,7 +2389,6 @@ mod parity_tests {
         sizes: std::collections::HashMap<String, [u32; 2]>,
         sample_frames: Vec<u64>,
         timeline: Timeline,
-        filter_args: Vec<String>,
         pipe_args: Vec<String>,
         pipe_frames: u64,
         segment_args: Vec<String>,
@@ -2395,7 +2420,6 @@ mod parity_tests {
             sizes: std::collections::HashMap<String, [u32; 2]>,
             sample_frames: Vec<u64>,
             timeline: Timeline,
-            filter_args: Vec<String>,
             pipe_args: Vec<String>,
             pipe_frames: u64,
             segment_args: Vec<String>,
@@ -2412,7 +2436,6 @@ mod parity_tests {
             sizes: w.sizes,
             sample_frames: w.sample_frames,
             timeline: w.timeline,
-            filter_args: w.filter_args,
             pipe_args: w.pipe_args,
             pipe_frames: w.pipe_frames,
             segment_args: w.segment_args,
@@ -2558,7 +2581,6 @@ mod parity_tests {
         /// metric that actually distinguishes "a boundary landed a pixel over"
         /// from "the two engines drew a different picture".
         solid_share: f64,
-        max_channel: i32,
         /// The bounding box of every differing pixel, for a failure message
         /// that says WHERE the two engines disagreed.
         bbox: Option<(u32, u32, u32, u32)>,
@@ -2570,7 +2592,6 @@ mod parity_tests {
         assert_eq!(a.dimensions(), b.dimensions(), "frames differ in SIZE");
         let (w, h) = a.dimensions();
         let mut sq = 0f64;
-        let mut max_channel = 0i32;
         let mut mask = vec![false; (w * h) as usize];
         let mut bbox: Option<(u32, u32, u32, u32)> = None;
         for y in 0..h {
@@ -2582,7 +2603,6 @@ mod parity_tests {
                     sq += (d * d) as f64;
                     worst = worst.max(d.abs());
                 }
-                max_channel = max_channel.max(worst);
                 if worst > GROSS_DIFF_CHANNEL {
                     mask[(y * w + x) as usize] = true;
                     bbox = Some(match bbox {
@@ -2625,7 +2645,6 @@ mod parity_tests {
             },
             gross_share: gross as f64 / px,
             solid_share: solid as f64 / px,
-            max_channel,
             bbox,
         }
     }
@@ -2637,83 +2656,6 @@ mod parity_tests {
             fps: Some(fx.fps),
             color_space: None,
         }
-    }
-
-    /// **The test D-350 exists for.** One document → both engines → real
-    /// decoded pixels at five real timestamps, covering a keyframed slide, a
-    /// rounded box and a crop, over a second full-frame layer.
-    #[test]
-    fn render_path_matches_the_filter_graph_path_pixel_for_pixel() {
-        if !ffmpeg_available() {
-            eprintln!("skipping: ffmpeg/ffprobe not on PATH");
-            return;
-        }
-        let _guard = super::super::PROJECT_STATE_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let fx = load_fixture();
-        let dir = tempfile::tempdir().expect("tempdir");
-        let dir = dir.path();
-        generate_media(&fx, dir).expect("generate fixture media");
-
-        let old_out = dir.join("old.mp4");
-        let new_out = dir.join("new.mp4");
-        run_ffmpeg(&localise(&fx.filter_args, dir, &old_out)).expect("the old filter-graph export");
-
-        let timeline = localise_timeline(&fx.timeline, dir);
-        let settings = settings_for(&fx);
-        let req = TimelineRenderRequest {
-            args: localise(&fx.pipe_args, dir, &new_out),
-            width: fx.comp_width,
-            height: fx.comp_height,
-            frames: fx.pipe_frames,
-            segments: None,
-            output: None,
-            loudness: None,
-            timeline_id: None,
-            cancel_token: None,
-        };
-        let outcome = render_timeline(&timeline, &settings, &req).expect("the new render path");
-        assert_eq!(
-            outcome.frames, fx.pipe_frames,
-            "the render path must write every frame it was asked for"
-        );
-
-        let mut worst = f64::INFINITY;
-        for (i, n) in fx.sample_frames.iter().enumerate() {
-            let a = frame_of(&old_out, *n, &dir.join(format!("old{i}.png"))).expect("old frame");
-            let b = frame_of(&new_out, *n, &dir.join(format!("new{i}.png"))).expect("new frame");
-            let d = compare(&a, &b);
-            eprintln!(
-                "frame {n}: PSNR {:.1} dB · differing {:.3}% · SOLID {:.4}% · worst channel {} · bbox {:?}",
-                d.psnr_db,
-                d.gross_share * 100.0,
-                d.solid_share * 100.0,
-                d.max_channel,
-                d.bbox
-            );
-            worst = worst.min(d.psnr_db);
-            assert!(
-                d.solid_share <= MAX_SOLID_DIFF_SHARE,
-                "frame {n}: {:.4}% of pixels differ SOLIDLY (a filled region, not a boundary \
-                 line) — limit {:.4}%, difference bounded by {:?}. The two engines drew a \
-                 different picture here, not the same one a pixel apart.",
-                d.solid_share * 100.0,
-                MAX_SOLID_DIFF_SHARE * 100.0,
-                d.bbox
-            );
-            assert!(
-                d.gross_share <= MAX_GROSS_DIFF_SHARE,
-                "frame {n}: {:.2}% of pixels differ by more than {GROSS_DIFF_CHANNEL}/255 in some \
-                 channel (limit {:.2}%) — too much boundary to be one pixel of rounding",
-                d.gross_share * 100.0,
-                MAX_GROSS_DIFF_SHARE * 100.0
-            );
-        }
-        eprintln!(
-            "worst PSNR across {} frames: {worst:.1} dB",
-            fx.sample_frames.len()
-        );
     }
 
     /// CLAUDE.md's determinism rule, applied to this path: the same document at
@@ -2820,6 +2762,7 @@ mod parity_tests {
             loudness: None,
             timeline_id: None,
             cancel_token: None,
+            timeline: None,
         };
         let outcome = render_timeline(&timeline, &settings, &req).expect("the render path");
         assert_eq!(
@@ -3233,6 +3176,7 @@ mod parity_tests {
                 loudness: None,
                 timeline_id: None,
                 cancel_token: None,
+                timeline: None,
             },
         )
         .expect("the single-stream render");
@@ -3248,6 +3192,7 @@ mod parity_tests {
             loudness: None,
             timeline_id: None,
             cancel_token: None,
+            timeline: None,
         };
         let plan = SegmentedEncodePlan {
             segment_args: localise(&fx.segment_args, dir, &segmented_out),
@@ -3453,158 +3398,10 @@ mod parity_tests {
         );
     }
 
-    /// **The live resource measurement B-230's own write-up says this repo was
-    /// missing** ("nothing in this repo fails a build when an export's peak
-    /// memory or thread count regresses — both halves of this blowup were found
-    /// by a human watching Activity Monitor").
-    ///
-    /// `#[ignore]`d on purpose: it samples a live process's real footprint and
-    /// thread count, which is a MEASUREMENT, not a pass/fail fact — a CI box
-    /// with a different core count produces different numbers for the old path
-    /// by design (that is the bug: its cost scales with the machine). Run it by
-    /// hand and read the numbers:
-    ///
-    /// ```text
-    /// cargo test -p apelles --lib chroma::edit_render::parity_tests::measure -- --ignored --nocapture
-    /// ```
-    ///
-    /// The recorded run is in `docs/notes/export-gpu-compositor.md` §6.
-    #[test]
-    #[ignore = "a live resource measurement, not a pass/fail assertion — see the doc comment"]
-    fn measure_resource_use_against_the_filter_graph_path() {
-        if !ffmpeg_available() {
-            eprintln!("skipping: ffmpeg/ffprobe not on PATH");
-            return;
-        }
-        let _guard = super::super::PROJECT_STATE_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let fx = load_fixture();
-        let dir = tempfile::tempdir().expect("tempdir");
-        let dir = dir.path();
-        generate_stress_media(&fx, dir).expect("generate stress media");
-        let st = &fx.stress;
-
-        eprintln!(
-            "\n=== D-350 resource measurement: {} clips, {}x{}, {} frames ===",
-            st.clips, st.width, st.height, st.pipe_frames
-        );
-
-        // --- the OLD path: one ffmpeg process, one `-i` per clip ---
-        let old_out = dir.join("stress-old.mp4");
-        let old_args = localise(&st.filter_args, dir, &old_out);
-        let started = Instant::now();
-        let mut child = ffmpeg_locate::ffmpeg()
-            .expect("an ffmpeg for the old path")
-            .args(&old_args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn the old path");
-        let old = sample_until_exit(&mut child);
-        let old_ms = started.elapsed().as_millis();
-        eprintln!(
-            "filter-graph path : peak RSS {:>7.1} MB · peak threads {:>5} · {} inputs · {old_ms} ms",
-            old.peak_rss_mb,
-            old.peak_threads,
-            st.filter_args.iter().filter(|a| a.as_str() == "-i").count()
-        );
-
-        // --- the NEW path: this process composites, one ffmpeg encodes ---
-        // Measured as the WHOLE tree (this test binary + the encoder + every
-        // `decode_pipe` child), because that is the honest comparison: the old
-        // path's number is everything it costs, so the new path's must be too.
-        let new_out = dir.join("stress-new.mp4");
-        let req = TimelineRenderRequest {
-            args: localise(&st.pipe_args, dir, &new_out),
-            width: st.width,
-            height: st.height,
-            frames: st.pipe_frames,
-            segments: None,
-            output: None,
-            loudness: None,
-            timeline_id: None,
-            cancel_token: None,
-        };
-        let timeline = localise_timeline(&st.timeline, dir);
-        let settings = ProjectSettings {
-            width: Some(st.width),
-            height: Some(st.height),
-            fps: Some(fx.fps),
-            color_space: None,
-        };
-        // **The baseline has to come out, or this compares the wrong things.**
-        // The old path's number is one freshly-spawned `ffmpeg` and nothing
-        // else. The new path runs INSIDE a process — here a `cargo test` binary
-        // carrying the whole app's linked runtime (tokio, wgpu, the ONNX
-        // runtime), in the real app the Tauri process itself — which is already
-        // holding hundreds of MB and dozens of threads before a single frame is
-        // composited. Reporting that total against a bare ffmpeg would flatter
-        // the old path by exactly the size of the app, which is not a fact about
-        // either export path. So: sample the host process at rest first, and
-        // report the DELTA over it alongside the absolute.
-        let baseline = sample_tree(std::process::id()).unwrap_or_default();
-        eprintln!(
-            "  (host process at rest: {:.1} MB · {} threads — subtracted below)",
-            baseline.peak_rss_mb, baseline.peak_threads
-        );
-
-        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let peak = std::sync::Arc::new(std::sync::Mutex::new(Sample::default()));
-        let sampler = {
-            let (stop, peak) = (stop.clone(), peak.clone());
-            std::thread::spawn(move || {
-                let me = std::process::id();
-                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
-                    if let Some(s) = sample_tree(me) {
-                        let mut g = peak.lock().unwrap_or_else(|e| e.into_inner());
-                        g.peak_rss_mb = g.peak_rss_mb.max(s.peak_rss_mb);
-                        g.peak_threads = g.peak_threads.max(s.peak_threads);
-                        g.peak_children = g.peak_children.max(s.peak_children);
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-            })
-        };
-        let started = Instant::now();
-        let outcome = render_timeline(&timeline, &settings, &req).expect("the render path");
-        let new_ms = started.elapsed().as_millis();
-        stop.store(true, std::sync::atomic::Ordering::Relaxed);
-        let _ = sampler.join();
-        let new = peak.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let d_rss = new.peak_rss_mb - baseline.peak_rss_mb;
-        let d_threads = new.peak_threads.saturating_sub(baseline.peak_threads);
-        eprintln!(
-            "compositor path   : peak RSS {:>7.1} MB · peak threads {:>5} · 1 input · {new_ms} ms \
-             ({} frames)",
-            new.peak_rss_mb, new.peak_threads, outcome.frames
-        );
-        eprintln!(
-            "  ... of which the EXPORT itself: {:>7.1} MB · {:>5} threads · {} ffmpeg children at peak",
-            d_rss, d_threads, new.peak_children
-        );
-        eprintln!(
-            "\nexport-attributable  RSS {:+.0}%  ·  threads {:+.0}%  ·  wall {:+.0}%",
-            (d_rss / old.peak_rss_mb - 1.0) * 100.0,
-            (d_threads as f64 / old.peak_threads as f64 - 1.0) * 100.0,
-            (new_ms as f64 / old_ms as f64 - 1.0) * 100.0
-        );
-        eprintln!(
-            "(the old path's cost scales with the {} clips; the new path's ffmpeg count is bounded \
-             by the VISIBLE VIDEO TRACK count plus one encoder — {} tracks here)",
-            st.clips,
-            st.timeline.tracks.len()
-        );
-    }
-
     #[derive(Debug, Clone, Default)]
     pub(super) struct Sample {
         pub(super) peak_rss_mb: f64,
         pub(super) peak_threads: u64,
-        /// How many processes other than the root were in the tree — for the
-        /// render path this is "the encoder plus every live decode pipe", the
-        /// number D-350 claims is bounded by track count rather than clip count.
-        pub(super) peak_children: usize,
     }
 
     /// One reading for `pid` and every descendant of it: summed resident memory
@@ -3648,10 +3445,7 @@ mod parity_tests {
                 }
             }
         }
-        let mut s = Sample {
-            peak_children: tree.len().saturating_sub(1),
-            ..Default::default()
-        };
+        let mut s = Sample::default();
         for (pid, _, rss_kb) in rows {
             if tree.contains(&pid) {
                 s.peak_rss_mb += rss_kb / 1024.0;
@@ -3679,33 +3473,14 @@ mod parity_tests {
             .unwrap_or(0)
     }
 
-    /// Sample `child` (and its descendants) every 100 ms until it exits,
-    /// returning the peak.
-    fn sample_until_exit(child: &mut std::process::Child) -> Sample {
-        let mut peak = Sample::default();
-        loop {
-            if let Some(s) = sample_tree(child.id()) {
-                peak.peak_rss_mb = peak.peak_rss_mb.max(s.peak_rss_mb);
-                peak.peak_threads = peak.peak_threads.max(s.peak_threads);
-                peak.peak_children = peak.peak_children.max(s.peak_children);
-            }
-            match child.try_wait() {
-                Ok(Some(_)) | Err(_) => break,
-                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
-            }
-        }
-        peak
-    }
-
     /// **The resource claim, measured rather than asserted** (B-228/B-229/B-230
     /// were all found by watching a process, not by a test).
     ///
-    /// A 40-clip timeline compiles, on the old path, to 40 decoder inputs and a
-    /// 40-stage overlay chain. On the render path it compiles to ONE input,
-    /// whatever the clip count — so the two numbers this checks are the two
-    /// multiplications those three bugs were. This asserts the compiled shape
-    /// (which is deterministic and CI-safe); the live footprint/thread numbers
-    /// are in `docs/notes/export-gpu-compositor.md` §6.
+    /// The render path compiles to ONE input whatever the clip count — the
+    /// per-clip decoder multiplication those three bugs were is gone by
+    /// construction. This asserts the compiled shape (deterministic and
+    /// CI-safe); the live numbers are in `docs/notes/export-gpu-compositor.md`
+    /// §6.
     #[test]
     fn the_render_path_opens_one_input_however_many_clips_there_are() {
         let fx = load_fixture();
@@ -3715,11 +3490,10 @@ mod parity_tests {
             1,
             "the render path must open exactly one input — the pipe"
         );
-        let clips: usize = fx.timeline.tracks.iter().map(|t| t.clips.len()).sum();
         assert_eq!(
-            inputs(&fx.filter_args),
-            clips,
-            "the old path opens one input per clip, which is the multiplication D-350 removes"
+            inputs(&fx.stress.pipe_args),
+            1,
+            "a 20-clip timeline too — one input whatever the clip count"
         );
     }
 
@@ -3782,6 +3556,7 @@ mod parity_tests {
             loudness: None,
             timeline_id: None,
             cancel_token: None,
+            timeline: None,
         };
         let outcome = render_timeline(&timeline, &settings, &req)
             .expect("a sizeless project renders at the export's own size");
@@ -3884,6 +3659,7 @@ mod parity_tests {
             loudness: None,
             timeline_id: None,
             cancel_token: None,
+            timeline: None,
         };
         let outcome =
             render_timeline(&timeline, &settings, &req).expect("an audio-only timeline exports");

@@ -31,8 +31,9 @@ vi.mock('@tauri-apps/api/core', () => {
     chroma_timeline_composition_size: () => ({ compWidth: 1920, compHeight: 1080, naturalWidth: 1, naturalHeight: 1 }),
     chroma_unused_export_path: (a) => `${(a as { dir: string }).dir}/${(a as { stem: string }).stem}.${(a as { ext: string }).ext}`,
     chroma_text_fonts: () => [],
-    chroma_timeline_grade_luts: () => ({ luts: {}, warnings: [] }),
-    chroma_run_editor_export: () => new Promise((resolve) => (run.resolve = resolve)),
+    chroma_timeline_grade_luts: () => ({ graded: [], warnings: [] }),
+    chroma_editor_export_status: () => ({ state: 'idle', jobId: 0 }),
+    chroma_render_timeline_export: () => new Promise((resolve) => (run.resolve = resolve)),
     chroma_cancel_editor_export: () => ({ wasRunning: true }),
   });
   return {
