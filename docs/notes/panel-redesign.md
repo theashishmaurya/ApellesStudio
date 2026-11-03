@@ -558,3 +558,14 @@ Perf (CLAUDE.md priority): the EQ drag coalesces to one op per frame and one und
 release (the `NumberScrubber` pattern, `ui-redesign.md` §6d); the Clipper review surface
 renders only the selected short's transcript; the music-range overlay is one absolutely
 positioned element, not a lane re-render; no new subscriptions to the playhead (D-325).
+
+## Revision 2: decluttered (owner feedback, 2026-11-03)
+
+The owner reviewed the first mockup: "this is very cluttered" (Music edits), "cluttered AF" (EQ), "crop should be interactive, not like this", "very cluttered" (Highlights), "too much info" (Export). References: `scratch/bug-refs/2026-11-03-mock-*.png`. The mockup (`scratch/panel-redesign-mockup.html`) was revised in place. The rule for every panel now: **the control is the explanation**. Descriptions go into tooltips, there are no footnote hints, and a value is edited on the thing it describes.
+
+- **Music edits.** The track picker is one quiet line ("On A3 · Electronic Vibrations ▾"). The five kinds are pills (Dropout, Breath, Dry open, Dry CTA, Section end), with only the selected one's sentence shown. The range is one row (`1:12.40 → 1:15.10`), with the playhead targets inside the fields. **Fades are dragged on the diagram's dots**: the separate steppers are gone. "When the music comes back" is a two-way segmented control (Song keeps time / Song resumes) with the long explanations in tooltips. Actions are Preview ▶ · Apply · ⋯ (Save for later lives in ⋯).
+- **EQ.** The band cards are gone: the numbered dots on the graph *are* the bands. The preset is a dropdown. The selected band is one row: power · `3 · Bell ▾` · frequency · gain · Q, as scrubbable numbers with no sliders. No footnote.
+- **Crop (FCP's model).** Crop happens **in the viewer**: the crop button in the section header puts the viewer in crop mode, with the outside dimmed and four edge handles to drag. The Inspector keeps one compact row, L · R · T · B, as scrubbable numbers.
+- **Highlights.** Add, Suggest and Show boxes are icons in the section header. Each highlight is one row: colour dot (click to cycle) · start · length · strength, with remove on hover.
+- **Export.** The presets are compact chips (name + one tag: 1080p, 4K, Vertical, 1:1, As edited, −16 LUFS). The "Preset" and "Save as" labels are gone. The summary is one line (`1920 × 1080 · 30 fps · −14 LUFS … ≈ 840 MB`), with the colour warning as an icon and tooltip. The Publish destinations are dimmed under "Publish · soon", with no badges and no footnote. The footer is Cancel · Export.
+- Also removed: the Level, Transform and Fade explanatory hints, and the Dynamic zoom description. The Dynamic zoom warning is shortened to one line with the detail in a tooltip.
