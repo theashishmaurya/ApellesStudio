@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-03** — **B-320 fixed:** a text reveal whose `dur` rounds to 0 frames no longer crashes the render; `inAt`/`outAt` treat a zero-length range as a step.
 - **2026-11-03** — **B-309 fixed:** `motion_validate` reports `text_overflow` per text layer that sticks out of its container shape (or the canvas), measuring on loaded fonts in the app and estimating otherwise (`engine/textFit.ts`); advisory, no authoring tool refuses on it.
 - **2026-11-03** — **B-321 fixed:** `motion_check_component` / `motion_preview_frame` no longer hold one long `invoke` open; the backend starts the render behind an operation id (`apelles_motion::longop`) and the webview polls it, so a finished proof or still always reaches the caller.
 - **2026-11-03** — **B-300 fixed:** a Motion video's default render scale is 2x only while the result stays within UHD (`scripts/renderScale.mts`), so a 3840x2160 manifest renders at 3840x2160, not 7680x4320; a 1080p manifest still comes out 4K.

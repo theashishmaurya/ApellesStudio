@@ -568,7 +568,7 @@ by opacity keys at the crossing.
 
 ## B-320 — a `text` layer whose `dur` rounds to 0 frames passes `motion_validate` but crashes the render
 
-status: **open** · severity: **medium** · area: Motion engine (`primitives/Text.tsx` `inAt`) · found 2026-10-28
+status: **fixed** (2026-11-03) · severity: **medium** · area: Motion engine (`primitives/Text.tsx` `inAt`) · found 2026-10-28
 
 - **repro:** a `text` layer with `"preset": "fade-up", "at": 0, "dur": 0.01` (meant as "already
   visible") — `motion_insert_layers` and `motion_validate` accept it; `motion_preview_frame`
@@ -577,6 +577,9 @@ status: **open** · severity: **medium** · area: Motion engine (`primitives/Tex
 - **expected:** either the schema refuses a reveal shorter than one frame, or `inAt` clamps the
   range to at least one frame (a zero-length reveal = visible from `at`).
 - **workaround used:** `"at": -0.2, "dur": 0.1` (fully revealed before the scene starts).
+- **cause:** `Text` reveals through `inAt(frame, start, start + dur)`; a `dur` of 0.01 s rounds to 0 frames, so Remotion's `interpolate` got `[0, 0]` and threw `inputRange must be strictly monotonically increasing`, which took the whole scene down. `motion_validate` could not see it because the schema is right (`dur` is just a number).
+- **fix:** `lib/draw.ts` `inAt` / `outAt` treat a range with `to <= from` as a step (hidden before `from`, shown from it; the reverse for `outAt`), the "zero-length reveal = visible from `at`" the report asked for. Every primitive that reveals through them is covered, not only Text; no schema refusal, so existing documents with a tiny `dur` just render.
+- **tests:** `lib/draw.test.ts` (zero-length and reversed ranges for both, a normal range unchanged).
 
 ## B-319 — `new_project` (and `open_project`) still answer with the whole grade document
 
