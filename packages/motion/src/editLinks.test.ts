@@ -11,6 +11,7 @@ import {
   checkSceneRename,
   computeEditLinks,
   clipReadsItem,
+  sameEditLinks,
   type EditLinkClip,
   type EditLinkTrack,
 } from './editLinks';
@@ -341,5 +342,34 @@ describe('checkSceneRename (B-242/D-371)', () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reason).toContain('no scene at index 9');
+  });
+});
+
+describe('sameEditLinks (B-370)', () => {
+  const media = [item('m1', '/p/motion/renders/intro.mp4', 'intro')];
+  const clipA = { id: 'c1', name: 'intro', media_id: 'm1', source_path: '/p/motion/renders/intro.mp4' };
+  const other = { id: 'c2', name: 'talk', media_id: 'x', source_path: '/p/talk.mov' };
+
+  it('calls an edit that leaves every link as it was "the same", though the objects differ', () => {
+    const before = computeEditLinks(media, [{ clips: [clipA, other] }], '/p');
+    // A trim of the unrelated clip: new track/clip objects, same links.
+    const after = computeEditLinks(media, [{ clips: [clipA, { ...other }] }], '/p');
+    expect(after).not.toBe(before);
+    expect(sameEditLinks(before, after)).toBe(true);
+  });
+
+  it('sees a placed, moved or removed scene clip', () => {
+    const none = computeEditLinks(media, [{ clips: [other] }], '/p');
+    const placed = computeEditLinks(media, [{ clips: [clipA, other] }], '/p');
+    const moved = computeEditLinks(media, [{ clips: [other, clipA] }], '/p');
+    expect(sameEditLinks(none, placed)).toBe(false);
+    expect(sameEditLinks(placed, moved)).toBe(false);
+    expect(sameEditLinks(placed, none)).toBe(false);
+  });
+
+  it('sees a scene gaining or losing its link entirely', () => {
+    const one = computeEditLinks(media, [], '/p');
+    expect(sameEditLinks(one, {})).toBe(false);
+    expect(sameEditLinks({}, {})).toBe(true);
   });
 });

@@ -4,6 +4,14 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-370 — every Edit change re-rendered the whole app shell (`Root` selected the timeline's tracks)
+
+status: **fixed 2026-11-03 (worktree; live re-check pending)** · severity: medium (half of every release commit) · area: `app/src/Root.tsx`
+
+- **found:** 2026-11-03, React Performance Tracks read live over `debug_perf_entries` during a 300-clip select-tool trim (dev bundle): the release commit rendered `Shell` (≈ 21 ms of a ≈ 30 ms `commit-rendered`) and its resizable panel groups, with or without a selection change.
+- **cause:** `Root` selected `timeline?.tracks` to compute the Motion tab's edit links (`computeEditLinks`), so any timeline change re-rendered `Root`, then `Shell` and every non-memoised child.
+- **fix:** `app/src/hooks/useMotionEditLinks.ts` reads the tracks by a raw store subscription and keeps the previous links object while `sameEditLinks` (`@apelles/motion`) says nothing changed. Tests: `useMotionEditLinks.test.tsx` (0 renders on an unrelated trim, a render when the scene clip goes), `editLinks.test.ts` "sameEditLinks (B-370)".
+
 ## B-371 — the UI harness failed hover checks when another app took the front mid-run (`track-header-quiet`)
 
 status: **fixed 2026-11-03 (harness)** · severity: minor (false FAIL) · area: `packages/ui-harness/src/runner.ts`

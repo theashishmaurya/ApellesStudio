@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { toast } from 'react-toastify';
 import { Shell, useActiveTab, useShellStore } from '@apelles/shell';
 import {
@@ -10,7 +10,6 @@ import {
 import {
   MotionTab,
   clipReadsItem,
-  computeEditLinks,
   useMotionProjectStore,
   type SceneRenderResult,
 } from '@apelles/motion';
@@ -23,6 +22,7 @@ import { useBrandStore } from '@apelles/brand';
 import { BrandKitButton } from '@apelles/brand/ui';
 import App from './App';
 import { MOTION_TAB_ENABLED } from './buildFeatures';
+import { useMotionEditLinks } from './hooks/useMotionEditLinks';
 import { useProjectScopedHistory } from './hooks/useProjectScopedHistory';
 import AgentActivityDock from './components/chroma/AgentActivityDock';
 import ProjectLauncher from './components/chroma/ProjectLauncher';
@@ -468,8 +468,6 @@ export function Root() {
     return () => useKeymapStore.getState().setPersist(null);
   }, []);
 
-  const mediaItems = useMediaPoolStore((s) => s.items);
-  const editTracks = useEditorTimelineStore((s) => s.timeline?.tracks);
   // B-219/D-359 — the open project's own root goes in with them. It is what
   // separates "this pool item is the file a re-render will overwrite" from
   // "this pool item was inherited verbatim when the project was copied on the
@@ -477,10 +475,11 @@ export function Root() {
   // can reach it". `motionProjectPath` above is the same value the Motion tab
   // already keys its manifest on, so there is no second notion of which
   // project is open.
-  const motionEditLinks = useMemo(
-    () => computeEditLinks(mediaItems, editTracks ?? [], motionProjectPath),
-    [mediaItems, editTracks, motionProjectPath],
-  );
+  //
+  // B-370 — through `useMotionEditLinks`, which keeps the previous object while
+  // the links are unchanged: selecting `timeline.tracks` here re-rendered Root
+  // (and the whole Shell) on every Edit change.
+  const motionEditLinks = useMotionEditLinks(motionProjectPath);
 
   return (
     <Shell
