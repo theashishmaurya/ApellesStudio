@@ -132,7 +132,11 @@ export function EditBrowser({ mediaPool }: EditBrowserProps) {
           </TabsList>
         </Tabs>
       </TooltipProvider>
-      <div className="relative min-h-0 flex-1">
+      {/* `overflow-x-hidden` is a guard, not the fix: each library keeps its own
+          content inside the column (B-362 — a Select trigger that would not
+          shrink, a row that would not wrap). A panel that regresses is clipped
+          here rather than growing a horizontal scrollbar. */}
+      <div className="relative min-h-0 flex-1 overflow-x-hidden">
         <div className={mode === 'sources' ? 'h-full' : 'hidden'}>
           <PanelErrorBoundary panel="Sources">{mediaPool}</PanelErrorBoundary>
         </div>

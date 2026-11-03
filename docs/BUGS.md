@@ -101,11 +101,23 @@ status: open (owner, 2026-11-01: "clipper UI is not intuitive at all") · severi
 
 ## B-362 — the Clipper panel scrolls horizontally inside the media browser; its content is wider than the column
 
-status: open (owner, 2026-11-01; queued with the v0.3.0 checklist) · severity: minor (layout) · area: `packages/editor/src/clipper/ClipperPanel.tsx`, `packages/editor/src/EditBrowser.tsx` (the browser's tab body)
+status: **fixed** (2026-11-03) · was: open (owner, 2026-11-01) · severity: minor (layout) · area: `@apelles/ui` `select.tsx`, `ClipperPanel.tsx`, `MusicEditsPanel.tsx`, `EditBrowser.tsx`
 
 - **Seen:** the owner's screenshot `scratch/bug-refs/2026-11-01-clipper-horizontal-scroll.png`. A horizontal scrollbar sits at the bottom of the Clipper tab, its left edge is cut off ("…PER", "…ine Voiceover v2"), and the timeline picker reads "Voiceover v2 · 30/10/2026, 10:09:38 AM".
 - **Likely cause (not yet confirmed):** a child forces the column wider than the browser. The run picker trigger's long label won't shrink, or the proposal rows / "Build" row are flex items without `min-w-0`, inside an `EditBrowser` tab body that has no `overflow-x` rule. D-432 P5 moved the Clipper from its own rail panel into the browser tabs, so a width the old panel tolerated now overflows.
 - **Fix:** truncate the picker label with an ellipsis and a full-text tooltip; `min-w-0` on the flex rows so text wraps; and make the browser's tab body `overflow-x: hidden` only after the real overflow is fixed, not as a mask. Add a DOM test that the panel's `scrollWidth` does not exceed its `clientWidth` at the default browser width (280 px) and at its minimum (220 px).
+- **Root cause** (measured in headless Chromium via `harness.html?mode=library` at 280 and 220 px across all 8 tabs): the shared `SelectTrigger` was `w-fit whitespace-nowrap` with no `min-w-0`, and its value was a `flex line-clamp-1` that cannot ellipsize. Any `flex-1` Select with a long label (Clipper Source / Run / Captions, Music Edits Bed / Re-entry) forced its row wider than the column.
+  - Before: **Music** overflowed 19 px at 280 and 79 px at 220; the **Clipper** setup grew a horizontal scrollbar (43 / 103 px), and its 90s length button overflowed 21 px at 220.
+  - Titles, Effects, Subtitles, Recut and Index had no overflow; the Sources tile names were already truncated.
+- **Fix:**
+  - `SelectTrigger` gets `min-w-0`, and its value gets `min-w-0 truncate` (every `SelectValue` in the repo is text-only).
+  - The Clipper length buttons wrap.
+  - The Clipper Run / Source / Captions and Music Bed / Re-entry triggers carry a `title` tooltip with the full label.
+  - `EditBrowser`'s tab body is `overflow-x-hidden` as a guard, added after the real fixes.
+  - Re-measured: no tab overflows at 280 or 220 px with the default seed.
+  - **Not re-measured:** a Clipper run with long proposal text, Music proposals, Recut results.
+- **Test:** `packages/ui/src/select.overflow.dom.test.tsx` pins the guards. jsdom has no layout, so the measurement itself stays a headless-Chromium check. ui 13/13, editor 2998/2998, tsc editor 3 / app 65.
+
 
 ## B-361 — clicking a caption preset drops a placeholder "Your caption here" clip (and errors when the playhead frame is taken) instead of captioning the video from its transcript
 
