@@ -196,6 +196,12 @@ several rounds of the owner's own screenshots before an agent could even confirm
    honest way to do that is to put the app's own measured number inside the
    picture.
 
+   - **`debug_native_preview {source, color?}` / `debug_native_preview_play {playing, from?, fps?}` /
+     `debug_native_preview_stats {reset?}`** (D-451) — turn on the native GPU preview surface prototype
+     (`source`: `pattern`, `pattern-packed`, `timeline`, or `null` for off), play on its own thread, and read
+     the presenter's numbers (fps, present intervals, drawable wait, hand-over → present / GPU done, bytes
+     uploaded / read back, and AppKit's frame of the native view). `docs/notes/preview-gpu-surface.md`.
+     Control-bridge ops only; no MCP tools (the product surface they become is the existing preview).
    - **`debug_set_fps_overlay {enabled, corner?, updateMs?}`** — a small
      fixed-position readout in the window itself:
      ```

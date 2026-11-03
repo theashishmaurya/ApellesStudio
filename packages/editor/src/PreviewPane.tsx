@@ -208,6 +208,7 @@ import {
   steppedZoom,
 } from './previewZoom';
 import { recordPreviewSpan, recordPreviewTiming } from './previewTiming';
+import { useNativePreview } from './nativePreview';
 import { notifyPreviewFrameShown } from './loadPerf';
 import { nextAudioSeq } from './audioTransport';
 import { beginScrub, endScrub, isScrubbing, updateScrub } from './scrubAudio';
@@ -332,6 +333,10 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
   // Holding the node in state makes it appearing a real render, which is what
   // React's docs prescribe for exactly this. See `useContentBox`'s own note.
   const [surfaceEl, setSurfaceEl] = useState<HTMLDivElement | null>(null);
+  // D-451 — the native GPU surface prototype (debug-tools builds only; a no-op
+  // otherwise). The hidden `<img>`'s box is the picture's box it follows.
+  const nativePicture = useCallback(() => frameImg.current, []);
+  useNativePreview(surfaceEl, nativePicture);
 
   // D-126/D-266 — mute/volume: monitoring state, not project data (see the
   // module doc). `volume` is the last non-zero level, remembered across a
@@ -1045,7 +1050,9 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
     // without an explicit one this would show through to black/transparent
     // outside the player's own content on displays with a different aspect
     // ratio than the video.
-    <div ref={fullscreenRef} className="relative flex min-h-0 flex-1 flex-col bg-bg-primary">
+    // D-451 — `data-preview-hole`: transparent while the native GPU surface
+    // shows the picture under the webview (`nativePreview.ts`).
+    <div ref={fullscreenRef} data-preview-hole className="relative flex min-h-0 flex-1 flex-col bg-bg-primary">
       {/* D-239 — the seven edit types' drop overlay. Mounted here, over the
           WHOLE pane rather than inside `surface` below, deliberately: it has to
           be reachable while the preview is still showing its spinner or "no

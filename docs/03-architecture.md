@@ -249,6 +249,14 @@ Pro, Resolve and Premiere run one engine for both. There is no CPU compositor an
 fallback. A clip's Colorist grade reaches it as the baked lattice (D-256), not as the
 Colorist's per-frame shader; the two tabs still run separate grade passes.
 
+**How that frame reaches the screen is still the old way, and its replacement is prototyped
+(D-451).** Today the engine's frame is read back to the CPU, JPEG-encoded, sent over IPC and
+decoded again by WebKit for an `<img>`. The chosen replacement, built behind
+`debug_assertions` as `chroma::preview_surface`: a `CAMetalLayer` view inserted below the
+transparent webview under the preview's rectangle, presented to by wgpu on the engine's own
+device, with the preview's panes marked `data-preview-hole` so the React overlays draw on
+top of it (`docs/notes/preview-gpu-surface.md`, with the integration seam in §7).
+
 Real, verified capabilities (see `docs/02-scope.md` for the itemised list with `D-NNN`s):
 ripple/roll/slip/slide/split/trim, multi-select + marquee, cross-track ripple + sync-lock,
 A/V linking, per-clip transform + crop + independent width/height, per-property keyframes,

@@ -180,6 +180,16 @@
   text-shadow: 0 0 18px rgba(255, 255, 255, 0.35);
 }
 
+/* D-451 — the Edit preview's native GPU surface: while it is on, every element
+   marked `data-preview-hole` (the panes between the window and the preview)
+   paints no background, so the CAMetalLayer under the webview shows through
+   the preview's rectangle; everything they contain still paints on top.
+   Unlayered, so it outranks the `bg-*` utilities it switches off. See
+   `packages/editor/src/nativePreview.ts`. */
+html[data-native-preview] [data-preview-hole] {
+  background-color: transparent;
+}
+
 @layer base {
   :where(button, [role='button']):not([disabled]) {
     cursor: pointer;

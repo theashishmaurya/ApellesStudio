@@ -235,6 +235,8 @@ export function EditorTab({ mediaPool, browserActions }: EditorTabProps) {
     <div className="relative h-full w-full min-h-0">
       <ResizablePanelGroup
         orientation="vertical"
+        // D-451 — transparent while the native GPU preview surface is on.
+        data-preview-hole
         className="h-full w-full min-h-0 bg-bg-primary"
         onLayoutChanged={layout.onVerticalLayoutChanged}
       >

@@ -85,3 +85,8 @@ D-417's blocking reasons, banner lines and the auto-install rule (the DOM wiring
   `chroma_detect_beats` (musical beat analysis, `apelles-beat`) and its session cache keyed by
   (path, meter, tempo hint), with in-flight requests shared. The Edit tab's beat grid and the
   Motion tab's soundtrack both read beats through it; the types and maths are `@apelles/beats`.
+- `startPreviewSurface` / `placePreviewSurface` / `showPreviewSurfaceFrame` / `playPreviewSurface` /
+  `previewSurfaceStats` / `stopPreviewSurface` (`src/previewSurface.ts`, D-451) — the Edit preview's
+  native GPU surface (`chroma::preview_surface`): no pixels cross this seam, only a rectangle, a
+  position or a play flag. Debug-only for now (the Rust commands exist with debug assertions on;
+  the one caller is `@apelles/editor`'s `nativePreview.ts`, behind `APELLES_DEBUG_TOOLS`).

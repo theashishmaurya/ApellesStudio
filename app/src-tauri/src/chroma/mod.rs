@@ -200,6 +200,12 @@ pub mod ocr;
 pub mod open_progress;
 pub mod page_session;
 pub mod playback;
+/// D-451 — the Edit preview's native GPU surface: a `CAMetalLayer` behind the
+/// transparent webview that shows a GPU-drawn frame with no read-back. A
+/// prototype until the GPU engine plugs into its seam, so gated like the debug
+/// tools (macOS only: it is AppKit).
+#[cfg(all(debug_assertions, target_os = "macos"))]
+pub mod preview_surface;
 pub mod project;
 pub mod relight;
 pub mod render_cost;
