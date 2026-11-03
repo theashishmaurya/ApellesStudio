@@ -67,6 +67,13 @@ export interface ExportJob {
   timelineId?: string;
   /** D-401 — measured before/after loudness once the job is done. */
   loudnessReport?: LoudnessReport;
+  /** B-335 — what the job was compiled at, and the run's output tails, kept
+   *  so the job answers for ITSELF (`editor_export`'s result, `editor_export_
+   *  status` by id) after it settles. */
+  width?: number;
+  height?: number;
+  stdoutTail?: string;
+  stderrTail?: string;
   status: ExportJobStatus;
   /** D-362 — this job's LIVE progress while it runs on the compositor path,
    *  polled from the renderer's own counters (`editor_export_status`'s exact
@@ -95,6 +102,10 @@ interface ExportQueueState {
     /** D-411 Phase 0 — the timeline to compile (from `prepareEditorExport`);
      *  omitted, the active one. */
     timeline?: Timeline,
+    /** B-335 — the caller's own job id (the MCP tool generates one before it
+     *  calls, so it can follow ITS job after a bridge timeout). Omitted, one
+     *  is made. Refused when a job already has it. */
+    id?: string,
   ): { id: string } | { error: string };
   /** Drop every finished (`done`/`failed`) job from the list — a `queued`/
    *  `running` job is never removed by this (there is no cancel this pass;
@@ -166,7 +177,13 @@ function runNext(): void {
 
   runCompiledExport(next.args, next.render, next.outPath, next.loudness, next.timelineId)
     .then((outcome) => {
-      settle({ status: outcome.ok ? 'done' : 'failed', error: outcome.error, loudnessReport: outcome.loudness });
+      settle({
+        status: outcome.ok ? 'done' : 'failed',
+        error: outcome.error,
+        loudnessReport: outcome.loudness,
+        stdoutTail: outcome.stdoutTail,
+        stderrTail: outcome.stderrTail,
+      });
     })
     .catch((e: unknown) => {
       settle({ status: 'failed', error: String((e as Error)?.message ?? e) });
@@ -176,14 +193,19 @@ function runNext(): void {
 
 export const useExportQueueStore = create<ExportQueueState>((set) => ({
   jobs: [],
-  enqueue: (name, exportArgs, timeline) => {
+  enqueue: (name, exportArgs, timeline, wantedId) => {
+    if (wantedId && useExportQueueStore.getState().jobs.some((j) => j.id === wantedId)) {
+      return { error: `an export job with id ${wantedId} already exists` };
+    }
     const compiled = compileEditorExportArgs(exportArgs, timeline);
     if (!('ok' in compiled)) return { error: compiled.error };
-    const id = `export-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const id = wantedId || `export-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const job: ExportJob = {
       id,
       name,
       outPath: compiled.outPath,
+      width: compiled.width,
+      height: compiled.height,
       args: compiled.args,
       render: compiled.render,
       loudness: compiled.loudness,

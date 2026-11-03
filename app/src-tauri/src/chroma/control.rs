@@ -510,8 +510,13 @@ fn native_op(app: &tauri::AppHandle, op: &str, args: &serde_json::Value) -> Opti
         // answer that itself needs a frontend round trip is the wrong shape.
         // The render runs in Rust (`chroma::edit_render`), so Rust is also
         // where its numbers are — nothing is relayed and nothing can wedge.
-        "editor_export_status" => serde_json::to_value(super::export_status::snapshot())
-            .map_err(|e| format!("could not serialize the export status: {e}")),
+        // B-335 — with a `job_id` it is NOT native: the job lives in the Edit
+        // queue (queued jobs have not reached the renderer yet), so the
+        // frontend answers it (`exportJobs.ts`); the guard lets it fall through.
+        "editor_export_status" if args.get("job_id").is_none_or(serde_json::Value::is_null) => {
+            serde_json::to_value(super::export_status::snapshot())
+                .map_err(|e| format!("could not serialize the export status: {e}"))
+        }
         // D-417 — Motion's render runtime. A Rust state machine with no store copy
         // (like the AI-env pair), and the answer an agent needs when a Motion render
         // failed with `motion_runtime_not_ready` — possibly before the Motion tab

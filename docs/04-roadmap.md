@@ -266,7 +266,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      6. Playback at about 300 clips runs at rAF 26 fps / paint 22 fps (the owner's Nemotron timeline has 288). Fixed by D-437 S10.
      7. Release frame 52–87 ms at 300 clips (acceptable).
    - **Also before v0.3.0 (owner ask):** ~~B-361~~ (fixed 2026-11-03). A caption preset click captions the video from its transcript (or restyles existing captions) instead of dropping a placeholder.
-   - **Also before v0.3.0:** ~~B-362~~ (fixed 2026-11-03); ~~B-368~~ (fixed 2026-11-03; Rust probe tests run and pass); ~~B-305~~ (fixed 2026-11-03, linked-audio track choice) and B-299 (verified fixed).
+   - **Also before v0.3.0:** ~~B-362~~ (fixed 2026-11-03); ~~B-368~~ (fixed 2026-11-03; Rust probe tests run and pass); ~~B-305~~ (fixed 2026-11-03, linked-audio track choice) and B-299 (verified fixed); ~~B-335~~ (fixed 2026-11-03, per-export job ids).
    - **Not for v0.3.0:** B-354, B-359's polish items, the missing keys (J/K/L, I/O, Shift+Delete), B-340.
    - **Release housekeeping:** version v0.3.0 (v0.4.0 stays the Motion release); release notes from the CHANGELOG; the website's MCP tool count (`website/src/data/mcp.ts` says 255, the real count is 269); the tag-triggered CI release (D-392). The owner gives the go and runs the push.
 00a3. **PAUSED 2026-11-01 (owner: out of subagent credits)**, resume in this order:

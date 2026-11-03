@@ -291,7 +291,8 @@ const SPEED_RANGE_HELP =
   `must be between ${MIN_SPEED} and ${MAX_SPEED}, or between -${MAX_SPEED} and -${MIN_SPEED} ` +
   `to play that run in reverse (1 = normal, -1 = backwards at recorded speed)`;
 import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
-import { resolveExportTimeline, runEditorExport } from './editorExport';
+import { resolveExportTimeline } from './editorExport';
+import { exportJobStatus, runQueuedEditorExport } from './exportJobs';
 // D-411 Phase 0 — the composition size of a timeline by id (FCPXML's default size).
 import { warmCompositionSize } from './compositionSize';
 import {
@@ -4971,7 +4972,10 @@ export function useEditorControl(): void {
       // extracted the real body into `editorExport.ts` so the Edit tab's own
       // GUI Export dialog + queue can call the EXACT same compile+run logic
       // rather than a parallel implementation) --------------------------
-      editor_export: (a) => runEditorExport(a ?? {}),
+      // B-335 — a queue job with its own id, not a direct render (exportJobs.ts).
+      editor_export: (a) => runQueuedEditorExport(a ?? {}),
+      // B-335 — the by-id half of the status; the id-less one is native.
+      editor_export_status: (a) => exportJobStatus(a ?? {}),
 
       // D-256 — which clips on this timeline carry a real Colorist grade, and
       // what baking it had to drop. The AI half of a feature whose human half

@@ -1079,6 +1079,13 @@ pub struct EditorSetDynamicZoomArgs {
     pub ease: Option<String>,
 }
 
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct EditorExportStatusArgs {
+    // Not a doc comment on purpose: the Python tool's parameter carries no description either.
+    #[serde(default)]
+    pub job_id: Option<String>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EditorExportArgs {
     pub out_path: String,
@@ -5430,8 +5437,12 @@ impl ApellesMcp {
         Parameters(p): Parameters<EditorExportArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         let out_path = p.out_path.clone();
+        // B-335 -- this call's own job id, made BEFORE the call so it can follow its own
+        // job even when the bridge times out first.
+        let job_id = new_export_job_id();
         let args = WireArgs::new()
             .set("outPath", p.out_path)
+            .set("jobId", job_id.clone())
             .put("width", p.width)
             .put("height", p.height)
             .put("timelineId", p.timeline_id)
@@ -5450,10 +5461,8 @@ impl ApellesMcp {
         // succeed. That is the false negative B-231 is half made of. The render
         // publishes real progress on the compositor path, so rather than hand
         // the caller a verdict that is simply wrong, poll for the true one.
-        if matches!(p.renderer, Some(ExportRenderer::Compositor))
-            && !env.get("ok").and_then(Value::as_bool).unwrap_or(false)
-        {
-            env = self.await_compositor_export(env, &out_path).await;
+        if !env.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+            env = self.await_export_job(env, &out_path, &job_id).await;
         }
         // The result carries the whole ffmpeg argv, which is long, noisy and of no use
         // to a caller deciding what to do next — so it is dropped from the answer.
@@ -5467,9 +5476,16 @@ impl ApellesMcp {
 
     #[tool(
         name = "editor_export_status",
-        description = r#"Poll the running — or most recently finished — `editor_export` render
-    (D-362, fixes B-231). Takes no arguments, starts nothing, and is free to
-    call as often as you like.
+        description = r#"Poll an `editor_export` job (D-362, fixes B-231; B-335). Starts nothing and
+    is free to call as often as you like.
+
+    **`job_id` (B-335) follows one specific export.** Every `editor_export` is
+    its own job and its answer carries `jobId`; pass it here to read THAT job:
+    `queued` (waiting behind another export, with `queuePosition`), `running`,
+    `done` or `failed`, always with that job's own `outPath`. A second export
+    started while one runs is queued, never mistaken for it. Without `job_id`
+    this reads the compositor renderer's running — or most recently finished
+    — render, whichever job it belongs to.
 
     **Read `state` first.** `running` (still going; poll again), `done` (the
     file is written and finalised), `failed` (`error` says why), `stalled`
@@ -5498,8 +5514,16 @@ impl ApellesMcp {
     renderer hands the whole job to one ffmpeg and learns nothing until it
     exits, so an export run that way is invisible here."#
     )]
-    pub async fn editor_export_status(&self) -> Result<CallToolResult, ErrorData> {
-        let env = self.op("editor_export_status", WireArgs::new()).await?;
+    pub async fn editor_export_status(
+        &self,
+        Parameters(p): Parameters<EditorExportStatusArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let env = self
+            .op(
+                "editor_export_status",
+                WireArgs::new().put("job_id", p.job_id),
+            )
+            .await?;
         Ok(render::json_text(&env))
     }
 
@@ -6961,32 +6985,54 @@ impl ApellesMcp {
 const EXPORT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 const EXPORT_POLL_MAX: std::time::Duration = std::time::Duration::from_secs(2 * 60 * 60);
 
+/// A fresh id for one `editor_export` call (B-335): `export-` and 12 hex digits, the shape the
+/// Python server's `uuid4().hex[:12]` makes. Unique within and across processes (clock plus a
+/// process-wide counter, hashed), which is all a job id has to be.
+fn new_export_job_id() -> String {
+    use sha2::{Digest, Sha256};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let digest = Sha256::digest(format!("{nanos}-{}-{n}", std::process::id()));
+    let hex: String = digest.iter().take(6).map(|b| format!("{b:02x}")).collect();
+    format!("export-{hex}")
+}
+
 impl ApellesMcp {
-    /// Poll `editor_export_status` until the render really settles (D-362).
+    /// Poll `editor_export_status` for THIS call's job until it settles (D-362, B-335).
     ///
-    /// Called only when `editor_export`'s own call came back as a transport
-    /// failure — which, on a real export, is the expected outcome rather than a
-    /// real one. Returns an envelope shaped like the one it replaces, so a
-    /// caller cannot tell whether its export happened to fit inside the
-    /// bridge's budget.
-    async fn await_compositor_export(&self, env: Value, out_path: &str) -> Value {
+    /// Called only when `editor_export`'s own call came back as a failure -- which, on a real
+    /// export, usually means the bridge's budget ran out while the job kept going. The poll asks
+    /// for `job_id`, the id this call gave the job, so it can never settle on another export's
+    /// result (B-335: it used to follow the renderer's single "latest export" slot). Returns an
+    /// envelope shaped like the one it replaces.
+    async fn await_export_job(&self, env: Value, out_path: &str, job_id: &str) -> Value {
         let deadline = std::time::Instant::now() + EXPORT_POLL_MAX;
         let mut status = Value::Null;
         while std::time::Instant::now() < deadline {
-            // The app being genuinely unreachable IS the real failure, and it
-            // is the one already in `env`.
-            let Ok(polled) = self.op("editor_export_status", WireArgs::new()).await else {
+            // The app being genuinely unreachable IS the real failure, and it is the one
+            // already in `env`.
+            let Ok(polled) = self
+                .op(
+                    "editor_export_status",
+                    WireArgs::new().set("job_id", job_id),
+                )
+                .await
+            else {
                 return env;
             };
+            // The app has no such job: the export was refused before it was queued (a bad
+            // argument, say), so the original answer is the honest one.
+            if !polled.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+                return env;
+            }
             status = polled.get("result").cloned().unwrap_or(Value::Null);
             match status.get("state").and_then(Value::as_str) {
-                // Nothing is running and nothing ever ran: the render never
-                // started, so the original transport error is the honest answer.
-                None | Some("idle") => return env,
-                Some("running") => {}
-                Some(state) => {
-                    return settled_export(state == "done", &status, out_path);
-                }
+                Some("queued" | "running") => {}
+                state => return settled_export(state == Some("done"), &status, out_path),
             }
             tokio::time::sleep(EXPORT_POLL_INTERVAL).await;
         }
@@ -6995,17 +7041,20 @@ impl ApellesMcp {
             obj.insert(
                 "error".into(),
                 Value::String(format!(
-                    "the export was still rendering after {}h — it has NOT failed and has not \
-                     been stopped; poll editor_export_status to follow it",
+                    "the export (job {job_id}) was still going after {}h -- it has NOT failed and has \
+                     not been stopped; poll editor_export_status(job_id=\"{job_id}\") to follow it",
                     EXPORT_POLL_MAX.as_secs() / 3600
                 )),
             );
+            if let Some(Value::Object(result)) = obj.get_mut("result") {
+                result.insert("jobId".into(), Value::String(job_id.to_string()));
+            }
         }
         late
     }
 }
 
-/// The settled envelope [`ApellesMcp::await_compositor_export`] hands back:
+/// The settled envelope [`ApellesMcp::await_export_job`] hands back:
 /// the status as the `result`, with the output path the caller asked for
 /// alongside it, since the status names the file the RENDERER was given.
 fn settled_export(ok: bool, status: &Value, out_path: &str) -> Value {

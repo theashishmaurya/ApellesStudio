@@ -373,7 +373,7 @@ status: **open** · severity: **major** · area: Automatic Clipper build (`packa
 
 ## B-335 — a second `editor_export` while one runs reports the FIRST job's result as its own
 
-status: **open** · severity: **major** · area: `editor_export` / `editor_export_status` (D-362 polling)
+status: **fixed 2026-11-03** · severity: **major** · area: `editor_export` / `editor_export_status` (D-362 polling)
 
 - **found:** 2026-10-29, Nemotron export.
   - A 1080p `editor_export` call was rejected client-side (the owner stopped it) but still started in the app.
@@ -383,6 +383,9 @@ status: **open** · severity: **major** · area: `editor_export` / `editor_expor
   - A new export while one is running is refused, or queued with its own job id, saying so.
   - `editor_export_status` and the tool's own polling follow the job id that request created.
   - The answer never names a different output than the one asked for.
+- **root cause:** `editor_export` ran the render directly (not through the export queue) and the MCP tools, on a bridge timeout, polled the renderer's ONE "latest export" slot (`chroma::export_status`). The second call was refused by the renderer (one render at a time), came back `ok: false`, and the poll then settled on the first job's slot: its `output`, `jobId: 2`, and `done`.
+- **fix:** every `editor_export` is a job of the export queue (`packages/editor/src/exportJobs.ts`, `exportQueueStore`) under its own id. The MCP tool makes the id before calling (`jobId`, sent to the op), the op enqueues under it and resolves with that job's result (a second export while one runs QUEUES behind it, D-198) and the answer carries `jobId`. `editor_export_status` gains `job_id`: that job's `queued` (with `queuePosition`) / `running` (live progress) / `done` / `failed` and its own `outPath`; the control server answers the id-less form natively as before and lets the `job_id` form through to the frontend (`control.rs`). The bridge-timeout poll follows its own `job_id` in `mcp/server.py` and `crates/apelles-mcp` (no longer compositor-only). Parity corpus re-captured (the random job id is normalised to a placeholder in `capture.py` and `parity.rs`); 269 tools unchanged.
+- **tests:** `exportJobs.test.ts` (two exports: distinct ids, queued behind the first, each result and status its own output; generated id; reused/unknown id; compile error leaves no job), `cargo test -p apelles-mcp` (parity). The Rust `control.rs` guard compiled only by reading (the disk could not take an app build) -- the first app build verifies it.
 
 ## B-334 — Inspector shows different values for the two halves of a linked A/V clip
 

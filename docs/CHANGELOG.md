@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-03** — **B-335 fixed:** every `editor_export` is its own export-queue job with its own id (`jobId` in the answer); a second export while one runs queues behind it and reports its own output. `editor_export_status` takes `job_id` (queued / running / done / failed per job); the MCP bridge-timeout poll follows its own job. Python and Rust servers updated, corpus re-captured, 269 tools unchanged.
 - **2026-11-03** — **B-305 fixed:** a camera clip's linked sound goes to a dialogue / voice-named track, else a track already holding A/V-linked halves, else any non-reserved audio track; SFX / music / ambience lanes (by name) are never used and a new audio track is made instead (GUI drop, `editor_add_clip`, `editor_edit_in`). **B-299 verified fixed** (reducer sign was right; docs fixed by B-337; sign now tested).
 - **2026-11-03** — **B-361 fixed:** clicking a caption preset now captions the video. It restyles existing captions, or generates them from the transcript, or transcribes first (with progress and Cancel). The placeholder sample is an explicit option. MCP `editor_add_caption_preset` gains `mode` (auto / sample).
 - **2026-11-03** — **B-362 fixed:** browser panels no longer scroll horizontally. The shared `SelectTrigger` can now shrink (`min-w-0` + a truncating value), the Clipper and Music Edits long labels get tooltips, and the browser tab body has an overflow guard. All 8 tabs were measured at 280 and 220 px.
