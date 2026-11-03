@@ -469,8 +469,7 @@ fn a_video_frame_feeds_the_grade_the_same_half_floats_as_its_rgba() {
                 timeout: Some(std::time::Duration::from_secs(20)),
             })
             .expect("poll");
-        let bytes = slice.get_mapped_range().to_vec();
-        bytes
+        slice.get_mapped_range().to_vec()
     };
     let rgba = engine_rgb(&engine, &path, &info, 5);
     engine

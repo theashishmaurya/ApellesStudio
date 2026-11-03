@@ -133,7 +133,7 @@ the authoritative per-crate table with deps and module lists; this is the summar
 |---|---|---|---|
 | L0 | `apelles-types` | **yes, real** | `Resolution`, `Rational`, `ChromaError`, the `fade` bezier model (D-147), the `pan` law (D-223), the `eq` band model + cookbook biquads (D-224). `Frame`/`ColorSpace`/`TimeRange`/typed IDs stay undesigned — the audit found no real duplicate to unify. Zero heavy deps. |
 | L0 | `apelles-gpu` | **yes, partial** (D-144) | headless wgpu device/queue/limits (`init_gpu_context`). **No display surface** — `WgpuDisplay` is a GUI concept and stays app-side; `GpuContext` really did split into two structs. No `render()` (that's `apelles-grade`'s). |
-| L1 | `apelles-media` | **yes, real** (D-146) | ~3,900 lines: `conform` (the *single* definition of "source frame N", D-228), `video` (ffprobe + ffmpeg decode, D-015), `decode_pipe` (D-030/D-125), `media_cache` (persistent disk cache, D-128), `probe`, `filmstrip` (D-134), `audio` (symphonia→rubato→cpal engine + waveforms). Export encode still app-side. |
+| L1 | `apelles-media` | **yes, real** (D-146) | ~3,900 lines: `conform` (the *single* definition of "source frame N", D-228), `video` (ffprobe + ffmpeg decode, D-015), `decode_pipe` (D-030/D-125: the pool of decode streams), `vt_decode` / `vt_encode` (D-452: VideoToolbox decode into IOSurface frames and encode from them, in process), `media_cache` (persistent disk cache, D-128), `probe`, `filmstrip` (D-134), `audio` (symphonia→rubato→cpal engine + waveforms). |
 | L1 | `apelles-grade` | future | the grade **renderer** — wraps the `app/` shader + adjustments↔uniform bridge + masks + scopes (D-021) |
 | L1 | `apelles-compositor` | **yes, real (D-449)** | the Edit tab's one **wgpu** render engine: every timeline frame of the preview, the Colorist's framed clip and the export is painted by it. Real deps are `apelles-gpu` + `apelles-types` only — no `apelles-grade` (the LUT is already-baked `Lut3d`, consumed directly), no `apelles-media`/`apelles-timeline` (an illegal L1→L2 edge). No CPU fallback. See `docs/notes/export-gpu-compositor.md` §15. |
 | L2 | `apelles-timeline` | **yes, real** (D-041 → D-229) | the OTIO-*shaped* edit model: tracks / clips / gaps / markers / transitions, ripple / roll / slip / slide / split / trim, per-clip transform + crop + fades + volume/pan/EQ fields, fps conversion. **Pure** — no probing, no I/O; callers pass frame counts. |
@@ -246,7 +246,12 @@ layers (z-order, keyframes, fades, transitions, crop and placement in pixels —
 as a **binary IPC payload**, not base64 (D-217). The same engine paints the export's frames
 and the Colorist's framed clip, so preview and export are one picture, the way Final Cut
 Pro, Resolve and Premiere run one engine for both. There is no CPU compositor and no
-fallback. A clip's Colorist grade is run by the Colorist's own shader on the engine's
+fallback. **Decode and encode are in process on the media engine (D-452):** a QuickTime-family
+source is decoded by VideoToolbox (`AVAssetReader`) into IOSurface frames the engine imports as
+textures and converts from Y'CbCr itself; an export's finished frames are written by the engine
+into the VideoToolbox encoder's own pixel buffers, one encoder per segment, and ffmpeg only joins
+the segments and muxes the sound (`-c:v copy`). No decoded or finished frame crosses the CPU, and a
+scrub starts no process. A clip's Colorist grade is run by the Colorist's own shader on the engine's
 device, per frame, before the clip's geometry (D-450), so a graded clip in the Edit tab is
 the Colorist's picture bit for bit.
 

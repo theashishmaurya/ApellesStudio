@@ -133,6 +133,33 @@ unsafe extern "C-unwind" fn on_encoded(
         .push_back(item);
 }
 
+/// An encoder's pixel-buffer pool, shared with the thread that fills the
+/// buffers on the GPU.
+#[derive(Clone)]
+pub struct BufferPool(CFRetained<CVPixelBufferPool>);
+
+// SAFETY: CVPixelBufferPool is documented as thread-safe; retain / release
+// are atomic.
+unsafe impl Send for BufferPool {}
+// SAFETY: as above.
+unsafe impl Sync for BufferPool {}
+
+impl BufferPool {
+    /// A buffer for the next frame (recycled once the encoder releases it).
+    pub fn pixel_buffer(&self) -> Result<PixelBuffer> {
+        let mut out: *mut CVPixelBuffer = std::ptr::null_mut();
+        // SAFETY: a valid pool and an out-pointer CoreVideo fills.
+        let status = unsafe {
+            CVPixelBufferPool::create_pixel_buffer(None, &self.0, NonNull::from(&mut out))
+        };
+        let buffer = NonNull::new(out)
+            .filter(|_| status == 0)
+            .ok_or_else(|| anyhow!("the encoder's pixel buffer pool is exhausted ({status})"))?;
+        // SAFETY: CVPixelBufferPoolCreatePixelBuffer returns +1.
+        Ok(PixelBuffer::new(unsafe { CFRetained::from_raw(buffer) }))
+    }
+}
+
 /// One video-only movie file being written.
 pub struct SegmentEncoder {
     session: CFRetained<VTCompressionSession>,
@@ -245,16 +272,13 @@ impl SegmentEncoder {
     /// A buffer from the encoder's own pool for the next frame, IOSurface-
     /// backed and Metal-compatible, in [`input_pixel_format`]'s layout.
     pub fn pixel_buffer(&self) -> Result<PixelBuffer> {
-        let mut out: *mut CVPixelBuffer = std::ptr::null_mut();
-        // SAFETY: a valid pool and an out-pointer CoreVideo fills.
-        let status = unsafe {
-            CVPixelBufferPool::create_pixel_buffer(None, &self.pool, NonNull::from(&mut out))
-        };
-        let buffer = NonNull::new(out)
-            .filter(|_| status == 0)
-            .ok_or_else(|| anyhow!("the encoder's pixel buffer pool is exhausted ({status})"))?;
-        // SAFETY: CVPixelBufferPoolCreatePixelBuffer returns +1.
-        Ok(PixelBuffer::new(unsafe { CFRetained::from_raw(buffer) }))
+        self.buffers().pixel_buffer()
+    }
+
+    /// The encoder's buffer pool, to take buffers from on another thread
+    /// while this encoder is moved to the thread that encodes.
+    pub fn buffers(&self) -> BufferPool {
+        BufferPool(self.pool.clone())
     }
 
     /// Compress `buffer` as the next frame. The GPU must have finished

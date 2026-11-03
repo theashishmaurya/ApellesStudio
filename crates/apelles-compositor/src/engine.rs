@@ -774,6 +774,11 @@ impl Engine {
     /// `format`, and submit: the IOSurface terminal of [`Self::submit_with`].
     /// No pixel is read back; the buffer holds the frame once
     /// [`PendingGpu::wait`] returns (the export hands it to its encoder then).
+    ///
+    /// A target of another size than the plan's is the export's aspect-change
+    /// stretch (`chroma::edit_render::canvas_plan`): the canvas is resampled to
+    /// it with the separable Triangle filter the general layer path uses
+    /// (`image::imageops::resize`'s, which the CPU did this with before).
     #[cfg(target_os = "macos")]
     pub fn submit_into(
         self: &Arc<Self>,
@@ -781,17 +786,26 @@ impl Engine {
         target: &apelles_types::video_frame::PixelBuffer,
         format: OutputFormat,
     ) -> Result<PendingGpu, ComposeError> {
-        let (w, h) = (plan.width, plan.height);
-        if target.dimensions() != (w, h) {
-            return Err(ComposeError::TooLarge(format!(
-                "the target buffer is {:?}, the frame {w}x{h}",
-                target.dimensions()
-            )));
+        let (w, h) = target.dimensions();
+        if w == 0 || h == 0 {
+            return Err(ComposeError::TooLarge("the target buffer is empty".into()));
         }
         let cache = self.texture_cache()?;
         let (gpu, ()) = self.submit_with(plan, |out, canvas| {
             let frame = &mut *out.0;
             let storage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC;
+            let resized;
+            let src: &wgpu::Buffer = if (canvas.width, canvas.height) == (w, h) {
+                canvas.buffer
+            } else {
+                resized = self.record_resize(
+                    frame,
+                    canvas.buffer,
+                    (canvas.width, canvas.height),
+                    (w, h),
+                )?;
+                &resized
+            };
             let copy = wgpu::TextureUsages::COPY_DST;
             // (plane, its size, its texture format, bytes per pixel)
             let planes: Vec<(usize, (u32, u32), wgpu::TextureFormat, u32)> = match format {
@@ -820,12 +834,7 @@ impl Engine {
                     (OutputFormat::Nv12Rec709, _) => (&self.kernels.out_chroma, pw.div_ceil(2)),
                     (OutputFormat::Bgra, _) => (&self.kernels.out_bgra, pw),
                 };
-                frame.dispatch(
-                    kernel,
-                    uniform_bytes(&p),
-                    &[canvas.buffer, &staging],
-                    (groups_x, ph),
-                );
+                frame.dispatch(kernel, uniform_bytes(&p), &[src, &staging], (groups_x, ph));
                 let texture =
                     cache.import(&self.device, target, plane, (pw, ph), texture_format, copy)?;
                 frame.encoder.copy_buffer_to_texture(
@@ -854,6 +863,52 @@ impl Engine {
             Ok(())
         })?;
         Ok(gpu)
+    }
+
+    /// Resample a packed RGBA buffer of `from` pixels to `to` (D-452): the
+    /// general layer path's two passes, square corners, no rotation.
+    #[cfg(target_os = "macos")]
+    fn record_resize(
+        &self,
+        frame: &mut Frame<'_>,
+        src: &wgpu::Buffer,
+        (fw, fh): (u32, u32),
+        (tw, th): (u32, u32),
+    ) -> Result<wgpu::Buffer, ComposeError> {
+        let storage = wgpu::BufferUsages::STORAGE;
+        let (vspans, vweights) = tables::triangle_weights(fh, th);
+        let (hspans, hweights) = tables::triangle_weights(fw, tw);
+        let vs = frame.upload(bytemuck::cast_slice(&vspans))?;
+        let vw = frame.upload(bytemuck::cast_slice(&vweights))?;
+        let hs = frame.upload(bytemuck::cast_slice(&hspans))?;
+        let hw = frame.upload(bytemuck::cast_slice(&hweights))?;
+        let mid = frame.buffer(u64::from(fw) * u64::from(th) * 16, storage)?;
+        let out = frame.buffer(u64::from(tw) * u64::from(th) * 4, storage)?;
+        let pv = ResizeParams {
+            in_w: fw,
+            out_w: fw,
+            out_h: th,
+            radius: 0.0,
+        };
+        frame.dispatch(
+            &self.kernels.resize_v,
+            uniform_bytes(&pv),
+            &[&vs, &vw, src, &mid],
+            (fw, th),
+        );
+        let ph = ResizeParams {
+            in_w: fw,
+            out_w: tw,
+            out_h: th,
+            radius: 0.0,
+        };
+        frame.dispatch(
+            &self.kernels.resize_h,
+            uniform_bytes(&ph),
+            &[&hs, &hw, &mid, &out],
+            (tw, th),
+        );
+        Ok(out)
     }
 
     /// **The one "frame finished on the GPU" step (D-452).** Records `plan`

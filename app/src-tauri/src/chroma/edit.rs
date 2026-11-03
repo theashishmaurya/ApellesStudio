@@ -1482,7 +1482,8 @@ pub(crate) fn render_timeline_frame(
     intent: FrameIntent,
     lane: decode_pipe::PipeLane,
 ) -> Result<Option<DynamicImage>, String> {
-    render_timeline_frame_deferred(timeline, settings, pos, max_long_edge, intent, lane)?
+    let to = super::gpu_compositor::Destination::ReadBack;
+    render_timeline_frame_deferred(timeline, settings, pos, max_long_edge, intent, lane, &to)?
         .map(RenderedFrame::finish)
         .transpose()
 }
@@ -1506,6 +1507,9 @@ impl RenderedFrame {
 /// handed back still in flight, so a caller with more frames to do (the
 /// export, D-449) can decode the next one while the GPU draws this one, and
 /// wait for it later, on another thread. The preview calls the waiting form.
+///
+/// D-452 — `to` is where the finished frame goes: read back, or written
+/// straight into an encoder's pixel buffer (the export, no read-back).
 pub(crate) fn render_timeline_frame_deferred(
     timeline: &Timeline,
     settings: &project::ProjectSettings,
@@ -1513,6 +1517,7 @@ pub(crate) fn render_timeline_frame_deferred(
     max_long_edge: Option<u32>,
     intent: FrameIntent,
     lane: decode_pipe::PipeLane,
+    to: &super::gpu_compositor::Destination,
 ) -> Result<Option<RenderedFrame>, String> {
     // B-290 — no "timeline has no video track" refusal here any more. An
     // audio-only timeline (a cut voiceover, a podcast) is a real document: it
@@ -1561,7 +1566,7 @@ pub(crate) fn render_timeline_frame_deferred(
         // A gap under the playhead still has a boundary coming, and priming it
         // is the whole reason the keep-list above was extended.
         prime(lane, &upcoming);
-        return captions_over_black(timeline, settings, pos, max_long_edge);
+        return captions_over_black(timeline, settings, pos, max_long_edge, to);
     }
     let comp = composition_size(settings, timeline)?;
 
@@ -1578,6 +1583,7 @@ pub(crate) fn render_timeline_frame_deferred(
         comp,
         lane,
         |canvas| caption_steps(timeline, pos as i64, canvas),
+        to,
     )?);
 
     // D-324 — prime the upcoming boundaries AFTER this frame is decoded, not
@@ -1695,6 +1701,7 @@ fn captions_over_black(
     settings: &project::ProjectSettings,
     pos: u64,
     max_long_edge: Option<u32>,
+    to: &super::gpu_compositor::Destination,
 ) -> Result<Option<RenderedFrame>, String> {
     if timeline.resolve_visible_captions_at(pos as i64).is_empty() {
         return Ok(None);
@@ -1709,7 +1716,7 @@ fn captions_over_black(
         background: apelles_compositor::Background::Solid([0, 0, 0, 255]),
         steps: caption_steps(timeline, pos as i64, (w, h))?,
     };
-    super::gpu_compositor::submit(&plan).map(|f| Some(RenderedFrame::Gpu(f)))
+    super::gpu_compositor::submit(&plan, to).map(|f| Some(RenderedFrame::Gpu(f)))
 }
 
 /// **D-324/D-330 — how far ahead of the playhead to look for the next cut, when
@@ -2600,6 +2607,7 @@ fn composite_video_frame(
     comp: (u32, u32),
     lane: decode_pipe::PipeLane,
     overlays: impl FnOnce((u32, u32)) -> Result<Vec<apelles_compositor::Step>, String>,
+    to: &super::gpu_compositor::Destination,
 ) -> Result<super::gpu_compositor::GpuFrame, String> {
     /// One step of the paint walk. Was a plain struct (a layer always had
     /// pixels) until D-230 introduced a layer that has none and instead
@@ -2874,7 +2882,7 @@ fn composite_video_frame(
         background: apelles_compositor::Background::Solid([0, 0, 0, 255]),
         steps,
     };
-    super::gpu_compositor::submit(&plan)
+    super::gpu_compositor::submit(&plan, to)
 }
 
 /// **D-449 — one resolved layer for the GPU engine**: `t`'s geometry turned

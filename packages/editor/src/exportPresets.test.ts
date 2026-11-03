@@ -23,7 +23,7 @@ const {
   userPresetFrom,
   withPreset,
 } = await import('./exportPresets');
-const { audioCodecArgs, estimateExportBytes, fmtApproxSize, pipeVideoCodecArgs } = await import('./exportFormat');
+const { audioCodecArgs, estimateExportBytes, fmtApproxSize } = await import('./exportFormat');
 const { buildPipeExportPlan } = await import('./timelinePipeExport');
 import type { Timeline } from './timeline';
 import type { TimelineExportOptions } from './exportTimeline';
@@ -162,37 +162,13 @@ describe('the default "Save as"', () => {
   });
 });
 
-describe('the codec tail per format', () => {
-  it('software H.264 is libx264 CRF 18; software ProRes 422 HQ is prores_ks profile 3 with PCM sound', () => {
+describe('the remux per format (D-452: the picture is encoded in process, never by ffmpeg)', () => {
+  it('H.264 carries the mp4 default sound; ProRes 422 HQ carries 24-bit PCM', () => {
     expect(audioCodecArgs('h264')).toEqual([]);
-    expect(pipeVideoCodecArgs('h264', 'software')).toEqual(['-c:v', 'libx264', '-crf', '18', '-pix_fmt', 'yuv420p']);
-    const prores = ['-c:v', 'prores_ks', '-profile:v', '3', '-vendor', 'apl0', '-pix_fmt', 'yuv422p10le'];
-    expect(pipeVideoCodecArgs('prores_hq', 'software')).toEqual(prores);
     expect(audioCodecArgs('prores_hq')).toEqual(['-c:a', 'pcm_s24le']);
   });
 
-  it('D-446 — the hardware encoder is VideoToolbox: H.264 at q 70, ProRes 422 HQ fed bgra', () => {
-    const h264 = ['-c:v', 'h264_videotoolbox', '-q:v', '70', '-pix_fmt', 'yuv420p'];
-    expect(pipeVideoCodecArgs('h264', 'hardware')).toEqual(h264);
-    const prores = ['-c:v', 'prores_videotoolbox', '-profile:v', '3', '-pix_fmt', 'bgra'];
-    expect(pipeVideoCodecArgs('prores_hq', 'hardware')).toEqual(prores);
-  });
-
-  it('D-446 — a compiler caller that names no encoder still gets the pre-D-446 software argv', () => {
-    const tl = {
-      id: 't',
-      name: 't',
-      rate: { num: 30, den: 1 },
-      tracks: [{ kind: 'audio', clips: [{ id: 'a', name: 'a', source_path: '/m/a.wav', source_start: 0, duration: 30, source_len: 30, start_frame: 0 }] }],
-    } as unknown as Timeline;
-    const plan = buildPipeExportPlan(tl, '/out/m.mp4', { fps: 30, width: 64, height: 64 }, 1);
-    expect(plan.args.join(' ')).toContain('-c:v libx264 -crf 18');
-    const hw = buildPipeExportPlan(tl, '/out/m.mp4', { fps: 30, width: 64, height: 64, encoder: 'hardware' }, 1);
-    expect(hw.args.join(' ')).toContain('-c:v h264_videotoolbox -q:v 70');
-    expect(hw.segments.segmentArgs.join(' ')).toContain('-c:v h264_videotoolbox -q:v 70');
-  });
-
-  it('the compositor plan encodes every segment as ProRes and muxes PCM at the concat step', () => {
+  it('the plan copies the rendered picture and names the format for the renderer', () => {
     const tl = {
       id: 't',
       name: 't',
@@ -201,11 +177,10 @@ describe('the codec tail per format', () => {
     } as unknown as Timeline;
     const opts = { fps: 30, width: 64, height: 64, format: 'prores_hq' } as TimelineExportOptions;
     const plan = buildPipeExportPlan(tl, '/out/m.mov', opts, 1);
-    expect(plan.args.join(' ')).toContain('prores_ks');
-    expect(plan.args.join(' ')).toContain('-c:a pcm_s24le');
-    expect(plan.segments.segmentArgs.join(' ')).toContain('prores_ks');
-    expect(plan.segments.concatArgs.join(' ')).toContain('-c:a pcm_s24le');
-    expect(plan.segments.concatArgs.join(' ')).toContain('-c:v copy');
+    const argv = plan.args.join(' ');
+    expect(argv).toContain('-c:a pcm_s24le');
+    expect(argv).toContain('-c:v copy');
+    for (const encoder of ['libx264', 'prores_ks', 'videotoolbox', 'rawvideo']) expect(argv).not.toContain(encoder);
   });
 
   it('estimates the file size from the format, pixels, rate and length', () => {

@@ -8,7 +8,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invokeM
 const { resolveLoudnessTarget, LOUDNESS_PRESETS } = await import('./loudness');
 const { runCompiledExport } = await import('./editorExport');
 
-const plan = { width: 2, height: 2, frames: 1 };
+const plan = { width: 2, height: 2, frames: 1, fps: 30, format: 'h264' as const };
 
 describe('resolveLoudnessTarget', () => {
   it('maps each preset to its spec', () => {

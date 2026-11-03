@@ -108,23 +108,59 @@ pub(crate) fn stats() -> apelles_compositor::EngineStats {
 
 /// Draw `plan`.
 pub(crate) fn render(plan: &FramePlan) -> Result<RgbaImage, String> {
-    submit(plan)?.wait()
+    submit(plan, &Destination::ReadBack)?.wait()
+}
+
+/// D-452 — where a finished frame goes: back to the CPU as pixels (the
+/// preview's JPEG, any picture a caller needs), or into an encoder's pixel
+/// buffer with no read-back (the export).
+pub(crate) enum Destination {
+    ReadBack,
+    Encoder {
+        buffer: apelles_types::video_frame::PixelBuffer,
+        format: apelles_compositor::OutputFormat,
+    },
 }
 
 /// Hand `plan` to the GPU and return at once; [`GpuFrame::wait`] for its
-/// pixels. The export's writer thread does the waiting, so the GPU draws one
-/// frame while the render worker decodes the next.
-pub(crate) fn submit(plan: &FramePlan) -> Result<GpuFrame, String> {
+/// pixels, or [`GpuFrame::wait_written`] for its encoder buffer. The export's
+/// writer thread does the waiting, so the GPU draws one frame while the render
+/// worker decodes the next.
+pub(crate) fn submit(plan: &FramePlan, to: &Destination) -> Result<GpuFrame, String> {
     let engine = engine()?;
-    settle(engine.submit(plan)).map(GpuFrame)
+    match to {
+        Destination::ReadBack => settle(engine.submit(plan)).map(GpuFrame::ReadBack),
+        Destination::Encoder { buffer, format } => {
+            settle(engine.submit_into(plan, buffer, *format)).map(GpuFrame::Written)
+        }
+    }
 }
 
-/// A frame on the GPU, not yet read back.
-pub(crate) struct GpuFrame(apelles_compositor::PendingFrame);
+/// A frame on the GPU, not yet finished.
+pub(crate) enum GpuFrame {
+    /// To be read back.
+    ReadBack(apelles_compositor::PendingFrame),
+    /// Being written into an encoder's buffer (D-452).
+    Written(apelles_compositor::PendingGpu),
+}
 
 impl GpuFrame {
+    /// The frame's pixels.
     pub(crate) fn wait(self) -> Result<RgbaImage, String> {
-        settle(self.0.wait())
+        match self {
+            GpuFrame::ReadBack(f) => settle(f.wait()),
+            GpuFrame::Written(_) => {
+                Err("this frame was written into an encoder's buffer, not read back".into())
+            }
+        }
+    }
+
+    /// Wait until the encoder's buffer holds the frame (D-452).
+    pub(crate) fn wait_written(self) -> Result<(), String> {
+        match self {
+            GpuFrame::Written(f) => settle(f.wait()),
+            GpuFrame::ReadBack(_) => Err("this frame is a read-back, not an encoder write".into()),
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 //! **The export benchmark (B-380): how long an export takes, stage by stage,
-//! on a realistic timeline, on both encoders.**
+//! on a realistic timeline.**
 //!
 //! What it is: one `#[ignore]`d measurement,
 //! [`measure_export_benchmark`], over the fixture
@@ -19,8 +19,9 @@
 //!   Utilization %", which covers the GPU, not the separate media engine), and
 //!   the peak resident memory of the whole process tree;
 //! - the output's frame count, video vs audio duration (A/V sync), and — when
-//!   both encoders ran — PSNR / SSIM of the hardware file against the software
-//!   one.
+//!   `APELLES_BENCH_REFERENCE` names an earlier export of the same case (an
+//!   older build's, kept with `APELLES_BENCH_KEEP`) — PSNR / SSIM of this file
+//!   against it.
 //!
 //! What it does NOT do: assert anything (it samples a live, shared machine — a
 //! measurement to read, as every `measure_*` in `edit_render` is), or keep files:
@@ -35,9 +36,8 @@
 //!
 //! Environment:
 //! - `APELLES_BENCH_SIZE` — `1080p` (default) or `4k`.
-//! - `APELLES_BENCH_CONFIGS` — comma list from `compositor-software`,
-//!   `compositor-hardware` (default: both, in that order). D-448 deleted the
-//!   `filter-*` configurations with the filter-graph export.
+//! - `APELLES_BENCH_KEEP` — copy the best run's output to this path.
+//! - `APELLES_BENCH_REFERENCE` — compare the output with this file.
 //! - `APELLES_BENCH_SEGMENTS` — compositor segment counts to sweep, comma list;
 //!   `auto` (default) is what the app itself would plan on this machine.
 //! - `APELLES_BENCH_REPEATS` — runs per configuration, best kept (default 1).
@@ -64,7 +64,7 @@ use super::parity_tests::{
     ffmpeg_available, frame_count, localise_timeline, render_at_segments, run_ffmpeg, sample_tree,
 };
 use super::{
-    SegmentedEncodePlan, TimelineRenderOutcome, TimelineRenderRequest, canvas_plan, edit,
+    ExportVideoFormat, TimelineRenderOutcome, TimelineRenderRequest, canvas_plan, edit,
     render_timeline,
 };
 
@@ -73,10 +73,9 @@ use super::{
 struct BenchCase {
     width: u32,
     height: u32,
-    pipe_args: Vec<String>,
+    /// D-452 — the remux: the segments' concat list, the sound, `-c:v copy`.
+    mux_args: Vec<String>,
     pipe_frames: u64,
-    segment_args: Vec<String>,
-    concat_args: Vec<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -455,13 +454,13 @@ fn cpu_pct(cpu: f64, wall: Duration) -> f64 {
 fn compositor_stages(o: &TimelineRenderOutcome) -> String {
     let s = &o.stages;
     let secs = |ms: u64| ms as f64 / 1000.0;
-    // D-449 — a worker's `frame` is decode + frame set-up + recording and
-    // uploading the GPU frame; the GPU wait and the read-back happen on the
-    // segment's writer thread, overlapped with the worker's next frame.
+    // D-449/D-452 — a worker's `frame` is decode + frame set-up + recording
+    // the GPU frame; the GPU wait happens on the segment's writer thread,
+    // overlapped with the worker's next frame, and then the encode.
     format!(
         "segs {} · render {:.1}s [per-worker sums: frame {:.1}s = decode+setup {:.1}s + GPU record+upload {:.1}s; \
          writer: GPU wait {:.1}s, readback {:.1}s; {} GPU frames, up {:.1} GB, down {:.1} GB; \
-         resize {:.1}s, wait-on-encoder {:.1}s] · concat {:.1}s",
+         resize {:.1}s, wait-on-writer {:.1}s; writer in the encoder {:.1}s] · remux {:.1}s",
         o.segments,
         secs(s.render_ms),
         secs(s.frame_ms),
@@ -474,6 +473,7 @@ fn compositor_stages(o: &TimelineRenderOutcome) -> String {
         s.gpu_readback_bytes as f64 / 1e9,
         secs(s.resize_ms),
         secs(s.handoff_wait_ms),
+        secs(s.encode_ms),
         secs(s.concat_ms),
     )
 }
@@ -522,25 +522,19 @@ fn check_output(path: &Path, frames: u64, fps: f64, reference: Option<&Path>) ->
     line
 }
 
-/// The time to decode the A-roll's whole runtime the way `decode_pipe` does
-/// (VideoToolbox decode, RGB out, piped) — the decode floor of one track.
-fn decode_floor(dir: &Path, secs: f64) -> Duration {
+/// The time to decode the A-roll's whole runtime the way the export does (the
+/// media engine's `vt_decode::Reader`, D-452: VideoToolbox into IOSurfaces,
+/// nothing converted or copied) — the decode floor of one track.
+fn decode_floor(dir: &Path, fps: f64, secs: f64) -> Duration {
+    let path = dir.join("aroll.mp4");
     let t = Instant::now();
-    let _ = ffmpeg_locate::ffmpeg().map(|mut c| {
-        c.args([
-            "-v",
-            "error",
-            "-hwaccel",
-            "videotoolbox",
-            "-t",
-            &secs.to_string(),
-            "-i",
-        ])
-        .arg(dir.join("aroll.mp4"))
-        .args(["-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
-        .stdout(Stdio::null())
-        .status()
-    });
+    let info = apelles_media::probe::probe_cached(&path).expect("probe the A-roll");
+    let mut reader = apelles_media::vt_decode::Reader::open(&path, &info, 0).expect("open");
+    for _ in 0..(secs * fps).round() as u64 {
+        if reader.next_frame().is_err() {
+            break;
+        }
+    }
     t.elapsed()
 }
 
@@ -556,10 +550,6 @@ fn measure_export_benchmark() {
         .unwrap_or_else(|e| e.into_inner());
     let fx = load_fixture();
     let size = env_or("APELLES_BENCH_SIZE", "1080p");
-    let configs = env_or(
-        "APELLES_BENCH_CONFIGS",
-        "compositor-software,compositor-hardware",
-    );
     let segments_plan = env_or("APELLES_BENCH_SEGMENTS", "auto");
     let repeats: usize = env_or("APELLES_BENCH_REPEATS", "1")
         .parse()
@@ -575,11 +565,11 @@ fn measure_export_benchmark() {
     std::fs::create_dir_all(&out_dir).expect("out dir");
     require_disk(&out_dir);
 
-    let any = fx
+    let case = fx
         .cases
-        .get(&format!("{size}-software"))
+        .get(&size)
         .unwrap_or_else(|| panic!("no bench case for size {size}"));
-    let (w, h) = (any.width, any.height);
+    let (w, h) = (case.width, case.height);
     let gen_started = Instant::now();
     generate_media(&media_dir, &fx, w, h).expect("generate media");
     let timeline = localise_timeline(&fx.timeline, &media_dir);
@@ -606,125 +596,84 @@ fn measure_export_benchmark() {
         timeline.tracks.iter().map(|t| t.clips.len()).sum::<usize>(),
         gen_started.elapsed().as_secs_f64(),
     );
-    let floor = decode_floor(&media_dir, runtime);
+    let floor = decode_floor(&media_dir, fx.fps, runtime);
     eprintln!(
-        "decode floor (one track, A-roll {runtime:.0} s, VideoToolbox → rgb24 pipe): {:.1}s  x{:.2}",
+        "decode floor (one track, A-roll {runtime:.0} s, VideoToolbox → IOSurface, in process): {:.1}s  x{:.2}",
         floor.as_secs_f64(),
         floor.as_secs_f64() / runtime
     );
     eprintln!("ffmpeg: {:?}", ffmpeg_locate::ffmpeg_path());
 
-    // The software output of each path is kept until its hardware twin has been
-    // compared with it, then both are deleted.
-    let mut reference: Option<(String, PathBuf)> = None;
-    for config in configs.split(',').map(str::trim).filter(|c| !c.is_empty()) {
-        let (path_kind, encoder) = config
-            .split_once('-')
-            .unwrap_or_else(|| panic!("bad config {config}"));
-        let case = fx
-            .cases
-            .get(&format!("{size}-{encoder}"))
-            .unwrap_or_else(|| panic!("no bench case {size}-{encoder}"));
-        let seg_list: Vec<String> = if path_kind == "compositor" {
-            segments_plan
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .collect()
-        } else {
-            vec!["-".to_string()]
-        };
-        for segs in seg_list {
-            let mut best: Option<(RunReport, PathBuf)> = None;
-            for rep in 0..repeats {
-                require_disk(&out_dir);
-                let out = out_dir.join(format!("{config}-{segs}-{rep}.mp4"));
-                let (stages, probe, wall, cpu) = match path_kind {
-                    "compositor" => {
-                        let plan = SegmentedEncodePlan {
-                            segment_args: localise(&case.segment_args, &media_dir, &out),
-                            concat_args: localise(&case.concat_args, &media_dir, &out),
-                        };
-                        let req = TimelineRenderRequest {
-                            args: localise(&case.pipe_args, &media_dir, &out),
-                            width: w,
-                            height: h,
-                            frames: case.pipe_frames,
-                            segments: Some(plan.clone()),
-                            output: Some(out.to_string_lossy().into_owned()),
-                            loudness: None,
-                            timeline_id: None,
-                            cancel_token: None,
-                            timeline: None,
-                        };
-                        let (outcome, probe, wall, cpu) = sampled(|| {
-                            if segs == "auto" {
-                                render_timeline(&timeline, &settings, &req)
-                            } else {
-                                let n: usize = segs.parse().expect("segment count");
-                                let comp = edit::composition_size(&settings, &timeline)
-                                    .expect("composition size");
-                                render_at_segments(
-                                    &timeline,
-                                    &settings,
-                                    &req,
-                                    &plan,
-                                    n,
-                                    (w, h),
-                                    canvas_plan(comp, (w, h)),
-                                )
-                            }
-                        });
-                        let outcome = outcome.expect("the compositor path");
-                        (compositor_stages(&outcome), probe, wall, cpu)
-                    }
-                    other => panic!("unknown path {other}"),
-                };
-                let report = RunReport {
-                    label: format!(
-                        "{config}{}",
-                        if segs == "-" {
-                            String::new()
-                        } else {
-                            format!(" [{segs}]")
-                        }
-                    ),
-                    wall,
-                    cpu_pct: cpu_pct(cpu, wall),
-                    probe,
-                    stages,
-                };
-                let keep = best.as_ref().is_none_or(|(b, _)| wall < b.wall);
-                if keep {
-                    if let Some((_, old)) = best.take() {
-                        let _ = std::fs::remove_file(old);
-                    }
-                    best = Some((report, out));
+    let reference = std::env::var("APELLES_BENCH_REFERENCE")
+        .ok()
+        .map(PathBuf::from);
+    for segs in segments_plan
+        .split(',')
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+    {
+        let mut best: Option<(RunReport, PathBuf)> = None;
+        for rep in 0..repeats {
+            require_disk(&out_dir);
+            let out = out_dir.join(format!("engine-{segs}-{rep}.mp4"));
+            let req = TimelineRenderRequest {
+                args: localise(&case.mux_args, &media_dir, &out),
+                width: w,
+                height: h,
+                frames: case.pipe_frames,
+                fps: fx.fps,
+                format: ExportVideoFormat::H264,
+                output: Some(out.to_string_lossy().into_owned()),
+                loudness: None,
+                timeline_id: None,
+                cancel_token: None,
+                timeline: None,
+            };
+            let (outcome, probe, wall, cpu) = sampled(|| {
+                if segs == "auto" {
+                    render_timeline(&timeline, &settings, &req)
                 } else {
-                    let _ = std::fs::remove_file(&out);
+                    let n: usize = segs.parse().expect("segment count");
+                    let comp =
+                        edit::composition_size(&settings, &timeline).expect("composition size");
+                    render_at_segments(
+                        &timeline,
+                        &settings,
+                        &req,
+                        n,
+                        (w, h),
+                        canvas_plan(comp, (w, h)),
+                    )
                 }
-            }
-            let Some((report, out)) = best else { continue };
-            print_run(&report, runtime, baseline_rss);
-            let reference_path = reference
-                .as_ref()
-                .filter(|(p, _)| p == path_kind && encoder == "hardware")
-                .map(|(_, f)| f.clone());
-            eprintln!(
-                "    {}",
-                check_output(&out, case.pipe_frames, fx.fps, reference_path.as_deref())
-            );
-            if encoder == "software" && segs == seg_list_first(&segments_plan, path_kind) {
-                if let Some((_, old)) = reference.take() {
+            });
+            let outcome = outcome.expect("the export");
+            let report = RunReport {
+                label: format!("engine [{segs}]"),
+                wall,
+                cpu_pct: cpu_pct(cpu, wall),
+                probe,
+                stages: compositor_stages(&outcome),
+            };
+            let keep = best.as_ref().is_none_or(|(b, _)| wall < b.wall);
+            if keep {
+                if let Some((_, old)) = best.take() {
                     let _ = std::fs::remove_file(old);
                 }
-                reference = Some((path_kind.to_string(), out));
+                best = Some((report, out));
             } else {
                 let _ = std::fs::remove_file(&out);
             }
         }
-    }
-    if let Some((_, old)) = reference.take() {
-        let _ = std::fs::remove_file(old);
+        let Some((report, out)) = best else { continue };
+        print_run(&report, runtime, baseline_rss);
+        eprintln!(
+            "    {}",
+            check_output(&out, case.pipe_frames, fx.fps, reference.as_deref())
+        );
+        if let Ok(keep) = std::env::var("APELLES_BENCH_KEEP") {
+            std::fs::copy(&out, &keep).expect("keep the output");
+        }
+        let _ = std::fs::remove_file(&out);
     }
     eprintln!(
         "\n(x = export time ÷ the timeline's runtime; under 1.00 is faster than real time. \
@@ -736,41 +685,92 @@ fn measure_export_benchmark() {
     );
 }
 
-/// The segment entry whose software output is kept as the reference: the
-/// first one listed for that path.
-fn seg_list_first(plan: &str, path_kind: &str) -> String {
-    if path_kind == "compositor" {
-        plan.split(',').next().unwrap_or("auto").trim().to_string()
-    } else {
-        "-".to_string()
-    }
-}
-
 #[test]
-fn the_bench_fixture_has_both_encoders_at_both_sizes() {
+fn the_bench_fixture_has_both_sizes_and_copies_the_picture() {
     let fx = load_fixture();
-    for key in [
-        "1080p-software",
-        "1080p-hardware",
-        "4k-software",
-        "4k-hardware",
-    ] {
+    for key in ["1080p", "4k"] {
         let c = fx
             .cases
             .get(key)
             .unwrap_or_else(|| panic!("missing case {key}"));
         assert_eq!(c.pipe_frames, (fx.duration_sec * fx.fps).round() as u64);
+        assert!(c.mux_args.windows(2).any(|w| w == ["-c:v", "copy"]));
     }
-    assert!(
-        fx.cases["4k-hardware"]
-            .pipe_args
-            .iter()
-            .any(|a| a == "h264_videotoolbox")
-    );
-    assert!(
-        fx.cases["4k-software"]
-            .pipe_args
-            .iter()
-            .any(|a| a == "libx264")
-    );
+}
+
+/// **D-452 — how close an export is to the picture the engine drew**, for the
+/// files `APELLES_FIDELITY_FILES` names (comma list, e.g. an export of this
+/// fixture by an older build and one by this build), against the engine's own
+/// frames at the output size: PSNR over R, G, B of each file's decoded frame
+/// (ffmpeg's conversion, which honours the stream's colour tags) at a few
+/// positions. Uses `APELLES_BENCH_SIZE` and `APELLES_BENCH_MEDIA_DIR` like the
+/// benchmark. A measurement to read.
+#[test]
+#[ignore = "a measurement, not a pass/fail assertion"]
+fn measure_export_fidelity() {
+    let _guard = super::super::PROJECT_STATE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let fx = load_fixture();
+    let size = env_or("APELLES_BENCH_SIZE", "1080p");
+    let case = fx.cases.get(&size).expect("bench case");
+    let (w, h) = (case.width, case.height);
+    let media_dir = PathBuf::from(std::env::var("APELLES_BENCH_MEDIA_DIR").expect("media dir"));
+    generate_media(&media_dir, &fx, w, h).expect("media");
+    let timeline = localise_timeline(&fx.timeline, &media_dir);
+    let settings = ProjectSettings {
+        width: Some(w),
+        height: Some(h),
+        fps: Some(fx.fps),
+        color_space: None,
+    };
+    let files: Vec<PathBuf> = env_or("APELLES_FIDELITY_FILES", "")
+        .split(',')
+        .filter(|f| !f.is_empty())
+        .map(PathBuf::from)
+        .collect();
+    let positions = [15u64, 400, 905, 1333, 1790];
+    for file in &files {
+        let mut worst = f64::INFINITY;
+        let mut sum = 0.0;
+        for &pos in &positions {
+            let truth = edit::render_timeline_frame(
+                &timeline,
+                &settings,
+                pos,
+                None,
+                super::FrameIntent::Single,
+                apelles_media::decode_pipe::PipeLane::LIVE,
+            )
+            .expect("render")
+            .expect("a picture")
+            .to_rgb8();
+            let out = ffmpeg_locate::ffmpeg()
+                .expect("ffmpeg")
+                .args(["-v", "error", "-i"])
+                .arg(file)
+                .arg("-vf")
+                .arg(format!("select=eq(n\\,{pos})"))
+                .args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
+                .output()
+                .expect("decode");
+            let got = image::RgbImage::from_raw(w, h, out.stdout).expect("a frame");
+            let mut se = 0f64;
+            for (a, b) in truth.as_raw().iter().zip(got.as_raw()) {
+                let d = f64::from(*a) - f64::from(*b);
+                se += d * d;
+            }
+            let mse = se / truth.as_raw().len() as f64;
+            let psnr = 10.0 * (255.0f64 * 255.0 / mse).log10();
+            worst = worst.min(psnr);
+            sum += psnr;
+        }
+        eprintln!(
+            "{}: PSNR against the engine's frames, mean {:.2} dB, worst {:.2} dB over {} positions",
+            file.display(),
+            sum / positions.len() as f64,
+            worst,
+            positions.len()
+        );
+    }
 }

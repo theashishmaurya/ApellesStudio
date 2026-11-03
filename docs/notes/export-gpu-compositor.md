@@ -1636,10 +1636,9 @@ crosses the `@apelles/bridge` seam (D-447). The perf-300 harness results are in 
                                                                                          └─▶ AVAssetWriter (.mp4/.mov)
 ```
 
-No decoded or finished pixel crosses the CPU on the media-engine path. ffmpeg stays where it is the right tool:
-probing (`ffprobe`), the audio mix and its remux into the finished picture (`-c:v copy`, D-197's argv), the
-loudness pass (D-401), thumbnails / filmstrips (`video::extract_thumb*`, batch extraction into the disk cache), and,
-until the import-time conform lands, decoding the containers AVFoundation does not open.
+No decoded or finished pixel crosses the CPU on the media-engine path. ffmpeg stays where it is the right tool
+(§16.6): the remux and the audio mix, loudness, probing, thumbnails / filmstrips, the Colorist's single-clip export,
+and, until the import-time conform lands, decoding the containers AVFoundation does not open.
 
 ## 16.2 Why `AVAssetReader`, and how the grid is kept
 
@@ -1711,4 +1710,89 @@ count, profile, rate, tags, the decoded frames), `video_tests::a_frame_written_i
 (within 1 code of an f64 reference, 1918 wide so neither plane's row is 256-byte aligned) and
 `…_for_prores_is_the_canvas_as_bgra` (exact).
 
-The export is wired to it in the next step of this wave; until then the export still encodes through ffmpeg.
+## 16.6 The export, wired (step 2)
+
+`chroma::edit_render` renders each segment's frames into its own `SegmentEncoder`: the worker takes a buffer from
+the encoder's pool, asks for the frame with `Destination::Encoder { buffer, format }`
+(`render_timeline_frame_deferred` → `Engine::submit_into`, which also resamples the canvas when the output's aspect
+differs from the composition, with the general layer path's Triangle passes, replacing the CPU `imageops::resize`),
+and hands the in-flight frame to the segment's writer thread, which waits for the GPU (`PendingGpu::wait`) and
+gives the buffer to the encoder. A gap is an empty plan into the same buffer. Every export, one segment or several,
+then runs the same remux: the concat list of the segment files, the audio mix D-197 compiles, `-c:v copy`, `-t` the
+export's length. The request is typed (`width`, `height`, `frames`, `fps`, `format`, `args` = the remux); the frame
+rate becomes the file's exact clock (`frame_rate`: an NTSC rate is `n·1000/1001`).
+
+**What still runs ffmpeg, and why:** the remux (joining files and muxing an AAC / PCM mix it already compiles is
+what ffmpeg is for; AVAssetWriter would need the mix re-implemented), the audio mix itself (D-197, unchanged),
+loudness (D-401), probing, thumbnails and filmstrips (batch extraction into the disk cache), the Colorist's own
+single-clip export (`chroma::export`, which renders through the grade shader, not this engine), and decoding the
+containers AVFoundation does not open until the import-time conform lands.
+
+**Cancel, status and the watchdog.** A cancel stops every segment's loop at its next frame; the dropped encoder
+abandons its temporary file; the remux, the one child process left, is killed through the cancel registration.
+Progress is still counted where a frame reaches the encoder. The watchdog no longer kills an encoder process (there
+is none): every wait in the in-process encoder is bounded (`GPU_TIMEOUT`, `vt_encode`'s append and finish
+timeouts), so a wedged segment returns an error by itself, and the watchdog records the stall and stops the
+siblings. Its end-to-end test against an ffmpeg that stopped reading went with the ffmpeg encoder.
+
+**The Encoder option (D-446) is removed.** Its "software" arm was ffmpeg's libx264 / `prores_ks`, a second encoder
+path the owner ruled out, and VideoToolbox's own software encoder would be a fallback with no measured reason to
+exist. The Export panel's Encoder field, `encoder` on `editor_export` in both MCP servers (corpus re-captured, still
+275 / 256 tools) and `ExportEncoder` in the editor are gone; a caller that still passes `encoder` gets an error
+saying so rather than a silently different file.
+
+## 16.7 Measured
+
+Back to back on the same machine (load average 8–12), `measure_export_benchmark`, hardware H.264, the planner's 2
+segments; before is the commit before D-452 (`3802e3bd`):
+
+| | 1080p before → after | 4K before → after |
+|---|---|---|
+| × real time | 0.17× → **0.13×** | 0.64× → **0.49×** |
+| render wall | 9.6 → 7.6 s | 37.7 → 28.3 s |
+| workers' decode + set-up (summed) | 13.2 → 0.4 s | 57.7 → 1.7 s |
+| bytes up / down | 10.1 / 8.0 GB → 0.1 / 0 GB | 40.4 / 31.9 GB → 0.2 / 0 GB |
+| CPU / GPU busy | 68% / 28% → 5% / 68% | 71% / 28% → 4% / 60% |
+| peak memory over the host | +1.9 → +0.12 GB | +4.6 → +0.14 GB |
+| one track's decode floor (60 s) | 6.0 → 3.4 s | 19.3 → 5.5 s |
+
+On a busier run (load 20–45) the same pair read 0.26× → 0.13× and 1.07× → 0.50×.
+
+**Where the time goes now: the hardware H.264 encoder.** The writers spend the render inside it (55 s summed over
+two writers for a 28 s render at 4K); the workers wait on them. 4K at 1, 2, 3 and 4 segments measured 0.50×, 0.49×,
+0.49×, 0.50×; 1080p at 1, 2, 3, 4 and 6 measured 0.18×, 0.13–0.16×, 0.14×, 0.14×, 0.15×. More segments cannot help
+a shared encoder, so the planner's ceiling is now 2 (`MAX_SEGMENTS`, retuned from 6) and its memory estimate uses
+the in-process sizes (roadmap 5b's "more segments" item, answered by measurement: fewer). Faster than this needs a
+faster encode (HEVC is about as fast; a lower H.264 quality would change the file) — not a renderer change.
+
+**Parity against the old export of the same fixture** (`measure_export_fidelity` and ffprobe / ebur128):
+
+| | 1080p old · new | 4K old · new |
+|---|---|---|
+| frames / video / audio duration / start | 1800 / 60.000 / 60.010 / 0 · identical | identical |
+| loudness (integrated, true peak) | −14.0 LUFS, −3.4 dBTP · identical | −14.0, −3.0 · identical |
+| PSNR against the engine's own frames | 33.4 · **34.9** dB | 34.4 · **36.0** dB |
+| file size | 84 · 80 MB | 338 · 321 MB |
+| new vs old, RGB | PSNR 36.8 dB, SSIM 0.957 | 37.6 dB, 0.965 |
+
+The new file is closer to the picture the engine drew than the old one was: the old path converted RGB to Y'CbCr
+with swscale's BT.601 default and wrote no tag, so a player reading HD as BT.709 shifted it, and it pre-scaled the
+B-roll with `fast_bilinear` before the engine. The two files differ from each other by two independent lossy
+encodes of a grain-heavy fixture (temporal noise at quality 0.70), which is why new-vs-old is lower than either
+against the truth. The H.264 setting is ffmpeg's `h264_videotoolbox -q:v 70` session reproduced property by
+property (quality 0.70, High, no B-frames, a key frame every 12), so D-446's measurement against libx264 CRF 18
+holds for the same encoder settings; the new numbers above are the re-measurement on the new path.
+
+**Scrub latency** (`chroma::scrub_bench::measure_scrub_latency`: two stacked 20 s H.264 tracks with grain, a
+picture-in-picture over a full frame, at the preview's 1280 px, `render_timeline_frame` per position), before →
+after:
+
+| | drag forward (+3 frames) p50 / p95 | jump anywhere p50 / p95 | drag back (−2 frames) p50 / p95 | ffmpeg processes left |
+|---|---|---|---|---|
+| 1080p | 16.1 / 23.3 → 9.8 / 14.8 ms | 357 / 563 → 121 / 240 ms | 480 / 569 → 153 / 219 ms | 2 → 0 |
+| 4K | 50.7 / 75.6 → 17.5 / 26.5 ms | 861 / 1902 → 128 / 440 ms | 1076 / 1458 → 240 / 457 ms | 2 → 0 |
+
+A jump or a step back is still a seek to the sync sample before it (this fixture has a key frame every 2 s); the
+seek itself is now in process instead of an ffmpeg spawn and a pipe. **Determinism:**
+`two_exports_of_one_document_decode_to_the_same_frames` (two exports decode to identical frames) and the frame-level
+tests in §16.5.

@@ -211,6 +211,8 @@ pub mod project;
 pub mod relight;
 pub mod render_cost;
 pub mod retake_proposals;
+#[cfg(test)]
+mod scrub_bench;
 pub mod session;
 pub mod sidecar;
 pub mod speech;
