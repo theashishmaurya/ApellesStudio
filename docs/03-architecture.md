@@ -135,7 +135,7 @@ the authoritative per-crate table with deps and module lists; this is the summar
 | L0 | `apelles-gpu` | **yes, partial** (D-144) | headless wgpu device/queue/limits (`init_gpu_context`). **No display surface** — `WgpuDisplay` is a GUI concept and stays app-side; `GpuContext` really did split into two structs. No `render()` (that's `apelles-grade`'s). |
 | L1 | `apelles-media` | **yes, real** (D-146) | ~3,900 lines: `conform` (the *single* definition of "source frame N", D-228), `video` (ffprobe + ffmpeg decode, D-015), `decode_pipe` (D-030/D-125), `media_cache` (persistent disk cache, D-128), `probe`, `filmstrip` (D-134), `audio` (symphonia→rubato→cpal engine + waveforms). Export encode still app-side. |
 | L1 | `apelles-grade` | future | the grade **renderer** — wraps the `app/` shader + adjustments↔uniform bridge + masks + scopes (D-021) |
-| L1 | `apelles-compositor` | future | multi-layer **wgpu** blend + transitions. **Not built — the Edit tab composites on the CPU today** (D-217). This is the single largest remaining architectural gap. Scoped as **D-363** (2026-09-19, not built): real deps are `apelles-gpu` + `apelles-types` only — no `apelles-grade` (the LUT is already-baked `Lut3d`, consumed directly), no `apelles-media`/`apelles-timeline` (an illegal L1→L2 edge). See `docs/notes/export-gpu-compositor.md` §11. |
+| L1 | `apelles-compositor` | **yes, real (D-449)** | the Edit tab's one **wgpu** render engine: every timeline frame of the preview, the Colorist's framed clip and the export is painted by it. Real deps are `apelles-gpu` + `apelles-types` only — no `apelles-grade` (the LUT is already-baked `Lut3d`, consumed directly), no `apelles-media`/`apelles-timeline` (an illegal L1→L2 edge). No CPU fallback. See `docs/notes/export-gpu-compositor.md` §15. |
 | L2 | `apelles-timeline` | **yes, real** (D-041 → D-229) | the OTIO-*shaped* edit model: tracks / clips / gaps / markers / transitions, ripple / roll / slip / slide / split / trim, per-clip transform + crop + fades + volume/pan/EQ fields, fps conversion. **Pure** — no probing, no I/O; callers pass frame counts. |
 | L2 | `apelles-grade-model` | **yes, real** (D-143) | the `grade.json` document (D-025) — save/load, the schema-migration gate, matte/track/depth-ref externalization. **Pure**, and deliberately untyped past the envelope (the canonical shape is the frontend store's). |
 | L2 | `apelles-project` | **yes, real** (D-148) | the `.chroma` project (D-037) + settings (D-038): `ProjectManifest`/`MediaItem` (+ the legacy read-only `ProjectShot`, D-070), atomic save, every schema migration, the media pool + bins, timeline lifecycle. Depends on `apelles-media` (probe/thumbnail) — an edge the lock doc's table had been missing. |
@@ -240,13 +240,14 @@ video frames flow through it — with `@dnd-kit` layered over it for every drag 
 unified same-track, cross-track, track-reorder and transition-palette drags onto one
 mechanism after two rounds of racing drag systems).
 
-**The compositor is CPU, not GPU, and that is the defining architectural fact of this tab.**
-Frames are composited in Rust (alpha-over, real z-ordered stacking — D-086/D-088), then
-handed to the webview as a **binary IPC payload**, not base64 (D-217). `apelles-compositor`
-(the wgpu engine in the crate table above) does not exist yet; when it does, this is the
-path it replaces. The preview stays **independent of the Colorist's wgpu/grade path** — the
-Edit tab needs "give me composited timeline frame N fast," not a graded frame, and the two
-tabs remain two separate passes over two separate models.
+**One GPU render engine draws every frame (D-449).** `chroma::edit` resolves the visible
+layers (z-order, keyframes, fades, transitions, crop and placement in pixels — D-086/D-088),
+`apelles-compositor` paints them on the GPU, and the finished frame is handed to the webview
+as a **binary IPC payload**, not base64 (D-217). The same engine paints the export's frames
+and the Colorist's framed clip, so preview and export are one picture, the way Final Cut
+Pro, Resolve and Premiere run one engine for both. There is no CPU compositor and no
+fallback. A clip's Colorist grade reaches it as the baked lattice (D-256), not as the
+Colorist's per-frame shader; the two tabs still run separate grade passes.
 
 Real, verified capabilities (see `docs/02-scope.md` for the itemised list with `D-NNN`s):
 ripple/roll/slip/slide/split/trim, multi-select + marquee, cross-track ripple + sync-lock,
@@ -374,8 +375,9 @@ shader) — what crosses the boundary is numbers, not code.
 The limit is the one a 3D LUT inherently has: it carries the **global** grade only. The
 spatial half — mask/local layers, the Colorist crop, depth relight — is not representable and
 is dropped with a warning (surfaced in the Export dialog and by `editor_get_grade_status`),
-never silently. Carrying that half would mean a real shared compositor (`apelles-grade` +
-`apelles-compositor`, still future), which is what remains of roadmap item 8.
+never silently. Carrying that half means running the grade shader itself inside the GPU
+engine (`apelles-grade` rendering into `apelles-compositor`'s device, D-449 §15.7), which is
+what remains of roadmap item 8.
 
 ### `grade.json` (D-025)
 
@@ -517,12 +519,10 @@ closed** (media-pool unification, Editor audio, the multi-track timeline UI, the
 dialog, the Motion tab, shell-level undo/redo, and waves 1–3 of the crate extraction). The
 real headline gaps as of 2026-09-08, in rough order of how much they shape the architecture:
 
-1. **`apelles-compositor` — the GPU compositor.** The Edit tab composites on the CPU today.
-   This is the biggest single piece of the architecture that is still drawn and not built.
-   Scoped (not built) 2026-09-19 as **D-363** — see `docs/notes/export-gpu-compositor.md` §11
-   for the full op list, phasing and risk table. Its real dependencies are `apelles-gpu` +
-   `apelles-types` only, not `apelles-media`/`apelles-grade` as this doc's own table below
-   (line ~138) had predicted — corrected there.
+1. ~~**`apelles-compositor` — the GPU compositor.**~~ **Built 2026-11-03 as D-449**: the one
+   GPU engine for the preview and the export, no CPU fallback (`docs/notes/
+   export-gpu-compositor.md` §15). What it still lacks is the grade shader running inside it
+   (the grade arrives as a baked lattice; §15.7).
 2. **Motion's missing MCP wrappers.** 18 real ops, zero reachable tools — see above.
 3. **`apelles-grade`** — the grade renderer is still `app/`-side, so `apelles-app` cannot go
    thin and the fork cannot shrink to "grade shader + mask raster" the way D-039 intends.

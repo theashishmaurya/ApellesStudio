@@ -4,14 +4,17 @@
 2026-09-18; phase 3 (contiguous segments, §10) shipped 2026-09-19. **Since
 D-448 (2026-11-03, §14) this is the only export renderer** — the old
 filter-graph path was compared on the owner's projects and deleted; the
-sections below that compare against it are history. **§11 is a PLAN, not shipped work** — a real GPU compositor
-(D-363) was scoped 2026-09-19 in response to B-234 (phase 3's real-world gain
-being far smaller than its benchmark) but deliberately not built yet; read §11
-before picking this effort back up.
+sections below that compare against it are history. **§15 (D-449, 2026-11-03)
+is the as-built GPU engine**: every frame of the preview and the export is now
+painted on the GPU by `apelles-compositor`, with no CPU compositor and no
+fallback. §2's and §9's descriptions of a CPU compositor are history from here
+on. §11 is the plan it was built from (D-363), kept for its op list and risk
+table; §15.1 says what changed from it.
 **Decisions:** `docs/08-decisions.md` **D-350** (the architecture), **D-351**
 (phase 2's parallelism, and why frame-level `par_iter` is the wrong shape here),
-**D-360** (phase 3's segments, lanes and concat), and **D-363** (the GPU
-compositor plan, not yet built).
+**D-360** (phase 3's segments, lanes and concat), **D-363** (the GPU
+compositor plan) and **D-449** (what was built: one GPU engine for preview and
+export, no CPU fallback).
 **Bugs it supersedes:** B-228/B-229/B-230 (resource),
 B-201/B-208/B-218/B-223 (parity). **B-234** (phase 3's real-world shortfall) is
 what §11 exists to eventually close.
@@ -1365,3 +1368,245 @@ real frame both exports measured about 20 dB, partly that local part and partly 
 root-caused (B-381, open). **The real fix for all of it is to run the grade shader per frame instead of a
 LUT, which is what a GPU compositor makes affordable** — it belongs with D-363's waves, not in the CPU blend.
 
+---
+
+# 15. D-449 (2026-11-03): one GPU render engine for the preview and the export — as built
+
+**Decision:** D-449 (supersedes D-363's shape). **Crate:** `crates/apelles-compositor` (README there).
+**App side:** `chroma::gpu_compositor` (the process's one engine), `chroma::edit::paint_layer` (the one
+`ClipTransform` → pixels conversion), `chroma::edit::composite_video_frame` (builds the frame plan).
+**Numbers:** `docs/perf/README.md` "Export"; raw logs summarised in §15.6.
+
+## 15.1 What changed from the §11 plan, and why
+
+§11 planned a GPU compositor as a third `renderer` value, opt-in, with the CPU compositor kept as the
+default and as a permanent reference, built in five waves, the live preview excluded. The owner set a
+different shape the same day the work started: one engine, no second path, preview included ("I don't
+wanna keep multiple paths"; "finish it end to end"). That is the Final Cut Pro / Resolve / Premiere
+pattern: one image engine for playback and export, hardware decode and encode around it. So:
+
+- **No `renderer: "gpu"`, no GPU/CPU control** in Export or in `editor_export`. There was nothing to add
+  to either MCP surface; the tool count is unchanged.
+- **No CPU fallback.** A GPU error is an error; the engine is reopened for the next frame.
+- **The preview moved in the same change**, because it is the same function: `composite_video_frame` is
+  what the Edit preview, the Colorist's framed clip (via `composite_layer_onto`) and every export segment
+  call. §9.4's concern (export parallelism slowing the preview's decoders) does not apply: the GPU path
+  takes no CPU cores.
+- **The CPU blend is deleted** (`blend_layer_sampled`, `overlay_parallel`, `to_rgba8_parallel`,
+  `apply_adjustment_to_canvas`, the CPU rotation and resize in `composite_layer_onto`,
+  `grade_lut::apply_to_rgba`, the CPU caption overlay). It lived on only as a test oracle
+  (`chroma::compositor_parity`) until the parity below was measured, and then went too.
+
+What §11 got right and was kept: the crate, its L1 slot and dependencies (`apelles-gpu` + `apelles-types`
+only), the fully enumerated op list (§11.1), manual LUT fetches, the geometry staying in `edit.rs`, and
+the dependency check (§11.6: no library fits).
+
+## 15.2 The shape
+
+```
+chroma::edit (what to draw)                     apelles-compositor (how to draw it)
+  render_timeline_frame(_deferred)
+    resolve layers, keyframes, fades, ──▶ FramePlan { canvas, background,
+    transitions, grade lattice, text,          steps: [Paint(Layer) | Adjust(ops)], captions last }
+    captions; paint_layer() turns a                 │
+    ClipTransform into crop / box /                 ▼
+    origin in canvas pixels              Engine::submit → PendingFrame ──wait──▶ RgbaImage
+                                            (prepare, sample | resize_v → resize_h → rotate → overlay,
+                                             adjust; one command buffer, one submission per frame)
+```
+
+- **Preview:** `timeline_frame` → `render_timeline_frame` waits at once and JPEG-encodes, as before.
+- **Export:** `edit_render::render_range` calls `render_timeline_frame_deferred` and sends the frame, still
+  on the GPU, to its encoder-writer thread, which waits for it, resizes when the output's aspect differs,
+  and writes. The worker decodes frame N + 1 while the GPU draws frame N. `WRITE_AHEAD` (4) still bounds
+  what is in flight.
+- **The single-layer plain-decode fast path stays**: a lone untransformed, ungraded, uncaptioned clip
+  that is the whole composition is returned as decoded, with no upload. A frame with a caption now goes
+  through the engine (captions are its top layers).
+
+## 15.3 How each step matches the CPU compositor
+
+Everything that depends only on the layer's geometry is computed on the CPU with the CPU compositor's
+own expressions, and uploaded (`tables.rs`); the GPU does only per-pixel sums and the blend. Rust rounds
+half away from zero, WGSL's `round` rounds half to even, so the kernels use their own `round_half_up`.
+
+| step | CPU (deleted) | GPU kernel | what is exact |
+|---|---|---|---|
+| RGB → RGBA | `to_rgba8_parallel` | `prepare` | exact |
+| grade | `grade_lut::apply_to_rgba` (`Lut3d::apply_rgb8`) | `prepare`, manual trilinear from a storage buffer | within 1 code value (f32 FMA) |
+| crop | sub-image / clamped taps | crop rect from `crop_pixel_rect` | exact |
+| magnify / 1:1 (fused) | `blend_layer_sampled` | `sample`; taps and fractions from `tables::sample_tables` (the CPU's f64 expressions) | 1:1 exact; magnify within 1 |
+| minify (general) | `image::imageops::resize` Triangle | `resize_v` → `resize_h`; weights from `tables::triangle_weights` (image 0.25's f32 algorithm) | within 1 |
+| rounded corners | `corner_coverage` (the shared SDF) | the same SDF in f32 | within 1 at the AA edge |
+| rotation | `imageproc::rotate_about_center` bilinear, rgba32f | `rotate`; matrix from `tables::rotation_inverse` (imageproc's f32 product) | within 1 |
+| opacity | alpha × opacity, rounded | same, in `sample` / `overlay` | exact |
+| source-over | `image::Rgba::blend` (straight alpha, truncating) | `prelude.wgsl` `blend` | within 1 (division rounding) |
+| adjustment clip | `AdjustmentOps::apply_rgb8` (f64, floor between stages) | `adjust`; stage 1 as tables, stage 2 fixed-point | exact except 2.4e-5 of RGB inputs, by 1 |
+| captions | `image::imageops::overlay` after compositing | a top layer, 1:1 | as source-over |
+
+## 15.4 Parity, measured against the CPU compositor (before it was deleted)
+
+`chroma::compositor_parity` (test-only while it existed): 1920×1080, textured sources, each plan drawn by
+the GPU engine and by the CPU compositor moved verbatim into the test module. Metrics: PSNR over RGB,
+SSIM of BT.709 luma (8×8 windows, stride 4), the largest channel difference, and the share of pixels
+with any difference. **Threshold: max 2 code values, PSNR ≥ 50 dB, SSIM ≥ 0.999.**
+
+```text
+effect                                                                   PSNR dB     SSIM   max  differing
+1:1 full-frame layer                                                   identical 1.000000     0    0.0000%
+magnify 1.73x, fractional position                                        111.30 1.000000     1    0.0001%
+magnify + crop + opacity 0.6                                               69.42 0.999967     1    2.1880%
+rounded corners (fused path)                                               88.56 1.000000     1    0.0278%
+minify 0.31x (Triangle)                                                    91.64 1.000000     1    0.0133%
+minify + crop + rounded + opacity (general path)                           95.14 1.000000     1    0.0083%
+rotate 17° (magnified)                                                     94.40 1.000000     1    0.0149%
+rotate -33° + minify + rounded + opacity                                   85.91 0.999999     1    0.0520%
+alpha layer over picture (a title)                                         77.60 0.999988     1   15.3871%
+dip-to-colour plate at 0.42                                                77.00 1.000000     1    0.3893%
+grade (33³ lattice), 1:1                                               identical 1.000000     0    0.0000%
+grade + magnify + rounded                                                 116.07 1.000000     1    0.0012%
+adjustment clip                                                        identical 1.000000     0    0.0000%
+full stack (base, graded PIP, slide, rotated card, title, adjustment)      59.48 0.999493     2   11.0180%
+```
+
+The differences are one-code-value rounding flips, in two places: the blend's division (the title and
+translucent cases differ on many pixels by 1) and fused multiply-adds in the interpolation. The full
+stack reaches 2 where one layer's ±1 lands under another's blend. There is no displaced edge or wrong
+region anywhere: the old-vs-new export test, which erodes one-pixel lines away
+(`render_path_matches_the_filter_graph_path_pixel_for_pixel`, §5), read exactly what it read in 2026-09
+(worst 33.4 dB on the known fractional-x boundary, SOLID 0.0000% on every frame) with the GPU engine
+drawing the compositor side, before D-449 deleted the filter path and that test with it.
+
+Engine-level tests that remain (`cargo test -p apelles-compositor`): a 1:1 opaque layer and an RGB source
+are byte-exact; a plate blend equals `image`'s own `blend` exactly; the adjustment against `apply_rgb8`
+on all 2^24 RGB values (≤ 1, on at most 2.4e-5 of channel values); the grade within 1 of
+`Lut3d::apply_rgb8`.
+
+## 15.5 Determinism
+
+No atomics, no reductions, one write per output pixel, fixed summation order. Pinned by:
+`a_frame_renders_to_the_same_bytes_every_time` (crate: six repeats and four threads at once),
+`a_frame_dropped_unread_does_not_poison_the_next_one` (a dropped in-flight frame cannot leak a mapped
+buffer into the next), and in the app `the_compositor_is_deterministic_across_runs`,
+`rendering_the_same_frame_twice_produces_identical_bytes`, `a_frame_is_the_same_in_any_decode_lane` and
+the segmented-vs-single-stream video test, plus `a_graded_frame_hashes_the_same_every_time` (`chroma::gpu_compositor`): a graded full-stack frame hashed `0438176df4831369` on every
+run on the M4. Per device, as D-363 said it would be.
+
+## 15.6 Speed, measured
+
+`measure_export_benchmark` (§13's fixture: 60 s, 3 video tracks, 15 clips, grain and motion), compositor
+path, hardware encode, the planner's segment count (2 on this machine), same machine and session for
+before and after. M4, 10 logical cores, shared with other agents' builds (load average 5–16 during the
+runs; best of 2 for the after).
+
+| | 1080p before (CPU) | 1080p after (GPU) | 4K before (CPU) | 4K after (GPU) |
+|---|---|---|---|---|
+| **× real time** | 0.23× | **0.23×** | 1.39× | **0.82×** |
+| render wall | 13.4 s | 13.1 s | 82.0 s | 47.6 s |
+| worker time, decode + composite (summed over 2 workers) | 22.9 s | 23.0 s | 144.1 s | 86.4 s |
+| └ of which decode + frame set-up | — | 17.9 s | — | 70.0 s |
+| └ of which GPU record + upload | — | 5.1 s | — | 16.4 s |
+| GPU wait (writer threads, overlapped) | — | 2.1 s | — | 7.8 s |
+| read-back (writer threads) | — | 1.3 s | — | 4.3 s |
+| frames through the engine / bytes up / bytes down | — | 960 / 10.1 GB / 8.0 GB | — | 960 / 40.4 GB / 31.9 GB |
+| waiting on the encoder | 1.1 s | 1.4 s | 2.6 s | 3.0 s |
+| CPU (of 10 cores) / GPU busy | 55% / 13% | 57% / 35% | 49% / 12% | 54% / 36% |
+| peak memory over the host | 2.5 GB | 2.6 GB | 3.7 GB | 4.4 GB |
+
+The other 840 of the 1800 frames are single-layer A-roll frames that take the plain-decode fast path and
+never reach the engine. "GPU busy" includes the VideoToolbox decode and encode.
+
+**Read honestly:**
+
+- **4K is under real time**, 1.39× → 0.82×, which was the blocker. Before pipelining (the worker waiting
+  for each frame itself) it measured 0.87–0.88×. Pipelining moved 7.8 s of GPU wait off the workers.
+- **1080p is level with the CPU compositor, not faster.** At 1080p the CPU blend was already cheap: it
+  ran on every core above `PARALLEL_PIXEL_MIN`. What remains is decode: 17.9 s of the workers' 23 s.
+  A 1080p explainer frame through the engine alone costs 1.3 ms to submit and 3.5 ms to wait and read
+  back (`measure_the_cost_of_one_frame`). Synchronously, without the pipelining, 1080p measured 0.26×.
+- **Decode is now the largest term at 4K** too (70 s of the workers' 86 s). One 4K track decodes in 17–20
+  s per 60 s through VideoToolbox into the pipe, whatever the pixel format (§15.9). The next real gain is
+  the zero-copy media path in §15.9, or more lanes.
+- **Segments.** With the blend off the CPU, 3 segments measured 0.74× at 4K (synchronous GPU, load ~10)
+  and 0.22–0.23× at 1080p, against the planner's 2. A pipelined 3-segment 4K run under load 16 measured
+  1.17×. That is inconclusive, so the planner is unchanged (§15.9).
+
+**Hops a zero-copy path would remove, per 4K frame through the engine** (from the counters above): the
+upload copy (40.4 GB / 960 frames ≈ 42 MB, inside the 17 ms of record + upload), the read-back copy
+(33 MB, 4.5 ms), and on each side the pipe itself (25 MB of rgb24 per layer in, 33 MB of RGBA out).
+
+**The preview (perf-300).** See §15.8 for the harness run against the debug bundle.
+
+## 15.7 Grading
+
+The Colorist grade reaches the engine as the 33³ lattice the Colorist's own shader baked (D-256), applied
+on the GPU with `apply_rgb8`'s arithmetic. Measured on a graded 1280×720 frame (exposure, contrast,
+highlights, shadows, saturation, temperature, tint):
+
+| | PSNR | SSIM | max |
+|---|---|---|---|
+| GPU export vs CPU compositor (same lattice) | 99.5 dB | 1.0000 | 1 |
+| GPU export vs the Colorist's own render of the frame | 49.2 dB | 0.9979 | 20 |
+| CPU export vs the Colorist's own render (before D-449) | 49.2 dB | 0.9979 | 20 |
+
+So the engine is exactly as close to the Colorist as the export always was. The remaining gap is the
+lattice: it interpolates between 33 points per axis where the shader computes, and a 3D LUT cannot carry
+the parts of a grade that are not per-pixel (masks, local tone, crop; D-256 strips and warns). Closing it,
+the owner's "same document and same frame give identical pixels" applied to grading, means running the
+Colorist shader per frame inside the engine. Measured before deciding
+(`measure_the_colorist_shader_per_frame`, the shader as `export::grade_frame` runs it: its own device, the
+frame uploaded, rendered, read back): **59 ms a frame at 1080p and 452 ms at 4K**, against 7 ms and 23 ms for
+a whole engine frame with the lattice. One graded 4K clip would take the export from 0.82× to about 15×
+real time, so the shader cannot simply be called per frame. `grade_frame` also reads process-global frame
+state (`chroma::state::current_video().frame`) for tracked masks and relight depth, which is not safe with
+parallel export segments and the live preview drawing at once, and it applies the Colorist crop and
+rotation, which would change a clip's framing on the timeline. The real step is the grade shader rendering
+into the engine's own device with no read-back, with its per-frame inputs passed in rather than read from
+global state (`apelles-grade`, roadmap item 8), then a `Step::Grade` in the plan. Not built here.
+
+**B-381's warmer cast** (D-448's check: exports about 20 dB from the Colorist's render on real footage, and
+warmer). It is a property of the lattice, not of the renderer: the GPU engine and the CPU compositor agree
+to 99.5 dB on a graded frame, so the cast survives unchanged on this path and its root cause is still the
+open part of B-381.
+
+## 15.8 The preview
+
+Same engine, same function. The preview's frame path is unchanged around it: `chroma_timeline_frame` →
+`timeline_frame` → `render_timeline_frame` → JPEG. No new command, no frontend change, so nothing new
+crosses the `@apelles/bridge` seam (D-447). The perf-300 harness results are in §15.6.
+
+## 15.9 Not done, and why
+
+- **`nv12` out of `decode_pipe`** (§13.3 item 3). Measured first: one 4K track through VideoToolbox into
+  the pipe takes 20.1 s as rgb24 and 18.9 s as nv12 (60 s of video, twice each). The hardware decoder,
+  not the conversion or the pipe, sets the floor, so nv12 buys about 6% of the decode term and half the
+  upload copy. It would also make a composited frame's colour conversion (GPU) differ by a code value
+  from a fast-path frame's (swscale) on the same clip. Not worth it alone; it belongs to the zero-copy
+  step below, which removes the CPU copy entirely.
+- **Zero-copy VideoToolbox frames.** Feasible through wgpu: `wgpu::hal::metal::Device::texture_from_raw`
+  plus `Device::create_texture_from_hal` take an `MTLTexture`, which `CVMetalTextureCache` makes from a
+  decoder's IOSurface-backed `CVPixelBuffer`; `objc2-core-video`, `objc2-metal` and `objc2-io-surface` are
+  already in the lockfile. It needs an in-process decoder (a `VTDecompressionSession` or `AVAssetReader`
+  in place of the `decode_pipe` ffmpeg processes, keeping D-228's conform to the nominal frame grid, the
+  forward-skip and seek behaviour, lanes and the hardware-failure fallback), the engine taking textures
+  as well as buffers (two-plane YCbCr kernels), and, for the encode side, a `VTCompressionSession` fed
+  `CVPixelBuffer`s from the engine with muxing, audio and the segment concat that ffmpeg does today. The
+  hops it would remove, measured at 4K (§15.6): the upload copy and the read-back, plus the pipe read on
+  each side. A multi-day replacement of both media ends, so it is its own wave with its own decision.
+- **The final aspect-change resize** (`canvas_plan`'s `needs_resize`, only when the output's aspect
+  differs from the composition) is still `image::imageops::resize` on the writer thread. It is zero in
+  every measured case. It can become a second engine pass.
+- **The segment planner is unchanged.** It still counts an encoder process per segment against the cores.
+  With the blend off the CPU, 3 segments measured faster than the planner's 2 at both sizes (§15.6), but
+  changing a CPU bound measured on one fixture under a busy machine is a decision of its own (B-234's
+  starving-lanes evidence is why the bound is conservative).
+
+## 15.10 Files
+
+| file | what changed |
+|---|---|
+| `crates/apelles-compositor/` | **new** — the engine, the plan, the tables, eight WGSL kernels, 14 tests, README |
+| `app/src-tauri/src/chroma/gpu_compositor.rs` | **new** — the process's one engine, `render` / `submit` / `grade` / `stats` |
+| `app/src-tauri/src/chroma/edit.rs` | the CPU passes deleted; `paint_layer`; `composite_video_frame` builds a plan; `RenderedFrame` + `render_timeline_frame_deferred`; captions as plan layers (`caption_steps`) |
+| `app/src-tauri/src/chroma/edit_render.rs` | the writer waits for GPU frames (`Outgoing`); `RenderStages` gains the engine's counters |
+| `app/src-tauri/src/chroma/{colorist_view,grade_lut,highlight_draw,export_bench,mod}.rs` | callers moved to the engine; `apply_to_rgba` deleted; `for_each_row_mut` moved to its last user; the bench prints the GPU stages |

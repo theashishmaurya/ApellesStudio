@@ -27,7 +27,38 @@ use apelles_timeline::Highlight;
 use apelles_timeline::highlight::Sweep;
 use image::RgbaImage;
 
-use super::edit::for_each_row_mut;
+/// Below this many pixels a row pass runs serially. It is the line between the
+/// live preview's frames and an export's (D-351, measured): the largest preview
+/// frame is 960×960 = 921,600 px (`PreviewPane.tsx`'s `PREVIEW_LONG_EDGE`) and
+/// the smallest export frame 1920×1080 = 2,073,600 px. Taking every core at
+/// preview sizes slowed the decode `ffmpeg` children live playback depends on
+/// (it failed `playback_primes_the_upcoming_cut_and_a_scrub_does_not`), so the
+/// preview stays serial and an export draws on every core. Since D-449 the
+/// compositing itself is on the GPU; this governs only the stroke drawing here.
+pub(super) const PARALLEL_PIXEL_MIN: u64 = 1024 * 1024;
+
+/// Run `f(y, row)` over every row of `buf`, in parallel when there is enough
+/// work to pay for it ([`PARALLEL_PIXEL_MIN`]). `stride` is one row in bytes;
+/// `buf.len()` must be a whole number of rows. Both arms run the same closure
+/// over the same disjoint rows, so the split changes the schedule and never a
+/// pixel.
+pub(super) fn for_each_row_mut(
+    buf: &mut [u8],
+    stride: usize,
+    f: impl Fn(usize, &mut [u8]) + Send + Sync,
+) {
+    debug_assert!(stride > 0 && buf.len().is_multiple_of(stride));
+    if (buf.len() / stride.max(1)) as u64 * (stride as u64 / 4) < PARALLEL_PIXEL_MIN {
+        buf.chunks_mut(stride)
+            .enumerate()
+            .for_each(|(y, r)| f(y, r));
+    } else {
+        use rayon::prelude::*;
+        buf.par_chunks_mut(stride)
+            .enumerate()
+            .for_each(|(y, r)| f(y, r));
+    }
+}
 
 /// Clips whose working copy is kept. A highlighted still is one image at the
 /// preview's decode size, and an edit only ever plays a few at once, so the

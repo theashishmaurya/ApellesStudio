@@ -149,6 +149,7 @@ dependencies = [
  "apelles-beat",
  "apelles-brand",
  "apelles-clipper",
+ "apelles-compositor",
  "apelles-gpu",
  "apelles-grade-model",
  "apelles-media",
@@ -304,6 +305,20 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "apelles-compositor"
+version = "0.0.0"
+dependencies = [
+ "apelles-gpu",
+ "apelles-types",
+ "bytemuck",
+ "image",
+ "log",
+ "pollster",
+ "thiserror 2.0.20",
+ "wgpu",
 ]
 
 [[package]]

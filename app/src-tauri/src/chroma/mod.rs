@@ -99,13 +99,18 @@
 //!   timelineExport.ts` builds the argv; this runs it, cancellable, with the
 //!   D-401 loudness pass inside the run — D-441) and the debug recorder's
 //!   streaming sink. No ffmpeg-arg knowledge lives here
+//! - `gpu_compositor` — **the one GPU render engine (D-449)**: the process-wide
+//!   `apelles_compositor::Engine` that paints every timeline frame, for the
+//!   Edit preview, the Colorist's framed clip and every export segment alike.
+//!   No CPU fallback; a GPU error is an error, and the device is reopened for
+//!   the next frame
 //! - `grade`    — the `grade.json` document command bridge: save / load
 //!                (D-025); the model itself lives in `apelles-grade-model` (D-143)
 //! - `grade_lut` — **the Colorist ⇄ Edit bridge (D-256)**: bakes a clip's saved
 //!   grade into a `apelles_types::Lut3d` by running an identity lattice through
 //!   the real Colorist wgpu pipeline, memoised on the grade file's own
 //!   (mtime, len). That lattice is what makes a Colorist grade visible on the
-//!   Edit timeline at all — `edit`'s CPU compositor interpolates it per clip,
+//!   Edit timeline at all — the GPU engine (`gpu_compositor`) applies it per clip,
 //!   and the ffmpeg exporter hands the same lattice to `lut3d` as a `.cube`, so
 //!   preview and export are the same maths by construction. Carries the
 //!   **global** grade only; masks/crop/relight are stripped with a warning
@@ -176,6 +181,7 @@ pub mod export_job;
 pub mod export_status;
 pub mod ffmpeg_run;
 pub mod filmstrip;
+pub mod gpu_compositor;
 pub mod grade;
 pub mod grade_lut;
 pub mod highlight_draw;

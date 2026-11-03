@@ -454,15 +454,27 @@ fn cpu_pct(cpu: f64, wall: Duration) -> f64 {
 
 fn compositor_stages(o: &TimelineRenderOutcome) -> String {
     let s = &o.stages;
+    let secs = |ms: u64| ms as f64 / 1000.0;
+    // D-449 — a worker's `frame` is decode + frame set-up + recording and
+    // uploading the GPU frame; the GPU wait and the read-back happen on the
+    // segment's writer thread, overlapped with the worker's next frame.
     format!(
-        "segs {} · render {:.1}s [per-worker sums: decode+composite {:.1}s, resize {:.1}s, \
-         wait-on-encoder {:.1}s] · concat {:.1}s",
+        "segs {} · render {:.1}s [per-worker sums: frame {:.1}s = decode+setup {:.1}s + GPU record+upload {:.1}s; \
+         writer: GPU wait {:.1}s, readback {:.1}s; {} GPU frames, up {:.1} GB, down {:.1} GB; \
+         resize {:.1}s, wait-on-encoder {:.1}s] · concat {:.1}s",
         o.segments,
-        s.render_ms as f64 / 1000.0,
-        s.frame_ms as f64 / 1000.0,
-        s.resize_ms as f64 / 1000.0,
-        s.handoff_wait_ms as f64 / 1000.0,
-        s.concat_ms as f64 / 1000.0,
+        secs(s.render_ms),
+        secs(s.frame_ms),
+        secs(s.frame_ms.saturating_sub(s.gpu_record_ms)),
+        secs(s.gpu_record_ms),
+        secs(s.gpu_wait_ms),
+        secs(s.gpu_readback_ms),
+        s.gpu_frames,
+        s.gpu_upload_bytes as f64 / 1e9,
+        s.gpu_readback_bytes as f64 / 1e9,
+        secs(s.resize_ms),
+        secs(s.handoff_wait_ms),
+        secs(s.concat_ms),
     )
 }
 
