@@ -352,11 +352,12 @@ status: **fixed** (2026-10-31) · severity: **minor** · area: `@apelles/editor`
 
 ## B-338 — a generated caption cue cannot be lengthened with `editor_trim_clip`
 
-status: **open** · severity: **minor** · area: caption clips (D-228/D-229) under `checkTrim` (`packages/editor/src/timeline.ts`)
+status: **fixed 2026-11-03** (with B-303) · severity: **minor** · area: caption clips (D-228/D-229) under `checkTrim` (`packages/editor/src/timeline.ts`)
 
 - **found:** 2026-10-30, Nemotron shorts. After `editor_generate_captions_from_transcript(scope="timeline")`, merging a 4-frame cue ("most") into its neighbour needed the neighbour 4 frames longer. `editor_trim_clip(edge="end", delta=4)` refused: "already 33 source frames long and cannot grow: that is all its media has (source_len 33)".
 - **what happens:** a caption has no media, but it is stamped with `source_len == duration`, so the media-bounds clamp treats it like footage that has run out. A title gets an hour of synthesized headroom (D-292's still-image rule); a caption gets none, so its end (or start) can only ever move inward.
 - **expected:** a caption, like a title or a still, can be extended freely in both directions with the ordinary trim tools and the GUI edge drag.
+- **cause confirmed / fix:** `source_len == duration` made the trim clamps (`clampedTrimStartDelta`, `trimEndBounds`, `headRoom`/`tailRoom` for ripple, roll and slide) treat a caption, title or adjustment clip as footage that had run out. They now read `sourceCeilingOf` (a synthesized hour for any generated clip, so projects saved before the fix work too) and `headFramesOf` (all of that extent is head room, `source_start` stays 0), and every growing path calls `fitSyntheticSource` so the stored `source_len` keeps covering `source_start + duration`. Neighbours still stop a plain trim (D-054). Tests: `generatedClipTrim.test.ts` (9).
 
 ## B-337 — `editor_trim_clip`'s docstring has the sign of `delta` backwards for `edge="end"`
 
@@ -721,7 +722,7 @@ status: **fixed** (2026-10-28, D-421) · severity: **major** · area: Edit track
 
 ## B-303 — title/text clips can't be lengthened (`editor_trim_clip`: 'no earlier material')
 
-status: **open** · severity: **minor** · area: text clip source length
+status: **fixed 2026-11-03** (see B-338: same root cause and fix, head and tail both extend) · severity: **minor** · area: text clip source length
 
 - **found:** 2026-10-28 by the agent editing "Five Levels" v3 in the live app. A text clip's source length equals its first duration, so it can't be extended; workaround: re-create.
 

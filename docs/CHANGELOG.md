@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-11-03** — **B-338 + B-303 fixed:** captions, titles and adjustment clips have no media to run out of, so `editor_trim_clip` and the edge drags lengthen them in both directions (neighbours still stop a plain trim); the trim clamps use a synthesized hour for any generated clip, so old projects work too.
 - **2026-11-03** — **B-348's last keys built:** J/K/L shuttle (L 1x/2x/4x/8x, K stops, K+J/L one frame; J is a reverse scrub, the player has no reverse playback), I/O/Alt+X in and out marks with a ruler range (new MCP `editor_set_marks`, also in `editor_get_state`, 270 tools; the marks do not drive Export, which has no range), and Shift+Delete ripple delete of the selection. Keymap registry, tests and docs updated.
 - **2026-11-03** — **v0.3.0 scope widened** (owner): the major bugs plus the Motion minors join the release; roadmap 00h added (a built-in chat over the user's own Claude Code / Codex CLI subscription, ToS-checked, for v0.4.0).
 - **2026-11-03** — **B-336 fixed:** a Clipper short built from a timeline source now carries every track of the chosen stretch (picture reframed for 9:16, demo sound, music, titles, Motion cards, linked pairs kept), tightened across all tracks, and captioned from the voice even when it sits on an audio track. A voice-only build is captioned too.
