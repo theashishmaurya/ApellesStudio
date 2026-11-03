@@ -120,6 +120,9 @@ export { Slider } from './components/ui/slider';
 export { ScrubBar } from './components/ui/scrub-bar';
 export type { ScrubBarProps } from './components/ui/scrub-bar';
 export { Progress } from './components/ui/progress';
+// B-369 — the Apelles-branded loading state (project open, timeline switch).
+export { BrandedLoader } from './branded-loader';
+export type { BrandedLoaderProps, BrandedLoaderVariant } from './branded-loader';
 export { Switch } from './components/ui/switch';
 export { ScrollArea, ScrollBar } from './components/ui/scroll-area';
 export { Separator } from './components/ui/separator';

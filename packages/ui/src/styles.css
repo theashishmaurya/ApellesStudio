@@ -53,4 +53,30 @@
 
   /* radius: reuse the fork's existing scale, don't add a third one */
   --radius: var(--radius-md);
+
+  /* B-369 — the BrandedLoader's two calm loops (used only under `motion-safe:`):
+     the mark breathes, an indeterminate bar sweeps across its track. */
+  --animate-loader-breathe: loader-breathe 2.4s ease-in-out infinite;
+  --animate-loader-sweep: loader-sweep 1.6s ease-in-out infinite;
+
+  @keyframes loader-breathe {
+    0%,
+    100% {
+      opacity: 0.8;
+      transform: scale(0.98);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes loader-sweep {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(300%);
+    }
+  }
 }
