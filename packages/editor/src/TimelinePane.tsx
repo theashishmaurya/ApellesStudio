@@ -1112,9 +1112,18 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
   // A layout effect, declared after the mount adoption, so on a remount the
   // remembered position wins over the fresh scroller's 0; the content is
   // already laid out at the incoming zoom, so the write is not clamped short.
+  //
+  // B-373 — arriving also ends the paused-seek follow's quiet window. The user's
+  // last scroll (`userScrollAtRef`) was a pan of the OUTGOING timeline's view,
+  // and this pane outlives the switch (it only renders nothing while no
+  // timeline is open), so the mark used to carry over: a jump on the incoming
+  // timeline within `SEEK_FOLLOW_SCROLL_QUIET_MS` of a wheel on the old one was
+  // dropped, and a dropped follow is never retried (the playhead stayed off
+  // screen). The incoming view is placed right here, by us, not by the user.
   const timelineId = timeline?.id ?? null;
   useLayoutEffect(() => {
     if (timelineId === null) return;
+    userScrollAtRef.current = Number.NEGATIVE_INFINITY;
     const scroller = scrollerRef.current;
     const saved = perTimelineView(useTimelineViewStore.getState().viewByTimeline, timelineId);
     if (scroller) {
