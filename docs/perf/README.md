@@ -47,10 +47,10 @@ The budget (`docs/notes/ui-harness.md`) is ≤ 50 ms for any single frame and �
 - **B-378:** the first preview frame after an app launch takes 1–2 s (ffmpeg/VideoToolbox decoder start-up, about 350–800 ms per new pipe).
 - **B-379:** the Inspector re-mounts for the newly selected clip a frame or two after the release: 10–20 ms, including a forced layout from a Base UI `scrollIntoViewIfNeeded`.
 - **B-375 follow-up:** pinch zoom at 300 clips was 66–109 ms worst frame before the proportional-pinch fix. It is not re-measured since.
-- **B-380:** 4K export is still slower than real time: 1.38× on the compositor, the only export renderer since D-448 (the deleted filter path was 2.46×). See "Export" below for the floor and what is left.
+- **B-380:** the export is under real time at 4K since D-449 (one GPU render engine): 1.39× → 0.82× on the compositor, the only export renderer since D-449 (the deleted filter path was 2.46×). See "Export" below.
 - **Live re-check owed:** the B-374 release numbers and the B-369 open numbers were measured in the agents' own bundles, not yet in the owner's dev app. Re-measure after the next restart and update this table.
 
-## Export (B-380, D-446, D-448)
+## Export (B-380, D-446, D-449, D-449)
 
 **How it is measured.** `measure_export_benchmark` (`app/src-tauri/src/chroma/export_bench.rs`, `#[ignore]`d)
 runs a 60 s explainer-shaped fixture (`tests/fixtures/export-bench.json`: 3 video tracks, 15 clips, jump-cut
@@ -89,17 +89,36 @@ fastest measured.
 
 | Measure | Floor |
 |---|---|
-| 1080p export (the default: compositor, hardware encode) | **≤ 0.35×** runtime |
-| 4K export (the default: compositor, hardware encode) | **≤ 1.38×** runtime |
+| 1080p export (compositor, hardware encode) | **≤ 0.23×** runtime (D-449; 0.35× under a busier machine before) |
+| 4K export (compositor, hardware encode) | **≤ 0.82×** runtime (D-449, GPU engine; was 1.38×) |
+| GPU engine vs the CPU compositor it replaced (measured before the CPU code was deleted) | max 2 code values, PSNR ≥ 50 dB, SSIM ≥ 0.999 per effect |
 | Loudness pass on a 60 s export | **≤ 2 s** |
 | Hardware H.264 quality vs libx264 CRF 18 (encoder sweep) | **equal or better** PSNR / SSIM / VMAF (q 70) |
 
-**Not at budget yet (B-380 stays open).** 4K is not under real time. The compositor's remaining time is the CPU
-blend (`blend_layer_sampled`, about 58% of busy samples) and the decode pipes' reads (about 28%); the next step is
-D-363's GPU compositor (`docs/notes/export-gpu-compositor.md` §13–§14). Step 1 of §13.3, the compositor as the
-default, is done: D-448 made it the only renderer after the real-project parity check
+D-449 made the compositor the only renderer after the real-project parity check
 (`2026-11-03-export-parity-report.md`), where on the owner's c040 project a 3 s range took 12 s on the
 compositor and 1033 s on the deleted filter path.
+
+### After D-449: one GPU render engine (2026-11-03)
+
+The compositor now paints every frame on the GPU (`apelles-compositor`), preview and export alike, with no CPU
+compositor and no fallback. Same fixture, same machine and session, planner's 2 segments, best of 2 (measured on
+the branch before it was rebased onto D-449, which changed the layer model's Clip exceptions but not the blend):
+
+| Compositor, hardware encode | 1080p before → after | 4K before → after |
+|---|---|---|
+| × real time | 0.23× → **0.23×** | 1.39× → **0.82×** |
+| render wall | 13.4 s → 13.1 s | 82.0 s → 47.6 s |
+| workers' decode + composite (summed) | 22.9 s → 23.0 s (decode + set-up 17.9 s, GPU record + upload 5.1 s) | 144.1 s → 86.4 s (70.0 s, 16.4 s) |
+| GPU wait / read-back (writer threads, overlapped) | — → 2.1 s / 1.3 s | — → 7.8 s / 4.3 s |
+| bytes to / from the GPU | — → 10.1 / 8.0 GB | — → 40.4 / 31.9 GB |
+| CPU / GPU busy | 55% / 13% → 57% / 35% | 49% / 12% → 54% / 36% |
+| peak memory over the host | 2.5 → 2.6 GB | 3.7 → 4.4 GB |
+
+4K is under real time. 1080p is level, not faster: the CPU blend was already cheap there and decode is what is
+left. Per-stage detail, the segment sweep, the parity table and what is not done (nv12, zero-copy VideoToolbox) are
+in `docs/notes/export-gpu-compositor.md` §15. **B-380 stays open** for the decode term (the largest at 4K now) and
+the grade (B-381); the 4K target itself is met.
 
 ## Keeping the floor
 

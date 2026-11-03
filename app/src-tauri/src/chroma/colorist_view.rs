@@ -168,7 +168,15 @@ impl ClipView {
 
         let mut canvas: image::RgbaImage =
             image::ImageBuffer::from_pixel(canvas_w, canvas_h, image::Rgba([0, 0, 0, 255]));
-        edit::composite_layer_onto(&mut canvas, &img.to_rgba8(), &t, natural);
+        // D-449 — painted by the same GPU engine as the Edit preview and the
+        // export, so the Colorist's framed clip is that one picture too.
+        let source = match img {
+            DynamicImage::ImageRgb8(rgb) => {
+                apelles_compositor::Source::Rgb(std::sync::Arc::new(rgb))
+            }
+            other => apelles_compositor::Source::Rgba(std::sync::Arc::new(other.into_rgba8())),
+        };
+        edit::composite_layer_onto(&mut canvas, source, &t, natural)?;
         Ok(DynamicImage::ImageRgba8(canvas))
     }
 }

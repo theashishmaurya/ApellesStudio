@@ -10,8 +10,9 @@
 //! `render_core::render` exactly as a graded frame would be rendered, and reads
 //! the result back as a lattice; [`lut_for_clip`] resolves a `Clip` id to
 //! `Some(lut)` / `None` against the open project, memoised on the grade file's
-//! own (mtime, len); [`apply_to_rgba`] is the per-pixel application
-//! `chroma::edit`'s compositor calls.
+//! own (mtime, len). The lattice is applied to a clip's pixels by the GPU
+//! render engine (`apelles_compositor`, D-449), the first step of painting
+//! that clip.
 //!
 //! What it does NOT do: no `.cube` parsing (the app's `lut_processing` owns
 //! that direction), no lattice maths (that is `apelles_types::lut3d`, pure and
@@ -32,9 +33,10 @@
 //!
 //! Baking sidesteps both. The shader stays the *only* implementation of the
 //! grade maths — it is what renders the lattice — and what crosses into the
-//! compositor is 3×33³ numbers, interpolated per pixel
-//! (`apelles_types::Lut3d::sample_trilinear`). The Edit preview and the export
-//! are drawn by that one compositor (D-448), so they agree *by construction*.
+//! compositor is 3×33³ numbers, interpolated per pixel by the GPU render
+//! engine with `Lut3d::apply_rgb8`'s own arithmetic (D-449: manual trilinear
+//! fetches, never a hardware sampler). The Edit preview and the export are
+//! drawn by that one engine (D-449, D-449), so they agree *by construction*.
 //! (Until D-448 an ffmpeg filter-graph export read the same lattice as a
 //! `.cube` through `lut3d`; that path is gone.)
 //!
@@ -71,7 +73,7 @@ use std::sync::{Arc, Mutex};
 
 use apelles_types::Lut3d;
 use apelles_types::lut3d::{DEFAULT_SIZE, IDENTITY_TOL};
-use image::{DynamicImage, RgbImage, RgbaImage};
+use image::{DynamicImage, RgbImage};
 use once_cell::sync::Lazy;
 use serde_json::{Value, json};
 
@@ -634,49 +636,10 @@ pub async fn chroma_timeline_grade_luts(clip_ids: Vec<String>) -> Result<GradeCh
         .map_err(|e| format!("grade lut bake task: {e}"))?
 }
 
-// --------------------------------------------------------------------------- //
-// applying a lattice to a decoded frame
-// --------------------------------------------------------------------------- //
-
-/// Apply `lut` to every pixel of `img`, in place.
-///
-/// Alpha is untouched — a grade is a colour transform, and the compositor's own
-/// alpha (a clip's opacity, a transition's blend) is applied later and must not
-/// be graded. Mirrors `chroma::edit`'s `apply_adjustment_to_canvas`, which does
-/// the same for D-230's operator; the difference is *where* each runs: an
-/// adjustment clip operates on the composited canvas beneath it, a clip's grade
-/// operates on that clip's own decoded pixels before it is placed.
-///
-/// **Parallel over rows, and that is a measurement rather than a reflex.**
-/// A trilinear sample is eight scattered reads into a 33³ lattice (431 kB of
-/// `f32` — past L1), so the serial loop measured **22 ms** for one 960×540
-/// preview frame on this machine: over half of a 24 fps frame's 41 ms budget,
-/// for one graded layer, which is a visible stutter by CLAUDE.md's
-/// performance-first rule rather than a rounding error. Chunking by row brings
-/// it to ~3 ms. `rayon` is already an `app/src-tauri` dependency, and it stays
-/// here rather than in `apelles-types` so that L0 crate keeps its zero-heavy-deps
-/// rule (D-039) — the pure per-pixel maths is still `Lut3d::apply_rgb8`, called
-/// unchanged; only the walk over the buffer is parallel.
-///
-/// Determinism is unaffected: each pixel's output depends on that pixel alone,
-/// so the split into rows cannot change a single value.
-pub fn apply_to_rgba(img: &mut RgbaImage, lut: &Lut3d) {
-    use rayon::prelude::*;
-
-    let width = img.width() as usize;
-    img.as_mut().par_chunks_mut(width * 4).for_each(|row| {
-        for px in row.as_chunks_mut::<4>().0 {
-            let [r, g, b] = lut.apply_rgb8([px[0], px[1], px[2]]);
-            px[0] = r;
-            px[1] = g;
-            px[2] = b;
-        }
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::RgbaImage;
 
     fn gpu_or_skip(what: &str) -> bool {
         if render_core::init_gpu_context().is_err() {
@@ -833,11 +796,12 @@ mod tests {
         assert_eq!(a.lut.data(), b.lut.data());
     }
 
-    /// `apply_to_rgba` leaves alpha alone (the compositor owns it) and really
-    /// does change colour.
+    /// The engine applies a lattice to a clip's pixels (D-449: on the GPU, the
+    /// only place a grade is applied to a frame) leaving alpha alone (the
+    /// compositor owns it) and really changing colour.
     #[test]
-    fn apply_to_rgba_changes_colour_and_preserves_alpha() {
-        // "half the red", built by hand — no GPU needed for this one.
+    fn applying_a_lattice_changes_colour_and_preserves_alpha() {
+        // "half the red", built by hand.
         let n = 5usize;
         let mut data = vec![0.0f32; 3 * n * n * n];
         for b in 0..n {
@@ -850,9 +814,13 @@ mod tests {
                 }
             }
         }
-        let lut = Lut3d::new(5, data).unwrap();
-        let mut img = RgbaImage::from_pixel(4, 4, image::Rgba([200, 100, 50, 128]));
-        apply_to_rgba(&mut img, &lut);
+        let lut = Arc::new(Lut3d::new(5, data).unwrap());
+        let img = Arc::new(RgbaImage::from_pixel(
+            4,
+            4,
+            image::Rgba([200, 100, 50, 128]),
+        ));
+        let img = super::super::gpu_compositor::grade(&img, &lut).expect("GPU grade");
         let px = img.get_pixel(0, 0);
         assert_eq!(px[0], 100, "red should halve");
         assert_eq!(px[1], 100);
@@ -862,45 +830,59 @@ mod tests {
 
     /// **The preview has to stay snappy** (CLAUDE.md: performance first).
     ///
-    /// Applying the lattice is the one genuinely new per-frame cost D-256 adds
-    /// to the Edit preview, and it is per PIXEL, so it needs a real number
-    /// rather than a shrug. 960×540 is `PreviewPane`'s scrubbing decode size —
-    /// the largest frame this path sees — and the budget is a small fraction of
-    /// a 24 fps frame's 41 ms, next to a decode that costs tens of ms on its
-    /// own.
-    ///
-    /// Note this cost is paid ONLY by a clip that actually carries a grade;
-    /// `lut_for_clip` returns `None` for every other clip before any pixel is
-    /// touched.
-    ///
-    /// Measured here at **3 ms** (parallel). The budget is set well above that
-    /// rather than at it, so a slower machine does not fail the suite — but far
-    /// enough below the **22 ms** the serial loop measured that losing the
-    /// parallel walk (see [`apply_to_rgba`]) trips this test instead of
-    /// quietly reaching the user as a stuttering preview.
+    /// Applying the lattice is the one per-pixel cost a graded clip adds to a
+    /// frame. On the CPU it measured 22 ms serial / 3 ms row-parallel for a
+    /// 960×540 preview frame; on the GPU engine it is one pass of the layer's
+    /// prepare kernel. This times a whole frame through the engine, a graded
+    /// 4K layer composited 1:1 against the same frame ungraded, and bounds what
+    /// the grade adds.
     #[test]
-    fn applying_a_lattice_to_a_preview_frame_stays_inside_the_budget() {
-        if !gpu_or_skip("applying_a_lattice_to_a_preview_frame_stays_inside_the_budget") {
+    fn a_graded_layer_stays_inside_the_frame_budget() {
+        if !gpu_or_skip("a_graded_layer_stays_inside_the_frame_budget") {
             return;
         }
-        const BUDGET_MS: u128 = 15;
+        const BUDGET_MS: f64 = 4.0;
         let baked = bake_lut3d(
             &json!({ "exposure": 0.8, "contrast": 20.0 }),
             DEFAULT_SIZE,
             true,
         )
         .expect("bake");
-        let mut img = RgbaImage::from_fn(960, 540, |x, y| {
-            image::Rgba([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8, 255])
-        });
-        let start = std::time::Instant::now();
-        apply_to_rgba(&mut img, &baked.lut);
-        let ms = start.elapsed().as_millis();
-        eprintln!("grade LUT over a 960x540 preview frame: {ms} ms");
+        let lut = Arc::new(baked.lut);
+        let img = Arc::new(image::RgbImage::from_fn(3840, 2160, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8])
+        }));
+        let plan = |lut: Option<Arc<Lut3d>>| apelles_compositor::FramePlan {
+            width: 3840,
+            height: 2160,
+            background: apelles_compositor::Background::Solid([0, 0, 0, 255]),
+            steps: vec![apelles_compositor::Step::Paint(apelles_compositor::Layer {
+                source: apelles_compositor::Source::Rgb(img.clone()),
+                lut,
+                crop: (0, 0, 3840, 2160),
+                size: (3840, 2160),
+                origin: (0.0, 0.0),
+                opacity: 1.0,
+                corner_radius: 0.0,
+                rotation_deg: 0.0,
+            })],
+        };
+        let best = |p: &apelles_compositor::FramePlan| {
+            (0..5)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    super::super::gpu_compositor::render(p).expect("GPU render");
+                    t.elapsed().as_secs_f64() * 1000.0
+                })
+                .fold(f64::INFINITY, f64::min)
+        };
+        let plain = best(&plan(None));
+        let graded = best(&plan(Some(lut)));
+        eprintln!("4K frame through the engine: {plain:.2} ms ungraded, {graded:.2} ms graded");
         assert!(
-            ms < BUDGET_MS,
-            "{ms} ms to apply a {DEFAULT_SIZE}³ LUT to one 960x540 frame exceeds \
-             the {BUDGET_MS} ms budget — the preview would visibly stutter on a graded clip"
+            graded - plain < BUDGET_MS,
+            "the grade adds {:.2} ms to a 4K frame, over the {BUDGET_MS} ms budget",
+            graded - plain
         );
     }
 

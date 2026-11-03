@@ -88,6 +88,7 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use image::DynamicImage;
 use image::codecs::jpeg::JpegEncoder;
@@ -121,154 +122,21 @@ use super::{caption_render, decode_pipe, grade_lut, project, text};
 pub(crate) use apelles_media::probe::probe_cached;
 
 // --------------------------------------------------------------------------- //
-// D-351 — the compositor's per-pixel passes, across the machine's cores.
+// D-449 — the paint walk runs on the GPU.
 //
-// Measured first, not assumed: a headless export of the 20-clip/1080p stress
-// fixture spent **66.7% of its wall time compositing and 33.3% decoding**
-// (33.16 s for 240 frames, 7.2 fps), with every one of those composite passes
-// running on ONE thread while the other nine sat idle — which is exactly the
-// "~22% CPU on a 10-core machine" the owner saw on the real project. See
-// `docs/notes/export-gpu-compositor.md` §9.
-//
-// Every pass parallelised here writes each output pixel from inputs it does not
-// itself write, so splitting the work by ROW is not an approximation: each
-// pixel's arithmetic is the identical expression it was before, evaluated in an
-// unspecified thread order that cannot reach it. That is what keeps CLAUDE.md's
-// "same doc + same frame ⇒ identical pixels" invariant true by construction
-// rather than by hoping — `rendering_the_same_frame_twice_produces_identical_
-// bytes` and the old-vs-new pixel-parity test both still pass unchanged, and
-// `parallel_row_passes_match_their_serial_form` asserts the equivalence
-// directly on the two hot loops.
-//
-// What is NOT parallelised here, deliberately: `image::imageops::resize`. It is
-// the library's own separable two-pass filter, and splitting it by output band
-// would need an input halo whose weight normalisation `image` does not expose —
-// a hand-rolled "identical" resize is exactly the kind of thing CLAUDE.md says
-// to reach for a library for, not to re-derive. It is parallelised ACROSS
-// layers instead (`prepare_layer_paint`), and remains this path's largest
-// single-threaded term; see the design note for what closes it.
+// Every layer this module resolves is painted by `apelles_compositor`'s engine
+// (`super::gpu_compositor`), the one render engine the live preview, the
+// Colorist's framed preview and every export segment share. This module still
+// owns everything that decides WHAT is drawn — which layers are visible, their
+// keyframed and faded transforms, the crop rectangle and placement box
+// (`crop_pixel_rect`, `ClipTransform::effective_size`), the grade lattice, text
+// and caption rasterisation — and hands the engine one resolved
+// `apelles_compositor::FramePlan` per frame (`paint_layer`). The CPU passes that
+// used to live here (D-217's `blend_layer_sampled`, D-351's row-parallel
+// overlay/opacity/corner/adjustment passes, the RGB→RGBA widening) are gone:
+// the engine reproduces each of them (measured parity: `docs/notes/
+// export-gpu-compositor.md` §15) and there is no CPU fallback.
 // --------------------------------------------------------------------------- //
-
-/// Below this many pixels a pass runs serially — and the number is **not** a
-/// rayon split-overhead threshold, which is what it looks like. It is the line
-/// between the LIVE PREVIEW's frames and an EXPORT's, and it is there because
-/// those two want opposite things from the CPU.
-///
-/// **Measured, not assumed** (this was a real regression, caught by an existing
-/// test before it shipped). Parallelising the compositor at preview sizes made
-/// `playback_primes_the_upcoming_cut_and_a_scrub_does_not` fail: the compositor
-/// taking every core slows the `ffmpeg` decode CHILD it is competing with, which
-/// inflates `decode_pipe::record_seek_cost`'s measured EWMA, which widens
-/// `prefetch_lead_secs`, which primes more standby pipes than that test's
-/// fixture expects. Nothing there is wrong arithmetic — it is D-330's scheduler
-/// correctly reacting to a genuinely slower seek — but it is the export's
-/// optimisation reaching into live playback and changing how it schedules
-/// decoders, which is precisely the trade CLAUDE.md says not to make
-/// ("performance, then stability" is about the UI feeling snappy; a preview that
-/// starves its own decoder to compositing threads is the opposite).
-///
-/// So: an export composites on every core, and the preview composites exactly as
-/// it did before this change, byte for byte and thread for thread.
-///
-/// **Why this value separates them exactly.** `PreviewPane.tsx`'s
-/// `PREVIEW_LONG_EDGE` is 960, and the preview is the only caller that caps the
-/// canvas that way — so the largest frame live playback can ever composite is
-/// 960×960, i.e. 921,600 px, even for a square composition. The smallest frame a
-/// real export composites is 1920×1080, i.e. 2,073,600 px. 1024² sits between
-/// them with room on both sides, so this is a boundary between two callers
-/// rather than a tuned constant. (A deliberately tiny export — the 640×360
-/// parity fixture — therefore composites serially, which is correct: it is
-/// smaller than a preview frame.)
-const PARALLEL_PIXEL_MIN: u64 = 1024 * 1024;
-
-/// Run `f(y, row)` over every row of `buf`, in parallel when there is enough
-/// work to pay for it. `stride` is one row in bytes; `buf.len()` must be a whole
-/// number of rows.
-///
-/// The serial arm is not a fallback for correctness — both arms run the same
-/// closure over the same disjoint rows — it is purely the small-image case.
-pub(super) fn for_each_row_mut(
-    buf: &mut [u8],
-    stride: usize,
-    f: impl Fn(usize, &mut [u8]) + Send + Sync,
-) {
-    debug_assert!(stride > 0 && buf.len().is_multiple_of(stride));
-    if (buf.len() / stride.max(1)) as u64 * (stride as u64 / 4) < PARALLEL_PIXEL_MIN {
-        buf.chunks_mut(stride)
-            .enumerate()
-            .for_each(|(y, r)| f(y, r));
-    } else {
-        use rayon::prelude::*;
-        buf.par_chunks_mut(stride)
-            .enumerate()
-            .for_each(|(y, r)| f(y, r));
-    }
-}
-
-/// `DynamicImage::to_rgba8`, but the 8-bit-RGB case — which is every frame
-/// `decode_pipe` produces — converts across cores instead of on one.
-///
-/// A 4K frame is 8.3 M pixels; at two video layers a frame that is ~16 M
-/// channel-widening writes per frame charged to a single thread for no reason.
-/// Every other variant defers to `image`'s own conversion, unchanged.
-fn to_rgba8_parallel(img: DynamicImage) -> image::RgbaImage {
-    let DynamicImage::ImageRgb8(src) = img else {
-        return img.to_rgba8();
-    };
-    let (w, h) = src.dimensions();
-    let mut out: image::RgbaImage = image::ImageBuffer::new(w, h);
-    let src_raw = src.as_raw();
-    let src_stride = w as usize * 3;
-    let dst_stride = w as usize * 4;
-    for_each_row_mut(out.as_mut(), dst_stride, |y, row| {
-        let s = &src_raw[y * src_stride..y * src_stride + src_stride];
-        for (d, p) in row
-            .as_chunks_mut::<4>()
-            .0
-            .iter_mut()
-            .zip(s.as_chunks::<3>().0)
-        {
-            *d = [p[0], p[1], p[2], 255];
-        }
-    });
-    out
-}
-
-/// `image::imageops::overlay`, across cores.
-///
-/// Deliberately a re-spelling of that function's own body rather than a new
-/// blend model: it is `dst.blend(&src)` over the intersection of the two
-/// images, which is a dozen lines and is the ONLY thing standing between this
-/// pass and the row split. The alternative — keeping `image`'s serial call —
-/// leaves a full-canvas alpha blend per layer per frame on one thread.
-/// `overlay_parallel_matches_the_image_crate` asserts the two produce identical
-/// buffers, so this cannot drift from the library it mirrors.
-fn overlay_parallel(canvas: &mut image::RgbaImage, top: &image::RgbaImage, ox: i64, oy: i64) {
-    use image::Pixel as _;
-    let (cw, ch) = canvas.dimensions();
-    let (tw, th) = top.dimensions();
-    let x0 = ox.max(0);
-    let y0 = oy.max(0);
-    let x1 = (ox + tw as i64).min(cw as i64);
-    let y1 = (oy + th as i64).min(ch as i64);
-    if x1 <= x0 || y1 <= y0 {
-        return;
-    }
-    let stride = cw as usize * 4;
-    let t_stride = tw as usize * 4;
-    let t_raw = top.as_raw();
-    let band = &mut canvas.as_mut()[y0 as usize * stride..y1 as usize * stride];
-    for_each_row_mut(band, stride, |ri, row| {
-        let py = y0 + ri as i64;
-        let t_row = (py - oy) as usize * t_stride;
-        for px in x0..x1 {
-            let to = t_row + (px - ox) as usize * 4;
-            let src = image::Rgba([t_raw[to], t_raw[to + 1], t_raw[to + 2], t_raw[to + 3]]);
-            let o = px as usize * 4;
-            image::Rgba::from_slice_mut(&mut row[o..o + 4]).blend(&src);
-        }
-    });
-}
 
 // --------------------------------------------------------------------------- //
 // D-292 — a clip's source may be a STILL IMAGE, not just moving footage.
@@ -312,12 +180,13 @@ fn decode_scale(source_size: (u32, u32), max_long_edge: Option<u32>) -> Option<(
 /// frame in it. (Stated once here; it is equally true of
 /// [`decode_clip_picture`] below.)
 ///
-/// **The compositor's variant: RGBA, shared where it can be.** A still's
-/// buffer comes straight back from `apelles_media::still`'s decode cache as the
-/// `Arc` that cache holds, with no copy at all — which is the point of the
-/// `Arc` in `Step::Paint`, and the same zero-copy path a rasterised text layer
-/// already takes. A video frame is converted once, exactly as it was before
-/// D-292.
+/// **The compositor's variant: the picture as the GPU engine takes it, shared
+/// where it can be.** A still's buffer comes straight back from
+/// `apelles_media::still`'s decode cache as the `Arc` that cache holds, with no
+/// copy at all, and the engine keeps it on the GPU while the cache does (the
+/// same path a rasterised title takes). A video frame is handed over as the RGB
+/// buffer `decode_pipe` produced; the engine widens it to RGBA on the GPU
+/// (D-449), so no CPU pass touches its pixels.
 fn decode_clip_rgba(
     source_path: &str,
     source_size: (u32, u32),
@@ -325,16 +194,20 @@ fn decode_clip_rgba(
     slot: decode_pipe::PipeSlot,
     source_frame: u64,
     max_long_edge: Option<u32>,
-) -> Result<std::sync::Arc<image::RgbaImage>, String> {
+) -> Result<apelles_compositor::Source, String> {
     let path = PathBuf::from(source_path);
     let scale = decode_scale(source_size, max_long_edge);
     if apelles_media::still::is_image_file(&path) {
         return apelles_media::still::decode_scaled(&path, scale)
+            .map(apelles_compositor::Source::Rgba)
             .map_err(|e| format!("decode still {source_path}: {e}"));
     }
     let info = probe_cached(&path)?;
     decode_pipe::playback_frame_scaled(lane, slot, &path, &info, source_frame, scale)
-        .map(|img| std::sync::Arc::new(to_rgba8_parallel(img)))
+        .map(|img| match img {
+            DynamicImage::ImageRgb8(rgb) => apelles_compositor::Source::Rgb(Arc::new(rgb)),
+            other => apelles_compositor::Source::Rgba(Arc::new(other.into_rgba8())),
+        })
         .map_err(|e| format!("decode {source_path} @ src frame {source_frame}: {e}"))
 }
 
@@ -1602,6 +1475,41 @@ pub(crate) fn render_timeline_frame(
     intent: FrameIntent,
     lane: decode_pipe::PipeLane,
 ) -> Result<Option<DynamicImage>, String> {
+    render_timeline_frame_deferred(timeline, settings, pos, max_long_edge, intent, lane)?
+        .map(RenderedFrame::finish)
+        .transpose()
+}
+
+/// A frame as [`render_timeline_frame_deferred`] returns it: either a picture
+/// already in hand (the plain-decode fast path), or one the GPU engine is
+/// still drawing (D-449).
+pub(crate) enum RenderedFrame {
+    Decoded(DynamicImage),
+    Gpu(super::gpu_compositor::GpuFrame),
+}
+
+impl RenderedFrame {
+    /// The frame's pixels, waiting for the GPU if it is still drawing.
+    pub(crate) fn finish(self) -> Result<DynamicImage, String> {
+        match self {
+            RenderedFrame::Decoded(img) => Ok(img),
+            RenderedFrame::Gpu(frame) => frame.wait().map(DynamicImage::ImageRgba8),
+        }
+    }
+}
+
+/// [`render_timeline_frame`] without the wait: the GPU engine's frame is
+/// handed back still in flight, so a caller with more frames to do (the
+/// export, D-449) can decode the next one while the GPU draws this one, and
+/// wait for it later, on another thread. The preview calls the waiting form.
+pub(crate) fn render_timeline_frame_deferred(
+    timeline: &Timeline,
+    settings: &project::ProjectSettings,
+    pos: u64,
+    max_long_edge: Option<u32>,
+    intent: FrameIntent,
+    lane: decode_pipe::PipeLane,
+) -> Result<Option<RenderedFrame>, String> {
     // B-290 — no "timeline has no video track" refusal here any more. An
     // audio-only timeline (a cut voiceover, a podcast) is a real document: it
     // simply has no visible layer at any position, which is the same answer a
@@ -1722,7 +1630,14 @@ pub(crate) fn render_timeline_frame(
         _ => false,
     };
 
-    let img = match layers.as_slice() {
+    // D-229 — captions go on last, over the finished picture, whatever the
+    // video z-order turned out to be. Since D-449 they are layers of the same
+    // GPU frame: a frame with a caption on it is composited (it never takes
+    // the plain-decode fast path below), with the captions painted after every
+    // video layer. A frame with none pays one empty `Vec`.
+    let has_captions = !timeline.resolve_visible_captions_at(pos as i64).is_empty();
+
+    let frame = match layers.as_slice() {
         [] => return Ok(None),
         [
             VisibleLayer {
@@ -1735,7 +1650,7 @@ pub(crate) fn render_timeline_frame(
                     },
                 ..
             },
-        ] if single_plain => {
+        ] if single_plain && !has_captions => {
             // Fast path: exactly one visible layer, with nothing to apply to
             // it, needs no compositing at all.
             //
@@ -1752,27 +1667,23 @@ pub(crate) fn render_timeline_frame(
             // case is byte-identical and no slower than before.
             // `comp` IS this clip's source size — that is exactly what
             // `single_plain` just checked — so no second probe is needed here.
-            decode_clip_picture(
+            RenderedFrame::Decoded(decode_clip_picture(
                 &clip.source_path,
                 comp,
                 lane,
                 pipe_slot(*track, *role),
                 (*source_frame).max(0) as u64,
                 max_long_edge,
-            )?
+            )?)
         }
-        _ => composite_video_frame(&layers, max_long_edge, comp, lane)?,
+        _ => RenderedFrame::Gpu(composite_video_frame(
+            &layers,
+            max_long_edge,
+            comp,
+            lane,
+            |canvas| caption_steps(timeline, pos as i64, canvas),
+        )?),
     };
-
-    // D-229 — captions go on last, over the finished picture, whatever the
-    // video z-order turned out to be. That includes over the single-layer fast
-    // path above: a caption must not be the reason a plain one-clip frame
-    // stops taking it, so this is a separate pass rather than another arm of
-    // the match. `draw_captions_onto` returns the frame untouched when there
-    // are none, which is every pre-D-229 project and every frame of a project
-    // with no subtitle track — so the common case pays one `Vec` allocation
-    // that comes back empty.
-    let img = draw_captions_onto(img, timeline, pos as i64)?;
 
     // D-324 — prime the upcoming boundaries AFTER this frame is decoded, not
     // before.
@@ -1789,7 +1700,7 @@ pub(crate) fn render_timeline_frame(
     // asserts on the standby count rather than only on wall-clock.)
     prime(lane, &upcoming);
 
-    Ok(Some(img))
+    Ok(Some(frame))
 }
 
 /// Hand the resolved [`PrefetchTarget`]s to `decode_pipe::sync_prefetch`
@@ -1816,30 +1727,71 @@ fn prime(lane: decode_pipe::PipeLane, targets: &[PrefetchTarget]) {
     decode_pipe::sync_prefetch(lane, &specs);
 }
 
-/// D-229 — alpha-composite every caption showing at `pos` onto `frame`.
+/// D-229 — every caption showing at `pos`, as top layers of a GPU frame plan
+/// (D-449), each rasterised at the canvas's own size and painted 1:1 at its
+/// top-left with full opacity.
 ///
-/// **A separate pass over the finished picture, deliberately** (see
+/// **On top of everything, deliberately** (see
 /// `Timeline::resolve_visible_captions_at`): a caption is not a video layer,
 /// takes no part in the video z-order, and never occludes what is under it the
-/// way an opaque clip does. Painting it here — after the compositor, after the
-/// single-layer fast path — is what makes those three facts true in the
-/// preview as well as in the model.
+/// way an opaque clip does, so the caller appends these after every video and
+/// adjustment step. A caption has no `opacity`/fade of its own (see
+/// `Clip::caption`'s doc); its only transparency is the background box's,
+/// already in the layer's own alpha.
 ///
-/// **The canvas is whatever the frame already is**, not the composition: the
-/// caption layer is rasterised at the frame's own size, so its style's
-/// fractions resolve against the same picture the viewer is looking at. That
-/// is the same resolution-independence contract the export honours by
-/// resolving the identical fractions against the output size.
+/// **The canvas is the frame's own size**, not the composition: the caption is
+/// rasterised there, so its style's fractions resolve against the same picture
+/// the viewer is looking at. That is the resolution-independence contract the
+/// export honours by resolving the identical fractions against the output size.
+fn caption_steps(
+    timeline: &Timeline,
+    pos: i64,
+    (w, h): (u32, u32),
+) -> Result<Vec<apelles_compositor::Step>, String> {
+    let captions = timeline.resolve_visible_captions_at(pos);
+    // D-243 — an animated caption needs to know where in its OWN clip this
+    // frame falls. Clip-local, not session-relative, so a cue that is moved or
+    // rippled animates identically (the same rule its word windows follow).
+    let fps = timeline.fps();
+    captions
+        .into_iter()
+        .map(|cap| {
+            let time = if fps > 0.0 {
+                caption_render::CaptionTime {
+                    t_secs: (pos - cap.clip.start_frame) as f64 / fps,
+                    dur_secs: cap.clip.duration as f64 / fps,
+                }
+            } else {
+                // A timeline with no usable frame rate has no time axis to
+                // animate along; the static first frame is the honest
+                // degradation.
+                caption_render::CaptionTime::STATIC
+            };
+            let layer = caption_render::render_caption_layer(cap.cue, &cap.style, w, h, time)?;
+            Ok(apelles_compositor::Step::Paint(apelles_compositor::Layer {
+                source: apelles_compositor::Source::Rgba(layer),
+                lut: None,
+                crop: (0, 0, w, h),
+                size: (w, h),
+                origin: (0.0, 0.0),
+                opacity: 1.0,
+                corner_radius: 0.0,
+                rotation_deg: 0.0,
+            }))
+        })
+        .collect()
+}
+
 /// B-290 — a position with no visible video layer, which is still a frame with
 /// a picture if a caption is up: the caption over opaque black, at the
-/// composition's preview canvas. `None` (nothing to draw at all) when no
-/// caption is visible either, which every caller turns into plain black.
+/// composition's preview canvas, drawn by the GPU engine like any other frame.
+/// `None` (nothing to draw at all) when no caption is visible either, which
+/// every caller turns into plain black.
 ///
 /// This is what a voiceover timeline with captions shows at every position,
 /// and it is what the filter export already wrote there (its captions are
 /// drawn over the `color=black` base whatever is or is not under them). Before
-/// this, the preview and the compositor export dropped a caption over a gap —
-/// the `layers.is_empty()` return ran ahead of [`draw_captions_onto`].
+/// this, the preview and the compositor export dropped a caption over a gap.
 ///
 /// A timeline with no frame size at all has no canvas to draw on, so it stays
 /// `None`: a project holding nothing but audio and no size set, whose preview
@@ -1849,7 +1801,7 @@ fn captions_over_black(
     settings: &project::ProjectSettings,
     pos: u64,
     max_long_edge: Option<u32>,
-) -> Result<Option<DynamicImage>, String> {
+) -> Result<Option<RenderedFrame>, String> {
     if timeline.resolve_visible_captions_at(pos as i64).is_empty() {
         return Ok(None);
     }
@@ -1857,47 +1809,13 @@ fn captions_over_black(
         return Ok(None);
     };
     let (w, h) = preview_canvas_size(comp, max_long_edge);
-    let black = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
-        w,
-        h,
-        image::Rgba([0, 0, 0, 255]),
-    ));
-    draw_captions_onto(black, timeline, pos as i64).map(Some)
-}
-
-fn draw_captions_onto(
-    frame: DynamicImage,
-    timeline: &Timeline,
-    pos: i64,
-) -> Result<DynamicImage, String> {
-    let captions = timeline.resolve_visible_captions_at(pos);
-    if captions.is_empty() {
-        return Ok(frame);
-    }
-    let (w, h) = (frame.width(), frame.height());
-    let mut canvas = frame.to_rgba8();
-    // D-243 — an animated caption needs to know where in its OWN clip this
-    // frame falls. Clip-local, not session-relative, so a cue that is moved or
-    // rippled animates identically (the same rule its word windows follow).
-    let fps = timeline.fps();
-    for cap in captions {
-        let time = if fps > 0.0 {
-            caption_render::CaptionTime {
-                t_secs: (pos - cap.clip.start_frame) as f64 / fps,
-                dur_secs: cap.clip.duration as f64 / fps,
-            }
-        } else {
-            // A timeline with no usable frame rate has no time axis to animate
-            // along; drawing the static first frame is the honest degradation.
-            caption_render::CaptionTime::STATIC
-        };
-        let layer = caption_render::render_caption_layer(cap.cue, &cap.style, w, h, time)?;
-        // Full opacity: a caption has no `opacity`/fade of its own (see
-        // `Clip::caption`'s doc) — its only transparency is the background
-        // box's, which is already baked into the layer's own alpha.
-        image::imageops::overlay(&mut canvas, layer.as_ref(), 0, 0);
-    }
-    Ok(DynamicImage::ImageRgba8(canvas))
+    let plan = apelles_compositor::FramePlan {
+        width: w,
+        height: h,
+        background: apelles_compositor::Background::Solid([0, 0, 0, 255]),
+        steps: caption_steps(timeline, pos as i64, (w, h))?,
+    };
+    super::gpu_compositor::submit(&plan).map(|f| Some(RenderedFrame::Gpu(f)))
 }
 
 /// **D-324/D-330 — how far ahead of the playhead to look for the next cut, when
@@ -2787,7 +2705,8 @@ fn composite_video_frame(
     max_long_edge: Option<u32>,
     comp: (u32, u32),
     lane: decode_pipe::PipeLane,
-) -> Result<DynamicImage, String> {
+    overlays: impl FnOnce((u32, u32)) -> Result<Vec<apelles_compositor::Step>, String>,
+) -> Result<super::gpu_compositor::GpuFrame, String> {
     /// One step of the paint walk. Was a plain struct (a layer always had
     /// pixels) until D-230 introduced a layer that has none and instead
     /// *operates on the canvas*, which is a different kind of step rather than
@@ -2795,14 +2714,17 @@ fn composite_video_frame(
     enum Step {
         /// An ordinary picture layer: paint it onto the canvas.
         Paint {
-            /// `Arc` (D-211) purely so a **rasterised text layer** — which
-            /// `chroma::text` hands back from its own cache, shared with
-            /// whatever other frame is showing the same title — needs no
-            /// per-frame clone of a full canvas-sized buffer. A decoded video
-            /// frame is owned outright and just gets wrapped; the cost is one
-            /// allocation per layer per frame, against a memcpy of the whole
-            /// buffer.
-            img: std::sync::Arc<image::RgbaImage>,
+            /// The layer's pixels as the GPU engine takes them (D-449). A
+            /// rasterised text layer or a still is the `Arc` its cache holds
+            /// (D-211/D-292), so the engine keeps it on the GPU instead of
+            /// uploading it every frame; a decoded video frame is owned
+            /// outright and uploaded once.
+            img: apelles_compositor::Source,
+            /// D-256 — the clip's baked Colorist grade, applied by the engine
+            /// to the layer's own pixels before any geometry. `None` for an
+            /// ungraded clip, and for a clip whose grade was already applied
+            /// because its highlights are drawn on the graded picture.
+            lut: Option<Arc<apelles_types::Lut3d>>,
             transform: ClipTransform,
             /// This layer's full-frame footprint on the canvas at
             /// `scale == 1.0`, in canvas pixels — its source size mapped
@@ -2834,11 +2756,12 @@ fn composite_video_frame(
         if let LayerSource::Color { rgb } = layer.source {
             let (r, g, b) = rgb;
             return Ok(Some(Step::Paint {
-                img: std::sync::Arc::new(image::ImageBuffer::from_pixel(
-                    canvas_w,
-                    canvas_h,
-                    image::Rgba([r, g, b, 255]),
-                )),
+                img: apelles_compositor::Source::Solid {
+                    width: canvas_w,
+                    height: canvas_h,
+                    rgba: [r, g, b, 255],
+                },
+                lut: None,
                 transform: plate_transform(layer.alpha),
                 natural: (canvas_w as f64, canvas_h as f64),
             }));
@@ -2874,7 +2797,10 @@ fn composite_video_frame(
         // reproduce; see its own doc.
         if let Some(text_layer) = &clip.text {
             return Ok(Some(Step::Paint {
-                img: text::render_text_layer(text_layer, canvas_w, canvas_h)?,
+                img: apelles_compositor::Source::Rgba(text::render_text_layer(
+                    text_layer, canvas_w, canvas_h,
+                )?),
+                lut: None,
                 // No `scaled_to_render` (D-344): a text clip's radius is pinned
                 // to zero by `resolve_text_clip_transform`, and zero is
                 // scale-invariant — stating the conversion here would only
@@ -2895,7 +2821,7 @@ fn composite_video_frame(
         // within a single track; see `pipe_slot`. D-292 — a STILL layer takes
         // no slot at all and never reaches `decode_pipe`; see
         // `decode_clip_rgba`.
-        let mut rgba = decode_clip_rgba(
+        let mut img = decode_clip_rgba(
             &clip.source_path,
             source_size,
             lane,
@@ -2903,37 +2829,40 @@ fn composite_video_frame(
             (*source_frame).max(0) as u64,
             max_long_edge,
         )?;
-        // D-256 — **the Colorist grade, applied here.** On this clip's own
-        // decoded pixels, before any geometry, because that is what a grade is:
-        // a property of the clip's picture, not of where it sits in the
-        // composition. The ffmpeg exporter puts its `lut3d` node at exactly the
-        // same point in the per-clip chain (before `crop`/`scale`), which is
-        // what makes the two engines agree on order as well as on maths — and
-        // since a 3D LUT is per-pixel it commutes with `crop` exactly anyway,
-        // so only the resample is order-sensitive and both engines resample
-        // after.
+        // D-256 — **the Colorist grade.** On this clip's own decoded pixels,
+        // before any geometry, because that is what a grade is: a property of
+        // the clip's picture, not of where it sits in the composition. Since
+        // D-449 the GPU engine applies it as the first thing it does to the
+        // layer (`Step::Paint::lut`), from the lattice the Colorist's own shader
+        // baked.
         //
         // Costs a memo lookup + one `metadata()` stat per layer per frame for
         // an ungraded clip, and nothing else — `lut_for_clip` returns `None`
         // before touching the GPU when there is no grade file, which is every
         // clip in every project that has never been near the Colorist tab.
-        //
-        // D-292 — `Arc::make_mut` rather than a plain `&mut`: a STILL's buffer
-        // is the decode cache's own, shared with whatever other frame is
-        // showing the same still, so grading it in place would corrupt the
-        // cache. `make_mut` copies exactly when the buffer is shared and not
-        // otherwise — so a still pays one copy only when it is actually graded,
-        // and a freshly decoded video frame (refcount 1) is still graded in
-        // place, byte-identically to before.
-        if let Some(lut) = grade_lut::lut_for_clip(&clip.id) {
-            grade_lut::apply_to_rgba(std::sync::Arc::make_mut(&mut rgba), &lut);
-        }
+        let mut lut = grade_lut::lut_for_clip(&clip.id);
         // D-396 — **the clip's highlighter strokes**, drawn on the decoded
         // picture after the grade and before any geometry, so they follow every
-        // crop, push-in and rotation. The ffmpeg exporter's `geq` nodes sit at
-        // exactly this point in the per-clip chain (after `lut3d`, before
-        // `crop`). A clip with none costs one empty-slice check.
-        highlighted_picture(&clip.id, &mut rgba, &clip.highlights, *source_frame);
+        // crop, push-in and rotation. Strokes are drawn on the CPU (they are
+        // rasterised like a title), so a highlighted clip is graded first, on
+        // the GPU, and handed to the paint walk already graded. A clip with no
+        // highlights costs one empty-slice check.
+        if !clip.highlights.is_empty() {
+            let mut rgba = match img {
+                apelles_compositor::Source::Rgba(a) => a,
+                apelles_compositor::Source::Rgb(rgb) => {
+                    Arc::new(DynamicImage::ImageRgb8(Arc::unwrap_or_clone(rgb)).into_rgba8())
+                }
+                apelles_compositor::Source::Solid { .. } => {
+                    unreachable!("a decoded clip is never a plate")
+                }
+            };
+            if let Some(l) = lut.take() {
+                rgba = Arc::new(super::gpu_compositor::grade(&rgba, &l)?);
+            }
+            highlighted_picture(&clip.id, &mut rgba, &clip.highlights, *source_frame);
+            img = apelles_compositor::Source::Rgba(rgba);
+        }
         // D-425 / B-325 — the layer's footprint at `scale == 1`: its **source**
         // size (not its decoded size — the decoded size follows the preview
         // quality, the source size does not) sized into the frame by the clip's
@@ -2954,7 +2883,8 @@ fn composite_video_frame(
             canvas_px,
         );
         Ok(Some(Step::Paint {
-            img: rgba,
+            img,
+            lut,
             // D-344 — `corner_radius` is the one geometry field authored in
             // OUTPUT pixels rather than as a ratio, so it is the one that has
             // to ride `render_scale` explicitly; see
@@ -3024,56 +2954,75 @@ fn composite_video_frame(
         steps
     };
 
-    let mut canvas: image::RgbaImage =
-        image::ImageBuffer::from_pixel(canvas_w, canvas_h, image::Rgba([0, 0, 0, 255]));
-
-    for step in decoded.iter().rev() {
-        match step {
+    // D-449 — the paint walk, as one plan for the GPU engine: back to front
+    // (lowest priority first). D-230's adjustment-clip model is unchanged: at
+    // its point in the walk the canvas IS "every layer beneath this clip", so
+    // the operator applies to exactly that. Adjustment alpha is untouched and
+    // the canvas is opaque black by construction.
+    let canvas = (canvas_w, canvas_h);
+    let mut steps: Vec<apelles_compositor::Step> = decoded
+        .into_iter()
+        .rev()
+        .filter_map(|step| match step {
             Step::Paint {
                 img,
+                lut,
                 transform,
                 natural,
-            } => composite_layer_onto(&mut canvas, img, transform, *natural),
-            // D-230 — the whole adjustment-clip compositing model, in one line:
-            // the canvas at this point in the reverse walk IS "every layer
-            // beneath this clip", so applying the operator to it is exactly the
-            // documented behaviour, with no scoping logic of its own.
-            Step::Adjust(ops) => apply_adjustment_to_canvas(&mut canvas, ops),
-        }
-    }
-
-    Ok(DynamicImage::ImageRgba8(canvas))
+            } => paint_layer(img, lut, &transform, natural, canvas)
+                .map(apelles_compositor::Step::Paint),
+            Step::Adjust(ops) => Some(apelles_compositor::Step::Adjust(ops)),
+        })
+        .collect();
+    // The frame's overlays (its captions, D-229) go on after every video and
+    // adjustment step.
+    steps.extend(overlays(canvas)?);
+    let plan = apelles_compositor::FramePlan {
+        width: canvas_w,
+        height: canvas_h,
+        background: apelles_compositor::Background::Solid([0, 0, 0, 255]),
+        steps,
+    };
+    super::gpu_compositor::submit(&plan)
 }
 
-/// D-230 — apply an adjustment clip's colour operator to the whole canvas.
+/// **D-449 — one resolved layer for the GPU engine**: `t`'s geometry turned
+/// into canvas pixels, exactly as the CPU compositor did before painting.
 ///
-/// **Whole canvas, deliberately.** The correction is full-frame: it reaches
-/// letterboxed/empty regions (which are the black backdrop) exactly as it
-/// reaches picture, because that is what the ffmpeg export does — there the
-/// filter sits on the composited stream, which includes `[base]`. Preview and
-/// export agreeing matters more here than the arguably-tidier alternative of
-/// masking the effect to where picture happens to be, which the export could
-/// not reproduce without a per-layer alpha pass it does not have.
-///
-/// Alpha is untouched: the operator is a colour correction, and the canvas is
-/// opaque by construction (it starts as opaque black).
-fn apply_adjustment_to_canvas(
-    canvas: &mut image::RgbaImage,
-    ops: &apelles_timeline::AdjustmentOps,
-) {
-    // D-351 — by row, like `grade_lut::apply_to_rgba` (which this pass is the
-    // adjustment-clip twin of) has always done. A full-canvas colour operator on
-    // one thread is a 4K frame's worth of per-pixel maths per adjustment clip
-    // per frame.
-    let stride = canvas.width() as usize * 4;
-    for_each_row_mut(canvas.as_mut(), stride, |_, row| {
-        for px in row.as_chunks_mut::<4>().0 {
-            let [r, g, b] = ops.apply_rgb8([px[0], px[1], px[2]]);
-            px[0] = r;
-            px[1] = g;
-            px[2] = b;
-        }
-    });
+/// This is the one place a [`ClipTransform`] becomes pixels, so the geometry
+/// keeps one implementation (D-363's rule): the kept rectangle is
+/// [`crop_pixel_rect`] (crop first, B-218), the placement box is
+/// [`ClipTransform::effective_size`] rounded to whole pixels and at least one
+/// (D-193), and the box's top-left is `position × canvas` (D-338), left
+/// unrounded for the engine to round as `image::imageops::overlay` did.
+/// `None` when nothing would be painted: a fully transparent layer, or one
+/// cropped away entirely.
+fn paint_layer(
+    source: apelles_compositor::Source,
+    lut: Option<Arc<apelles_types::Lut3d>>,
+    t: &ClipTransform,
+    natural: (f64, f64),
+    canvas: (u32, u32),
+) -> Option<apelles_compositor::Layer> {
+    let opacity = t.opacity.clamp(0.0, 1.0) as f32;
+    if opacity <= 0.0 {
+        return None;
+    }
+    let (lw, lh) = source.dimensions();
+    let crop = crop_pixel_rect(lw, lh, t)?;
+    let (raw_w, raw_h) = t.effective_size(natural, canvas);
+    let size = (raw_w.round().max(1.0) as u32, raw_h.round().max(1.0) as u32);
+    let (cw, ch) = canvas;
+    Some(apelles_compositor::Layer {
+        source,
+        lut,
+        crop,
+        size,
+        origin: (t.position_x * cw as f64, t.position_y * ch as f64),
+        opacity,
+        corner_radius: t.corner_radius,
+        rotation_deg: t.rotation,
+    })
 }
 
 /// The **kept** (un-cropped) region of a `w`×`h` layer under `t`'s normalised
@@ -3103,56 +3052,14 @@ fn crop_pixel_rect(w: u32, h: u32, t: &ClipTransform) -> Option<(u32, u32, u32, 
     (x1 > x0 && y1 > y0).then_some((x0, y0, x1, y1))
 }
 
-/// D-344 — how much of the pixel whose top-left corner is `(x, y)` a
-/// `w`×`h` placement box rounded to radius `r` covers: `1.0` well inside,
-/// `0.0` well outside, a linear one-pixel ramp across the corner arc.
-/// All four arguments are in the placement box's OWN pixel space.
-///
-/// **This is the canonical rounded-box signed distance field** (the
-/// `sdRoundedBox` every SDF reference states — `q = |p| - (half - r)`,
-/// `length(max(q, 0)) + min(max(q.x, q.y), 0) - r`), not a hand-derived
-/// corner test, per CLAUDE.md's "don't hand-roll what a known-good formula
-/// already solves". Using the real SDF rather than the obvious
-/// "distance from the corner circle's centre" is not pedantry: the naive form
-/// has no defined value on the straight edges, so it needs a special case
-/// there — and that special case is exactly what broke `r == 0`, which under
-/// the naive expression silently halved the alpha of the ENTIRE layer instead
-/// of doing nothing (caught against real ffmpeg before either engine was
-/// written; see `docs/notes/rounded-corners.md`). The SDF form needs no
-/// special case and is an exact identity at `r == 0` by construction, which is
-/// what makes this feature's "zero is byte-identical" guarantee hold for a
-/// KEYFRAMED radius passing through zero too, not just for a clip that never
-/// sets one.
-///
-/// `+ 0.5` on both the pixel centre and the coverage threshold is the
-/// half-pixel convention that makes the box span `0..w` (full pixel coverage)
-/// rather than `0..w-1` (pixel centres): without it the outermost row and
-/// column would come back half-covered even at `r == 0`.
-///
-/// `r` is clamped to `0 ..= min(w, h) / 2` here, at the point of use, exactly
-/// as [`crop_pixel_rect`] clamps the crop insets and for the same stated
-/// reason — the model stores what the UI wrote, the consumer decides what it
-/// means. An over-large radius therefore becomes a pill or a circle (what CSS
-/// `border-radius` does with one) rather than a degenerate shape.
-///
-/// **The ffmpeg exporter computes this identical expression** in its `geq`
-/// alpha mask (`timelineExport.ts`'s `cornerRadiusMaskExpr`) — same formula,
-/// same clamp, same half-pixel convention — which is what makes the two
-/// engines agree to within ffmpeg's own 1/255 quantisation rather than
-/// "approximately".
-fn corner_coverage(x: f64, y: f64, w: f64, h: f64, r: f64) -> f32 {
-    // The SDF itself lives in `apelles-types` (D-396) now that clip highlights
-    // share it; this stays as the call sites' local name.
-    apelles_types::shape::rounded_box_coverage(x, y, w, h, r)
-}
-
 /// Crop → scale → **round the corners** → rotate → apply opacity (as an alpha
 /// multiply) → overlay `layer` onto `canvas`, with its TOP-LEFT corner at
-/// `transform`'s `position_x`/`position_y` (canvas fractions). Real
-/// arbitrary-angle rotation via `imageproc::geometric_transformations::
-/// rotate_about_center` — the exact same function + transparent-border
-/// pattern `image_processing.rs`'s own `apply_rotation` already uses for
-/// the Colorist's rotate adjustment, not a second rotation implementation.
+/// `transform`'s `position_x`/`position_y` (canvas fractions), on the GPU
+/// engine (D-449): one plan, the canvas as its background, this layer as its
+/// one step. The engine reproduces the CPU compositor this function used to
+/// be, step for step (the rotation is `imageproc`'s `rotate_about_center`
+/// with a transparent border, ported); what follows is the definition of
+/// those steps, which [`paint_layer`] resolves into canvas pixels.
 ///
 /// **Crop is first, and the crop is what gets scaled** (D-132, corrected by
 /// B-218). The crop insets select a sub-rectangle of the layer, and it is
@@ -3242,358 +3149,47 @@ fn corner_coverage(x: f64, y: f64, w: f64, h: f64, r: f64) -> f32 {
 /// the export chain (after `scale`, before `rotate`), for the same reasons.
 pub(super) fn composite_layer_onto(
     canvas: &mut image::RgbaImage,
-    layer: &image::RgbaImage,
+    layer: apelles_compositor::Source,
     t: &ClipTransform,
     natural: (f64, f64),
-) {
-    let opacity = t.opacity.clamp(0.0, 1.0) as f32;
-    if opacity <= 0.0 {
-        return; // fully transparent — nothing to paint, skip the work
-    }
-
-    let (lw, lh) = layer.dimensions();
-    let Some((cx0, cy0, cx1, cy1)) = crop_pixel_rect(lw, lh, t) else {
-        return; // cropped away entirely — nothing to paint
-    };
-    let cropped = (cx0, cy0, cx1, cy1) != (0, 0, lw, lh);
-    // B-218 — the crop's own pixel size. This, not the layer's full size, is
-    // what gets resized into the placement box: crop happens BEFORE scale, the
-    // order `capabilities.json` has always documented and the exporter has
-    // always compiled (`crop=...` then `scale=...`).
-    let (crop_w, crop_h) = (cx1 - cx0, cy1 - cy0);
-    // D-193 — `box_width`/`box_height` (canvas-fraction, when set) override
-    // `natural * scale` per axis independently; see `ClipTransform::
-    // effective_size`'s own doc for the full "why".
-    let (raw_w, raw_h) = t.effective_size(natural, canvas.dimensions());
-    let (sw, sh) = (raw_w.round().max(1.0) as u32, raw_h.round().max(1.0) as u32);
-
-    // D-217 — the magnified / 1:1 case goes straight onto the canvas instead of
-    // through a full-size intermediate buffer. This is the preview's single
-    // dominant cost: measured on the owner's own reel (two 2940×1670 layers in
-    // a 1080×1920 canvas at the 960 px preview cap), `image::imageops::resize`
-    // was ~16 ms per layer of a ~43 ms frame — 74% of it — because the layer is
-    // enlarged to its full on-canvas footprint (1470×835 at `scale == 1`,
-    // 1911×1086 at the reel's keyframed `scale == 1.3`) and `overlay` then
-    // throws most of those pixels away against a 540×960 canvas. Sampling
-    // bounds the work by what the canvas can actually show, and at a ratio ≥ 1
-    // it is not an approximation: `Triangle`'s support collapses to the same
-    // two taps per axis that a bilinear fetch uses, so this produces the same
-    // picture. A genuine **minification** keeps the `resize` path below — its
-    // output buffer is smaller than the source there, so the waste it can carry
-    // is bounded anyway, and `Triangle`'s widening support is real area
-    // filtering that a naive bilinear sample would alias against.
-    if t.rotation == 0.0 && sw >= crop_w && sh >= crop_h {
-        let (cw, ch) = canvas.dimensions();
-        // Same placement arithmetic as the general path's `overlay` call below
-        // — the layer's TOP-LEFT corner at `position_*` of the canvas (D-338,
-        // fixes B-201; see this function's own doc). The work buffer's size
-        // does not enter into it, which is exactly why the two paths agree
-        // without this branch having to reconstruct `(ww, wh)`.
-        let x = t.position_x * cw as f64;
-        let y = t.position_y * ch as f64;
-        blend_layer_sampled(
-            canvas,
-            layer,
-            (cx0, cy0, cx1, cy1),
-            (sw, sh),
-            (x, y),
-            opacity,
-            t.corner_radius,
-        );
-        return;
-    }
-
-    // The un-cropped branch is byte-for-byte the pre-D-132 path — no extra
-    // buffer, no per-pixel pass — so an uncropped clip (every clip in every
-    // existing project) costs exactly what it did before.
-    //
-    // B-218 — the cropped branch takes the crop's SUB-IMAGE and resizes THAT
-    // into the placement box, rather than alpha-masking the full layer and
-    // resizing the whole thing. Two things follow, both of which are the fix:
-    // the kept picture fills the box (crop-then-scale, ffmpeg's order and the
-    // documented one) instead of occupying only the sub-rectangle of it the
-    // crop happened to leave, and the crop edge is hard rather than feathered
-    // — which is what ffmpeg's own `crop` produces, so the two engines now
-    // agree there too. It is also strictly less work than the old path: no
-    // full-layer clone, no per-pixel alpha pass, and the resize input is the
-    // crop rather than the whole frame.
-    // D-351 — `Cow`, not an unconditional clone. A full-frame layer with no
-    // crop, no resize, no rounding, no rotation and full opacity — the base
-    // layer of every composition, on every frame — reached `layer.clone()` here
-    // and then had `overlay` read the copy: a whole canvas memcpy per frame
-    // (33 MB at 4K) whose result is byte-identical to what it was copied from.
-    // `to_mut()` below still copies exactly when one of those passes really is
-    // going to write, so nothing that mutates `work` changed.
-    let mut work: std::borrow::Cow<'_, image::RgbaImage> = if cropped {
-        let sub = image::imageops::crop_imm(layer, cx0, cy0, crop_w, crop_h).to_image();
-        std::borrow::Cow::Owned(if (sw, sh) != (crop_w, crop_h) {
-            image::imageops::resize(&sub, sw, sh, image::imageops::FilterType::Triangle)
-        } else {
-            sub
-        })
-    } else if (sw, sh) != (lw, lh) {
-        std::borrow::Cow::Owned(image::imageops::resize(
-            layer,
-            sw,
-            sh,
-            image::imageops::FilterType::Triangle,
-        ))
-    } else {
-        std::borrow::Cow::Borrowed(layer)
-    };
-
-    // D-344 — round the placement box's corners, here: `work` is now exactly
-    // the box at its real on-canvas size `(sw, sh)` and is still axis-aligned,
-    // which is the only point in this pipeline where both are true. See this
-    // function's own doc for why that position is the definition rather than a
-    // convenience, and [`corner_coverage`] for the formula and its clamp.
-    //
-    // A multiply into the existing alpha, never a replace, so this composes
-    // with the crop mask above it exactly the way `opacity` below composes with
-    // both: a cropped-away pixel is already alpha 0 and must not be un-hidden.
-    if t.corner_radius > 0.0 {
-        let work = work.to_mut();
-        let (ww, wh) = work.dimensions();
-        let (fw, fh) = (ww as f64, wh as f64);
-        let radius = t.corner_radius;
-        let stride = ww as usize * 4;
-        // D-351 — the same per-pixel coverage multiply, by row. `corner_coverage`
-        // is a pure function of `(x, y, w, h, r)`, so a row depends on nothing
-        // another row writes.
-        for_each_row_mut(work.as_mut(), stride, |y, row| {
-            for (x, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-                let cov = corner_coverage(x as f64, y as f64, fw, fh, radius);
-                if cov < 1.0 {
-                    px[3] = (px[3] as f32 * cov).round().clamp(0.0, 255.0) as u8;
-                }
-            }
-        });
-    }
-
-    if t.rotation != 0.0 {
-        let rgba32f = DynamicImage::ImageRgba8(work.into_owned()).to_rgba32f();
-        let rotated = imageproc::geometric_transformations::rotate_about_center(
-            &rgba32f,
-            (t.rotation as f32) * std::f32::consts::PI / 180.0,
-            imageproc::geometric_transformations::Interpolation::Bilinear,
-            imageproc::geometric_transformations::Border::Constant(image::Rgba([
-                0.0f32, 0.0, 0.0, 0.0,
-            ])),
-        );
-        work = std::borrow::Cow::Owned(DynamicImage::ImageRgba32F(rotated).to_rgba8());
-    }
-
-    if opacity < 1.0 {
-        let work = work.to_mut();
-        let stride = work.width() as usize * 4;
-        for_each_row_mut(work.as_mut(), stride, |_, row| {
-            for p in row.as_chunks_mut::<4>().0 {
-                p[3] = (p[3] as f32 * opacity).round().clamp(0.0, 255.0) as u8;
-            }
-        });
-    }
-
+) -> Result<(), String> {
     let (cw, ch) = canvas.dimensions();
-    // D-136 — `position_*` is a fraction of the composition, so it scales
-    // with the canvas: the same stored value lands on the same part of the
-    // picture at every preview quality. Per-axis (x against the width, y
-    // against the height), matching the crop insets' own convention.
-    //
-    // D-338 (fixes B-201) — and it names the layer's TOP-LEFT corner, not an
-    // offset from the canvas centre, so this is `position * canvas` and
-    // nothing else: literally ffmpeg's `overlay=x='<position_x>*W'`, which is
-    // what the exporter has always compiled. The work buffer's own size no
-    // longer appears in the placement at all, which is the whole point — it
-    // is what made the old formula disagree with the export by half the
-    // layer's size.
-    let x = t.position_x * cw as f64;
-    let y = t.position_y * ch as f64;
-    overlay_parallel(canvas, &work, x.round() as i64, y.round() as i64);
-}
-
-/// Paint a layer onto `canvas` at `dest_size`, scaling it by direct bilinear
-/// sampling and touching **only the canvas pixels it can actually cover**
-/// (D-217).
-///
-/// What it is: the enlarge-and-blend inner loop of [`composite_layer_onto`]'s
-/// no-rotation, ratio-≥-1 fast path — crop, scale, opacity and source-over
-/// blend fused into one pass whose cost is bounded by the canvas rather than
-/// by the layer's (arbitrarily large) on-canvas footprint.
-///
-/// `crop` is the SOURCE RECTANGLE this box samples, not a mask over the whole
-/// layer (B-218): `dest_size` maps onto `crop`'s extent, so the kept picture
-/// fills the box exactly as `crop=...`-then-`scale=...` does in the export.
-/// The caller's own ratio-≥-1 guard is therefore against the CROP's size, not
-/// the layer's.
-///
-/// What it does NOT do: rotation (the caller keeps that on the general path,
-/// which needs a whole rotated buffer), and **minification** — a ratio below 1
-/// needs `Triangle`'s widening support to avoid aliasing, and a plain bilinear
-/// fetch would not give it. Both are the caller's own guard conditions.
-///
-/// `origin` is the layer's unrounded top-left on the canvas; it is rounded here
-/// exactly the way `image::imageops::overlay` rounds it on the general path, so
-/// a clip does not shift by a pixel depending on which path it took. The sample
-/// position `(o + 0.5) * ratio - 0.5` is the one `image::imageops::resize`
-/// itself uses, so at ratio ≥ 1 the two agree pixel for pixel.
-///
-/// `corner_radius` (D-344) is folded into the same fused pass rather than
-/// costing a second one — this path exists precisely to avoid materialising a
-/// full-size intermediate buffer, and masking one into existence just to round
-/// its corners would give that back. It is evaluated in the destination box's
-/// own space (`px - ox`, `py - oy` against `dest_size`), which is the identical
-/// grid the general path's `work` buffer uses, so the two paths produce the
-/// same coverage for the same clip — `ox`/`oy` are the same rounded origin
-/// `overlay` would have placed that buffer at.
-fn blend_layer_sampled(
-    canvas: &mut image::RgbaImage,
-    layer: &image::RgbaImage,
-    crop: (u32, u32, u32, u32),
-    dest_size: (u32, u32),
-    origin: (f64, f64),
-    opacity: f32,
-    corner_radius: f64,
-) {
-    use image::Pixel as _;
-
-    let (cw, ch) = canvas.dimensions();
-    // Only the WIDTH of the layer is needed now (B-218): it is the row stride
-    // for the byte offsets below. The sampling extent is the CROP's, not the
-    // layer's — see this function's own doc.
-    let lw = layer.width();
-    let (sw, sh) = dest_size;
-    let (ox, oy) = (origin.0.round() as i64, origin.1.round() as i64);
-
-    // The visible window: the layer's footprint clipped to the canvas. Empty
-    // means the layer is entirely off-canvas — which the old path still paid a
-    // full-size resize for before `overlay` discarded all of it.
-    let vx0 = ox.max(0);
-    let vy0 = oy.max(0);
-    let vx1 = (ox + sw as i64).min(cw as i64);
-    let vy1 = (oy + sh as i64).min(ch as i64);
-    if vx1 <= vx0 || vy1 <= vy0 {
-        return;
-    }
-
-    // D-344 — resolved once for the whole window, not per pixel: an un-rounded
-    // clip (every clip in every pre-D-344 project) never evaluates the SDF at
-    // all, it multiplies by a constant `1.0` the optimiser folds away.
-    let rounding = |bx: i64, by: i64| -> f32 {
-        if corner_radius <= 0.0 {
-            return 1.0;
-        }
-        corner_coverage(bx as f64, by as f64, sw as f64, sh as f64, corner_radius)
+    let Some(layer) = paint_layer(layer, None, t, natural, (cw, ch)) else {
+        return Ok(()); // fully transparent or cropped away: nothing to paint
     };
-
-    // B-218 — the source rectangle this box samples is the CROP, not the whole
-    // layer: `rx`/`ry` map the destination box onto the crop's own extent and
-    // every tap is offset by, and clamped to, the crop's bounds. That is
-    // crop-then-scale — the kept picture fills the box — where this used to map
-    // the box onto the FULL layer and merely zero the alpha of taps that landed
-    // outside the crop, which left the kept picture occupying only the crop's
-    // own sub-fraction of the box. The general (minifying / rotated) path above
-    // does the same thing by resizing the crop's sub-image.
-    let (cx0, cy0, cx1, cy1) = crop;
-    let rx = (cx1 - cx0) as f64 / sw as f64;
-    let ry = (cy1 - cy0) as f64 / sh as f64;
-    let src = layer.as_raw();
-    let stride = lw as usize * 4;
-    let last_x = cx1 as i64 - 1;
-    let last_y = cy1 as i64 - 1;
-
-    // Per-column sample state, computed once for the whole window rather than
-    // once per row — this loop runs up to canvas-many times.
-    struct Col {
-        i0: usize,
-        i1: usize,
-        fx: f32,
-    }
-    // A tap that falls outside the crop reads the crop's edge texel, exactly as
-    // `resize` reaches the same place from the other side (it drops
-    // out-of-range taps and renormalises what is left).
-    let cols: Vec<Col> = (vx0..vx1)
-        .map(|px| {
-            let u = ((px - ox) as f64 + 0.5) * rx - 0.5 + cx0 as f64;
-            let ux = u.floor();
-            let x0 = (ux as i64).clamp(cx0 as i64, last_x);
-            let x1 = (ux as i64 + 1).clamp(cx0 as i64, last_x);
-            Col {
-                i0: x0 as usize * 4,
-                i1: x1 as usize * 4,
-                fx: (u - ux) as f32,
-            }
-        })
-        .collect();
-
-    // D-351 — one destination row per unit of work. Every tap this loop reads is
-    // in `layer` (immutable) and every pixel it writes is on its own row, so the
-    // split changes the schedule and nothing else: each output pixel is the same
-    // expression of the same inputs it was before.
-    let canvas_stride = cw as usize * 4;
-    let band = &mut canvas.as_mut()[vy0 as usize * canvas_stride..vy1 as usize * canvas_stride];
-    for_each_row_mut(band, canvas_stride, |ri, crow| {
-        let py = vy0 + ri as i64;
-        let v = ((py - oy) as f64 + 0.5) * ry - 0.5 + cy0 as f64;
-        let vy = v.floor();
-        let fy = (v - vy) as f32;
-        let y0 = (vy as i64).clamp(cy0 as i64, last_y);
-        let y1 = (vy as i64 + 1).clamp(cy0 as i64, last_y);
-        let row0 = y0 as usize * stride;
-        let row1 = y1 as usize * stride;
-
-        for (i, px) in (vx0..vx1).enumerate() {
-            let c = &cols[i];
-            // The four taps. Every one of them is inside the crop by
-            // construction (B-218 — the indices above are clamped to it), so
-            // there is no mask to apply and the crop edge is hard, matching
-            // ffmpeg's own `crop` and the general path's sub-image resize.
-            let tap = |base: usize, off: usize| -> [f32; 4] {
-                let p = &src[base + off..base + off + 4];
-                [p[0] as f32, p[1] as f32, p[2] as f32, p[3] as f32]
-            };
-            let p00 = tap(row0, c.i0);
-            let p10 = tap(row0, c.i1);
-            let p01 = tap(row1, c.i0);
-            let p11 = tap(row1, c.i1);
-
-            let mut out = [0f32; 4];
-            for ch in 0..4 {
-                let top = p00[ch] + (p10[ch] - p00[ch]) * c.fx;
-                let bot = p01[ch] + (p11[ch] - p01[ch]) * c.fx;
-                out[ch] = top + (bot - top) * fy;
-            }
-            // D-344 — the rounded-box coverage for this destination pixel, in
-            // the placement box's own space. `rounding` is `1.0` for every
-            // un-rounded clip (the guard above computes nothing at all then),
-            // so this multiply is an exact no-op and the pre-D-344 arithmetic
-            // is preserved bit for bit.
-            let a = (out[3] * opacity * rounding(px - ox, py - oy))
-                .round()
-                .clamp(0.0, 255.0) as u8;
-            if a == 0 {
-                continue; // fully transparent sample — nothing to blend
-            }
-            let sample = image::Rgba([
-                out[0].round().clamp(0.0, 255.0) as u8,
-                out[1].round().clamp(0.0, 255.0) as u8,
-                out[2].round().clamp(0.0, 255.0) as u8,
-                a,
-            ]);
-            let o = px as usize * 4;
-            let dst = image::Rgba::from_slice_mut(&mut crow[o..o + 4]);
-            if a == 255 {
-                *dst = sample; // an opaque source-over is a plain replace
-            } else {
-                dst.blend(&sample);
-            }
-        }
-    });
+    let plan = apelles_compositor::FramePlan {
+        width: cw,
+        height: ch,
+        background: apelles_compositor::Background::Image(Arc::new(std::mem::take(canvas))),
+        steps: vec![apelles_compositor::Step::Paint(layer)],
+    };
+    *canvas = super::gpu_compositor::render(&plan)?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod composite_tests {
     use super::*;
+    use apelles_types::shape::rounded_box_coverage as corner_coverage;
     use image::{ImageBuffer, Rgba};
+
+    /// The tests below drive the compositor one layer at a time, as they did
+    /// when it was CPU code; since D-449 that is the GPU engine, so a failure
+    /// to draw is a test failure here.
+    fn composite_layer_onto(
+        canvas: &mut image::RgbaImage,
+        layer: &image::RgbaImage,
+        t: &ClipTransform,
+        natural: (f64, f64),
+    ) {
+        super::composite_layer_onto(
+            canvas,
+            apelles_compositor::Source::Rgba(Arc::new(layer.clone())),
+            t,
+            natural,
+        )
+        .expect("the GPU compositor draws the layer");
+    }
 
     fn flat(w: u32, h: u32, px: [u8; 4]) -> image::RgbaImage {
         ImageBuffer::from_pixel(w, h, Rgba(px))
@@ -3613,55 +3209,15 @@ mod composite_tests {
         })
     }
 
-    /// **D-351 — the parallel overlay is the `image` crate's overlay.**
-    ///
-    /// `overlay_parallel` exists only to put `image::imageops::overlay`'s own
-    /// per-pixel blend on more than one thread, so the thing that has to stay
-    /// true is not "it looks right" but "it is byte-identical to the function it
-    /// replaced" — including at every partial overlap, which is where an index
-    /// error hides.
-    #[test]
-    fn overlay_parallel_matches_the_image_crate() {
-        // The last case is deliberately over `PARALLEL_PIXEL_MIN` so this
-        // exercises the PARALLEL arm as well as the serial one — the small
-        // cases alone would only ever compare `overlay_parallel`'s serial
-        // fallback against `image`, which is the half that cannot be wrong.
-        for (cw, ch, tw, th) in [
-            (64u32, 48u32, 32u32, 24u32),
-            (301, 199, 512, 400),
-            (8, 8, 8, 8),
-            (1920, 1080, 1280, 700),
-        ] {
-            for (ox, oy) in [
-                (0i64, 0i64),
-                (7, 5),
-                (-9, -13),
-                (cw as i64 - 3, 2),
-                (2, ch as i64 + 4),
-            ] {
-                let base = noisy(cw, ch, 11);
-                let top = noisy(tw, th, 29);
-                let mut want = base.clone();
-                image::imageops::overlay(&mut want, &top, ox, oy);
-                let mut got = base.clone();
-                overlay_parallel(&mut got, &top, ox, oy);
-                assert_eq!(
-                    want, got,
-                    "overlay_parallel diverged at canvas {cw}x{ch}, top {tw}x{th}, origin ({ox},{oy})"
-                );
-            }
-        }
-    }
-
     /// **D-351 — the row split is a schedule change, not a maths change.**
     ///
-    /// `for_each_row_mut` has a serial arm and a parallel arm chosen by size
-    /// alone. This drives the same closure through both over an image big
-    /// enough to take the parallel arm and asserts the buffers are equal —
-    /// so if the parallel arm ever mis-indexes a row, the two disagree here
-    /// rather than in an exported video.
+    /// `for_each_row_mut` (now `highlight_draw`'s, the stroke drawing being its
+    /// last user) has a serial arm and a parallel arm chosen by size alone.
+    /// This drives the same closure through both over an image big enough to
+    /// take the parallel arm and asserts the buffers are equal.
     #[test]
     fn parallel_row_passes_match_their_serial_form() {
+        use super::super::highlight_draw::{PARALLEL_PIXEL_MIN, for_each_row_mut};
         let (w, h) = (1600u32, 900u32); // 1.44 Mpx — comfortably over PARALLEL_PIXEL_MIN
         assert!(
             (w as u64) * (h as u64) >= PARALLEL_PIXEL_MIN,
@@ -3689,29 +3245,13 @@ mod composite_tests {
         );
     }
 
-    /// **D-351 — the parallel RGB→RGBA widening is `to_rgba8`.**
+    /// **The compositor is a pure function of its inputs, run twice** (CLAUDE.md:
+    /// "same doc + same frame ⇒ identical pixels"). On the GPU engine (D-449)
+    /// as it was on D-351's row-parallel CPU passes: an export-sized layer with
+    /// every per-layer effect at once, drawn four times, is four times the same
+    /// bytes.
     #[test]
-    fn to_rgba8_parallel_matches_the_image_crate() {
-        for (w, h) in [(333u32, 277u32), (2, 2), (1920, 1080)] {
-            let rgb: image::RgbImage =
-                ImageBuffer::from_fn(w, h, |x, y| image::Rgb([x as u8, y as u8, (x ^ y) as u8]));
-            let want = DynamicImage::ImageRgb8(rgb.clone()).to_rgba8();
-            let got = to_rgba8_parallel(DynamicImage::ImageRgb8(rgb));
-            assert_eq!(want, got, "to_rgba8_parallel diverged at {w}x{h}");
-        }
-    }
-
-    /// **D-351 — the compositor is a pure function of its inputs, run twice.**
-    ///
-    /// The row split hands unspecified rows to unspecified threads, so the one
-    /// thing a scheduler could in principle leak into the picture is a
-    /// *different answer on a second run*. CLAUDE.md makes that a blocker
-    /// ("same doc + same frame ⇒ identical pixels"), so it is asserted directly
-    /// on the two passes that now split, rather than only end-to-end.
-    #[test]
-    fn the_parallel_compositor_is_deterministic_across_runs() {
-        // Export-sized on purpose: at a PREVIEW size every pass below takes the
-        // serial arm and this would assert nothing about the parallel one.
+    fn the_compositor_is_deterministic_across_runs() {
         let layer = noisy(1800, 1400, 3);
         let t = ClipTransform {
             opacity: 0.6,

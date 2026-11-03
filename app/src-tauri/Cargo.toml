@@ -38,6 +38,7 @@ apelles-motion-runtime = { path = "../../crates/apelles-motion-runtime" }
 apelles-grade-model = { path = "../../crates/apelles-grade-model" }
 apelles-types = { path = "../../crates/apelles-types" }
 apelles-gpu = { path = "../../crates/apelles-gpu" }
+apelles-compositor = { path = "../../crates/apelles-compositor" }
 apelles-ai = { path = "../../crates/apelles-ai" }
 apelles-audio-library = { path = "../../crates/apelles-audio-library" }
 apelles-media = { path = "../../crates/apelles-media" }

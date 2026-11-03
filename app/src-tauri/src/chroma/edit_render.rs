@@ -180,9 +180,15 @@ pub struct TimelineRenderOutcome {
 /// `handoff_wait_ms` is the compositor blocked on a full [`WRITE_AHEAD`]
 /// channel, i.e. waiting for the ENCODER: near zero means the encoder keeps up
 /// and the compositor is the bottleneck; large means the opposite. `frame_ms`
-/// is decode + composite (`render_timeline_frame` does both and they are not
-/// separable from here without instrumenting the compositor's inner loop; the
-/// benchmark measures decode on its own, `export_bench`).
+/// is decode + composite (`render_timeline_frame` does both). D-449 — the
+/// `gpu_*` fields split the composite out of it: the GPU engine's own counters
+/// across this render (summed over the segment workers, and over anything else
+/// drawing at the same time, which in an export is nothing): recording and
+/// uploading each frame (on the worker, so inside `frame_ms`), waiting for the
+/// GPU to finish it and copying it back (on the segment's writer thread,
+/// overlapped with the worker's next frame), and the bytes moved each way.
+/// `frame_ms - gpu_record_ms` is then decode and the CPU-side frame set-up
+/// (layer resolution, titles, captions).
 #[derive(Debug, Clone, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderStages {
@@ -192,9 +198,27 @@ pub struct RenderStages {
     pub render_ms: u64,
     pub concat_ms: u64,
     pub loudness_ms: u64,
+    pub gpu_frames: u64,
+    pub gpu_record_ms: u64,
+    pub gpu_wait_ms: u64,
+    pub gpu_readback_ms: u64,
+    pub gpu_upload_bytes: u64,
+    pub gpu_readback_bytes: u64,
 }
 
 impl RenderStages {
+    /// Fill the `gpu_*` fields from the engine's counters across this render.
+    fn with_engine(mut self, before: &apelles_compositor::EngineStats) -> Self {
+        let d = super::gpu_compositor::stats().since(before);
+        self.gpu_frames = d.frames;
+        self.gpu_record_ms = millis(d.record);
+        self.gpu_wait_ms = millis(d.gpu);
+        self.gpu_readback_ms = millis(d.readback);
+        self.gpu_upload_bytes = d.upload_bytes;
+        self.gpu_readback_bytes = d.readback_bytes;
+        self
+    }
+
     /// The summed-over-segments half, from each worker's outcome.
     fn from_segments<'a>(parts: impl IntoIterator<Item = &'a SegmentOutcome>) -> Self {
         let mut st = RenderStages::default();
@@ -610,6 +634,7 @@ pub fn render_timeline(
     let canvas = canvas_plan(comp, out);
     grade_preflight(timeline)?;
     let started = Instant::now();
+    let engine_before = super::gpu_compositor::stats();
 
     // D-441 — registered before anything spawns, so a job cancelled while it
     // was being started is refused here instead of rendering anyway.
@@ -700,6 +725,7 @@ pub fn render_timeline(
     // thing a caller (or B-231's next reader) actually needs to see.
     match outcome {
         Ok(mut o) => {
+            o.stages = o.stages.with_engine(&engine_before);
             // D-401 — the loudness pass is part of the job: the status reads
             // `normalising`, not `done`, until the file is final.
             match req.loudness {
@@ -833,6 +859,20 @@ fn wait_bounded(
     }
 }
 
+/// D-449 — one frame on its way to a segment's encoder.
+enum Outgoing {
+    /// Finished RGBA bytes at the output size (a plain decode, or a gap).
+    Bytes(Vec<u8>),
+    /// A frame the GPU engine is still drawing. The writer waits for it, then
+    /// resizes it to `out` when the output's aspect differs from the canvas
+    /// (`resize`, from [`canvas_plan`]).
+    Gpu {
+        frame: super::gpu_compositor::GpuFrame,
+        out: (u32, u32),
+        resize: bool,
+    },
+}
+
 /// What one segment's worker produced.
 struct SegmentOutcome {
     written: u64,
@@ -908,7 +948,12 @@ fn render_range(
     // `width * height * 4` bytes" — a swap would not error, it would silently
     // emit a shuffled video, which is why the ordering guarantee wants to be a
     // property of the structure rather than of a comparison somewhere.
-    let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(WRITE_AHEAD);
+    //
+    // D-449 — a composited frame reaches the writer still on the GPU, and the
+    // writer is what waits for it: the render worker submits frame N and goes
+    // on to decode frame N + 1 while the GPU draws N. The channel's bound is
+    // unchanged, so at most `WRITE_AHEAD` frames are in flight.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Outgoing>(WRITE_AHEAD);
     let writer = {
         // D-362 — the progress heartbeat is taken HERE, one tick per frame that
         // really reached the encoder's stdin. This is the most downstream point
@@ -917,15 +962,37 @@ fn render_range(
         // whether the compositor stalled, the hand-off channel jammed, or the
         // encoder stopped reading.
         let job = job.clone();
-        std::thread::spawn(move || -> Result<u64, std::io::Error> {
+        std::thread::spawn(move || -> Result<(u64, std::time::Duration), String> {
             let mut n = 0u64;
-            for frame in rx {
-                stdin.write_all(&frame)?;
+            let mut resize_time = std::time::Duration::ZERO;
+            for item in rx {
+                let bytes = match item {
+                    Outgoing::Bytes(b) => b,
+                    Outgoing::Gpu { frame, out, resize } => {
+                        let rgba = frame.wait()?;
+                        if resize || rgba.dimensions() != out {
+                            let started = Instant::now();
+                            let resized = image::imageops::resize(
+                                &rgba,
+                                out.0,
+                                out.1,
+                                image::imageops::FilterType::Triangle,
+                            );
+                            resize_time += started.elapsed();
+                            resized.into_raw()
+                        } else {
+                            rgba.into_raw()
+                        }
+                    }
+                };
+                stdin
+                    .write_all(&bytes)
+                    .map_err(|e| format!("write to encoder: {e}"))?;
                 n += 1;
                 job.frame_written(segment);
             }
             drop(stdin); // EOF → the encoder flushes and exits
-            Ok(n)
+            Ok((n, resize_time))
         })
     };
 
@@ -947,7 +1014,7 @@ fn render_range(
             break;
         }
         let frame_started = Instant::now();
-        let rendered = edit::render_timeline_frame(
+        let rendered = edit::render_timeline_frame_deferred(
             timeline,
             settings,
             pos,
@@ -971,10 +1038,15 @@ fn render_range(
             lane,
         );
         frame_time += frame_started.elapsed();
-        let frame = match rendered {
-            Ok(Some(img)) => {
+        let item = match rendered {
+            Ok(Some(edit::RenderedFrame::Gpu(frame))) => Outgoing::Gpu {
+                frame,
+                out,
+                resize: needs_resize,
+            },
+            Ok(Some(edit::RenderedFrame::Decoded(img))) => {
                 let rgba = img.to_rgba8();
-                if needs_resize || rgba.dimensions() != out {
+                Outgoing::Bytes(if needs_resize || rgba.dimensions() != out {
                     let resize_started = Instant::now();
                     let resized = image::imageops::resize(
                         &rgba,
@@ -983,24 +1055,24 @@ fn render_range(
                         image::imageops::FilterType::Triangle,
                     );
                     resize_time += resize_started.elapsed();
-                    resized
+                    resized.into_raw()
                 } else {
-                    rgba
-                }
+                    rgba.into_raw()
+                })
             }
-            Ok(None) => blank.clone(),
+            Ok(None) => Outgoing::Bytes(blank.as_raw().clone()),
             Err(e) => {
                 render_err = Some(format!("frame {pos}: {e}"));
                 break;
             }
         };
         let handoff_started = Instant::now();
-        let sent = tx.send(frame.into_raw());
+        let sent = tx.send(item);
         handoff_wait += handoff_started.elapsed();
         if sent.is_err() {
-            // The writer is gone, which only happens when its `write_all`
-            // failed — its own error is the real one, so take that below
-            // rather than reporting "the channel closed".
+            // The writer is gone, which only happens when its write or its
+            // GPU wait failed — its own error is the real one, so take that
+            // below rather than reporting "the channel closed".
             render_err = Some(format!("frame {pos}: encoder stopped reading"));
             break;
         }
@@ -1013,13 +1085,16 @@ fn render_range(
     let joined = writer.join();
     job.segment_finished(segment);
     let written = match joined {
-        Ok(Ok(n)) => n,
+        Ok(Ok((n, writer_resize))) => {
+            resize_time += writer_resize;
+            n
+        }
         Ok(Err(e)) => {
             // The encoder may well still be alive and waiting for input that
             // will never come, so it is killed rather than waited on.
             let _ = child.kill();
             let _ = child.wait();
-            return Err(format!("write to encoder: {e} — {}", tail(&stderr)));
+            return Err(format!("{e} — {}", tail(&stderr)));
         }
         Err(_) => {
             let _ = child.kill();
@@ -2561,8 +2636,8 @@ mod parity_tests {
             video.to_string_lossy().to_string(),
             "-vf".into(),
             format!("select=eq(n\\,{n})"),
-            "-vsync".into(),
-            "0".into(),
+            "-fps_mode".into(),
+            "passthrough".into(),
             "-frames:v".into(),
             "1".into(),
             into.to_string_lossy().to_string(),
@@ -3075,6 +3150,7 @@ mod parity_tests {
             req.output.clone(),
             export_status::STALL_TIMEOUT,
         )?;
+        let engine_before = super::super::gpu_compositor::stats();
         let outcome = render_segmented(
             timeline,
             settings,
@@ -3087,7 +3163,10 @@ mod parity_tests {
             Instant::now(),
         );
         job.finish(outcome.as_ref().map(|_| ()).map_err(Clone::clone));
-        outcome
+        outcome.map(|mut o| {
+            o.stages = o.stages.with_engine(&engine_before);
+            o
+        })
     }
 
     /// How many video frames `video` actually contains, counted rather than
