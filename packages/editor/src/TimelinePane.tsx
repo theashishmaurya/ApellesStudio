@@ -306,7 +306,6 @@ import {
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import {
   ArrowsLeftRightIcon,
-  FilmStripIcon,
   ArrowsInLineHorizontalIcon,
   // D-138 — the A/V-link action's own icon. Deliberately `Link`, not
   // `LinkSimpleHorizontal`: that one is the track header's sync-lock-ON icon
@@ -478,6 +477,7 @@ import { trackBadges, trackLabels } from './trackOps';
 import { TrackHeader, trackDragId } from './TrackHeader';
 import { ClipAppearanceButton, SnapSkimToggles, TimelineZoomSlider } from './TimelineViewControls';
 import { TimelineBeatControl } from './TimelineBeatControl';
+import { TimelineEmptyState, TimelineNoClipsHint } from './EditEmptyStates';
 import { TimelineRuler } from './TimelineRuler';
 import { usePreviewPeekStore } from './previewPeek';
 // D-432 P3 — per-track height.
@@ -669,7 +669,15 @@ function TrackDropZone({ track, top, height }: { track: number; top: number; hei
 
 /** D-432 P5 — `toolbarCenter`: what the Edit tab centres in this pane's
  *  toolbar row (the timeline switcher and timecode, spec §4.9). */
-export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
+export function TimelinePane({
+  toolbarCenter,
+  emptyAction,
+}: {
+  toolbarCenter?: ReactNode;
+  /** v0.3.0 (§4.13) — the empty timeline's action (the composition root's
+   *  Import button), shown under its one-line instruction. */
+  emptyAction?: ReactNode;
+}) {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   // D-325 — deliberately NOT `useEditorTimelineStore((s) => s.playhead)`. This
   // is the only component in the codebase where that selector's ordinary
@@ -3347,20 +3355,11 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
   if (tracks.length === 0) {
     // a brand new timeline (`chroma_timeline_create`) has no tracks yet —
     // the first drop creates one (see `applyOp`'s 'add_clip' handling).
+    // v0.3.0 (§4.13) — placeholder V1 / A1 lanes and one line, not a dashed
+    // box. The drop handlers stay on this wrapper.
     return (
-      <div
-        className={
-          'h-full w-full flex flex-col items-center justify-center gap-2 text-center px-6 border-2 border-dashed rounded-none transition-colors ' +
-          (dragOver ? 'border-accent bg-accent/5' : 'border-transparent')
-        }
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={onDrop}
-      >
-        <FilmStripIcon className="size-6 text-text-secondary/50" />
-        <p className="text-xs text-text-secondary">
-          Empty timeline — drag a clip from Sources to get started.
-        </p>
+      <div className="h-full w-full" onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+        <TimelineEmptyState action={emptyAction} dragOver={dragOver} />
       </div>
     );
   }
@@ -4248,6 +4247,9 @@ export function TimelinePane({ toolbarCenter }: { toolbarCenter?: ReactNode }) {
                 snap guide and the Blade line (one set per pane, positioned
                 imperatively by `useEditGesture`). */}
             <EditFeedbackLayer ref={feedbackRef} />
+            {/* v0.3.0 (§4.13) — tracks but no clips: the instruction over the
+                lanes (clicks pass through everywhere but its button). */}
+            {tracks.every((t) => t.clips.length === 0) && <TimelineNoClipsHint action={emptyAction} />}
           </div>
             </ResizablePanel>
 

@@ -58,6 +58,7 @@ import { SidebarSimpleIcon } from '@phosphor-icons/react';
 
 import { EditorInspectorPanel } from './EditorInspectorPanel';
 import { EditBrowser } from './EditBrowser';
+import { NoProjectState } from './EditEmptyStates';
 import { PreviewPane } from './PreviewPane';
 import { CaptionInspectorPanel } from './CaptionInspectorPanel';
 import { TextClipInspectorPanel } from './TextClipInspectorPanel';
@@ -189,14 +190,8 @@ export function EditorTab({ mediaPool, browserActions }: EditorTabProps) {
   }, [load]);
 
   if (!projectOpen) {
-    return (
-      <div className="h-full w-full flex flex-col items-center justify-center gap-2 bg-bg-primary text-center px-6">
-        <h1 className="text-lg font-semibold text-text-primary">No project open</h1>
-        <p className="text-sm text-text-secondary max-w-md">
-          Open a project in the Colorist tab — its shots become the Edit timeline.
-        </p>
-      </div>
-    );
+    // v0.3.0 (§4.13) — the copy is unchanged, restyled to the type scale.
+    return <NoProjectState />;
   }
 
   if (status === 'error') {
@@ -344,7 +339,7 @@ export function EditorTab({ mediaPool, browserActions }: EditorTabProps) {
               </div>
             )}
             <div className="min-h-0 flex-1">
-              <TimelinePane toolbarCenter={<TimelineToolbarCenter />} />
+              <TimelinePane toolbarCenter={<TimelineToolbarCenter />} emptyAction={browserActions} />
             </div>
           </PanelErrorBoundary>
         </ResizablePanel>

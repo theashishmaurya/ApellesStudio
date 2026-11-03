@@ -591,12 +591,23 @@ export function SourcesPanel({ variant = 'panel' }: { variant?: SourcesPanelVari
       <div className="h-full min-h-0 overflow-y-auto p-2" data-chroma-media-grid>
         {loading && items.length === 0 ? (
           <p className="text-[11px] text-text-secondary p-2">Loading…</p>
+        ) : items.length === 0 ? (
+          // v0.3.0 (D-432 §4.13) — the empty pool is the import target: a
+          // dashed `border-color` zone with the `FilmStrip` glyph, one press
+          // away from the picker (the same import as every Import button).
+          <button
+            type="button"
+            data-chroma-empty-state="media"
+            onClick={() => void doImport()}
+            disabled={importing}
+            className="flex w-full flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border-color px-3 py-6 text-center text-text-secondary hover:border-text-tertiary hover:text-text-primary disabled:opacity-60"
+          >
+            <FilmStripIcon className="size-6" aria-hidden />
+            <span className="text-sm font-medium">Import media</span>
+            <span className="text-2xs text-text-tertiary">Referenced in place, never copied</span>
+          </button>
         ) : filtered.length === 0 ? (
-          <p className="text-[11px] text-text-secondary p-2">
-            {items.length === 0
-              ? 'No media yet — Import to add clips to this project (referenced in place, never copied).'
-              : 'No media matches.'}
-          </p>
+          <p className="text-[11px] text-text-secondary p-2">No media matches.</p>
         ) : (
           <div className="grid grid-cols-2 gap-2">
             {filtered.map((it) => {

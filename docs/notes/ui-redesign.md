@@ -1072,6 +1072,26 @@ leftovers, closed against the approved mockup (owner: "loved the design",
   sample data; the app shows the user's names when set and "Video 1" style
   labels otherwise, as before.
 
+**Empty states (§4.13, B-354, B-359 item 8).** `EditEmptyStates.tsx`:
+- Timeline with no tracks: two placeholder lanes (V1 over A1, default
+  height, the strip colours, `timeline-bg` / `lane-alt` banding, dimmed
+  headers) under the switcher row, and one centred line, "Drag media here
+  from the browser to start editing", with the Import button (the same
+  injected `SourcesImportButton`, via `TimelinePane.emptyAction`). The dashed
+  2 px box is gone; a drag over it rings the panel in the accent.
+- Tracks but no clips: the same line centred over the lanes
+  (`TimelineNoClipsHint`, `pointer-events-none` except the button).
+- Browser, no media: the grid is a dashed `border-color` `--radius-md` zone
+  with `FilmStrip` 24 px and "Import media"; a press opens the picker.
+- Inspector: no selection already shows the timeline / project settings
+  (P4, never blank). Several clips selected shows `InspectorEmptyState`, now
+  `text-xs text-secondary` with a `CursorClick` glyph: "Select one clip to
+  edit its properties." (the shared component gained an optional `icon`).
+- No project: the same copy with a `FolderOpen` glyph, on the type scale.
+- Deviations: the spec's "press E to append" and the browser zone's "⌘I" are
+  not shown, because neither shortcut exists yet; the line names the drag
+  instead, and the zone says media is referenced in place.
+
 ## 7. Human + AI parity
 
 Every new GUI capability gets its MCP surface in the same phase (standing rule):

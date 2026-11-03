@@ -196,6 +196,7 @@ import { useState } from 'react';
 import {
   DiamondIcon,
   ArrowCounterClockwiseIcon,
+  CursorClickIcon,
   FilmStripIcon,
   GaugeIcon,
   InfoIcon,
@@ -593,7 +594,13 @@ export function ClipInspectorPanel({
   const [ratioLocked, setRatioLocked] = useState(() => clip?.box_width == null && clip?.box_height == null);
 
   if (!clip) {
-    return <InspectorEmptyState>Select a clip to edit its properties.</InspectorEmptyState>;
+    // v0.3.0 (§4.13) — reached with several clips selected (no selection shows
+    // the timeline settings instead): say what to do, with a glyph.
+    return (
+      <InspectorEmptyState icon={<CursorClickIcon aria-hidden />}>
+        Select one clip to edit its properties.
+      </InspectorEmptyState>
+    );
   }
 
   const transformFields = clip.text

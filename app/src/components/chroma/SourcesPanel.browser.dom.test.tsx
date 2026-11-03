@@ -63,7 +63,7 @@ beforeEach(() => {
     openProjectKey: 'k',
     importPaths: async (paths: string[], folder?: string) => {
       importCalls.push({ paths, folder });
-      return { ok: true, added: paths };
+      return { ok: true, added: paths.map((p) => item(p)) };
     },
   });
 });
@@ -99,6 +99,20 @@ describe('SourcesPanel in the Edit browser (v0.3.0)', () => {
     fireEvent.click(toggle);
     expect(screen.getByTestId('sources-select-toggle').getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByText('Select all')).toBeTruthy();
+  });
+
+  it('an empty pool is the import target (§4.13): a dashed zone that opens the picker', async () => {
+    picker.paths = ['/new/y.mp4'];
+    useMediaPoolStore.setState({ items: [] });
+    render(<SourcesPanel variant="browser" />);
+    const zone = document.querySelector('[data-chroma-empty-state="media"]') as HTMLElement;
+    expect(zone.className).toContain('border-dashed');
+    expect(zone.textContent).toContain('Import media');
+    expect(zone.querySelector('svg')).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(zone);
+    });
+    expect(importCalls).toEqual([{ paths: ['/new/y.mp4'], folder: undefined }]);
   });
 
   it('the tab-row Import imports into the bin the grid is showing', async () => {
