@@ -521,8 +521,7 @@ pub fn snapshot() -> ExportStatus {
             output: None,
             error: None,
             stall_timeout_secs: STALL_TIMEOUT.as_secs(),
-            note: "no export has run in this session — start one with editor_export."
-                .to_string(),
+            note: "no export has run in this session — start one with editor_export.".to_string(),
         };
     };
 

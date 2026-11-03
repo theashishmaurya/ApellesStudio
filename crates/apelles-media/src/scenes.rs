@@ -47,9 +47,7 @@ pub fn parse_showinfo_times(stderr: &str) -> Vec<f64> {
 /// last lines.
 pub fn detect_scene_cuts(path: &Path, threshold: f64) -> Result<Vec<f64>, String> {
     let mut cmd = ffmpeg_locate::ffmpeg().map_err(|e| e.to_string())?;
-    let filter = format!(
-        "scale={SCENE_DECODE_WIDTH}:-2,select='gt(scene\\,{threshold})',showinfo"
-    );
+    let filter = format!("scale={SCENE_DECODE_WIDTH}:-2,select='gt(scene\\,{threshold})',showinfo");
     let output = cmd
         .arg("-hide_banner")
         .arg("-nostdin")

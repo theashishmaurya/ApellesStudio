@@ -741,9 +741,14 @@ mod tests {
         let baked = session.bake(&grade, DEFAULT_SIZE, true).expect("bake");
         let adjustments = get_all_adjustments_from_json(&grade, false, None);
         let mut worst = 0i32;
-        for (i, c) in [[30u8, 40, 50], [128, 100, 80], [200, 190, 170], [90, 160, 60]]
-            .into_iter()
-            .enumerate()
+        for (i, c) in [
+            [30u8, 40, 50],
+            [128, 100, 80],
+            [200, 190, 170],
+            [90, 160, 60],
+        ]
+        .into_iter()
+        .enumerate()
         {
             let patch = RgbImage::from_pixel(64, 64, image::Rgb(c));
             let shaded = render_core::render(
@@ -770,7 +775,10 @@ mod tests {
             }
         }
         // The lattice's own trilinear interpolation between 33 entries.
-        assert!(worst <= 3, "the baked LUT is {worst} codes from the shader on flat colour");
+        assert!(
+            worst <= 3,
+            "the baked LUT is {worst} codes from the shader on flat colour"
+        );
     }
 
     /// CLAUDE.md's render-path invariant at the bake's own level.
@@ -829,7 +837,11 @@ mod tests {
         let b = bake_lut3d(&with, DEFAULT_SIZE, true).expect("bake");
         let w = b.warnings.join(" ");
         assert!(w.contains("vignette") && w.contains("grain"), "{w}");
-        assert!(!a.warnings.iter().any(|w| w.contains("vignette")), "{:?}", a.warnings);
+        assert!(
+            !a.warnings.iter().any(|w| w.contains("vignette")),
+            "{:?}",
+            a.warnings
+        );
         assert_eq!(a.lut.data(), b.lut.data());
     }
 
