@@ -81,6 +81,7 @@ export type { MotionRuntimeState, MotionRuntimeStatus } from './motionRuntime';
 export {
   PREVIEW_PLAYHEAD_EVENT,
   WINDOW_FULLSCREEN_EVENT,
+  endTrimView,
   onPreviewPlayhead,
   onPreviewPresent,
   onWindowFullscreen,
@@ -89,6 +90,7 @@ export {
   previewSurfaceStats,
   setPreviewFullscreen,
   showPreviewSurfaceFrame,
+  showPreviewSurfaceTwoUp,
   startPreviewSurface,
   stopPreviewSurface,
 } from './previewSurface';
@@ -101,6 +103,7 @@ export type {
   PreviewSurfaceShowReport,
   PreviewSurfaceSpread,
   PreviewSurfaceStats,
+  PreviewSurfaceTwoUpHalf,
 } from './previewSurface';
 
 export { audioPlay, audioSetVolume, audioStop } from './audioTransport';

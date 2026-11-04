@@ -2365,7 +2365,6 @@ pub fn run() {
             chroma::webview_lifecycle::chroma_webview_take_termination,
             chroma::page_session::chroma_page_session_get,
             chroma::page_session::chroma_page_session_set_tab,
-            chroma::edit::chroma_trim_view_frame,
             chroma::edit::chroma_trim_view_end,
             chroma::grade_pass::chroma_timeline_grade_luts,
             chroma::edit::chroma_timeline_clip_geometry,
@@ -2456,6 +2455,8 @@ pub fn run() {
             chroma::preview_surface::commands::chroma_preview_surface_place,
             #[cfg(target_os = "macos")]
             chroma::preview_surface::commands::chroma_preview_surface_show,
+            #[cfg(target_os = "macos")]
+            chroma::preview_surface::commands::chroma_preview_surface_two_up,
             #[cfg(target_os = "macos")]
             chroma::preview_surface::commands::chroma_preview_surface_play,
             #[cfg(target_os = "macos")]

@@ -277,6 +277,45 @@ pub async fn chroma_preview_surface_show(position: u64) -> Result<ShowReport, St
     .map_err(|e| format!("show task: {e}"))?
 }
 
+/// Roadmap 00r 5d (c) — draw the two-up trim viewer's two source frames into
+/// the surface and show them, in place of the timeline's frame, while a roll,
+/// slip or slide is dragged. Latest-wins is the caller's (`nativePreview.ts`
+/// runs one request at a time); `chroma_trim_view_end` releases the trim
+/// lane's decoders when the gesture ends.
+#[tauri::command]
+pub async fn chroma_preview_surface_two_up(
+    left: Option<crate::chroma::edit::TwoUpHalf>,
+    right: Option<crate::chroma::edit::TwoUpHalf>,
+) -> Result<ShowReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut guard = session();
+        let s = current(&mut guard)?;
+        let p = placement().ok_or("the preview has not been placed yet")?;
+        let long_edge = p
+            .render_long_edge()
+            .ok_or("the preview has no picture box yet")?;
+        let began = Instant::now();
+        s.in_flight = None;
+        s.in_flight = crate::chroma::edit::draw_two_up_frame(
+            left.as_ref(),
+            right.as_ref(),
+            long_edge,
+            &mut s.presenter,
+        )?;
+        let render_ms = began.elapsed().as_secs_f64() * 1000.0;
+        #[cfg(debug_assertions)]
+        super::stats::record_draw(render_ms);
+        let timing = present(s)?;
+        Ok(ShowReport {
+            position: 0,
+            render_ms,
+            acquire_ms: timing.acquire_ms,
+        })
+    })
+    .await
+    .map_err(|e| format!("two-up task: {e}"))?
+}
+
 fn stop_player() {
     let player = PLAYER.lock().unwrap_or_else(|e| e.into_inner()).take();
     if let Some(p) = player {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createShowQueue, cssColorToRgba, pictureRect, placementFromRects, sameRect } from './nativePreview';
+import { createShowQueue, cssColorToRgba, pictureRect, placementFromRects, sameRect, twoUpHalves } from './nativePreview';
 
 describe('nativePreview geometry (D-451, D-454)', () => {
   const view = { x: 10, y: 40, width: 800, height: 450 };
@@ -129,5 +129,27 @@ describe('the show queue (D-454): latest-wins, one in flight', () => {
     for (let i = 0; i < 8; i += 1) await Promise.resolve();
     expect(errors).toEqual(['Error: decode failed']);
     expect(q.shown()).toBe(2);
+  });
+});
+
+describe('the two-up on the preview surface (roadmap 00r 5d (c))', () => {
+  const half = (sourcePath: string, sourceFrame: number) => ({ sourcePath, sourceFrame, label: 'Out', timelineFrame: 0 });
+
+  it('is nothing at all when no roll, slip or slide is being dragged', () => {
+    expect(twoUpHalves(null)).toBeNull();
+  });
+
+  it('hands over each half\'s source and frame, rounded to the decoder\'s unit', () => {
+    expect(twoUpHalves({ left: half('/a.mp4', 11.6), right: half('/b.mp4', 4.2) })).toEqual({
+      left: { sourcePath: '/a.mp4', sourceFrame: 12 },
+      right: { sourcePath: '/b.mp4', sourceFrame: 4 },
+    });
+  });
+
+  it('drops a half with no picture (a title, a gap) and never asks for a negative frame', () => {
+    expect(twoUpHalves({ left: half('', 3), right: half('/b.mp4', -2) })).toEqual({
+      left: null,
+      right: { sourcePath: '/b.mp4', sourceFrame: 0 },
+    });
   });
 });

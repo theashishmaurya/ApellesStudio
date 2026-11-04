@@ -135,6 +135,28 @@ export function showPreviewSurfaceFrame(position: number): Promise<PreviewSurfac
   return invoke('chroma_preview_surface_show', { position });
 }
 
+/** One half of the two-up trim viewer's picture: a frame of a clip's source. */
+export interface PreviewSurfaceTwoUpHalf {
+  sourcePath: string;
+  sourceFrame: number;
+}
+
+/** Roadmap 00r 5d (c) — draw the two-up trim viewer's two source frames into
+ *  the surface, in place of the timeline's frame, while a roll, slip or slide
+ *  is dragged. A half with no picture is left black. */
+export function showPreviewSurfaceTwoUp(
+  left: PreviewSurfaceTwoUpHalf | null,
+  right: PreviewSurfaceTwoUpHalf | null,
+): Promise<PreviewSurfaceShowReport> {
+  return invoke('chroma_preview_surface_two_up', { left, right });
+}
+
+/** The two-up gesture ended: release the trim lane's decode pipes (each one a
+ *  live `ffmpeg` process). */
+export function endTrimView(): Promise<void> {
+  return invoke('chroma_trim_view_end');
+}
+
 export function playPreviewSurface(args: PreviewSurfacePlay): Promise<void> {
   return invoke('chroma_preview_surface_play', { args });
 }

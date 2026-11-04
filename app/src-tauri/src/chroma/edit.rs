@@ -172,8 +172,7 @@ fn decode_scale(source_size: (u32, u32), max_long_edge: Option<u32>) -> Option<(
 /// as it does for footage, since nothing downstream should have to care — is
 /// simply not consulted. That is what makes a still hold for its full length
 /// instead of the compositor trying to frame-step a codec stream that has one
-/// frame in it. (Stated once here; it is equally true of
-/// [`decode_clip_picture`] below.)
+/// frame in it.
 ///
 /// **The picture as the GPU engine takes it, shared where it can be.** A
 /// still's buffer comes straight back from `apelles_media::still`'s decode
@@ -214,30 +213,6 @@ pub(crate) fn decoded_picture(
 ) -> Result<DynamicImage, String> {
     super::gpu_compositor::picture(apelles_compositor::Source::Video(frame), scale)
         .map(DynamicImage::ImageRgba8)
-}
-
-/// **One source frame as a picture on the CPU** — the two-up trim viewer's
-/// JPEG. Decoded exactly as a timeline layer is ([`decode_clip_rgba`]) and
-/// converted to pixels by the GPU engine at the preview size (D-452), so the
-/// trim viewer shows the same picture the preview does.
-fn decode_clip_picture(
-    source_path: &str,
-    source_size: (u32, u32),
-    lane: decode_pipe::PipeLane,
-    slot: decode_pipe::PipeSlot,
-    source_frame: u64,
-    max_long_edge: Option<u32>,
-) -> Result<DynamicImage, String> {
-    let source = decode_clip_rgba(
-        source_path,
-        source_size,
-        lane,
-        slot,
-        source_frame,
-        max_long_edge,
-    )?;
-    let scale = decode_scale(source_size, max_long_edge);
-    super::gpu_compositor::picture(source, scale).map(DynamicImage::ImageRgba8)
 }
 
 // --------------------------------------------------------------------------- //
@@ -1093,11 +1068,11 @@ pub fn chroma_timeline_link_clips(
     Ok(group)
 }
 
-/// The quality, 0-100, of the JPEGs this module still makes: the launcher
-/// card's thumbnail ([`timeline_thumb_jpeg`]) and the two-up trim viewer's
-/// frames ([`chroma_trim_view_frame`]). The live preview is not one of them
-/// since D-454: it is drawn on the GPU straight into its native surface
-/// ([`draw_preview_frame`]).
+/// The quality, 0-100, of the one JPEG this module still makes: the launcher
+/// card's thumbnail ([`timeline_thumb_jpeg`]). No preview picture is encoded
+/// any more — the live frame (D-454) and the two-up trim viewer's two
+/// ([`draw_two_up_frame`]) are drawn on the GPU straight into the native
+/// surface.
 const PREVIEW_JPEG_QUALITY: u8 = 80;
 
 /// Encode one picture to JPEG bytes at [`PREVIEW_JPEG_QUALITY`] (D-217).
@@ -1122,45 +1097,6 @@ fn preview_canvas_size(comp: (u32, u32), max_long_edge: Option<u32>) -> (u32, u3
     max_long_edge
         .and_then(|le| decode_pipe::scale_target(comp.0, comp.1, le))
         .unwrap_or(comp)
-}
-
-/// D-432 P3 — one frame of one SOURCE file as preview JPEG bytes, for the Edit
-/// tab's two-up trim viewer (the outgoing and incoming frames of a roll, slip
-/// or slide while it is dragged).
-///
-/// Why a source frame and not the timeline's frame: during the drag the
-/// persisted timeline still holds the pre-edit cut, so the frame a roll is
-/// about to make the outgoing clip's last one is not at any timeline position
-/// yet; it is a frame of that clip's source. Decoded through the same
-/// [`decode_clip_picture`] the preview's single-layer path uses, on its own
-/// pipe lane ([`decode_pipe::PipeLane::TRIM_VIEW`]) with one slot per half
-/// (`half` 0 or 1), so a drag reads each side sequentially and never touches
-/// the live preview's pipes. No grade, no transform: it shows the picture
-/// being cut, as Final Cut's two-up does. `chroma_trim_view_end` releases the
-/// lane's pipes when the gesture ends.
-#[tauri::command]
-pub async fn chroma_trim_view_frame(
-    source_path: String,
-    source_frame: u64,
-    half: u8,
-    max_long_edge: Option<u32>,
-) -> Result<tauri::ipc::Response, String> {
-    let jpeg = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
-        let size = clip_source_size(&source_path)?;
-        let slot = decode_pipe::PipeSlot::Track(usize::from(half.min(1)));
-        let img = decode_clip_picture(
-            &source_path,
-            size,
-            decode_pipe::PipeLane::TRIM_VIEW,
-            slot,
-            source_frame,
-            max_long_edge,
-        )?;
-        encode_preview_jpeg(&img)
-    })
-    .await
-    .map_err(|e| format!("trim view frame task: {e}"))??;
-    Ok(tauri::ipc::Response::new(jpeg))
 }
 
 /// D-432 P3 — the two-up trim viewer's gesture ended: release its decode pipes
@@ -1233,6 +1169,128 @@ pub(crate) fn draw_preview_frame(
             Ok(None)
         }
     }
+}
+
+/// Roadmap 00r 5d (c) — one half of the two-up trim viewer: which frame of
+/// which source file it shows. Decoded on the trim lane's own pipe slot, so a
+/// drag never touches the live preview's decoders.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TwoUpHalf {
+    pub source_path: String,
+    pub source_frame: u64,
+}
+
+/// The gap between the two halves, in canvas pixels. The divider itself is the
+/// overlay's own 2 px rule, drawn over this gap, so the two agree by sharing
+/// the width rather than by one drawing the other's line.
+const TWO_UP_GAP_PX: u32 = 2;
+
+/// `src` scaled to fit inside `box_px` whole, its aspect kept (what the
+/// overlay's `object-contain` did).
+fn fitted_in(src: (u32, u32), box_px: (u32, u32)) -> (u32, u32) {
+    if src.0 == 0 || src.1 == 0 {
+        return (1, 1);
+    }
+    let scale =
+        (f64::from(box_px.0) / f64::from(src.0)).min(f64::from(box_px.1) / f64::from(src.1));
+    (
+        (f64::from(src.0) * scale).round().max(1.0) as u32,
+        (f64::from(src.1) * scale).round().max(1.0) as u32,
+    )
+}
+
+/// The two halves' boxes on a canvas `w` wide: equal, with
+/// [`TWO_UP_GAP_PX`] between them, the right one against the right edge so an
+/// odd remainder never shows as a seam at the canvas edge. Each is `(x0,
+/// width)`.
+fn two_up_boxes(w: u32) -> ((u32, u32), (u32, u32)) {
+    let half_w = w.saturating_sub(TWO_UP_GAP_PX) / 2;
+    ((0, half_w), (w.saturating_sub(half_w), half_w))
+}
+
+/// One half's layer: its source frame decoded and letterboxed into the half
+/// box at `x0`. `None` for a half with no picture (the overlay says so).
+fn two_up_layer(
+    half: &TwoUpHalf,
+    slot: usize,
+    x0: u32,
+    box_px: (u32, u32),
+    long_edge: u32,
+) -> Result<apelles_compositor::Layer, String> {
+    let source_size = clip_source_size(&half.source_path)?;
+    let source = decode_clip_rgba(
+        &half.source_path,
+        source_size,
+        decode_pipe::PipeLane::TRIM_VIEW,
+        decode_pipe::PipeSlot::Track(slot),
+        half.source_frame,
+        Some(long_edge),
+    )?;
+    let (sw, sh) = source.dimensions();
+    let (fw, fh) = fitted_in((sw, sh), box_px);
+    Ok(apelles_compositor::Layer {
+        source,
+        crop: (0, 0, sw, sh),
+        size: (fw, fh),
+        origin: (
+            f64::from(x0) + f64::from(box_px.0.saturating_sub(fw)) / 2.0,
+            f64::from(box_px.1.saturating_sub(fh)) / 2.0,
+        ),
+        opacity: 1.0,
+        corner_radius: 0.0,
+        rotation_deg: 0.0,
+    })
+}
+
+/// **Roadmap 00r 5d (c) — the two-up trim viewer's picture, drawn by the GPU
+/// engine into the preview's native surface** (D-454), the same way
+/// [`draw_preview_frame`] draws the timeline's frame: the outgoing frame
+/// letterboxed into the left half of the preview canvas and the incoming one
+/// into the right, split by [`TWO_UP_GAP_PX`].
+///
+/// It replaces the two `chroma_trim_view_frame` JPEGs the overlay used to
+/// fetch into two `<img>`s — the last preview picture that was read back,
+/// encoded and sent over IPC. The overlay keeps what is text: each half's
+/// label, its timecode and the divider rule over the gap.
+///
+/// A half whose source will not decode is left black rather than failing the
+/// frame: a drag must not stop because one side's file is missing, and the
+/// half's own label still names it.
+///
+/// No grade and no transform, as before: it shows the picture being cut, which
+/// is what Final Cut's two-up shows.
+pub(crate) fn draw_two_up_frame(
+    left: Option<&TwoUpHalf>,
+    right: Option<&TwoUpHalf>,
+    long_edge: u32,
+    presenter: &mut super::preview_surface::presenter::Presenter,
+) -> Result<Option<super::gpu_compositor::GpuFrame>, String> {
+    let (timeline, settings) = resolve_timeline_and_settings(false)?;
+    let target = super::preview_surface::presenter::PresentTarget::new(presenter);
+    let to = super::gpu_compositor::Destination::Present(&target);
+    let Some((w, h)) = nothing_visible_canvas(&settings, &timeline, Some(long_edge)) else {
+        target.clear_frame()?;
+        return Ok(None);
+    };
+    let ((lx, half_w), (rx, _)) = two_up_boxes(w);
+    let mut steps = Vec::new();
+    if half_w > 0 && h > 0 {
+        for (slot, (half, x0)) in [(left, lx), (right, rx)].into_iter().enumerate() {
+            let Some(half) = half else { continue };
+            match two_up_layer(half, slot, x0, (half_w, h), long_edge) {
+                Ok(layer) => steps.push(apelles_compositor::Step::Paint(layer)),
+                Err(e) => log::debug!("two-up: {} is black ({e})", half.source_path),
+            }
+        }
+    }
+    let plan = apelles_compositor::FramePlan {
+        width: w,
+        height: h,
+        background: apelles_compositor::Background::Solid([0, 0, 0, 255]),
+        steps,
+    };
+    super::gpu_compositor::submit(&plan, &to).map(Some)
 }
 
 /// B-290 — the canvas of the preview frame for a position where
@@ -3006,6 +3064,36 @@ pub(super) fn composite_layer_onto(
     };
     *canvas = super::gpu_compositor::render(&plan)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod two_up_tests {
+    use super::*;
+
+    /// Roadmap 00r 5d (c) — the two halves the overlay labels and the two the
+    /// engine paints are the same two: equal, split by the gap the overlay's
+    /// divider covers, and together the whole canvas.
+    #[test]
+    fn the_two_halves_are_equal_and_split_by_the_divider_gap() {
+        for w in [1920u32, 1280, 961, 2] {
+            let ((lx, lw), (rx, rw)) = two_up_boxes(w);
+            assert_eq!(lx, 0, "w={w}: the left half starts at the left edge");
+            assert_eq!(lw, rw, "w={w}: the halves are equal");
+            assert_eq!(rx + rw, w, "w={w}: the right half ends at the right edge");
+            assert!(rx >= lw + TWO_UP_GAP_PX, "w={w}: the gap is between them");
+        }
+    }
+
+    /// A source is letterboxed whole into its half, its aspect kept, whether
+    /// it is wider or taller than the box.
+    #[test]
+    fn a_source_is_letterboxed_whole_into_its_half() {
+        assert_eq!(fitted_in((1920, 1080), (640, 640)), (640, 360));
+        assert_eq!(fitted_in((1080, 1920), (640, 640)), (360, 640));
+        assert_eq!(fitted_in((100, 100), (640, 360)), (360, 360));
+        // Never a zero-sized box, whatever it is handed.
+        assert_eq!(fitted_in((0, 0), (640, 360)), (1, 1));
+    }
 }
 
 #[cfg(test)]

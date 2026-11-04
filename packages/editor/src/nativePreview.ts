@@ -35,14 +35,16 @@ import {
   placePreviewSurface,
   playPreviewSurface,
   showPreviewSurfaceFrame,
+  showPreviewSurfaceTwoUp,
   startPreviewSurface,
   stopPreviewSurface,
   type PreviewSurfacePlacement,
   type PreviewSurfaceRect,
+  type PreviewSurfaceTwoUpHalf,
 } from '@apelles/bridge';
 
 import { notifyPreviewFrameShown } from './loadPerf';
-import { usePreviewPeekStore } from './previewPeek';
+import { usePreviewPeekStore, type TwoUpHalf as TwoUpHalfView, type TwoUpView } from './previewPeek';
 import { recordPreviewSpan, recordPreviewTiming } from './previewTiming';
 import { timelineDuration, timelineFps } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
@@ -193,6 +195,29 @@ export interface NativePreviewState {
 }
 
 /**
+ * Roadmap 00r 5d (c) — the two-up trim viewer's two halves as
+ * `showPreviewSurfaceTwoUp` takes them, or `null` when no roll, slip or slide
+ * is being dragged.
+ *
+ * The surface has ONE owner: while a two-up is in the peek store it is what
+ * the preview shows, in place of the timeline's frame at the playhead, and
+ * `TwoUpViewer` draws only the labels, timecodes and divider over it.
+ *
+ * A half with no source file (a title, a gap) maps to `null` — that side is
+ * drawn black and its own label says so. A source frame is rounded and pinned
+ * at zero, the unit the decoder takes.
+ */
+export function twoUpHalves(view: TwoUpView | null): {
+  left: PreviewSurfaceTwoUpHalf | null;
+  right: PreviewSurfaceTwoUpHalf | null;
+} | null {
+  if (!view) return null;
+  const half = (h: TwoUpHalfView): PreviewSurfaceTwoUpHalf | null =>
+    h.sourcePath ? { sourcePath: h.sourcePath, sourceFrame: Math.max(0, Math.round(h.sourceFrame)) } : null;
+  return { left: half(view.left), right: half(view.right) };
+}
+
+/**
  * Drive the native preview under `surface` (the preview surface element),
  * with the picture at `box` (its composition-fit content box, zoom and pan
  * included). Mounted while the Edit tab shows a timeline.
@@ -219,7 +244,11 @@ export function useNativePreview(surface: HTMLElement | null, box: ContentBoxLik
     const queue = createShowQueue({
       show: (position) => {
         const began = performance.now();
-        return showPreviewSurfaceFrame(position).then(() => {
+        const twoUp = twoUpHalves(usePreviewPeekStore.getState().twoUp);
+        const shown = twoUp
+          ? showPreviewSurfaceTwoUp(twoUp.left, twoUp.right)
+          : showPreviewSurfaceFrame(position);
+        return shown.then(() => {
           if (import.meta.env.APELLES_DEBUG_TOOLS === 'true') {
             recordPreviewSpan('scrub', performance.now() - began);
             recordPreviewTiming('paint');
@@ -315,9 +344,13 @@ export function useNativePreview(surface: HTMLElement | null, box: ContentBoxLik
       }
     });
     const unsubscribePeek = usePreviewPeekStore.subscribe((s, prev) => {
-      if (s.skimFrame === prev.skimFrame) return;
+      const twoUpChanged = s.twoUp !== prev.twoUp;
+      if (s.skimFrame === prev.skimFrame && !twoUpChanged) return;
       const at = paused();
-      if (at !== null) queue.want(at);
+      // A two-up drag moves its two source frames while the playhead stays
+      // put, and its end restores the timeline's frame at that same position,
+      // so neither can be skipped as "already on screen".
+      if (at !== null) queue.want(at, twoUpChanged);
     });
 
     // Playback: the Rust loop owns the picture and reports each frame it shows.
