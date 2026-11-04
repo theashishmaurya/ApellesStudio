@@ -580,6 +580,60 @@ mod tests {
         .expect("engine frame")
     }
 
+    /// Roadmap 00r 5d (b) — the preview hands the grade a GPU-resident picture
+    /// (`gpu_compositor::resized`); the grade reads it in place, and the
+    /// result is bit-identical to grading the same pixels from the CPU.
+    #[test]
+    fn grading_a_gpu_resident_picture_equals_grading_it_from_the_cpu() {
+        use apelles_compositor::{GpuImage, Source};
+        use wgpu::util::DeviceExt;
+        let (w, h) = (640, 360);
+        let img = picture(w, h, 11);
+        let engine = super::super::gpu_compositor::engine().expect("engine");
+        let (device, _) = engine.device_and_queue();
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("grade_pass test picture"),
+            contents: img.as_raw(),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let on_gpu = Source::Gpu(GpuImage {
+            buffer,
+            width: w,
+            height: h,
+            row_pixels: w,
+        });
+        let on_cpu = Source::Rgba(std::sync::Arc::new(img));
+        for (name, grade) in grades() {
+            let g = super::resolve(&grade)
+                .expect("resolve")
+                .expect("a real grade");
+            let read = |s: &Source| {
+                super::super::gpu_compositor::picture(
+                    super::grade_source(s, &g).expect("grade"),
+                    None,
+                )
+                .expect("read back")
+            };
+            assert!(
+                read(&on_gpu) == read(&on_cpu),
+                "{name}: the GPU-resident input graded differently"
+            );
+        }
+    }
+
+    /// The preview's resize keeps the frame on the GPU and at the asked size.
+    #[test]
+    fn a_resized_picture_stays_on_the_gpu_at_its_new_size() {
+        let img = picture(1920, 1080, 3);
+        let out = super::super::gpu_compositor::resized(
+            apelles_compositor::Source::Rgba(std::sync::Arc::new(img)),
+            (960, 540),
+        )
+        .expect("resize");
+        assert!(matches!(out, apelles_compositor::Source::Gpu(_)));
+        assert_eq!(out.dimensions(), (960, 540));
+    }
+
     /// **B-381's fix, as a pixel claim.** A graded clip's frame drawn by the
     /// engine (the native pass) is the Colorist's own render of the same
     /// picture, bit for bit, for every grade the reference covers — the local

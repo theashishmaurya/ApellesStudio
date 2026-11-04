@@ -264,3 +264,7 @@ Not carried yet; the Export panel and `editor_get_grade_status` name them per cl
 - **The Colorist crop, rotation and flips** are a framing, not a colour: applying them inside the grade
   would change the clip's framing on the timeline. They need a decision on how a Colorist crop composes with
   the Edit transform before they are carried.
+
+## Preview size after D-452 (2026-11-04, roadmap 00r 5d (b))
+
+D-452 removed the decoder's scale argument, so a media-engine frame reached the grade at the source's full size and a graded 4K clip was graded at 4K on every played frame (~25 fps). `edit.rs` now resizes a `Source::Video` to the preview's picture-box size on the GPU first (`gpu_compositor::resized`: the engine's one-layer plan, its minify filter, the canvas copied into a buffer of its own, no read-back), and `Engine::write_f16_texture` reads that `Source::Gpu` in place. The export (`max_long_edge` = None) still grades at full size. Measured (`measure_the_preview_size_grade`): a graded 960×540 engine frame costs 3.6–8.2 ms across the five reference grades. Tests: `grading_a_gpu_resident_picture_equals_grading_it_from_the_cpu` (bit-identical), `a_resized_picture_stays_on_the_gpu_at_its_new_size`.

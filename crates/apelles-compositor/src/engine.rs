@@ -1372,8 +1372,9 @@ impl Engine {
     /// same size with `STORAGE_BINDING` usage, as `v / 255` per channel
     /// (`to_f16.wgsl`): the input the Colorist's grade shader reads (D-450).
     /// Recorded and submitted at once, so a later submission on this queue
-    /// (the grade itself) sees the result. Only a decoded picture (RGB8 or
-    /// RGBA8 on the CPU) can be written.
+    /// (the grade itself) sees the result. Takes a picture on the CPU (RGB8
+    /// or RGBA8), a decoded video frame, or a GPU-resident image (read where it
+    /// is, no upload: the preview's frame already resized to the picture box).
     pub fn write_f16_texture(
         &self,
         source: &Source,
@@ -1387,45 +1388,24 @@ impl Engine {
                 target.height()
             )));
         }
-        let (bytes, kind) = match source {
-            Source::Rgba(img) => (img.as_raw().as_slice(), 0),
-            Source::Rgb(img) => (img.as_raw().as_slice(), 1),
+        // The pixels the kernel reads: a GPU image as it already is (its
+        // padded row stride), anything on the CPU uploaded into the reused
+        // staging buffer first.
+        let (src, src_w, kind) = match source {
+            Source::Gpu(g) => (g.buffer.clone(), g.row_pixels, 0),
+            Source::Rgba(img) => (self.upload_f16_source(img.as_raw())?, w, 0),
+            Source::Rgb(img) => (self.upload_f16_source(img.as_raw())?, w, 1),
             #[cfg(target_os = "macos")]
             Source::Video(video) => return self.write_f16_from_video(video, target),
-            Source::Solid { .. } | Source::Gpu(_) => {
+            Source::Solid { .. } => {
                 return Err(ComposeError::Gpu(
-                    "only a decoded picture can be written to a half-float texture".to_string(),
+                    "a solid colour has no picture to write to a half-float texture".to_string(),
                 ));
             }
         };
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let need = (bytes.len() as u64).div_ceil(4).max(1) * 4;
-        let src = {
-            let mut slot = self.f16_source.lock().unwrap_or_else(|e| e.into_inner());
-            match slot.as_ref() {
-                Some(b) if b.size() >= need => b.clone(),
-                _ => {
-                    if need > self.max_binding {
-                        return Err(ComposeError::TooLarge(format!(
-                            "a {need}-byte frame is over this device's {}-byte limit",
-                            self.max_binding
-                        )));
-                    }
-                    let b = self.device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some("apelles-compositor to_f16 source"),
-                        size: need,
-                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    });
-                    *slot = Some(b.clone());
-                    b
-                }
-            }
-        };
-        write_padded(&self.queue, &src, bytes);
-        self.count_upload(bytes.len());
         let p = ToF16Params {
-            src_w: w,
+            src_w,
             kind,
             width: w,
             height: h,
@@ -1477,6 +1457,37 @@ impl Engine {
             Some(e) => Err(ComposeError::Gpu(e.to_string())),
             None => Ok(()),
         }
+    }
+
+    /// Copy `bytes` into the reused staging buffer [`Self::write_f16_texture`]
+    /// reads a CPU picture from, growing it when a larger frame arrives.
+    fn upload_f16_source(&self, bytes: &[u8]) -> Result<wgpu::Buffer, ComposeError> {
+        let need = (bytes.len() as u64).div_ceil(4).max(1) * 4;
+        let src = {
+            let mut slot = self.f16_source.lock().unwrap_or_else(|e| e.into_inner());
+            match slot.as_ref() {
+                Some(b) if b.size() >= need => b.clone(),
+                _ => {
+                    if need > self.max_binding {
+                        return Err(ComposeError::TooLarge(format!(
+                            "a {need}-byte frame is over this device's {}-byte limit",
+                            self.max_binding
+                        )));
+                    }
+                    let b = self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("apelles-compositor to_f16 source"),
+                        size: need,
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                    *slot = Some(b.clone());
+                    b
+                }
+            }
+        };
+        write_padded(&self.queue, &src, bytes);
+        self.count_upload(bytes.len());
+        Ok(src)
     }
 
     /// D-452 — [`Self::write_f16_texture`] for a decoded video frame: its

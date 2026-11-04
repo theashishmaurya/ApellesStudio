@@ -2666,6 +2666,20 @@ fn composite_video_frame(
         // before touching the GPU when there is no grade file, which is every
         // clip in every project that has never been near the Colorist tab.
         if let Some(grade) = grade_pass::grade_for_clip(&clip.id) {
+            // Roadmap 00r 5d (b) — a preview grades the picture at the size it
+            // is shown, not the source's: a media-engine frame arrives at full
+            // size (D-452), so a graded 4K clip was graded at 4K on every
+            // played frame and playback fell to ~25 fps. Resized on the GPU
+            // first (the engine's own minify filter, the frame never leaves the
+            // GPU); a still already decodes at this size. The export
+            // (`max_long_edge` = None) grades at full size as before. As D-450
+            // states, the preview grading at preview size is the long-standing
+            // rule, not a new difference.
+            if let (apelles_compositor::Source::Video(_), Some(size)) =
+                (&img, decode_scale(source_size, max_long_edge))
+            {
+                img = super::gpu_compositor::resized(img, size)?;
+            }
             img = grade_pass::grade_source(&img, &grade)?;
         }
         // D-396 — **the clip's highlighter strokes**, drawn on the graded
