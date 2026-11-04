@@ -23,7 +23,7 @@
 //!   alpha channel (including a VP9 WebM's side-channel alpha) becomes HEVC
 //!   with alpha. The hardware encoder is required: a failure is an error that
 //!   names the file, never a silent software encode.
-//! - **The job queue** ([`request`], [`cancel`], [`status`], [`set_listener`]):
+//! - **The job queue** ([`request`], [`retry`], [`cancel`], [`status`], [`set_listener`]):
 //!   one worker thread converts queued sources in order, reporting progress
 //!   to a listener the app installs (which the GUI and `editor_list_media`
 //!   read), with a cancel that kills the `ffmpeg` and removes the partial file.
@@ -403,10 +403,22 @@ pub fn status(source: &Path) -> Option<ConversionStatus> {
     converted_file(source).map(|_| ConversionStatus::ready())
 }
 
-/// Queue every source in `sources` that needs a conversion and has none on
-/// disk, none queued and none running. A source whose last conversion failed
-/// or was cancelled is queued again: asking is what restarts it.
+/// Queue every source in `sources` that needs a conversion this session has not
+/// been asked for yet and that has none on disk. A source already queued,
+/// converting, failed or cancelled is left as it is: an import or a project
+/// open must not restart a conversion the user cancelled ([`retry`] does that).
 pub fn request(sources: &[PathBuf]) {
+    enqueue(sources, false);
+}
+
+/// [`request`], and also queue again every source in `sources` whose last
+/// conversion failed or was cancelled: the user's "convert this again" (a
+/// re-probe of the pool item).
+pub fn retry(sources: &[PathBuf]) {
+    enqueue(sources, true);
+}
+
+fn enqueue(sources: &[PathBuf], restart: bool) {
     let mut queued = Vec::new();
     {
         let mut reg = registry();
@@ -414,11 +426,12 @@ pub fn request(sources: &[PathBuf]) {
             if !needs_conversion(source) || !source.is_file() {
                 continue;
             }
-            let active = matches!(
-                reg.jobs.get(source).map(|s| s.state),
-                Some(ConversionState::Queued | ConversionState::Converting)
-            );
-            if active {
+            let skip = match reg.jobs.get(source).map(|s| s.state) {
+                Some(ConversionState::Queued | ConversionState::Converting) => true,
+                Some(ConversionState::Failed | ConversionState::Cancelled) => !restart,
+                Some(ConversionState::Ready) | None => false,
+            };
+            if skip {
                 continue;
             }
             let root = reg.project_root.clone().or_else(|| {
@@ -428,7 +441,9 @@ pub fn request(sources: &[PathBuf]) {
                     .clone()
             });
             let Some(root) = root else { continue };
-            if converted_path_in(&root, source).is_ok_and(|p| p.is_file()) {
+            if converted_path_in(&root, source)
+                .is_ok_and(|p| p.is_file() && facts_path(&p).is_file())
+            {
                 reg.jobs.remove(source);
                 continue;
             }
@@ -469,17 +484,21 @@ pub fn cancel(source: &Path) -> bool {
         let running = reg.running.as_ref().filter(|r| r.source == source).cloned();
         (was, running)
     };
-    match running {
-        Some(job) => job.cancel(),
-        None => set_state(
-            source,
-            ConversionStatus {
-                state: ConversionState::Cancelled,
-                progress: 0.0,
-                error: None,
-            },
-        ),
+    // Reported cancelled at once, so the caller reads back what it asked for;
+    // a running job's `ffmpeg` is killed and the worker removes its partial
+    // file as it unwinds (and reports `Ready` instead only if the run had
+    // already finished, which is then the truth).
+    if let Some(job) = running {
+        job.cancel();
     }
+    set_state(
+        source,
+        ConversionStatus {
+            state: ConversionState::Cancelled,
+            progress: 0.0,
+            error: None,
+        },
+    );
     was
 }
 

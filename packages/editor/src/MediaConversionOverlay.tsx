@@ -33,8 +33,8 @@ export function MediaConversionOverlay({ conversion, name, onCancel, onConvertAg
       : conversion.state === 'queued'
         ? 'Waiting to convert'
         : conversion.state === 'failed'
-          ? 'Conversion failed'
-          : 'Not converted';
+          ? 'Failed'
+          : 'Cancelled';
   return (
     <div
       data-chroma-tile-conversion={conversion.state}

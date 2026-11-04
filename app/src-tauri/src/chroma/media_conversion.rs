@@ -80,7 +80,8 @@ fn video_sources(manifest: &ProjectManifest) -> Vec<PathBuf> {
 }
 
 /// Ask for every source in `manifest` the media engine cannot open to be
-/// converted (those already converted, queued or running are left alone), and
+/// converted (those already converted, queued, running, failed or cancelled
+/// this session are left alone: a cancel holds until a re-probe), and
 /// remove converted files no source maps to any more. Cheap when nothing needs
 /// doing: a `stat` per such source.
 pub fn convert_project_sources(project_dir: &Path, manifest: &ProjectManifest) {
@@ -99,7 +100,7 @@ pub fn convert_project_sources(project_dir: &Path, manifest: &ProjectManifest) {
 /// Ask for `paths` to be converted again if their last conversion failed or
 /// was cancelled (a re-probe is the user's "try this source again").
 pub fn retry(paths: &[PathBuf]) {
-    optimized_media::request(paths);
+    optimized_media::retry(paths);
 }
 
 /// One pool item's cancel, as the Sources panel and

@@ -63,7 +63,7 @@ describe('MediaConversionOverlay', () => {
       />,
     );
     const root = mounted.container.querySelector('[data-chroma-tile-conversion="failed"]');
-    expect(root?.textContent).toContain('Conversion failed');
+    expect(root?.textContent).toContain('Failed');
     expect(root?.getAttribute('title')).toContain('hardware HEVC encoder');
     click(mounted.container.querySelector('button[aria-label="Convert talk.mkv again"]'));
     expect(onConvertAgain).toHaveBeenCalledTimes(1);

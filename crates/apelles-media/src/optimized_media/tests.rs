@@ -629,18 +629,30 @@ fn a_queued_conversion_can_be_cancelled_and_asked_for_again() {
     );
     // The running one too: its ffmpeg is killed and nothing is left.
     assert!(cancel(&long));
+    // Reported at once, before the killed run has unwound…
+    assert_eq!(
+        status(&long).map(|s| s.state),
+        Some(ConversionState::Cancelled)
+    );
+    // …and the unwinding removes the partial file.
+    let leftovers = || -> Vec<PathBuf> {
+        std::fs::read_dir(project.join(FOLDER))
+            .map(|d| d.flatten().map(|e| e.path()).collect())
+            .unwrap_or_default()
+    };
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while status(&long).map(|s| s.state) != Some(ConversionState::Cancelled) {
+    while !leftovers().is_empty() || registry().running.is_some() {
         assert!(
             std::time::Instant::now() < deadline,
-            "the running cancel lands"
+            "nothing half-written: {:?}",
+            leftovers()
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    let leftovers: Vec<_> = std::fs::read_dir(project.join(FOLDER))
-        .map(|d| d.flatten().map(|e| e.path()).collect())
-        .unwrap_or_default();
-    assert!(leftovers.is_empty(), "nothing half-written: {leftovers:?}");
+    assert_eq!(
+        status(&long).map(|s| s.state),
+        Some(ConversionState::Cancelled)
+    );
     // A decode does not restart a cancelled conversion behind the user's back…
     let info = crate::video::probe(&short).expect("probe");
     let err = decode_source(&short, &info).err().expect("cancelled");
@@ -649,8 +661,14 @@ fn a_queued_conversion_can_be_cancelled_and_asked_for_again() {
         status(&short).map(|s| s.state),
         Some(ConversionState::Cancelled)
     );
-    // …asking for it does.
+    // …nor does an import or a project open asking for every source again…
     request(std::slice::from_ref(&short));
+    assert_eq!(
+        status(&short).map(|s| s.state),
+        Some(ConversionState::Cancelled)
+    );
+    // …a retry (a re-probe of the item) does.
+    retry(std::slice::from_ref(&short));
     let asked = status(&short).map(|s| s.state);
     assert!(
         asked.is_some_and(|s| s != ConversionState::Cancelled),
