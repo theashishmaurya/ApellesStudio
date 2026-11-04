@@ -2146,6 +2146,9 @@ pub fn run() {
             }
 
             let window = window_builder.build().expect("Failed to build window");
+            // D-456 — the window is built protected from outside capture; the
+            // owner's setting may turn that off.
+            app_settings::apply_screen_capture_protection(app.handle(), &settings);
 
             #[cfg(target_os = "android")]
             android_integration::initialize_android(&window);

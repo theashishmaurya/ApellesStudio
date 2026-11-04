@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- 2026-11-04: D-456 — Settings → General → *Hide from Screen Capture* turns the outside-capture protection off and on live (on by default).
 - 2026-11-04: **D-456** — Apelles' window is excluded from other apps' screen capture in every build (`contentProtected`, `NSWindow.sharingType = .none`); Apelles' own screenshots and recordings are internal and keep working.
 - 2026-11-04: roadmap 00r 5d (b) — the Edit preview grades a clip at the picture box's size again: a decoded frame is resized on the GPU before the Colorist grade (3.6–8.2 ms per graded 960×540 frame instead of a 4K grade); the export still grades at full size.
 - 2026-11-04: roadmap 00r 5d (d) — MCP tool descriptions (both servers, corpus re-captured) and code comments no longer describe the deleted ffmpeg filter export as live; the TypeScript adjustment-maths mirror that only fed that export (`buildAdjustmentOps`, `buildAdjustmentSteps`, `clipAdjustmentOps`) is deleted.

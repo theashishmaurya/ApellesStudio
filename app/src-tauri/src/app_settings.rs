@@ -477,6 +477,13 @@ pub struct AppSettings {
     #[serde(default)]
     pub font_family: Option<String>,
     pub decorations: Option<bool>,
+    /// D-456 — keep the main window out of other apps' screenshots and screen
+    /// recordings (`NSWindow.sharingType = .none`). `None` (a settings file
+    /// from before the setting) means on, the default. Apelles' own captures
+    /// are internal and unaffected. Applied at start-up and on every save
+    /// ([`apply_screen_capture_protection`]).
+    #[serde(default)]
+    pub hide_from_screen_capture: Option<bool>,
     #[serde(alias = "comfyuiAddress")]
     pub ai_connector_address: Option<String>,
     pub last_folder_state: Option<LastFolderState>,
@@ -618,6 +625,7 @@ impl Default for AppSettings {
             theme: Some("dark".to_string()),
             font_family: None,
             decorations: Some(false),
+            hide_from_screen_capture: Some(true),
             ai_connector_address: None,
             last_folder_state: None,
             ui_visibility: None,
@@ -879,6 +887,8 @@ pub fn save_settings(settings: AppSettings, app_handle: AppHandle) -> Result<(),
     let json_string = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     fs::write(path, json_string).map_err(|e| e.to_string())?;
 
+    apply_screen_capture_protection(&app_handle, &settings);
+
     let state = app_handle.state::<AppState>();
     let cache_size = settings.image_cache_size.unwrap_or(5) as usize;
     state
@@ -889,9 +899,42 @@ pub fn save_settings(settings: AppSettings, app_handle: AppHandle) -> Result<(),
     Ok(())
 }
 
+/// D-456 — whether the main window refuses other apps' screen capture: the
+/// setting, on unless the owner turned it off.
+pub fn hides_from_screen_capture(settings: &AppSettings) -> bool {
+    settings.hide_from_screen_capture.unwrap_or(true)
+}
+
+/// D-456 — apply [`hides_from_screen_capture`] to the main window. The window
+/// config already starts protected (`contentProtected` in `tauri.conf.json`),
+/// so the window is never capturable before this runs; this is how the
+/// setting turns it off, and back on, live.
+pub fn apply_screen_capture_protection(app_handle: &AppHandle, settings: &AppSettings) {
+    let Some(window) = app_handle.get_webview_window("main") else {
+        return;
+    };
+    if let Err(e) = window.set_content_protected(hides_from_screen_capture(settings)) {
+        log::warn!("could not apply the screen-capture setting: {e}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// D-456 — a settings file from before the setting keeps the window
+    /// protected; only an explicit `false` turns it off.
+    #[test]
+    fn screen_capture_protection_is_on_unless_turned_off() {
+        let old: AppSettings = serde_json::from_str("{}").expect("an empty settings file parses");
+        assert!(hides_from_screen_capture(&old));
+        assert!(hides_from_screen_capture(&AppSettings::default()));
+        let off = AppSettings {
+            hide_from_screen_capture: Some(false),
+            ..AppSettings::default()
+        };
+        assert!(!hides_from_screen_capture(&off));
+    }
 
     /// B-194: no `settings.json` at all is `NotFound` — the one case a
     /// caller may substitute [`AppSettings::default`] for.

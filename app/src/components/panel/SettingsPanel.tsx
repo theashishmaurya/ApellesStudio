@@ -1412,6 +1412,19 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                         />
                       </SettingItem>
 
+                      {/* D-456 — applied by `save_settings` in Rust, live; on by default. */}
+                      <SettingItem
+                        label={t('settings.general.hideFromScreenCapture')}
+                        description={t('settings.general.hideFromScreenCaptureDesc')}
+                      >
+                        <Switch
+                          checked={appSettings?.hideFromScreenCapture ?? true}
+                          id="hide-from-screen-capture-toggle"
+                          label={t('settings.general.enableHideFromScreenCapture')}
+                          onChange={(checked) => onSettingsChange({ ...appSettings, hideFromScreenCapture: checked })}
+                        />
+                      </SettingItem>
+
                       {osPlatform === 'linux' && (
                         <SettingItem
                           label={t('settings.general.nativeTitlebar')}

@@ -155,6 +155,9 @@ export interface AppSettings {
   aiConnectorAddress?: string;
   aiProvider?: string;
   decorations?: any;
+  /** D-456 — keep the window out of other apps' screenshots and screen
+   *  recordings. Unset means on. */
+  hideFromScreenCapture?: boolean;
   editorPreviewResolution?: number;
   smallThumbnailResolution?: number;
   mediumThumbnailResolution?: number;
