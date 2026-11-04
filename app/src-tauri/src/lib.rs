@@ -2320,6 +2320,8 @@ pub fn run() {
             camera_session: Mutex::new(camera_tethering::CameraSession::new()),
         })
         .invoke_handler(tauri::generate_handler![
+            chroma::control::chroma_control_announce,
+            chroma::control::chroma_control_respond,
             chroma::commands::chroma_video_info,
             chroma::commands::chroma_seek,
             chroma::playback::chroma_play_frame,

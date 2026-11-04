@@ -8,9 +8,9 @@
  * surface at all before this pass, only Colorist (`useChromaControl.ts`)
  * and Motion (`@apelles/motion`'s `useMotionControl.ts`) did.
  *
- * **Same event pair as both existing hooks, no Rust changes.** Listens on
- * the SAME `chroma://request`/`chroma://response/<id>` Tauri events
- * `control.rs` already emits/awaits (`app/src-tauri/src/chroma/control.rs`
+ * **Same bridge as both existing hooks, no Rust changes.** Listens on the
+ * SAME `chroma://request` event `control.rs` emits and replies through
+ * `respondToControlRequest` (B-386) (`app/src-tauri/src/chroma/control.rs`
  * has never needed an op-name change to carry a new tab's ops — it forwards
  * `{op,args}` blind). Every op here is namespaced `editor_*`, mirroring
  * Motion's own OPT-IN convention exactly (`MOTION_OP_PREFIX`,
@@ -18,8 +18,7 @@
  * opt-OUT/catch-all shape, which `docs/notes/mcp-architecture.md` calls
  * out as the one NOT to copy. `useChromaControl.ts` has its own matching
  * skip for `editor_*` (D-183) so the two listeners never race for the
- * one-shot response slot `control.rs`'s `app.once(...)` hands out per
- * request id.
+ * one reply `control.rs` takes per request id (B-386).
  *
  * **No ref/argument plumbing needed, unlike Motion.** `useEditorTimelineStore`
  * and `@apelles/bridge`'s `useMediaPoolStore` are real module-level zustand
@@ -104,14 +103,16 @@ import {
   takeSegments,
   type ClipRun,
 } from './recutRuns';
-import { listen, emit } from '@tauri-apps/api/event';
+import { listen } from '@tauri-apps/api/event';
 
 import {
+  announceBridgeClaim,
   assertRequestLive,
   awaitsConversion,
   isAudioOnlyItem,
   type MediaItem,
   newBridgeClaim,
+  respondToControlRequest,
   useMediaPoolStore,
   useVideoUnderstandingStore,
 } from '@apelles/bridge';
@@ -391,7 +392,7 @@ const EDITOR_OP_PREFIX = 'editor_';
  *  `defers: []` — this registry claims its prefix and nothing else; the catch-all
  *  in `app/src/hooks/useChromaControl.ts` is the only one with anything to
  *  defer. The event name is spelled out here rather than imported, matching how
- *  `chroma://request`/`chroma://response/` already are in all four registries. */
+ *  `chroma://request` already is in all four registries. */
 
 /** B-032/B-034/D-112's own fix, copied verbatim from `useMotionControl.ts` —
  *  `listen()`'s cleanup is `unlistenPromise.then((f) => f())`, and Tauri's
@@ -6482,7 +6483,7 @@ export function useEditorControl(): void {
         return;
       }
 
-      const respond = (body: any) => emit(`chroma://response/${id}`, body);
+      const respond = (body: any) => respondToControlRequest(id, body);
       const fn = OPS[op];
       if (!fn) {
         respond({ ok: false, error: `unknown editor op: ${op}` });
@@ -6517,7 +6518,7 @@ export function useEditorControl(): void {
     // promise resolving is that fact), and only if this effect is still live.
     let subscribed = true;
     void unlistenP.then(() => {
-      if (subscribed) void emit('chroma://bridge-ready', bridge.claim);
+      if (subscribed) void announceBridgeClaim(bridge.claim);
     });
 
     return () => {

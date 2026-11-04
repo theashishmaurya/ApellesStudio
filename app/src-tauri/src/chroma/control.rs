@@ -3,9 +3,23 @@
 //! A tiny blocking HTTP server that runs *inside* the Tauri app and bridges
 //! `HTTP  ⇄  Tauri events  ⇄  the frontend`. Every request is turned into a
 //! `chroma://request` event; the frontend (`useChromaControl`) applies it
-//! through the *same* store actions the GUI buttons call and replies on
-//! `chroma://response/<id>` with the post-render frame + scopes. So an MCP edit
-//! and a manual slider drag share exactly one state — they can't diverge.
+//! through the *same* store actions the GUI buttons call and replies through
+//! the [`chroma_control_respond`] command with the post-render frame + scopes.
+//! So an MCP edit and a manual slider drag share exactly one state — they
+//! can't diverge.
+//!
+//! **Frontend → Rust goes through commands, never events (B-386).** Tauri 2's
+//! Rust-side event registry (`tauri::event::Listeners`) queues a listener that
+//! is registered, and an event that is emitted, while another thread is
+//! delivering an event, and only flushes that queue after a delivery that
+//! reached at least one Rust handler. A per-op `app.once("chroma://response/
+//! <id>")` registered during a delivery to no Rust handler (the debug present
+//! events, any page-only event) therefore sat queued while the page's reply
+//! arrived and was dropped, and the op timed out after the page had answered
+//! it in milliseconds. The reply ([`chroma_control_respond`]) and the
+//! handshake ([`chroma_control_announce`]) are commands, which have no
+//! listener registry; requests still go out as the `chroma://request` event,
+//! whose page-side listeners are a separate, unaffected registry.
 //!
 //! What it does NOT do: any grade or mask logic, and it does not know the op
 //! list. It just forwards `{op, args}`. The op registry lives in the frontend.
@@ -95,10 +109,11 @@
 //! See chroma/docs/08-decisions.md D-020 / D-210 and
 //! chroma/docs/notes/control-server/SPEC.md.
 
-use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::collections::HashMap;
+use std::sync::{Condvar, LazyLock, Mutex, mpsc};
 use std::time::Duration;
 
-use tauri::{Emitter, Listener};
+use tauri::Emitter;
 use tiny_http::{Header, Method, Response, Server};
 
 const DEFAULT_PORT: u16 = 19788;
@@ -148,27 +163,10 @@ pub fn serve(app: tauri::AppHandle) {
     };
     log::info!("[chroma::control] listening on http://{addr}  (POST /op {{op,args}})");
 
-    // B-071 — start hearing frontend handshakes BEFORE serving a single
-    // request, so a registry that subscribes while the very first HTTP request
-    // is already in flight is still recorded in time to answer it.
-    let registry: Arc<BridgeRegistry> = Arc::new(BridgeRegistry::default());
-    {
-        let registry = registry.clone();
-        app.listen(
-            "chroma://bridge-ready",
-            move |ev| match serde_json::from_str::<BridgeClaim>(ev.payload()) {
-                Ok(claim) => {
-                    log::info!(
-                        "[chroma::control] frontend bridge ready: prefix {:?}, defers {:?}",
-                        claim.prefix,
-                        claim.defers
-                    );
-                    registry.announce(claim);
-                }
-                Err(e) => log::warn!("[chroma::control] malformed chroma://bridge-ready: {e}"),
-            },
-        );
-    }
+    // B-071 — handshakes land in the process-wide [`REGISTRY`] through
+    // [`chroma_control_announce`], which can run before this thread has even
+    // bound its port, so a registry that subscribes early is never missed.
+    let registry: &BridgeRegistry = &REGISTRY;
 
     for mut req in server.incoming_requests() {
         let raw = req.url().to_string();
@@ -188,7 +186,7 @@ pub fn serve(app: tauri::AppHandle) {
             // endpoint exists to diagnose.
             let state = dispatch(
                 &app,
-                &registry,
+                registry,
                 "get_state",
                 serde_json::json!({}),
                 None,
@@ -256,7 +254,7 @@ pub fn serve(app: tauri::AppHandle) {
 
         match dispatch(
             &app,
-            &registry,
+            registry,
             &op,
             args,
             source,
@@ -360,7 +358,7 @@ enum BridgeErr {
 /// the op registry lives in one place. What is announced here is prefixes, at
 /// runtime, by the code that owns them — never op names.
 #[derive(Debug, Clone, serde::Deserialize)]
-struct BridgeClaim {
+pub struct BridgeClaim {
     #[serde(default)]
     prefix: String,
     #[serde(default)]
@@ -380,6 +378,47 @@ impl BridgeClaim {
     /// Whether this registry would really handle `op`.
     fn serves(&self, op: &str) -> bool {
         op.starts_with(&self.prefix) && !self.defers.iter().any(|d| op.starts_with(d.as_str()))
+    }
+}
+
+/// B-071 — the process's one record of checked-in frontend registries, fed by
+/// [`chroma_control_announce`] and read by [`dispatch`].
+static REGISTRY: LazyLock<BridgeRegistry> = LazyLock::new(BridgeRegistry::default);
+
+/// B-386 — the ops waiting for their reply, by request id. [`dispatch`]
+/// inserts its sender before emitting the request and removes it when it
+/// stops waiting; [`chroma_control_respond`] hands the reply to it.
+static REPLIES: LazyLock<Mutex<HashMap<String, mpsc::Sender<String>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn replies() -> std::sync::MutexGuard<'static, HashMap<String, mpsc::Sender<String>>> {
+    REPLIES.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// B-071 / B-386 — a frontend registry checks in: it is subscribed and serves
+/// `claim.prefix` (minus `claim.defers`). A command rather than an event so it
+/// cannot be lost in Tauri's Rust-side event queue (this module's doc).
+#[tauri::command]
+pub fn chroma_control_announce(claim: BridgeClaim) {
+    log::info!(
+        "[chroma::control] frontend bridge ready: prefix {:?}, defers {:?}",
+        claim.prefix,
+        claim.defers
+    );
+    REGISTRY.announce(claim);
+}
+
+/// B-386 — a frontend registry's reply to request `id`, the `{ok, error,
+/// result}` envelope as-is. A reply nobody is waiting for any more (the op
+/// outlived its bridge timeout) is dropped with a note, which is what the
+/// timeout's own answer told the caller would happen.
+#[tauri::command]
+pub fn chroma_control_respond(id: String, body: serde_json::Value) {
+    match replies().remove(&id) {
+        Some(tx) => {
+            let _ = tx.send(body.to_string());
+        }
+        None => log::debug!("[chroma::control] late reply for {id}: its caller stopped waiting"),
     }
 }
 
@@ -744,8 +783,8 @@ fn sample_pixel_args(args: &serde_json::Value) -> Result<(String, u32, u32), Str
 }
 
 /// The bridge: wait for a frontend registry that serves `op` to be subscribed
-/// (B-071), emit `chroma://request`, wait for the frontend's
-/// `chroma://response/<id>`, return its raw JSON payload string.
+/// (B-071), emit `chroma://request`, wait for the frontend's reply through
+/// [`chroma_control_respond`] (B-386), return its raw JSON payload string.
 ///
 /// `ready_wait` is how long to give the handshake before giving up with
 /// [`BridgeErr::NotReady`]; `Duration::ZERO` skips waiting entirely (what
@@ -769,10 +808,9 @@ fn dispatch(
 
     let id = uuid::Uuid::new_v4().to_string();
     let (tx, rx) = mpsc::channel::<String>();
-
-    let handler_id = app.once(format!("chroma://response/{id}"), move |ev| {
-        let _ = tx.send(ev.payload().to_string());
-    });
+    // B-386 — registered before the request goes out, so a reply can never
+    // arrive ahead of its waiter.
+    replies().insert(id.clone(), tx);
 
     // B-272 — the request names the ONE frontend subscription that runs it, so
     // a leaked listener from before a reload hears the event and does nothing.
@@ -792,10 +830,11 @@ fn dispatch(
         }),
     );
 
-    match rx.recv_timeout(timeout) {
+    let reply = rx.recv_timeout(timeout);
+    replies().remove(&id);
+    match reply {
         Ok(payload) => Ok(payload),
         Err(_) => {
-            app.unlisten(handler_id);
             // B-164 — no `forget_serving` here anymore. A timeout means the
             // frontend hasn't answered YET (SAM 2 routinely runs past this
             // budget), not that its registry is gone — dropping a still-live
@@ -838,6 +877,28 @@ fn err_body(msg: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    /// B-386 — a reply reaches the op waiting for it by id, and a reply for an
+    /// op that stopped waiting is dropped without disturbing anyone else.
+    #[test]
+    fn a_reply_reaches_its_waiter_by_id() {
+        let (tx, rx) = mpsc::channel::<String>();
+        replies().insert("b386-live".to_string(), tx);
+        chroma_control_respond("b386-gone".to_string(), serde_json::json!({ "ok": false }));
+        chroma_control_respond(
+            "b386-live".to_string(),
+            serde_json::json!({ "ok": true, "result": 7 }),
+        );
+        let got: serde_json::Value =
+            serde_json::from_str(&rx.recv_timeout(Duration::from_secs(1)).expect("the reply"))
+                .expect("json");
+        assert_eq!(got, serde_json::json!({ "ok": true, "result": 7 }));
+        assert!(
+            !replies().contains_key("b386-live"),
+            "a delivered reply frees its slot"
+        );
+    }
 
     fn ms(v: u64) -> serde_json::Value {
         serde_json::json!(v)

@@ -4,6 +4,13 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-386 — control-bridge replies were lost under load: the page answered an op in milliseconds and the bridge still timed out
+
+status: **fixed 2026-11-04** (D-455; found by the UI harness's 300-clip suite on main, after D-454) · severity: high (an MCP client, or the harness, saw "got no reply from the frontend within 20s" for ops that had run; a second harness run in one app session could lose every reply) · area: `app/src-tauri/src/chroma/control.rs`, `packages/bridge/src/controlBridge.ts`, the five control registries
+
+- **Cause.** Each op's reply came back as the `chroma://response/<id>` Tauri event to a per-op `app.once` listener. Tauri 2's Rust-side event registry (2.11.5, `event/listener.rs`) registers a listener with `try_lock`; when another thread is delivering an event, the listener goes into a pending queue, which is flushed only after a delivery that reached a Rust handler. Deliveries to no Rust handler (events meant only for the page, among them D-454's debug present events) flush nothing, so the reply's listener could still be queued when the page's reply arrived, and the reply was dropped. A reply emitted during another delivery was queued the same way. Proved by logging every op on both sides: the page logged `op< editor_add_clip … 14ms` and the server logged the same op's timeout 20 s later. The build before D-454 lost 2 replies on a second suite run; main, with D-454's extra events, lost all of them.
+- **Fix.** D-455: the page replies through the `chroma_control_respond` command and announces through `chroma_control_announce`, via `@apelles/bridge`'s `respondToControlRequest` / `announceBridgeClaim`. `control.rs` holds the waiting ops in a map by request id. Tests: `a_reply_reaches_its_waiter_by_id` (control.rs); the 26 registry suites now read replies from the bridge helpers.
+
 ## B-385 — an export's sound ended where its last sound source ended, short of the picture (a 10 s ProRes master had 9.979 s of sound)
 
 status: **fixed 2026-11-04** (found in D-452 step 2's measurement, root-caused in step 3) · severity: low–medium (a master whose sound track is shorter than its picture: most players pad it, but an editor or a delivery check reading the file sees two lengths; with silence at the end of a timeline the gap is that whole silence) · area: `packages/editor/src/timelinePipeExport.ts` (`buildPipeAudioGraph`)

@@ -34,8 +34,8 @@ It is **verified, not assumed**: `docs/notes/debug-tooling.md` records the
 ## Ops
 
 All are namespaced `debug_` and answered here, over the same
-`chroma://request` / `chroma://response/<id>` event pair every other registry
-uses (Colorist's `useChromaControl`, Motion's, the Edit tab's). Reached over
+`chroma://request` event and `respondToControlRequest` reply (B-386) every
+other registry uses (Colorist's `useChromaControl`, Motion's, the Edit tab's). Reached over
 MCP as tools of the same name.
 
 | op | what it does |

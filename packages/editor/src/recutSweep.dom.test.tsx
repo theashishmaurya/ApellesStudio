@@ -217,6 +217,21 @@ vi.mock('@tauri-apps/api/event', () => ({
   },
 }));
 
+// B-386 — replies and the handshake reach the control server through
+// commands; record them in the same log the suite reads.
+vi.mock('@apelles/bridge', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@apelles/bridge')>()),
+  respondToControlRequest: (id: string, payload: unknown) => {
+    bus.emitted.push({ event: `chroma://response/${id}`, payload });
+    return Promise.resolve();
+  },
+  announceBridgeClaim: (payload: unknown) => {
+    bus.emitted.push({ event: 'chroma://bridge-ready', payload });
+    return Promise.resolve();
+  },
+}));
+
+
 import { useEditorTimelineStore } from './timelineStore';
 import { useMediaUnderstandingStore, type Transcript } from './mediaUnderstandingStore';
 import { useEditorControl } from './useEditorControl';

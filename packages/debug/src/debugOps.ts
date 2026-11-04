@@ -3,7 +3,7 @@
  *
  * What it is: the fourth control-server op registry, alongside Colorist's
  *   (`app/src/hooks/useChromaControl.ts`), Motion's and the Edit tab's — same
- *   `chroma://request` / `chroma://response/<id>` event pair, same
+ *   `chroma://request` event and `respondToControlRequest` reply, same
  *   namespaced-prefix opt-in convention (`debug_`), same "read back what you
  *   just wrote" reply shape. It holds the ops that DRIVE and INSPECT the
  *   running UI itself rather than any document: which tab is showing, which

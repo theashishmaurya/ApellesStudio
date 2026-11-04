@@ -11,8 +11,8 @@
  * What it does NOT do: any op logic.
  */
 import { useEffect } from 'react';
-import { emit, listen } from '@tauri-apps/api/event';
-import { assertRequestLive, newBridgeClaim } from '@apelles/bridge';
+import { listen } from '@tauri-apps/api/event';
+import { announceBridgeClaim, assertRequestLive, newBridgeClaim, respondToControlRequest } from '@apelles/bridge';
 import { runForRequest } from '@apelles/history';
 import { assertProjectIdentity } from '@apelles/store';
 import { applyBrandKit, availableBrandTabs } from './appliers';
@@ -66,8 +66,10 @@ export function useBrandControl(): void {
       const payload = (ev?.payload || {}) as { id?: string; op?: string; args?: Record<string, unknown> };
       const { id, op, args } = payload;
       if (!bridge.isForMe(payload)) return;
+      // A request without an id has no reply slot; nothing can answer it.
+      if (typeof id !== 'string') return;
       if (typeof op !== 'string' || !op.startsWith(BRAND_OP_PREFIX)) return;
-      const respond = (body: unknown) => emit(`chroma://response/${id}`, body);
+      const respond = (body: unknown) => respondToControlRequest(id, body);
       const fn = OPS[op];
       if (!fn) {
         void respond({ ok: false, error: `unknown brand op: ${op}` });
@@ -86,7 +88,7 @@ export function useBrandControl(): void {
 
     let subscribed = true;
     void unlistenP.then(() => {
-      if (subscribed) void emit('chroma://bridge-ready', bridge.claim);
+      if (subscribed) void announceBridgeClaim(bridge.claim);
     });
     return () => {
       subscribed = false;

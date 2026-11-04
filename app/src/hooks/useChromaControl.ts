@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { listen, emit } from '@tauri-apps/api/event';
+import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { v4 as uuidv4 } from 'uuid';
 // B-217/D-358 — the cross-store project-identity guard. See the call site in the
@@ -7,7 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { assertProjectIdentity } from '@apelles/store';
 import { stepHistory } from '@apelles/shell';
 import { safeUnlisten } from '../utils/tauriListeners';
-import { assertRequestLive, newBridgeClaim } from '@apelles/bridge';
+import { announceBridgeClaim, assertRequestLive, newBridgeClaim, respondToControlRequest } from '@apelles/bridge';
 
 // D-183 — the three Edit-tab ops that used to live here (`get_timeline`,
 // `set_clip_fade`, `set_track_duck`) moved to `@apelles/editor`'s own
@@ -60,8 +60,8 @@ import {
  * Mounted ONCE (in Editor). The Rust control server (`src/chroma/control.rs`)
  * emits `chroma://request` for every HTTP `/op`; this hook runs the op against
  * the SAME store actions the GUI buttons use (`setAdjustments`, the `useAiMasking`
- * handlers), waits for the render to settle, and replies on
- * `chroma://response/<id>` with the post-render frame + histogram + adjustments.
+ * handlers), waits for the render to settle, and replies through
+ * `respondToControlRequest` (B-386) with the post-render frame + histogram + adjustments.
  *
  * Adding a new MCP capability = add one entry to `OPS` below. Never a parallel
  * code path — that's what keeps MCP and the UI from ever diverging.
@@ -1547,7 +1547,7 @@ export function useChromaControl() {
       // payload), so this early return is load-bearing: without it, this
       // handler's synchronous "unknown op" branch below would race ahead of
       // Motion's real (multi-`await`) handler and win the one-shot
-      // `chroma://response/<id>` slot with a false "unknown op" error.
+      // reply slot for that request id with a false "unknown op" error.
       //
       // D-183 — `editor_*` gets the SAME treatment, for the SAME reason, now
       // that `@apelles/editor`'s own `useEditorControl` (mounted from
@@ -1568,7 +1568,7 @@ export function useChromaControl() {
       // natively — so this skip covers exactly the frontend ones.
       // D-416 — `brand_*` is `@apelles/brand`'s registry (`useBrandControl`).
       if (typeof op === 'string' && BRIDGE_DEFERS.some((prefix) => op.startsWith(prefix))) return;
-      const respond = (body: any) => emit(`chroma://response/${id}`, body);
+      const respond = (body: any) => respondToControlRequest(id, body);
 
       const fn = OPS[op];
       if (!fn) {
@@ -1700,7 +1700,7 @@ export function useChromaControl() {
     // promise resolving is that fact), and only if this effect is still live.
     let subscribed = true;
     void unlistenP.then(() => {
-      if (subscribed) void emit('chroma://bridge-ready', bridge.claim);
+      if (subscribed) void announceBridgeClaim(bridge.claim);
     });
 
     return () => {

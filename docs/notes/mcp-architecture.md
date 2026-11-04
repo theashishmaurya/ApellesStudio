@@ -92,11 +92,21 @@ capability should copy that pair rather than trying to make the bridge wait.
 
 ## The op-prefix convention — every tab opts IN to its own namespace
 
-Every tab's `useXControl.ts` listens on the SAME two Tauri events every other
-tab's does (`chroma://request` / `chroma://response/<id>`) — `control.rs` emits
-one event per request and awaits exactly one reply, so **at most one listener may
-ever answer a given op name**, or two hooks race for the same one-shot response
-slot and the request hangs or double-answers.
+Every tab's `useXControl.ts` listens on the SAME Tauri event every other tab's
+does (`chroma://request`) and replies through `@apelles/bridge`'s
+`respondToControlRequest(id, body)` (the `chroma_control_respond` command) —
+`control.rs` emits one event per request and takes exactly one reply per id, so
+**at most one listener may ever answer a given op name**, or two hooks race for
+the same reply and the request double-answers.
+
+**Replies and claims are commands, never events (B-386).** Tauri 2's Rust-side
+event registry queues a listener registered, or an event emitted, while another
+thread is delivering an event, and flushes that queue only after a delivery
+that reached a Rust handler. When replies were the `chroma://response/<id>`
+event, a reply could arrive before its per-op listener was live and be dropped,
+and the op timed out after the page had answered it. Anything the frontend
+sends `control.rs` goes through a command (`chroma_control_respond`,
+`chroma_control_announce`); only the outbound request is an event.
 
 The convention that keeps that true as tabs are added: each tab's hook is scoped
 to a private prefix and returns immediately (bare `return`, before doing any work)
@@ -129,14 +139,14 @@ is not enough — `control.rs` binds its HTTP port in Tauri's `.setup()`, long
 before the webview loads and any of these hooks runs, and Tauri does not buffer
 events, so a `chroma://request` emitted before your `listen()` has resolved is
 lost outright and the caller gets a full-budget timeout blaming a closed window.
-So, right after `listen()` resolves, emit your claim:
+So, right after `listen()` resolves, announce your claim:
 
 ```ts
-const BRIDGE_CLAIM = { prefix: EDITOR_OP_PREFIX, defers: [] as string[] };
+const bridge = newBridgeClaim(EDITOR_OP_PREFIX);
 // …
 let subscribed = true;
 void unlistenP.then(() => {
-  if (subscribed) void emit('chroma://bridge-ready', BRIDGE_CLAIM);
+  if (subscribed) void announceBridgeClaim(bridge.claim);
 });
 return () => { subscribed = false; safeUnlisten(unlistenP); };
 ```
@@ -167,8 +177,8 @@ does not. Check which shape your tab's own state is in before copying either.
    `useXControl.ts`: pick a prefix (`x_`), copy the dispatch-loop shape from
    `useEditorControl.ts` (opt-in prefix, `OPS` map, try/catch around each op,
    `safeUnlisten` for the HMR-teardown race — see that file's own doc comment for
-   why `safeUnlisten` exists, B-032/B-034/D-112; and the `chroma://bridge-ready`
-   announcement, B-071/D-309, without which your very first op after an app start
+   why `safeUnlisten` exists, B-032/B-034/D-112; and the `announceBridgeClaim`
+   announcement, B-071/D-309/B-386, without which your very first op after an app start
    is silently dropped). Each op reads/writes the tab's
    real store action, never a parallel implementation. Mount the hook once, from
    the tab's own root component (`EditorTab.tsx`, `MotionTab.tsx`) or app-level

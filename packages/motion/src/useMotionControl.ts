@@ -36,13 +36,13 @@
  * not Motion is the active tab, exactly the guarantee `useChromaControl`
  * already relies on for Colorist.
  *
- * **Same event pair, no Rust changes.** Listens on the SAME `chroma://
- * request` / `chroma://response/<id>` Tauri events `control.rs` already
- * emits/awaits. Every Motion op is namespaced `motion_*`. This hook answers
+ * **Same bridge, no Rust changes.** Listens on the SAME `chroma://request`
+ * event `control.rs` emits and replies through `respondToControlRequest`
+ * (B-386), as every registry does. Every Motion op is namespaced `motion_*`. This hook answers
  * ONLY ops in that namespace (including `{error: 'unknown motion op'}` for a
  * typo'd one) and does nothing at all for anything else, so it never
  * contends with `useChromaControl`'s own listener for the one-shot response
- * slot `control.rs`'s `app.once(...)` hands out per request id —
+ * `control.rs` takes per request id (B-386) —
  * `useChromaControl.ts` mirrors this by skipping (not error-responding to)
  * any `motion_*` op. Two listeners on one event name, partitioned by a
  * naming convention, not two servers or two ports.
@@ -98,8 +98,8 @@
  */
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
-import { listen, emit } from '@tauri-apps/api/event';
-import { assertRequestLive, newBridgeClaim } from '@apelles/bridge';
+import { listen } from '@tauri-apps/api/event';
+import { announceBridgeClaim, assertRequestLive, newBridgeClaim, respondToControlRequest } from '@apelles/bridge';
 import { runForRequest } from '@apelles/history';
 // B-217/D-358 — the cross-store project-identity guard; see the dispatcher below.
 import { assertProjectIdentity } from '@apelles/store';
@@ -272,6 +272,8 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
       const payload = (ev?.payload || {}) as { id?: string; op?: string; args?: Record<string, unknown> };
       const { id, op, args } = payload;
       if (!bridge.isForMe(payload)) return;
+      // A request without an id has no reply slot; nothing can answer it.
+      if (typeof id !== 'string') return;
       if (typeof op !== 'string' || !op.startsWith(MOTION_OP_PREFIX)) {
         // Not ours — leave it for useChromaControl.ts's Colorist registry
         // (or whatever else may claim this event in the future). Responding
@@ -280,7 +282,7 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
         return;
       }
 
-      const respond = (body: unknown) => emit(`chroma://response/${id}`, body);
+      const respond = (body: unknown) => respondToControlRequest(id, body);
       const fn = OPS[op];
       if (!fn) {
         void respond({ ok: false, error: `unknown motion op: ${op}` });
@@ -314,7 +316,7 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
     // promise resolving is that fact), and only if this effect is still live.
     let subscribed = true;
     void unlistenP.then(() => {
-      if (subscribed) void emit('chroma://bridge-ready', bridge.claim);
+      if (subscribed) void announceBridgeClaim(bridge.claim);
     });
 
     return () => {

@@ -44,13 +44,24 @@
  * already running when the deadline passes still completes; the timeout
  * answer says so.
  *
- * **What it does NOT do:** register listeners, answer ops, or know any op name.
+ * **B-386 — replies and the handshake are commands, not events.** Tauri 2's
+ * Rust-side event registry queues a listener registered (or an event emitted)
+ * while another thread is delivering an event, and only flushes that queue
+ * after a delivery that reached a Rust handler, so a reply sent as the
+ * `chroma://response/<id>` event could arrive before its listener was live and
+ * be dropped: the op timed out at the bridge after the page had answered it in
+ * milliseconds. [`respondToControlRequest`] and [`announceBridgeClaim`] invoke
+ * `chroma_control_respond` / `chroma_control_announce` instead, which have no
+ * listener registry. Requests still arrive as the `chroma://request` event.
+ * **What it does NOT do:** register listeners, run ops, or know any op name.
  * A request with no `target` at all (a unit test driving a handler directly) is
  * accepted; the control server always sets one. Likewise a request without a
  * `deadline_ms` never expires.
  */
 
-/** What a registry announces on `chroma://bridge-ready`. */
+import { invoke } from '@tauri-apps/api/core';
+
+/** What a registry announces to the control server (`chroma_control_announce`). */
 export interface BridgeClaimWire {
   /** The op prefix it serves (`"editor_"`; `""` for the catch-all). */
   prefix: string;
@@ -61,7 +72,7 @@ export interface BridgeClaimWire {
 }
 
 export interface BridgeClaim {
-  /** The payload to emit on `chroma://bridge-ready`. */
+  /** The claim to hand to [`announceBridgeClaim`]. */
   claim: BridgeClaimWire;
   /** Whether a `chroma://request` payload is addressed to THIS subscription. */
   isForMe(requestPayload: unknown): boolean;
@@ -93,4 +104,16 @@ export function assertRequestLive(requestPayload: unknown, now: number = Date.no
     `not run: the caller stopped waiting ${now - deadline} ms before this op could start (it timed out at the ` +
       `bridge), so it was dropped instead of applying late${typeof op === 'string' ? ` (${op})` : ''}`,
   );
+}
+
+/** B-071 / B-386 — tell the control server this subscription is live and which
+ *  ops it serves. Call once its `listen('chroma://request')` has resolved. */
+export function announceBridgeClaim(claim: BridgeClaimWire): Promise<void> {
+  return invoke('chroma_control_announce', { claim });
+}
+
+/** B-386 — answer control request `id` with its `{ ok, error, result }`
+ *  envelope. */
+export function respondToControlRequest(id: string, body: unknown): Promise<void> {
+  return invoke('chroma_control_respond', { id, body });
 }

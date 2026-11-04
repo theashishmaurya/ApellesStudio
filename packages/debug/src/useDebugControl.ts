@@ -3,8 +3,9 @@
  * (D-219, B-358).
  *
  * What it is: one hook, mounted once from `app/src/App.tsx` next to
- *   `useChromaControl()`, that listens on the same `chroma://request` /
- *   `chroma://response/<id>` event pair every other registry uses and answers
+ *   `useChromaControl()`, that listens on the same `chroma://request` event
+ *   and replies through `respondToControlRequest` (B-386), as every other
+ *   registry does, and answers
  *   the `debug_` namespace from `debugOps.ts`.
  *
  * What it does NOT do: anything at all in a production build. The whole body
@@ -25,8 +26,8 @@
  */
 
 import { useEffect } from 'react';
-import { listen, emit } from '@tauri-apps/api/event';
-import { assertRequestLive, newBridgeClaim } from '@apelles/bridge';
+import { listen } from '@tauri-apps/api/event';
+import { announceBridgeClaim, assertRequestLive, newBridgeClaim, respondToControlRequest } from '@apelles/bridge';
 
 const DEBUG_OP_PREFIX = 'debug_';
 
@@ -83,15 +84,17 @@ export function useDebugControl(): void {
         if (!bridge.isForMe(payload)) return;
         if (typeof op !== 'string' || !op.startsWith(DEBUG_OP_PREFIX)) {
           // Not ours. Every registry claims exactly its own prefix and stays
-          // silent otherwise — `control.rs` hands out one `app.once` response
-          // slot per request id, so two handlers answering would race for it.
+          // silent otherwise — `control.rs` takes one reply per request id
+          // (B-386), so two handlers answering would race for it.
           return;
         }
         // `debug_screenshot` / `debug_sample_pixel` share this prefix but are
         // answered natively in Rust (`control.rs`'s `native_op`, D-210) and
         // never reach the frontend at all, so there is nothing to skip here —
         // noted because the name overlap looks like one.
-        const respond = (body: unknown) => emit(`chroma://response/${id}`, body);
+        // A request without an id has no reply slot; nothing can answer it.
+        if (typeof id !== 'string') return;
+        const respond = (body: unknown) => respondToControlRequest(id, body);
         const fn = DEBUG_OPS[op];
         if (!fn) {
           void respond({ ok: false, error: `unknown debug op: ${op}`, result: null });
@@ -109,7 +112,7 @@ export function useDebugControl(): void {
       // B-071 — announce only once the subscription has genuinely landed (the
       // promise resolving is that fact), and only if this effect is still live.
       void unlisten.then(() => {
-        if (!disposed) void emit('chroma://bridge-ready', bridge.claim);
+        if (!disposed) void announceBridgeClaim(bridge.claim);
       });
     });
 
