@@ -192,5 +192,17 @@ export interface Scenario {
   fixture?: FixtureSpec;
   /** Left out of a run that names no `--filter` (a slow or measurement-only family, e.g. `perf-300`). */
   optIn?: boolean;
+  /**
+   * Why this scenario cannot be driven through native input at all, when it
+   * cannot (B-387). It is then SKIPPED with this reason rather than run: a
+   * scenario whose input provably never reaches the page reports nothing about
+   * the app, and leaving it to FAIL puts a permanent red in every regression
+   * run that reads exactly like a product defect — which is how B-387's own
+   * cause was misread twice. The scenario is kept, not deleted, because the
+   * behaviour is real and still wanted; the reason names what would have to
+   * change to test it, and the behaviour's own coverage lives where it can
+   * actually be asserted (a DOM test, or a human on real hardware).
+   */
+  notNativelyDrivable?: string;
   steps: Step[];
 }

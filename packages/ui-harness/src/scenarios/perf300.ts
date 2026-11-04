@@ -20,7 +20,7 @@
 import { BIG_300, bigClipName } from '../bigFixture.ts';
 import type { Scenario, Step, TargetRef } from '../scenario.ts';
 import { byFrames, clip, editArea, trimRight } from '../targets.ts';
-import { FPS_GUARD, pickTool, toolActive } from './common.ts';
+import { FPS_GUARD, PINCH_NOT_DRIVABLE, pickTool, toolActive } from './common.ts';
 
 const AREA = 'perf-300';
 const REFERENCE = 'Snappy at scale (CLAUDE.md priority order; D-437 section 4 targets): the tools must feel the same on a 300-clip timeline as on three clips';
@@ -41,7 +41,7 @@ const unsyncOthers = (keep: number): Step[] =>
     .filter((t) => t !== keep)
     .map((t) => ({ op: 'editor_set_track_sync_locked', args: { track: t, syncLocked: false }, label: `sync-unlock track ${t}` }));
 
-const scenario = (id: string, title: string, steps: Step[]): Scenario => ({
+const scenario = (id: string, title: string, steps: Step[], extra?: Partial<Scenario>): Scenario => ({
   id: `perf-300-${id}`,
   title: `300 clips: ${title}`,
   area: AREA,
@@ -49,6 +49,7 @@ const scenario = (id: string, title: string, steps: Step[]): Scenario => ({
   fixture: BIG_300,
   optIn: true,
   steps: [FPS_GUARD, ...steps],
+  ...extra,
 });
 
 export const PERF_300_SCENARIOS: Scenario[] = [
@@ -85,16 +86,26 @@ export const PERF_300_SCENARIOS: Scenario[] = [
   scenario('move-clip', 'Drag a clip along its track', [
     { pointer: { action: 'drag', target: clip(c(4, 3), { fy: 0.8 }), to: byFrames(30), steps: 15, durationMs: 450 }, label: `move ${c(4, 3)} 30 frames right`, measure: true },
   ]),
-  scenario('zoom-pinch-in', 'Trackpad pinch zooms in', [
-    { capture: 'view', as: 'before' },
-    { pointer: { action: 'pinch', target: editArea({ fx: 0.5, fy: 0.6 }), scale: 1.5 }, expectHit: false, measure: true },
-    { waitFor: { path: 'view.pxPerSec', op: 'gt', value: { ref: 'before.pxPerSec' } } },
-  ]),
-  scenario('zoom-pinch-out', 'Trackpad pinch zooms out (more clips on screen)', [
-    { capture: 'view', as: 'before' },
-    { pointer: { action: 'pinch', target: editArea({ fx: 0.5, fy: 0.6 }), scale: 0.4 }, expectHit: false, measure: true },
-    { waitFor: { path: 'view.pxPerSec', op: 'lt', value: { ref: 'before.pxPerSec' } } },
-  ]),
+  scenario(
+    'zoom-pinch-in',
+    'Trackpad pinch zooms in',
+    [
+      { capture: 'view', as: 'before' },
+      { pointer: { action: 'pinch', target: editArea({ fx: 0.5, fy: 0.6 }), scale: 1.5 }, expectHit: false, measure: true },
+      { waitFor: { path: 'view.pxPerSec', op: 'gt', value: { ref: 'before.pxPerSec' } } },
+    ],
+    { notNativelyDrivable: PINCH_NOT_DRIVABLE },
+  ),
+  scenario(
+    'zoom-pinch-out',
+    'Trackpad pinch zooms out (more clips on screen)',
+    [
+      { capture: 'view', as: 'before' },
+      { pointer: { action: 'pinch', target: editArea({ fx: 0.5, fy: 0.6 }), scale: 0.4 }, expectHit: false, measure: true },
+      { waitFor: { path: 'view.pxPerSec', op: 'lt', value: { ref: 'before.pxPerSec' } } },
+    ],
+    { notNativelyDrivable: PINCH_NOT_DRIVABLE },
+  ),
   scenario('zoom-ctrl-wheel', 'Ctrl+wheel zooms around the cursor', [
     { capture: 'view', as: 'before' },
     { pointer: { action: 'wheel', target: editArea({ fx: 0.4, fy: 0.6 }), modifiers: ['ctrl'], deltaY: -120, steps: 3 }, expectHit: false, measure: true },

@@ -391,8 +391,10 @@ import {
   buttonZoomAnchorX,
   createZoomCoalescer,
   frameAtViewportX,
+  gestureZoomFactor,
   pinchZoomFactor,
   scrollLeftForAnchor,
+  type WebKitGestureEvent,
 } from './timelineZoom';
 // B-145 — the one place a dnd-kit drag's displacement is derived. NOT
 // `event.delta`, which is corrupted by this pane's own scroll container — see
@@ -1017,7 +1019,17 @@ export function TimelinePane({
     const el = editAreaRef.current;
     if (!el) return;
     const zoomCoalescer = createZoomCoalescer((factor, clientX) => zoomByRef.current(factor, clientX));
+    // B-387 — the scale the pinch in flight last reported, 0 between gestures.
+    // Doubles as "a gesture is live", which the wheel handler needs: a webview
+    // that reported BOTH a gesture and a synthesized ctrl-wheel for the same
+    // physical pinch would otherwise zoom twice for it.
+    let gestureScale = 0;
     const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey && gestureScale > 0) {
+        // The pinch is already being handled as a gesture; don't count it again.
+        e.preventDefault();
+        return;
+      }
       if (!e.ctrlKey) {
         // B-357 — a plain wheel pans through the lanes' scroller natively, but
         // only when the pointer is over it: the ruler and the lanes' own
@@ -1042,9 +1054,47 @@ export function TimelinePane({
       // in the next frame.
       zoomCoalescer.push(pinchZoomFactor(e.deltaY, e.deltaMode), e.clientX);
     };
+    // B-387 — the macOS trackpad pinch, which the wheel handler above never
+    // sees. Its comment's premise ("a real pinch ... arrives as a `wheel` event
+    // with `ctrlKey: true`, synthesized by the browser itself") is Chromium's
+    // and Firefox's convention; this app's webview is WKWebView, and WebKit
+    // instead delivers a pinch as its own `gesture*` events, whose `scale` is
+    // the cumulative factor since the gesture began. So the standard macOS
+    // zoom gesture did nothing at all on the timeline, while =/-, the toolbar
+    // buttons, the zoom slider and an explicit Ctrl+wheel all worked.
+    // Reference: https://danburzo.ro/dom-gestures/.
+    //
+    // Through the SAME coalescer and the same anchored `zoomBy` as Ctrl+wheel,
+    // so a pinch is not a second zoom implementation: one zoom step per frame,
+    // anchored under the fingers, one undo entry.
+    const onGestureStart = (e: WebKitGestureEvent) => {
+      e.preventDefault(); // else WKWebView magnifies the whole page instead
+      gestureScale = Number.isFinite(e.scale) && e.scale > 0 ? e.scale : 1;
+    };
+    const onGestureChange = (e: WebKitGestureEvent) => {
+      e.preventDefault();
+      const factor = gestureZoomFactor(e.scale, gestureScale);
+      if (factor === null) return;
+      gestureScale = e.scale;
+      zoomCoalescer.push(factor, e.clientX);
+    };
+    const onGestureEnd = (e: WebKitGestureEvent) => {
+      e.preventDefault();
+      gestureScale = 0;
+    };
+    // `gesture*` is not in the DOM event map, so the handlers are registered
+    // through the base `EventListener` type rather than declared globally: this
+    // is a WebKit-only event, and widening `HTMLElementEventMap` for the whole
+    // app would claim otherwise.
     el.addEventListener('wheel', onWheel, { passive: false });
+    el.addEventListener('gesturestart', onGestureStart as EventListener, { passive: false });
+    el.addEventListener('gesturechange', onGestureChange as EventListener, { passive: false });
+    el.addEventListener('gestureend', onGestureEnd as EventListener, { passive: false });
     return () => {
       el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('gesturestart', onGestureStart as EventListener);
+      el.removeEventListener('gesturechange', onGestureChange as EventListener);
+      el.removeEventListener('gestureend', onGestureEnd as EventListener);
       zoomCoalescer.cancel();
     };
     // B-123 — `editArea`, not `[]`: this node mounts LATE on the real app's

@@ -101,6 +101,12 @@ const WHEEL_LANDING_TOLERANCE_PX = 3;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** How long an overlay may still be on top before a scenario starts — long
+ *  enough for a closing sheet's 150 ms fade and its backdrop's unmount, short
+ *  enough that a stuck overlay is still reported promptly. */
+const OVERLAY_SETTLE_MS = 1000;
+const OVERLAY_POLL_MS = 100;
+
 class SkipScenario extends Error {}
 
 /** Replace `@clip:<name>` / `@marker:<name>` tokens with the ids the fixture
@@ -202,6 +208,10 @@ export class ScenarioRunner {
     };
     let fixture: BuiltFixture | null = null;
     try {
+      // B-387 — before building anything: a scenario whose input cannot reach
+      // the page is a skip, not a run. Its fixture (a 300-clip timeline, for
+      // the perf family) is not worth building to prove that again.
+      if (scenario.notNativelyDrivable) throw new SkipScenario(scenario.notNativelyDrivable);
       fixture = await buildFixture(this.client, this.project, scenario.id, scenario.fixture);
       await this.assertNothingCoversTheTimeline();
       await this.runSteps(scenario, fixture, result);
@@ -235,15 +245,35 @@ export class ScenarioRunner {
    *  (one overlay) is rediscovered per scenario. A harness defect, not an app
    *  finding: the harness's own ops no longer open the Agent activity dock. */
   private async assertNothingCoversTheTimeline(): Promise<void> {
-    const check = await this.client.op<{ ok?: boolean; overlays?: { part: string; hit: string | null; overlay: string | null }[] }>('debug_overlay_check', {
-      parts: COVER_CHECK_PARTS,
-    });
+    // An overlay in the middle of its EXIT animation is not an overlay covering
+    // the timeline: a sheet or dialog the previous scenario closed on its last
+    // step fades for 150 ms (`@apelles/ui`'s `dialog.tsx` / `sheet.tsx`
+    // `data-[ending-style]`), and its Base UI backdrop (`role="presentation"`,
+    // `fixed inset-0 z-50`) is hit-testable until it unmounts. Sampling once
+    // made this guard race that fade and fail the NEXT scenario for the
+    // previous one's tidy-up — `music-fade-dot-drag` erroring after
+    // `export-preset-chips`, intermittently, which also made the error look
+    // like a defect in the music panel. So: re-sample while something is still
+    // on top, and fail only on an overlay that STAYS. A genuinely stuck
+    // overlay (the Agent activity dock, a toast, a modal left open) still fails
+    // here, one second later, which is the guard's whole point.
+    let check = await this.overlayCheck();
+    for (let waited = 0; check.ok === false && waited < OVERLAY_SETTLE_MS; waited += OVERLAY_POLL_MS) {
+      await sleep(OVERLAY_POLL_MS);
+      check = await this.overlayCheck();
+    }
     if (check.ok !== false) return;
     const first = check.overlays?.[0];
     throw new Error(
       `a fixed overlay covers the timeline before the scenario starts: ${first?.overlay ?? 'unknown'} sits over ${first?.part ?? 'a timeline part'}` +
-        ` (${check.overlays?.length ?? 0} sampled points). Close it (the Agent activity dock, a toast, a dialog) and rerun.`,
+        ` (${check.overlays?.length ?? 0} sampled points, still there after ${OVERLAY_SETTLE_MS} ms). Close it (the Agent activity dock, a toast, a dialog) and rerun.`,
     );
+  }
+
+  private overlayCheck() {
+    return this.client.op<{ ok?: boolean; overlays?: { part: string; hit: string | null; overlay: string | null }[] }>('debug_overlay_check', {
+      parts: COVER_CHECK_PARTS,
+    });
   }
 
   private async screenshot(name: string, result: ScenarioResult): Promise<void> {
@@ -397,7 +427,7 @@ export class ScenarioRunner {
   private checkDelivery(step: Step, reply: Record<string, unknown>, label: string, record: (v: Verdict) => void): void {
     const observed = reply.observed as { counts?: Record<string, number>; lastWheel?: { x: number; y: number } | null } | undefined;
     const counts = observed?.counts ?? {};
-    const native = reply.native as { windowKey?: boolean; madeKeyForMove?: boolean } | undefined;
+    const native = reply.native as { windowKey?: boolean; madeKeyForMove?: boolean; magnifyBuilt?: boolean } | undefined;
     if ('pointer' in step) {
       const action = step.pointer.action;
       if (action === 'html5Drag') {
@@ -435,6 +465,18 @@ export class ScenarioRunner {
         record({
           ok: false,
           message: `${label}: the wheel landed at (${landed.x}, ${landed.y}) but aimed at (${first.x}, ${first.y}) — the native wheel's location is in the wrong coordinate space`,
+        });
+      }
+      if (action === 'pinch' && native?.magnifyBuilt === false) {
+        // B-387 — `debug_input` already knows whether AppKit really produced an
+        // `NSEventTypeMagnify` from the undocumented fields it sets, and this
+        // runner used to throw that away: a pinch that was never delivered and
+        // an app that ignores a delivered pinch both surfaced as the scenario's
+        // own "pxPerSec did not change", which was twice read as a product bug.
+        // Name the real one.
+        record({
+          ok: false,
+          message: `${label}: AppKit built no Magnify event, so no pinch was delivered — a harness-side synthesis failure (macOS SPI change?), which says nothing about the app`,
         });
       }
       if ((step.expectHit ?? true) && first && first.hitInside === false) {

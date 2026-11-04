@@ -15,6 +15,7 @@ import {
   buttonZoomAnchorX,
   createZoomCoalescer,
   frameAtViewportX,
+  gestureZoomFactor,
   pinchZoomFactor,
   scrollLeftForAnchor,
 } from './timelineZoom';
@@ -139,6 +140,34 @@ describe('pinchZoomFactor (B-375)', () => {
   it('reads line and page delta modes in scaled units', () => {
     expect(pinchZoomFactor(-1, 1)).toBeCloseTo(pinchZoomFactor(-16), 12);
     expect(pinchZoomFactor(-1, 2)).toBe(pinchZoomFactor(-PINCH_MAX_DELTA_PX));
+  });
+});
+
+describe('gestureZoomFactor (B-387)', () => {
+  it('is the ratio to the previous scale, so a whole gesture multiplies to its own total', () => {
+    // WebKit reports the scale cumulatively: 1 → 1.2 → 1.5 is a 1.5× pinch.
+    const steps = [1.2, 1.5];
+    let prev = 1;
+    let total = 1;
+    for (const scale of steps) {
+      const factor = gestureZoomFactor(scale, prev);
+      expect(factor).not.toBeNull();
+      total *= factor as number;
+      prev = scale;
+    }
+    expect(total).toBeCloseTo(1.5, 12);
+  });
+  it('a pinch in and a pinch back out cancel', () => {
+    const inFactor = gestureZoomFactor(2, 1) as number;
+    const outFactor = gestureZoomFactor(1, 2) as number;
+    expect(inFactor * outFactor).toBeCloseTo(1, 12);
+  });
+  it('refuses a scale that would drive pxPerSec to zero, NaN or negative', () => {
+    expect(gestureZoomFactor(0, 1)).toBeNull();
+    expect(gestureZoomFactor(1, 0)).toBeNull();
+    expect(gestureZoomFactor(-1, 1)).toBeNull();
+    expect(gestureZoomFactor(Number.NaN, 1)).toBeNull();
+    expect(gestureZoomFactor(1, Number.POSITIVE_INFINITY)).toBeNull();
   });
 });
 

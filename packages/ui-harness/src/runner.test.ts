@@ -228,6 +228,26 @@ describe('ScenarioRunner (against a fake app)', () => {
     expect(result.reason).toMatch(/unexpected op nonesuch/);
     expect(app.calls.slice(-2)).toEqual(['editor_delete_timeline', 'debug_clear_harness_history']);
   });
+
+  it('B-387: a scenario whose input cannot be delivered natively SKIPS with its reason, and builds no fixture', async () => {
+    const app = new FakeApp(false);
+    const result = await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp' }).run({
+      id: 'undrivable',
+      title: 'undrivable',
+      area: 'zoom',
+      reference: 'x',
+      fixture: THREE_CLIPS,
+      notNativelyDrivable: 'WKWebView cannot be sent a pinch',
+      steps: [{ pointer: { action: 'pinch', target: { selector: '[data-testid="x"]' }, scale: 1.5 } }],
+    });
+    expect(result.status).toBe('SKIP');
+    expect(result.reason).toBe('WKWebView cannot be sent a pinch');
+    // Nothing was built, so nothing was pressed and nothing needed tearing down:
+    // the point of skipping before the fixture is not paying for 300 clips to
+    // prove again that the input cannot arrive.
+    expect(app.calls).toEqual([]);
+    expect(result.screenshots).toEqual([]);
+  });
 });
 
 describe('the perf method (F6, H17)', () => {
@@ -345,6 +365,22 @@ describe('harness defects the runner now guards (H1, H2, H12)', () => {
     expect(result.reason).toMatch(/fixed overlay covers the timeline.*div\.fixed\.left-3\.bottom-3 sits over \[data-testid="timeline-split"\]/);
     expect(app.calls).not.toContain('debug_pointer');
     expect(app.calls.slice(-2)).toEqual(['editor_delete_timeline', 'debug_clear_harness_history']);
+  });
+
+  it('H1: an overlay that is only closing (gone by the next sample) does NOT fail the scenario', async () => {
+    const app = new FakeApp(false);
+    // The previous scenario's sheet, mid-fade: present for the first sample,
+    // unmounted by the second. B-387's run hit this as an intermittent ERROR.
+    app.overlays = [{ part: '[data-testid="timeline-split"]', hit: 'div', overlay: 'div.fixed.inset-0.z-50[role="presentation"]' }];
+    const original = app.op.bind(app);
+    let overlayChecks = 0;
+    app.op = async (op: string, args: Record<string, unknown>) => {
+      if (op === 'debug_overlay_check' && ++overlayChecks > 1) app.overlays = [];
+      return original(op, args);
+    };
+    const result = await new ScenarioRunner(app, project, { mode: 'native', shotsDir: '/tmp', evidence: true }).run(roll);
+    expect(result.status).toBe('PASS');
+    expect(overlayChecks).toBeGreaterThan(1);
   });
 
   it('H1: every request the client sends is stamped source "harness"', async () => {

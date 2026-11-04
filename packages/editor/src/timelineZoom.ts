@@ -130,6 +130,31 @@ export function pinchZoomFactor(deltaY: number, deltaMode = 0): number {
 }
 
 /**
+ * WebKit's proprietary trackpad-pinch event (`gesturestart` / `gesturechange` /
+ * `gestureend`), which the DOM lib types do not declare (B-387). `scale` is
+ * CUMULATIVE since the gesture began — 1 at `gesturestart` — not a per-event
+ * delta, so a step's own factor is the ratio to the previous event's scale.
+ */
+export interface WebKitGestureEvent extends UIEvent {
+  readonly scale: number;
+  readonly clientX: number;
+  readonly clientY: number;
+}
+
+/**
+ * B-387 — the zoom factor one `gesturechange` represents, given the scale the
+ * previous event of the same gesture reported, or `null` when the pair says
+ * nothing usable (a non-finite or non-positive scale, which would otherwise
+ * drive `pxPerSec` to zero, `NaN` or a negative). The caller stores the new
+ * scale and pushes the factor through the same coalescer as a Ctrl+wheel zoom.
+ */
+export function gestureZoomFactor(scale: number, prevScale: number): number | null {
+  if (!Number.isFinite(scale) || !Number.isFinite(prevScale)) return null;
+  if (scale <= 0 || prevScale <= 0) return null;
+  return scale / prevScale;
+}
+
+/**
  * Coalesces zoom events to one flush per animation frame (D-437 S8): the
  * factors multiply, the latest pointer x is the anchor. `flush` receives the
  * accumulated factor and anchor, and is not called when they cancel to ~1.

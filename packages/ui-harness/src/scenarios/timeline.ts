@@ -30,7 +30,7 @@ import {
   trackHeader,
   trackHeightZone,
 } from '../targets.ts';
-import { clipIs, clipUnchanged, FPS_GUARD, GAPPED, GHOST, LONG, playheadNear, THREE_CLIPS } from './common.ts';
+import { clipIs, clipUnchanged, FPS_GUARD, GAPPED, GHOST, LONG, PINCH_NOT_DRIVABLE, playheadNear, THREE_CLIPS } from './common.ts';
 
 /** The harness's generated picture-only test file in the Sources panel
  *  (`SourcesPanel.tsx`'s `sources-media-tile`, named after the file). */
@@ -416,6 +416,7 @@ export const TIMELINE_SCENARIOS: Scenario[] = [
     title: 'A trackpad pinch over the timeline zooms it',
     area: 'zoom',
     reference: 'macOS convention: pinch to zoom; WebKit delivers it as gesture events, not ctrl+wheel',
+    notNativelyDrivable: PINCH_NOT_DRIVABLE,
     fixture: THREE_CLIPS,
     steps: [
       { capture: 'view', as: 'before' },

@@ -96,3 +96,25 @@ export const pickTool = (tool: string): Step => ({
 export const toolActive = (tool: string, reason: string): Step => ({
   reachable: { selector: `[data-testid="${TIMELINE_TEST_IDS.trimTool}"][data-chroma-trim-tool="${tool}"][aria-pressed="true"]`, reason },
 });
+
+/**
+ * B-387 — why every pinch scenario is skipped rather than run.
+ *
+ * `debug_pointer`'s `pinch` builds a real `NSEventTypeMagnify` (its own
+ * `magnifyBuilt` confirms it) and sends it to `magnifyWithEvent:`, which is
+ * WKWebView's PAGE-magnification entry point, not a DOM event source: the page
+ * never hears it, at any zoom, on an idle machine. The NSResponder bracket that
+ * would make it one (`beginGestureWithEvent:` / `endGestureWithEvent:`, where
+ * WebKit's `gesturestart` / `gestureend` come from) is not overridden by
+ * WKWebView — checked against the ObjC runtime: of its 974 own methods it has
+ * `magnifyWithEvent:` and `smartMagnifyWithEvent:` but neither gesture
+ * bracket, so sending them hits `NSView`'s no-op.
+ *
+ * So a pinch cannot be delivered from outside the app at all, and these
+ * scenarios could only ever report the harness's own limitation. The zoom
+ * itself is covered where it can be asserted: `gestureZoomFactor` in
+ * `timelineZoom.test.ts` and the wiring in `TimelinePane.zoom.dom.test.tsx`
+ * (tests 9-11), with the end-to-end confirmation needing a real trackpad.
+ */
+export const PINCH_NOT_DRIVABLE =
+  'a pinch cannot be delivered natively: WKWebView turns `magnifyWithEvent:` into page magnification, not a DOM gesture, and does not override the `beginGestureWithEvent:` bracket that would make it one (B-387). Covered by TimelinePane.zoom.dom.test.tsx tests 9-11; the end-to-end check needs a real trackpad.';

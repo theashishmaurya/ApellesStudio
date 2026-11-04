@@ -289,6 +289,22 @@ several rounds of the owner's own screenshots before an agent could even confirm
      WebKitTestRunner's own pattern — so the page gets trusted events without any TCC
      permission and without the window being frontmost. In-page synthetic dispatch is
      the labelled fallback (jsdom, non-macOS).
+   - **One input this cannot deliver: a trackpad pinch** (B-387, 2026-11-04). `pinch`
+     builds a genuine `NSEventTypeMagnify` — its `magnifyBuilt` says so — and sends it
+     to `magnifyWithEvent:`, which is WKWebView's PAGE-magnification entry point and
+     not a DOM event source, so the page hears nothing (and `allowsMagnification` is
+     never set; it is in wry 0.55.1's iOS bindings only, default off). WebKit's DOM
+     `gesturestart` / `gestureend` come from the NSResponder gesture bracket instead,
+     and WKWebView does not override it: of its 974 own methods it declares
+     `magnifyWithEvent:` and `smartMagnifyWithEvent:` but neither
+     `beginGestureWithEvent:` nor `endGestureWithEvent:`, so sending those (tried,
+     reverted) reaches `NSView`'s no-op. A pinch scenario therefore declares
+     `notNativelyDrivable` and is SKIPPED with that reason rather than failing: a red
+     that can only ever mean "the harness cannot do this" reads exactly like a product
+     defect, and did, twice. **The general rule this is an instance of:** when an
+     input cannot be delivered, say so in the scenario, and move the behaviour's
+     coverage to where it can be asserted — here a DOM test for the wiring plus a
+     human on real hardware for the end-to-end fact.
    - **`debug_activate_app`** (H15, native control op, harness-only: no MCP tool): brings the
      app to the front and makes its window key (WebKit delivers a buttonless move only to a key
      window), reporting the previous front app; called again with `restorePid` it hands the

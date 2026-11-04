@@ -114,6 +114,24 @@ function wheel(el: HTMLElement, opts: { clientX: number; deltaY: number }): void
   });
 }
 
+/** B-387 — WebKit's own pinch events, which jsdom has no constructor for:
+ *  built as plain `Event`s with the fields the handler reads. `scale` is
+ *  cumulative since `gesturestart`, the way WebKit reports it. */
+function pinch(
+  el: HTMLElement,
+  events: ReadonlyArray<{ type: 'gesturestart' | 'gesturechange' | 'gestureend'; scale: number; clientX: number }>,
+): void {
+  for (const ev of events) {
+    actSync(() => {
+      const e = new Event(ev.type, { bubbles: true, cancelable: true });
+      Object.defineProperty(e, 'scale', { value: ev.scale });
+      Object.defineProperty(e, 'clientX', { value: ev.clientX });
+      Object.defineProperty(e, 'clientY', { value: 200 });
+      el.dispatchEvent(e);
+    });
+  }
+}
+
 let restoreOffsets: () => void;
 let restoreResizeObserver: () => void;
 let restorePointerCapture: () => void;
@@ -302,5 +320,71 @@ describe('B-116 — the timeline zooms around a point, not around nothing', () =
     press('Zoom out');
     await waitFrames(2);
     expect(probeLeft()).toBeCloseTo(before, 6);
+  });
+
+  // B-387 — the macOS trackpad pinch. These are the WIRING tests that were
+  // missing: the arithmetic is in `timelineZoom.test.ts`'s `gestureZoomFactor`,
+  // and the live harness could not catch the gap because its own synthetic
+  // pinch takes the native `magnifyWithEvent:` path, so a missing listener and
+  // a pinch that never reaches the page look identical from outside.
+  it('9. a WebKit trackpad pinch zooms the timeline, anchored under the fingers', async () => {
+    const area = await mountPane();
+    const before = probeLeft();
+    const anchorX = 200;
+
+    // WebKit reports `scale` cumulatively: 1 at the start, 1.2 one step in.
+    pinch(area, [
+      { type: 'gesturestart', scale: 1, clientX: anchorX },
+      { type: 'gesturechange', scale: ZOOM_STEP, clientX: anchorX },
+      { type: 'gestureend', scale: ZOOM_STEP, clientX: anchorX },
+    ]);
+    await waitFrames(2);
+
+    // Same assertion as the ctrl-wheel test 5: distance from the anchor scales
+    // by exactly the zoom step, which is both "it zoomed" and "it anchored".
+    expect(probeLeft() - anchorX).toBeCloseTo((before - anchorX) * ZOOM_STEP, 5);
+  });
+
+  it('10. a pinch in and back out returns to where it started', async () => {
+    const area = await mountPane();
+    const before = probeLeft();
+    const anchorX = 200;
+
+    pinch(area, [
+      { type: 'gesturestart', scale: 1, clientX: anchorX },
+      { type: 'gesturechange', scale: 2, clientX: anchorX },
+      { type: 'gesturechange', scale: 1, clientX: anchorX },
+      { type: 'gestureend', scale: 1, clientX: anchorX },
+    ]);
+    await waitFrames(2);
+
+    expect(probeLeft()).toBeCloseTo(before, 4);
+  });
+
+  it('11. a ctrl-wheel DURING a pinch is ignored, so a webview reporting both does not zoom twice', async () => {
+    const area = await mountPane();
+    const before = probeLeft();
+    const anchorX = 200;
+
+    pinch(area, [{ type: 'gesturestart', scale: 1, clientX: anchorX }]);
+    // A webview that also synthesizes the Chromium-style ctrl-wheel for this
+    // same physical pinch: it must not add a second zoom step.
+    wheel(area, { clientX: anchorX, deltaY: -120 });
+    await waitFrames(2);
+    expect(probeLeft()).toBeCloseTo(before, 6);
+
+    // The gesture's own step still counts, exactly once.
+    pinch(area, [
+      { type: 'gesturechange', scale: ZOOM_STEP, clientX: anchorX },
+      { type: 'gestureend', scale: ZOOM_STEP, clientX: anchorX },
+    ]);
+    await waitFrames(2);
+    expect(probeLeft() - anchorX).toBeCloseTo((before - anchorX) * ZOOM_STEP, 5);
+
+    // …and once the gesture is over, a ctrl-wheel zooms again as it always did.
+    const afterPinch = probeLeft();
+    wheel(area, { clientX: anchorX, deltaY: -120 });
+    await waitFrames(2);
+    expect(probeLeft()).not.toBeCloseTo(afterPinch, 3);
   });
 });
