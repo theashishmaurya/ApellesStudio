@@ -1638,7 +1638,8 @@ crosses the `@apelles/bridge` seam (D-447). The perf-300 harness results are in 
 
 No decoded or finished pixel crosses the CPU on the media-engine path. ffmpeg stays where it is the right tool
 (§16.6): the remux and the audio mix, loudness, probing, thumbnails / filmstrips, the Colorist's single-clip export,
-and, until the import-time conform lands, decoding the containers AVFoundation does not open.
+and converting, once, a source in a container AVFoundation does not open (§16.8, D-453), which then decodes here
+like any other.
 
 ## 16.2 Why `AVAssetReader`, and how the grid is kept
 
@@ -1725,8 +1726,8 @@ rate becomes the file's exact clock (`frame_rate`: an NTSC rate is `n·1000/1001
 **What still runs ffmpeg, and why:** the remux (joining files and muxing an AAC / PCM mix it already compiles is
 what ffmpeg is for; AVAssetWriter would need the mix re-implemented), the audio mix itself (D-197, unchanged),
 loudness (D-401), probing, thumbnails and filmstrips (batch extraction into the disk cache), the Colorist's own
-single-clip export (`chroma::export`, which renders through the grade shader, not this engine), and decoding the
-containers AVFoundation does not open until the import-time conform lands.
+single-clip export (`chroma::export`, which renders through the grade shader, not this engine), and the one-time
+conversion of a source in a container AVFoundation does not open (§16.8).
 
 **Cancel, status and the watchdog.** A cancel stops every segment's loop at its next frame; the dropped encoder
 abandons its temporary file; the remux, the one child process left, is killed through the cancel registration.
@@ -1796,3 +1797,16 @@ A jump or a step back is still a seek to the sync sample before it (this fixture
 seek itself is now in process instead of an ffmpeg spawn and a pipe. **Determinism:**
 `two_exports_of_one_document_decode_to_the_same_frames` (two exports decode to identical frames) and the frame-level
 tests in §16.5.
+
+## 16.8 Optimized media: the last decoder goes (step 3, D-453)
+
+A source in a container AVFoundation does not open (Matroska / WebM, AVI, MPEG-TS, MXF) is converted once, on
+import or when its project opens, into an HEVC `.mov` (`hevc_videotoolbox -q:v 75`, its own timestamps kept) in
+the project's `optimized-media/` folder, keyed by `media_cache::source_key` of the original; `decode_pipe` opens
+that file in its place (`optimized_media::decode_source`) and the project keeps naming the original. The ffmpeg
+decode pipe, its software retry and the decode `scale` argument are deleted, so every frame the preview, a scrub
+or an export draws is decoded by `vt_decode`. Measured against the original's decode: every frame of the textured test sources at or
+above 45 dB, the same frame at every nominal index, VFR holds and an MPEG-TS start offset included. A source not
+converted yet is an error naming it, which the preview shows as "converting N%" and an export reports. Design,
+measurements, tests and the state machine: `docs/notes/optimized-media.md`. Found on the way: B-384 (a `.mov`'s
+leading empty edit decoded black).

@@ -63,7 +63,8 @@ fn vfr_hold(dir: &Path) -> PathBuf {
     )
 }
 
-/// What ffmpeg's conformed decode (the `decode_pipe` command, in software)
+/// What ffmpeg's conformed decode (the command the deleted ffmpeg decode pipe
+/// ran, in software)
 /// gives as luma for nominal frames `start..start + n`.
 fn ffmpeg_luma(path: &Path, info: &VideoInfo, start: u64, n: usize) -> Vec<Vec<u8>> {
     let grid = crate::conform::from_frame(info, start);

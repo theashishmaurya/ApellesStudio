@@ -445,8 +445,10 @@ fn segment_count_for(
     by_work.min(by_cores).min(by_memory).clamp(1, MAX_SEGMENTS)
 }
 
-/// How many processes one segment of this timeline spawns: one encoder plus
-/// one `decode_pipe` `ffmpeg` per VISIBLE VIDEO track (B-234/D-369).
+/// How many media streams one segment of this timeline runs: one encoder plus
+/// one `decode_pipe` reader per VISIBLE VIDEO track (B-234/D-369 counted them
+/// when each was an `ffmpeg` process; since D-452/D-453 both are in process,
+/// and the count still sizes the segment budget).
 ///
 /// Hidden video tracks are excluded because they are skipped by
 /// `resolve_visible_video_layers_at` entirely and so never open a pipe; audio

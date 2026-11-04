@@ -1,5 +1,6 @@
 //! D-452 — the engine's Y'CbCr → RGB conversion against swscale, the
-//! conversion the ffmpeg decode pipe produced for the same source.
+//! conversion the ffmpeg decode pipe produced for the same source (the pipe was
+//! deleted by D-453; its command stays here as the reference).
 //!
 //! Each fixture is decoded twice: by the media engine (`apelles_media::
 //! vt_decode`) and drawn 1:1 through this engine, and by ffmpeg to `rgb24` with
@@ -33,7 +34,7 @@ fn synth(dir: &Path, name: &str, lavfi: &str, args: &[&str]) -> PathBuf {
 /// How ffmpeg converts the reference frame.
 #[derive(Clone, Copy, Debug)]
 enum Swscale {
-    /// Exactly what the ffmpeg decode pipe ran: hardware decode, then the
+    /// Exactly what the deleted ffmpeg decode pipe ran: hardware decode, then the
     /// auto-inserted scaler with its default flags (chroma replicated, the
     /// fast fixed-point tables).
     PipeDefault,

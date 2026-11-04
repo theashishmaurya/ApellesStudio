@@ -241,8 +241,8 @@ pub struct MotionRenderResult {
 ///
 /// **This is the whole answer to "is overwriting a file mid-project safe?"**
 /// A re-render of a scene already placed on the Edit timeline replaces a file
-/// that other things may be reading *right now* — the preview's decode pipe (a
-/// live `ffmpeg` process), and an export job whose argv was frozen at enqueue
+/// that other things may be reading *right now* — the preview's decode stream (a
+/// live media-engine reader), and an export job whose argv was frozen at enqueue
 /// time (D-198) and which may be part-way through reading it. Writing the new
 /// video over the old bytes in place gives both of them a torn file. Rendering
 /// beside it and finishing with [`std::fs::rename`] does not: `rename(2)` over
@@ -363,8 +363,8 @@ pub(super) fn render_scene_file(
     })?;
 
     // D-260 — the one cache in this workspace that a replaced file does NOT
-    // invalidate on its own: a decode pipe is a live `ffmpeg` process holding
-    // the old (now unlinked) inode open, and it respawns on a change of path,
+    // invalidate on its own: a decode stream is a live media-engine reader holding
+    // the old (now unlinked) inode open, and it reopens on a change of path,
     // never of content. Everything else derived from this file — the probe, the
     // filmstrip chunks, the waveform peaks — is `blake3(path ‖ mtime ‖ len)`-
     // keyed (D-128) and re-reads by itself. See

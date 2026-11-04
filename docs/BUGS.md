@@ -14,10 +14,10 @@ status: **fixed 2026-11-04** (found in D-452 step 2's measurement, root-caused i
 
 ## B-384 — a QuickTime file whose track starts with an empty edit decoded black where ffmpeg holds the first frame
 
-status: **fixed 2026-11-04** (found while converting MPEG-TS sources for D-452 step 3) · severity: low (the media engine's decode of a `.mov` / `.mp4` with a delayed start — the MPEG-TS conversions have one, and ffmpeg writes one for any stream whose timestamps do not start at zero — showed black for the slots before the first frame) · area: `crates/apelles-media/src/vt_decode.rs`
+status: **fixed 2026-11-04** (found by D-453's conversion tests) · severity: low (the media engine's decode of a `.mov` / `.mp4` with a delayed start — the MPEG-TS conversions have one, and ffmpeg writes one for any stream whose timestamps do not start at zero — showed black for the slots before the first frame) · area: `crates/apelles-media/src/vt_decode.rs`
 
 - **Cause.** For an empty edit, AVAssetReader hands out a synthesized black frame at the edit's start, with an image buffer and a valid time. ffmpeg's demuxer presents nothing there, so its conform (D-228) holds the first real frame over those slots; the media engine conformed the black frame instead. A converted `.mts` (timestamps from 1.47 s) decoded black for its first 44 slots (6.5 dB against the original's decode).
-- **Fix.** The reader reads the track's segments and drops any frame presented inside an empty one, in exact `CMTime` arithmetic. Tests: `vt_decode::tests::an_empty_edit_at_the_start_holds_the_first_frame_not_black` (luma bit-exact against ffmpeg's conformed decode from five starts).
+- **Fix.** The reader reads the track's segments and drops any frame presented inside an empty one, in exact `CMTime` arithmetic. Tests: `vt_decode::tests::an_empty_edit_at_the_start_holds_the_first_frame_not_black` (luma bit-exact against ffmpeg's conformed decode from five starts) and the `.mts` case of `optimized_media::tests::every_container_converts_to_a_mov_that_decodes_to_the_originals_frames`.
 
 ## B-383 — a title with an out-of-range size crashed the preview and hung the export (debug builds)
 

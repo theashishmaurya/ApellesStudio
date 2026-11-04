@@ -55,7 +55,7 @@ use super::edit;
 /// increasing** and therefore searchable by `partition_point`.
 const FRAME_BASE: u32 = 1;
 
-/// One video layer's decode: `decode_pipe::playback_frame_scaled` plus the
+/// One video layer's decode: `decode_pipe::playback_frame` plus the
 /// RGBA conversion.
 ///
 /// **Three, because that is roughly the measured ratio.** On the 20-clip /

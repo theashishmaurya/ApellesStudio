@@ -42,7 +42,7 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
     counterpart for a source that has one frame and no clock. The extension
     gate (`is_image_file`, mirrored on the TS side), a header-only dimension
     `probe` (no subprocess), `decode_scaled` (the still counterpart of
-    `decode_pipe::playback_frame_scaled`, memoised on `(path, source_key,
+    `decode_pipe::playback_frame`, memoised on `(path, source_key,
     target)` so a still held for three seconds is decoded once, not 72 times)
     and a `thumbnail` in the same wire shape `video::extract_thumb` produces.
     Deliberately reports **no** rate/duration/frame count — a still has none,
@@ -55,8 +55,9 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
     arithmetic. Each frame is an IOSurface-backed, Metal-compatible
     `CVPixelBuffer` in the source's own two-plane Y'CbCr layout (4:2:0 / 4:2:2
     / 4:4:4, 8- or 10-bit, video or full range) with the matrix ffmpeg would
-    use for it (`YcbcrLayout`); the GPU engine converts it. No colour, no
-    scaling, no audio, no fallback.
+    use for it (`YcbcrLayout`); the GPU engine converts it. Frames
+    AVAssetReader synthesizes for an empty edit are dropped, as ffmpeg presents
+    none there (B-384). No colour, no scaling, no audio, no fallback.
   - `vt_encode` (D-452) — **the media engine's encode**: `SegmentEncoder`, a
     `VTCompressionSession` (hardware required) into an `AVAssetWriter`
     writing a video-only `.mp4` / `.mov`. H.264 at D-446's measured quality
@@ -66,12 +67,24 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
     joining (ffmpeg remuxes those in `chroma::edit_render`).
   - `decode_pipe` — the pool of sequential decode streams, one per playback
     slot and lane (D-125, D-360), with the cut-boundary prefetch (D-324,
-    D-330). A stream is a `vt_decode::Reader` for the QuickTime family, and the
-    long-lived `ffmpeg` pipe (with D-125's hardware-decode retry) for any
-    other container until the import-time conform replaces it (D-452). Frames
-    come back as `Decoded::Video` (full size, for the GPU) or `Decoded::Rgb`. A
+    D-330). Every stream is a `vt_decode::Reader` (D-452): over the source
+    itself for the QuickTime family, over its converted file for any other
+    container (`optimized_media`, D-453), keyed by the original path either
+    way. `playback_frame` returns a `VideoFrame` (full size, for the GPU). A
     repeat of the last frame (a hold, a slow ramp) is served without a seek. A
-    still never uses it: there is no stream to step (D-292).
+    source not converted yet is an error naming it. A still never uses it:
+    there is no stream to step (D-292).
+  - `optimized_media` (D-453) — **a source the media engine cannot open,
+    converted once**: `convert` runs `hevc_videotoolbox -q:v 75` into a
+    `.mov` keeping the source's timestamps (D-228's grid holds), range, depth
+    and alpha, and checks the media engine can read it; the files live in the
+    open project's `optimized-media/` folder (`set_project_dir`; the app
+    cache's with no project, `init`), keyed by `media_cache::source_key`, with
+    each file's decode facts beside it. `request` / `cancel` / `status` /
+    `set_listener` are the one-worker queue the app drives and the GUI and MCP
+    read; `decode_source` is what `decode_pipe` opens; `prune` removes files
+    nothing maps to. Hardware encoder required, no software fallback. Design
+    and measurements: `docs/notes/optimized-media.md`.
   - `media_cache` — the persistent, source-keyed disk cache for derived
     artefacts (D-128): `blake3(path ‖ mtime ‖ len)` identity, atomic
     `write_blob`, LRU `prune_to_budget`.

@@ -130,7 +130,8 @@ mod tests {
 
     /// The D-031 throughput proxy. On the C019 clip, loop N frames through the
     /// **real** playback path minus the IPC + native surface:
-    ///   scaled decode pipe (ffmpeg downscales to playback res, D-031) →
+    ///   the decode pipe (the media engine, full size, D-452) and the GPU
+    ///   engine's conversion at playback res →
     ///   `render_core::render` (a real WGSL grade, headless, D-014 — the same
     ///   call `export.rs` uses). Prints ms/frame split decode vs grade + fps.
     ///
@@ -205,13 +206,12 @@ mod tests {
         };
 
         // warm up the pipe + GPU (first frame pays spawn + shader compile + upload)
-        let warm = crate::chroma::decode_pipe::playback_frame_scaled(
+        let warm = crate::chroma::decode_pipe::playback_frame(
             crate::chroma::decode_pipe::PipeLane::LIVE,
             crate::chroma::decode_pipe::PipeSlot::Current,
             &vid,
             &info,
             start_frame,
-            scale,
         )
         .expect("warm decode");
         // D-452 — the decoded frame reaches the Colorist as pixels through the
@@ -227,13 +227,12 @@ mod tests {
             let f = start_frame + 1 + i;
 
             let d0 = Instant::now();
-            let frame = crate::chroma::decode_pipe::playback_frame_scaled(
+            let frame = crate::chroma::decode_pipe::playback_frame(
                 crate::chroma::decode_pipe::PipeLane::LIVE,
                 crate::chroma::decode_pipe::PipeSlot::Current,
                 &vid,
                 &info,
                 f,
-                scale,
             )
             .expect("decode");
             let frame = crate::chroma::edit::decoded_picture(frame, scale).expect("convert");

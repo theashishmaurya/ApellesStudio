@@ -149,13 +149,12 @@ pub async fn seek_and_install(
     });
     let view_for_task = view.clone();
     let decoded = tokio::task::spawn_blocking(move || -> Result<image::DynamicImage, String> {
-        let frame = decode_pipe::playback_frame_scaled(
+        let frame = decode_pipe::playback_frame(
             decode_pipe::PipeLane::LIVE,
             decode_pipe::PipeSlot::Current,
             &path,
             &info,
             decode_frame_index,
-            scale,
         )
         .map_err(|e| e.to_string())?;
         let size = scale.or(Some((info.resolution.width, info.resolution.height)));
