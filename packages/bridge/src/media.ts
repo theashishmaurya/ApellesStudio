@@ -26,6 +26,9 @@
  * not the bare persisted model.
  */
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+
+import { safeUnlisten } from './tauriListeners';
 // D-358/B-217 — this store is a process-wide singleton and must survive a Vite
 // dev-mode module re-evaluation as ONE instance; `createSharedStore` is plain
 // `create()` in production and under vitest. It also announces which project it
@@ -74,6 +77,46 @@ export interface MediaImageInfo {
   height: number;
 }
 
+/** D-453 — where a source's one conversion to optimized media stands. */
+export type MediaConversionState = 'queued' | 'converting' | 'ready' | 'failed' | 'cancelled';
+
+/** Mirrors `apelles_media::optimized_media::ConversionStatus` (serde
+ *  camelCase): a source the macOS media engine cannot open (Matroska / WebM,
+ *  AVI, MPEG-TS, MXF) is converted once into a `.mov` it can, and cannot be
+ *  previewed or exported until that is `ready`. */
+export interface MediaConversion {
+  state: MediaConversionState;
+  /** 0..1 converted (1 when ready). */
+  progress: number;
+  /** why a `failed` conversion failed */
+  error?: string;
+}
+
+/** The progress event `chroma::media_conversion` sends for every change. */
+export const MEDIA_CONVERSION_EVENT = 'chroma://media-conversion';
+
+interface MediaConversionEvent {
+  sourcePath: string;
+  conversion: MediaConversion;
+}
+
+/** One pool item's cancel, as `chroma_media_cancel_conversion` reports it. */
+export interface MediaConversionCancel {
+  id: string;
+  sourcePath: string;
+  /** there was a conversion queued or running to cancel */
+  wasConverting: boolean;
+  /** where it stands now; absent for a source that never needed one */
+  conversion?: MediaConversion | null;
+}
+
+/** Whether `item` cannot be shown yet because its conversion has not finished.
+ *  The one place that fact is read (the Sources tile, the preview notice and
+ *  `editor_list_media` all ask it). */
+export function awaitsConversion(item: Pick<MediaItem, 'conversion'>): boolean {
+  return !!item.conversion && item.conversion.state !== 'ready';
+}
+
 /** Mirrors `chroma::project::MediaItemDto` (serde camelCase). */
 export interface MediaItem {
   id: string;
@@ -108,6 +151,11 @@ export interface MediaItem {
    *  field's own doc (`apelles_project::manifest::MediaItem::motion_scene_id`)
    *  for why provenance lives on the pool item and not on the clip. */
   motionSceneId?: string | null;
+  /** D-453 — the source's conversion to optimized media, live; absent for a
+   *  source the media engine opens as it is (`.mov`/`.mp4`/`.m4v`), an
+   *  audio-only source and a still. Kept current by the progress event while a
+   *  project is open. */
+  conversion?: MediaConversion | null;
 }
 
 /** B-089 — a pure-audio source (no video stream) is probed as a real item whose
@@ -203,6 +251,16 @@ interface MediaPoolState {
    *  panel's "New Folder" action. Idempotent; replaces `folders` with the
    *  backend's fresh (deduped, sorted) list on success. */
   createFolder: (path: string) => Promise<{ ok: boolean; error?: string }>;
+  /** D-453 — cancel the conversions of the pool items `ids` (the Sources
+   *  tile's Cancel, and `editor_cancel_media_conversion`). A running one's
+   *  `ffmpeg` is killed and its partial file removed; a queued one never
+   *  starts. Re-probing an item (`reprobeMedia`) asks for it again. Each
+   *  item's `conversion` is updated in place from the answer. */
+  cancelConversion: (
+    ids: string[],
+  ) => Promise<{ ok: boolean; error?: string; items?: MediaConversionCancel[]; unknownIds?: string[] }>;
+  /** D-453 — apply one progress event to the item(s) with that source. */
+  applyConversion: (sourcePath: string, conversion: MediaConversion) => void;
   // NOTE: D-046's "add to grading" action (`chroma_project_add_shot`) is
   // deliberately NOT a store action here — it needs `useSessionStore.
   // _hydrateOpenDto` (`app/src/store`), which `@apelles/bridge` cannot depend
@@ -248,6 +306,10 @@ export const useMediaPoolStore = createSharedStore<MediaPoolState>('bridge.media
     if (get().openProjectKey === key) return;
     refreshToken += 1; // orphan any read still in flight from the old project
     set({ openProjectKey: key, items: [], folders: [], error: null, loading: key !== null });
+    // D-453 — conversion progress is pushed while a project is open: a tile
+    // and the preview's notice read it from `items`, whether or not the
+    // Sources panel is on screen.
+    watchConversions(key !== null);
     if (key === null) return;
     void get().refresh();
   },
@@ -351,7 +413,56 @@ export const useMediaPoolStore = createSharedStore<MediaPoolState>('bridge.media
       return { ok: false, error: String(e) };
     }
   },
+
+  cancelConversion: async (ids) => {
+    if (ids.length === 0) return { ok: true, items: [], unknownIds: [] };
+    try {
+      const res = await invoke<{ items: MediaConversionCancel[]; unknownIds: string[] }>(
+        'chroma_media_cancel_conversion',
+        { ids },
+      );
+      const byId = new Map(res.items.map((c) => [c.id, c.conversion ?? null]));
+      set((s) => ({
+        items: s.items.map((it) => (byId.has(it.id) ? { ...it, conversion: byId.get(it.id) } : it)),
+      }));
+      return { ok: true, items: res.items, unknownIds: res.unknownIds };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  },
+
+  applyConversion: (sourcePath, conversion) => {
+    set((s) => {
+      if (!s.items.some((it) => it.sourcePath === sourcePath)) return s;
+      return {
+        items: s.items.map((it) => (it.sourcePath === sourcePath ? { ...it, conversion } : it)),
+      };
+    });
+  },
 }));
+
+// ---- D-453: conversion progress, listened to while a project is open --------
+
+let conversionUnlisten: Promise<() => void> | null = null;
+
+function ignore(): void {
+  /* no Tauri bridge (a jsdom test): there are no events to miss */
+}
+
+/** Start (`true`) or stop (`false`) applying `MEDIA_CONVERSION_EVENT`s to the
+ *  pool. Idempotent either way. */
+function watchConversions(on: boolean): void {
+  if (on && !conversionUnlisten) {
+    const registration = listen<MediaConversionEvent>(MEDIA_CONVERSION_EVENT, (event) => {
+      useMediaPoolStore.getState().applyConversion(event.payload.sourcePath, event.payload.conversion);
+    });
+    registration.catch(ignore);
+    conversionUnlisten = registration;
+  } else if (!on && conversionUnlisten) {
+    safeUnlisten(conversionUnlisten);
+    conversionUnlisten = null;
+  }
+}
 
 /** B-217/D-358 — what this store believes it is holding, for the guard that
  *  refuses an MCP op when the media pool and `useSessionStore` have stopped

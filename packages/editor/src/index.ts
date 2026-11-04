@@ -185,6 +185,10 @@ export type { TimelineSummary, TimelineActionResult } from './timelineStore';
  *  the project launcher, the shot strip. See `MediaThumbnail.tsx`. */
 export { MediaThumbnail, formatDuration, mediaItemThumbnailProps } from './MediaThumbnail';
 export type { MediaThumbnailKind, MediaThumbnailProps } from './MediaThumbnail';
+/** D-453 — a media tile's "converting 42%" / failed / cancelled state, inside
+ *  its thumbnail well. See `MediaConversionOverlay.tsx`. */
+export { MediaConversionOverlay } from './MediaConversionOverlay';
+export type { MediaConversionOverlayProps } from './MediaConversionOverlay';
 export { PANEL_IDS, parsePanelId, usePanelOpen } from './panelRegistry';
 export type { PanelId } from './panelRegistry';
 /** D-252 exported `CaptionPanel` here for `@apelles/debug`'s DOM proof that

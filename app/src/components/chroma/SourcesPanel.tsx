@@ -77,7 +77,12 @@ import {
 } from '@apelles/ui';
 import { useShellStore } from '@apelles/shell';
 import { useMediaPoolStore } from '@apelles/bridge';
-import { CHROMA_MEDIA_DRAG_MIME, MediaThumbnail, mediaItemThumbnailProps } from '@apelles/editor';
+import {
+  CHROMA_MEDIA_DRAG_MIME,
+  MediaConversionOverlay,
+  MediaThumbnail,
+  mediaItemThumbnailProps,
+} from '@apelles/editor';
 
 import { useSessionStore, type ProjectOpenDto } from '../../store/useSessionStore';
 import { useSourcesImport } from './SourcesImportButton';
@@ -313,6 +318,7 @@ export function SourcesPanel({ variant = 'panel' }: { variant?: SourcesPanelVari
   const moveToFolder = useMediaPoolStore((s) => s.moveToFolder);
   const removeMedia = useMediaPoolStore((s) => s.removeMedia);
   const reprobeMedia = useMediaPoolStore((s) => s.reprobeMedia);
+  const cancelConversion = useMediaPoolStore((s) => s.cancelConversion);
   const createFolder = useMediaPoolStore((s) => s.createFolder);
 
   const [search, setSearch] = useState('');
@@ -439,6 +445,14 @@ export function SourcesPanel({ variant = 'panel' }: { variant?: SourcesPanelVari
     // D-292 — a still re-probes into `image`, not `video`; either is a success.
     if (item?.video?.frameCount || item?.image) toast.success(`Re-probed ${label}`);
     else toast.warning(`${label} still can't be read — check the file is where the pool expects it`);
+  };
+
+  // D-453 — stop one item's conversion to optimized media. The GUI half of
+  // `editor_cancel_media_conversion`: the same store action, the same
+  // `chroma_media_cancel_conversion` command.
+  const doCancelConversion = async (id: string, label: string) => {
+    const res = await cancelConversion([id]);
+    if (!res.ok) toast.error(`Couldn't cancel converting ${label}: ${res.error}`);
   };
 
   const toggleSelecting = () => {
@@ -676,6 +690,16 @@ export function SourcesPanel({ variant = 'panel' }: { variant?: SourcesPanelVari
                             <WarningIcon className="size-3" />
                           </div>
                         )}
+                        {/* D-453 — converting to optimized media: the tile
+                            says how far along, with a Cancel. */}
+                        {it.conversion && (
+                          <MediaConversionOverlay
+                            conversion={it.conversion}
+                            name={it.name}
+                            onCancel={() => void doCancelConversion(it.id, it.name)}
+                            onConvertAgain={() => void doReprobe(it.id, it.name)}
+                          />
+                        )}
                       </MediaThumbnail>
                       <span className="text-[10px] truncate text-text-secondary group-hover:text-text-primary">
                         {it.name}
@@ -725,6 +749,11 @@ export function SourcesPanel({ variant = 'panel' }: { variant?: SourcesPanelVari
                     </div>
                   </ContextMenuTrigger>
                   <ContextMenuContent>
+                    {(it.conversion?.state === 'queued' || it.conversion?.state === 'converting') && (
+                      <ContextMenuItem onClick={() => void doCancelConversion(it.id, it.name)}>
+                        <XIcon className="size-3.5" /> Cancel conversion
+                      </ContextMenuItem>
+                    )}
                     <ContextMenuItem
                       onClick={() => void doReprobe(it.id, it.name)}
                       disabled={reprobingId === it.id}

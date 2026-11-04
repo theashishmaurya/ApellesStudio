@@ -24,6 +24,11 @@ D-045/D-046 media-pool store, now consumed by a real panel (D-046's
   action here — it needs `useSessionStore._hydrateOpenDto` (`app/src/store`),
   which this package cannot depend on without inverting the D-039 layer
   direction, so it lives directly in `SourcesPanel.tsx` instead.
+  D-453: each item's `conversion` (a source the media engine cannot open is
+  converted once into optimized media) is kept live from the
+  `chroma://media-conversion` event while a project is open;
+  `cancelConversion(ids)` wraps `chroma_media_cancel_conversion`, and
+  `awaitsConversion(item)` is the one "cannot be shown yet" test.
 
 - `useVideoUnderstanding` / `useVideoUnderstandingStore` (`src/videoUnderstanding.ts`,
   D-433) — the opt-in "AI video understanding" flag: `chroma_video_understanding_status`

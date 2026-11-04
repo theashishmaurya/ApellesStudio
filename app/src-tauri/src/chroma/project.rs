@@ -267,6 +267,10 @@ async fn open_manifest(
         path: project_dir.clone(),
         name: manifest.name.clone(),
     }));
+    // D-453 — a source the media engine cannot open is converted once into
+    // this project's optimized-media folder: an existing project whose sources
+    // need it starts converting now, with the pool's progress UI.
+    super::media_conversion::convert_project_sources(&project_dir, &manifest);
     progress.finish(&manifest.name);
 
     Ok(ProjectOpenDto {
@@ -669,6 +673,8 @@ pub async fn chroma_project_save(
         path: dir.clone(),
         name: manifest.name.clone(),
     }));
+    // D-453 — the project now lives in `dir`, and its optimized media with it.
+    super::media_conversion::convert_project_sources(&dir, &manifest);
 
     let dir2 = dir.clone();
     let thumb_regenerated = tokio::task::spawn_blocking(move || regen_thumb(&dir2))
@@ -909,6 +915,9 @@ pub async fn chroma_media_import(
             manifest.modified = now_rfc3339();
             save_manifest(&dir, &manifest)?;
         }
+        // D-453 — an imported source the media engine cannot open starts its
+        // one conversion now; the items below report it as queued.
+        super::media_conversion::convert_project_sources(&dir, &manifest);
         Ok(added)
     })
     .await
@@ -1001,6 +1010,14 @@ pub async fn chroma_media_reprobe(ids: Vec<String>) -> Result<Vec<MediaItemDto>,
             manifest.modified = now_rfc3339();
             save_manifest(&dir, &manifest)?;
         }
+        // D-453 — re-probing is also "try this source again": a conversion
+        // that failed or was cancelled is asked for again.
+        let paths: Vec<PathBuf> = touched
+            .iter()
+            .filter(|m| m.video.as_ref().is_some_and(|v| v.resolution.width > 0))
+            .map(|m| PathBuf::from(&m.source_path))
+            .collect();
+        super::media_conversion::retry(&paths);
         Ok(touched)
     })
     .await

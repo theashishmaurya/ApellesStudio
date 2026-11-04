@@ -1940,6 +1940,9 @@ pub fn run() {
                 // filmstrip tiles, `ffprobe` results, waveform peaks. Same
                 // `app_cache_dir()` root RapidRAW's own thumbnail/exif caches
                 // already use. Pruning walks the tree, so it runs off-thread.
+                // D-453: optimized media's no-project folder and its progress
+                // event, beside (not inside, it is never pruned) that cache.
+                chroma::media_conversion::install(&app_handle, &cache_dir);
                 chroma::media_cache::init(cache_dir);
                 std::thread::spawn(chroma::media_cache::prune_to_budget);
             }
@@ -2334,6 +2337,7 @@ pub fn run() {
             chroma::project::chroma_media_import,
             chroma::project::chroma_media_refresh,
             chroma::project::chroma_media_reprobe,
+            chroma::media_conversion::chroma_media_cancel_conversion,
             chroma::project::chroma_media_list,
             chroma::project::chroma_media_move,
             chroma::project::chroma_media_remove,

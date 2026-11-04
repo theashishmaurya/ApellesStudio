@@ -447,6 +447,11 @@ pub struct EditorReprobeMediaArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorCancelMediaConversionArgs {
+    pub ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EditorCreateMediaFolderArgs {
     pub path: String,
 }
@@ -3104,6 +3109,18 @@ impl ApellesMcp {
     `hasThumb` is a boolean, deliberately: the real thumbnail is a base64 JPEG
     data URL that would swamp this response and means nothing to you anyway.
 
+    **`conversion` and `previewable` (D-453).** A source the macOS media engine
+    cannot open (`.mkv`, `.webm`, `.avi`, `.mts`/`.m2ts`, `.mxf`) is converted
+    ONCE, on import or when its project opens, into an HEVC `.mov` in the
+    project's `optimized-media/` folder; the pool item keeps its original
+    `sourcePath`. Such a row's `conversion` is `{state, progress, error?}` —
+    `state` one of `queued`, `converting` (`progress` 0..1), `ready`, `failed`
+    (`error` says why) or `cancelled` — and `null` for a source that needs no
+    conversion. Until it is `ready` the row's `previewable` is false: a clip
+    of it can be placed, but the preview and an export cannot draw it yet. The
+    response's `awaitingConversion` array lists those ids. Poll this tool for
+    progress; `editor_cancel_media_conversion` stops one.
+
     (D-266.)"#
     )]
     pub async fn editor_list_media(&self) -> Result<CallToolResult, ErrorData> {
@@ -3136,6 +3153,9 @@ impl ApellesMcp {
     next `editor_add_clip`. `unknownIds` lists any id that is not in the pool
     at all (skipped, not an error). Ids you did not name are never touched.
 
+    It is also how a conversion to optimized media that failed or was
+    cancelled (`editor_list_media`'s `conversion`, D-453) is started again.
+
     On demand only, by design: a re-probe is a real ffprobe (plus a thumbnail
     regeneration if the source actually changed), so `editor_list_media` does
     not fire one for every row behind your back. Wraps the same
@@ -3148,6 +3168,35 @@ impl ApellesMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new().set("ids", p.ids);
         let env = self.op("editor_reprobe_media", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_cancel_media_conversion",
+        description = r#"Cancel the conversion of media-pool items to optimized media, by pool
+    item id (D-453) — parallel to `editor_cancel_export`.
+
+    A source the macOS media engine cannot open (`.mkv`, `.webm`, `.avi`,
+    `.mts`/`.m2ts`, `.mxf`) is converted once into an HEVC `.mov` before it can
+    be previewed or exported; `editor_list_media` reports each item's
+    `conversion`. A running conversion's ffmpeg is killed and its partial file
+    removed; a queued one never starts. The item stays in the pool with
+    `conversion.state: "cancelled"` and cannot be previewed or exported until
+    `editor_reprobe_media` asks for its conversion again.
+
+    Returns `items` — one per id found: `id`, `sourcePath`, `wasConverting`
+    (whether there was a queued or running conversion to cancel) and the
+    `conversion` as it now stands (`null` for a source that never needed one)
+    — and `unknownIds` for ids not in the pool (skipped, not an error). Wraps
+    the same `chroma_media_cancel_conversion` command as the Sources panel's
+    Cancel on a converting tile."#
+    )]
+    pub async fn editor_cancel_media_conversion(
+        &self,
+        Parameters(p): Parameters<EditorCancelMediaConversionArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("ids", p.ids);
+        let env = self.op("editor_cancel_media_conversion", args).await?;
         Ok(render::json_text(&env))
     }
 

@@ -110,6 +110,7 @@
     "editor_remove_track",
     "editor_remove_transition",
     "editor_reprobe_media",
+    "editor_cancel_media_conversion",
     "editor_roll_edit",
     "editor_search_audio",
     "editor_set_adjustment_clip",
