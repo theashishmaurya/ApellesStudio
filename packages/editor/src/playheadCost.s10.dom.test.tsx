@@ -35,6 +35,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 
 import {
+  PREVIEW_SURFACE_STUBS,
   actSync,
   captureConsole,
   createInvokeStub,
@@ -52,7 +53,7 @@ const counts = vi.hoisted(() => ({ preview: 0, player: 0 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
-    chroma_timeline_frame: () => new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer,
+    ...PREVIEW_SURFACE_STUBS,
     chroma_timeline_composition_size: () => ({ compWidth: 1000, compHeight: 500, naturalWidth: 1, naturalHeight: 1 }),
     chroma_timeline_clip_geometry: () => ({ compWidth: 1000, compHeight: 500, naturalWidth: 1000, naturalHeight: 500 }),
     chroma_project_get_settings: () => ({ width: 1000, height: 500 }),

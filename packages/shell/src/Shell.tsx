@@ -283,7 +283,11 @@ export function Shell({
   useShortcut('app.redo', () => stepHistory('redo', tabs.map((t) => t.id)), { enabled: projectOpen });
 
   return (
+    // D-454 — `data-preview-hole`: transparent while the Edit preview's native
+    // picture shows through the webview (`app/src/styles.css`), like the
+    // Colorist's B-006 switch below.
     <div
+      data-preview-hole
       className={
         'flex flex-col h-full w-full text-text-primary overflow-hidden ' +
         // B-006: a tab (Colorist) drawing straight onto the native window via a

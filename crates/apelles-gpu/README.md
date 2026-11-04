@@ -31,14 +31,18 @@
 - `GpuContext { instance, adapter, device, queue, limits }` — `Clone`, headless.
   `instance` and `adapter` are kept (D-451) so a caller can make a window
   surface the device can present to: a surface can only be configured with a
-  device of the instance it was created from. The Edit preview's presenter
-  (`app/src-tauri`'s `chroma::preview_surface`) is that caller.
+  device of the instance it was created from. Since D-454 this is the
+  process's ONE context: `app/src-tauri`'s `chroma::gpu_compositor::device()`
+  opens it, and the engine, the Colorist's grade pass, the Edit preview's
+  `CAMetalLayer` surface and the Colorist tab's own window surface (B-006) all
+  use its instance and device.
 - `init_gpu_context() -> Result<GpuContext, String>`.
 
 ## Callers
 
-`apelles-compositor`'s `Engine::new()` (D-449), `app/src-tauri`'s
-`chroma::preview_surface::gpu()` (D-451), and
+`apelles-compositor`'s `Engine::new()` (D-449, its own tests and tools),
+`app/src-tauri`'s `chroma::gpu_compositor::device()` (D-454, the process's one
+device), and
 `app/src-tauri/src/render_core.rs::init_gpu_context()`, and it is itself called from `chroma/export.rs`, `chroma/playback.rs`
 and `chroma/relight.rs` (6 `render_core::` references total, all unchanged by
 this extraction — see D-144).

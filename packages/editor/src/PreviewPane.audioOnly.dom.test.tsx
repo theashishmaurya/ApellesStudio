@@ -11,10 +11,10 @@
  * `chroma::audio`'s `resolve_sources_at_a_timeline_with_no_video_track_plays_its_audio`
  * and `chroma::edit_render`'s `an_audio_only_timeline_exports_a_black_picture_and_its_sound`.
  * This file is the other half of the claim: that nothing on THIS side of the
- * IPC depends on a video track either. The play clock is wall-clock (D-049),
- * not driven by decoded frames, so an audio-only timeline must still: show the
- * frame the backend answers with, start `chroma_audio_play` from the playhead
- * on Play, advance the playhead while playing, and stop the session on Pause.
+ * IPC depends on a video track either. An audio-only timeline must still: ask
+ * the native preview to show the playhead (Rust draws black there), start
+ * `chroma_audio_play` and the native playback loop from the playhead on Play,
+ * follow the frames the loop reports, and stop the session on Pause.
  * It passed before the fix as well — it guards against a frontend regression
  * reintroducing the dependency, not against the Rust bug.
  *
@@ -26,21 +26,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React, { act } from 'react';
 
 import {
+  PREVIEW_SURFACE_STUBS,
   actSync,
   captureConsole,
   createInvokeStub,
   installCanvasContextStub,
-  installObjectUrlStub,
   installPointerCaptureStub,
   installResizeObserverStub,
   mount,
   stubOffsetMetrics,
   waitFrames,
-  waitMs,
   type CanvasContextStub,
   type MountedComponent,
-  type ObjectUrlStub,
 } from './testUtils/pointerHarness';
+import { fireEvent, resetEventBus } from './testUtils/eventBus';
 
 const CANVAS_W = 1000;
 const CANVAS_H = 500;
@@ -63,9 +62,11 @@ const record = vi.hoisted(
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
-    // What the fixed backend answers for an audio-only timeline: a black frame
-    // at the composition size (the bytes are irrelevant in jsdom).
-    chroma_timeline_frame: record('chroma_timeline_frame', new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer),
+    // What the fixed backend does for an audio-only timeline: draws black at
+    // the composition size (`draw_preview_frame`; nothing to see in jsdom).
+    ...PREVIEW_SURFACE_STUBS,
+    chroma_preview_surface_show: record('chroma_preview_surface_show', { position: 0, renderMs: 0, acquireMs: 0 }),
+    chroma_preview_surface_play: record('chroma_preview_surface_play'),
     chroma_timeline_composition_size: () => ({
       compWidth: CANVAS_W,
       compHeight: CANVAS_H,
@@ -91,10 +92,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   }),
 }));
 
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: () => Promise.resolve(() => {}),
-  emit: () => Promise.resolve(),
-}));
+vi.mock('@tauri-apps/api/event', async () => (await import('./testUtils/eventBus')).eventModule);
 
 import { useEditorTimelineStore } from './timelineStore';
 import { PreviewPane } from './PreviewPane';
@@ -129,7 +127,6 @@ function voiceoverTimeline(): Timeline {
 let restoreOffsets: () => void;
 let restoreResizeObserver: () => void;
 let restorePointerCapture: () => void;
-let objectUrls: ObjectUrlStub;
 let canvas: CanvasContextStub;
 let mounted: MountedComponent | null = null;
 let console_: ReturnType<typeof captureConsole>;
@@ -166,7 +163,6 @@ beforeEach(() => {
   restoreOffsets = stubOffsetMetrics(CANVAS_W, CANVAS_H);
   restoreResizeObserver = installResizeObserverStub();
   restorePointerCapture = installPointerCaptureStub();
-  objectUrls = installObjectUrlStub();
   canvas = installCanvasContextStub(600);
   console_ = captureConsole();
   calls.log.length = 0;
@@ -179,7 +175,7 @@ afterEach(() => {
   mounted?.unmount();
   mounted = null;
   canvas.restore();
-  objectUrls.restore();
+  resetEventBus();
   restorePointerCapture();
   restoreResizeObserver();
   restoreOffsets();
@@ -187,12 +183,12 @@ afterEach(() => {
 });
 
 describe('B-290: an audio-only timeline in the viewer', () => {
-  it('shows the frame the backend answers with, not a preview error', async () => {
+  it('asks the native preview for the playhead, not a preview error', async () => {
     await mountPane();
 
-    expect(named('chroma_timeline_frame').length).toBeGreaterThan(0);
+    expect(named('chroma_preview_surface_show').map((c) => c.args.position)).toContain(0);
     expect(mounted?.container.textContent ?? '').not.toContain('preview error');
-    expect(mounted?.container.querySelector('[data-preview-surface] img')).not.toBeNull();
+    expect(mounted?.container.querySelector('[data-preview-surface]')).not.toBeNull();
   });
 
   it('Play starts the audio session from the playhead and the playhead runs; Pause stops it', async () => {
@@ -202,19 +198,24 @@ describe('B-290: an audio-only timeline in the viewer', () => {
     await act(async () => {
       button('Play').click();
     });
-    await waitMs(400);
+    await waitFrames(3);
 
     const plays = named('chroma_audio_play');
     expect(plays).toHaveLength(1);
     expect(plays[0].args).toMatchObject({ startFrame: 0, rate: 1 });
     expect(named('chroma_audio_scrub_begin')).toHaveLength(0);
+    // The picture side of playback is the native loop, from the same frame.
+    expect(named('chroma_preview_surface_play').at(-1)?.args.args).toMatchObject({
+      playing: true,
+      from: 0,
+      end: VO_FRAMES,
+    });
 
+    // The loop reports the frames it shows; the playhead follows them.
+    actSync(() => fireEvent('chroma://preview-playhead', { frame: 37, ended: false }));
     const { playhead, playing } = useEditorTimelineStore.getState();
     expect(playing).toBe(true);
-    expect(playhead).toBeGreaterThan(0);
-    expect(playhead).toBeLessThan(VO_FRAMES);
-    // The picture side of playback keeps asking for frames as it goes.
-    expect(named('chroma_timeline_frame').some((c) => c.args.playing === true)).toBe(true);
+    expect(playhead).toBe(37);
 
     await act(async () => {
       button('Pause').click();

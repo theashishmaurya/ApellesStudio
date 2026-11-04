@@ -1,38 +1,43 @@
 // @vitest-environment jsdom
 /**
  * @apelles/editor — a seek DURING playback keeps playing from the new frame
- * (B-326). The play loop and the audio session each free-run against a clock
- * baselined at the playhead when Play started, so a plain `setPlayhead` was
- * overwritten by the loop's next tick (the click "did nothing") while audio
- * kept going from the old spot. `seekPlayhead` re-baselines both.
+ * (B-326). Since D-454 the picture's play loop runs in Rust (clocked by the
+ * display, following the audio clock) and reports each frame it shows; the
+ * webview restarts it, and the audio session, from the playhead on a
+ * `seekPlayhead`. A plain `setPlayhead` restarts neither, so the loop's next
+ * reported frame puts the playhead back where playback is.
  *
- * jsdom: no decode, no audio device — asserts the playhead and the
- * `chroma_audio_play` IPC boundary.
+ * jsdom: no presenter, no audio device — asserts the `chroma_preview_surface_
+ * play` / `chroma_audio_play` IPC boundary, and plays the loop's part by firing
+ * its frame event.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 
 import {
+  PREVIEW_SURFACE_STUBS,
   actSync,
   captureConsole,
   createInvokeStub,
-  installObjectUrlStub,
   installPointerCaptureStub,
   installResizeObserverStub,
   mount,
   stubOffsetMetrics,
   waitFrames,
   type MountedComponent,
-  type ObjectUrlStub,
 } from './testUtils/pointerHarness';
+import { fireEvent, resetEventBus } from './testUtils/eventBus';
 
 const FPS = 25;
-const STUB_FRAME = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer;
-const invoked = vi.hoisted(() => ({ play: [] as Record<string, unknown>[] }));
+const invoked = vi.hoisted(() => ({ play: [] as Record<string, unknown>[], video: [] as Record<string, unknown>[] }));
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
-    chroma_timeline_frame: () => STUB_FRAME,
+    ...PREVIEW_SURFACE_STUBS,
+    chroma_preview_surface_play: (args: Record<string, unknown> | undefined) => {
+      invoked.video.push((args?.args as Record<string, unknown>) ?? {});
+      return undefined;
+    },
     chroma_timeline_composition_size: () => ({ compWidth: 1000, compHeight: 500, naturalWidth: 1, naturalHeight: 1 }),
     chroma_timeline_clip_geometry: () => ({ compWidth: 1000, compHeight: 500, naturalWidth: 1, naturalHeight: 1 }),
     chroma_project_get_settings: () => ({ width: 1000, height: 500 }),
@@ -48,10 +53,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   }),
 }));
 
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: () => Promise.resolve(() => undefined),
-  emit: () => Promise.resolve(),
-}));
+vi.mock('@tauri-apps/api/event', async () => (await import('./testUtils/eventBus')).eventModule);
 
 import { useEditorTimelineStore } from './timelineStore';
 import { PreviewPane } from './PreviewPane';
@@ -73,22 +75,21 @@ const timeline: Timeline = {
 
 let restores: (() => void)[] = [];
 let mounted: MountedComponent | null = null;
-let objectUrls: ObjectUrlStub;
 let console_: ReturnType<typeof captureConsole>;
 
 beforeEach(() => {
   restores = [stubOffsetMetrics(1000, 500), installResizeObserverStub(), installPointerCaptureStub()];
-  objectUrls = installObjectUrlStub();
   console_ = captureConsole();
   invoked.play.length = 0;
+  invoked.video.length = 0;
 });
 
 afterEach(() => {
   console_.restore();
   mounted?.unmount();
   mounted = null;
-  objectUrls.restore();
   restores.forEach((r) => r());
+  resetEventBus();
   actSync(() => useEditorTimelineStore.setState({ timeline: null, playing: false, playhead: 0 }));
 });
 
@@ -110,25 +111,47 @@ async function startPlaying(): Promise<void> {
   await waitFrames(3);
 }
 
-describe('seeking while playing (B-326)', () => {
-  it('seekPlayhead keeps playing from the new frame and restarts audio there', async () => {
-    await startPlaying();
-    expect(invoked.play.at(-1)?.startFrame).toBe(100);
+/** The loop reports a frame it showed. */
+function loopShows(frame: number): void {
+  actSync(() => fireEvent('chroma://preview-playhead', { frame, ended: false }));
+}
 
+describe('seeking while playing (B-326)', () => {
+  it('Play hands the loop to Rust from the playhead, with the audio session', async () => {
+    await startPlaying();
+    expect(invoked.video.at(-1)).toMatchObject({ playing: true, from: 100, fps: FPS, rate: 1, end: 5000 });
+    expect(invoked.play.at(-1)?.startFrame).toBe(100);
+    loopShows(112);
+    expect(useEditorTimelineStore.getState().playhead).toBe(112);
+  });
+
+  it('seekPlayhead keeps playing from the new frame and restarts the loop and the audio there', async () => {
+    await startPlaying();
     actSync(() => useEditorTimelineStore.getState().seekPlayhead(3000));
-    await waitFrames(6);
+    await waitFrames(3);
 
     const s = useEditorTimelineStore.getState();
     expect(s.playing).toBe(true);
-    expect(s.playhead).toBeGreaterThanOrEqual(3000);
-    expect(s.playhead).toBeLessThan(3000 + FPS * 5);
+    expect(s.playhead).toBe(3000);
+    expect(invoked.video.at(-1)).toMatchObject({ playing: true, from: 3000 });
     expect(invoked.play.at(-1)?.startFrame).toBe(3000);
   });
 
-  it('a plain setPlayhead is the bug: the loop clock overwrites it', async () => {
+  it('a plain setPlayhead restarts nothing: the loop puts the playhead back where playback is', async () => {
     await startPlaying();
+    const calls = invoked.video.length;
     actSync(() => useEditorTimelineStore.getState().setPlayhead(3000));
-    await waitFrames(6);
-    expect(useEditorTimelineStore.getState().playhead).toBeLessThan(3000);
+    await waitFrames(3);
+    expect(invoked.video.length).toBe(calls);
+    loopShows(140);
+    expect(useEditorTimelineStore.getState().playhead).toBe(140);
+  });
+
+  it('the end of the timeline stops the transport on the last frame', async () => {
+    await startPlaying();
+    actSync(() => fireEvent('chroma://preview-playhead', { frame: 4999, ended: true }));
+    const s = useEditorTimelineStore.getState();
+    expect(s.playing).toBe(false);
+    expect(s.playhead).toBe(4999);
   });
 });

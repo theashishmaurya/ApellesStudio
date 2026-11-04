@@ -30,6 +30,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 
 import {
+  PREVIEW_SURFACE_STUBS,
   actSync,
   captureConsole,
   createInvokeStub,
@@ -54,14 +55,13 @@ const DURATION = 120;
  *  fractions. Its bottom-right corner IS the default anchor (0.5, 0.82). */
 const CAPTION_BOX = { left: 0.3, top: 0.7, width: 0.4, height: 0.12 };
 
-const STUB_FRAME = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer;
 const NATURAL_FULL_FRAME = { naturalWidth: 1, naturalHeight: 1 };
 
 const captionMeasureCalls: Array<{ text: string; compWidth: number; compHeight: number }> = [];
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
-    chroma_timeline_frame: () => STUB_FRAME,
+    ...PREVIEW_SURFACE_STUBS,
     chroma_timeline_composition_size: () => ({
       compWidth: CANVAS_W,
       compHeight: CANVAS_H,

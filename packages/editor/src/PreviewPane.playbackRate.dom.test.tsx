@@ -33,6 +33,7 @@ import React, { act } from 'react';
 import { MAX_PLAYBACK_RATE } from '@apelles/player';
 
 import {
+  PREVIEW_SURFACE_STUBS,
   actSync,
   captureConsole,
   createInvokeStub,
@@ -50,7 +51,6 @@ const CANVAS_W = 1000;
 const CANVAS_H = 500;
 const FPS = 25;
 
-const STUB_FRAME = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer;
 const NATURAL_FULL_FRAME = { naturalWidth: 1, naturalHeight: 1 };
 
 /** Every transport-affecting invoke the tree made, so the rate can be asserted
@@ -63,7 +63,7 @@ const invoked = vi.hoisted(() => ({
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
-    chroma_timeline_frame: () => STUB_FRAME,
+    ...PREVIEW_SURFACE_STUBS,
     chroma_timeline_composition_size: () => ({
       compWidth: CANVAS_W,
       compHeight: CANVAS_H,

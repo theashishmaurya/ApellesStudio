@@ -47,13 +47,15 @@
 //!
 //! What it does NOT do: capture anything outside the webview. Native window
 //!   chrome, menus, file dialogs and other apps are all invisible to it, for
-//!   the same reason as `debug_screenshot`. One consequence is specific
-//!   enough to call out: the **Colorist tab's picture is a native wgpu
-//!   surface behind the webview** (B-151) and does NOT appear in a recording.
-//!   `debug_screenshot` composites that surface in on demand; doing it per
-//!   frame would mean a full decode/re-encode per frame and would wreck the
-//!   very timing being recorded. This tool is for the Edit tab's playback,
-//!   which is webview content throughout. It also records no audio.
+//!   the same reason as `debug_screenshot`. Two pictures are native layers
+//!   behind the webview. The **Edit preview** (D-454) is composited into each
+//!   recorded frame where the webview is transparent over it
+//!   (`debug_capture::composite_edit_preview_raw`: a read-back of the frame on
+//!   screen and a per-pixel blend into the raw frame, no PNG round trip), so a
+//!   recording of playback shows the playback. The **Colorist tab's picture**
+//!   (B-151) does NOT appear: `debug_screenshot` composites it on demand, and
+//!   its PNG path per frame would wreck the timing being recorded. It also
+//!   records no audio.
 //!
 //! Platform: macOS only, deliberately — same reasoning and same explicit
 //!   "not supported here" error as `debug_capture`.
@@ -325,7 +327,15 @@ pub fn record_window_video<R: Runtime>(
     // window that only a capture can tell us. It doubles as a fail-fast — a
     // window that cannot be captured at all should error immediately rather
     // than after spawning a subprocess.
-    let first = debug_capture::capture_webview_raw(&window, snapshot_width)?;
+    let mut first = debug_capture::capture_webview_raw(&window, snapshot_width)?;
+    // D-454 — capture pixels per CSS pixel, for the Edit preview's composite.
+    let css_width = window
+        .inner_size()
+        .map(|s| f64::from(s.width) / window.scale_factor().unwrap_or(1.0))
+        .unwrap_or(f64::from(first.width));
+    let px_per_css = f64::from(first.width) / css_width.max(1.0);
+    #[cfg(target_os = "macos")]
+    debug_capture::composite_edit_preview_raw(app, &mut first, px_per_css);
     let (frame_w, frame_h, pix_fmt) = (first.width, first.height, first.pix_fmt);
     let frame_bytes =
         frame_w as usize * frame_h as usize * debug_capture::pix_fmt_bytes_per_pixel(pix_fmt);
@@ -359,7 +369,7 @@ pub fn record_window_video<R: Runtime>(
         }
 
         let before = Instant::now();
-        let frame = match debug_capture::capture_webview_raw(&window, snapshot_width) {
+        let mut frame = match debug_capture::capture_webview_raw(&window, snapshot_width) {
             Ok(frame) => frame,
             // One failed capture must not lose the whole recording: emit the
             // previous frame, count it, and carry on. A window that has gone
@@ -372,6 +382,8 @@ pub fn record_window_video<R: Runtime>(
                 continue;
             }
         };
+        #[cfg(target_os = "macos")]
+        debug_capture::composite_edit_preview_raw(app, &mut frame, px_per_css);
         costs.push(before.elapsed().as_secs_f64() * 1000.0);
 
         // A mid-recording window resize would change the frame size, which

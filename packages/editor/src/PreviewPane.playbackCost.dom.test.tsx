@@ -1,80 +1,55 @@
 // @vitest-environment jsdom
 /**
- * @apelles/editor — what one displayed preview frame COSTS (D-290, B-146).
+ * @apelles/editor — what a played preview frame costs the webview (D-290,
+ * B-146; reshaped by D-454).
  *
- * **Why this file exists.** The owner's report was "playback lags", and
- * profiling it live (`debug_frame_timing` against the real app and the real
- * project — the numbers are in D-290) found the ceiling is not the decoder:
- * one pass of `PreviewPane`'s play loop cost 25.0 ms, and 21.5 ms of that was
- * still there over a timeline GAP where Rust decodes nothing at all. The
- * expensive part was this side of the IPC, and the biggest single piece of it
- * that could be removed without a redesign was React: every displayed frame
- * used to commit `PreviewPane`'s whole subtree **twice** — once for the
- * playhead, once again for the picture's `src`.
+ * **Why this file exists.** The owner's "playback lags" report was profiled to
+ * this side of the IPC (D-290): React committing the pane twice per frame, a
+ * JPEG to decode per frame, a play loop that waited on its own round trips
+ * (B-370). Since D-454 the picture never crosses the IPC at all — the Rust
+ * playback loop draws it natively and reports each frame it shows as an event
+ * — so what is left to hold down here is what one such event costs: one move
+ * of the playhead, at most one commit, no request for a frame, no listener
+ * churn on the preview surface, and no redraw of the frame already on screen
+ * when the transport pauses.
  *
- * **What is asserted here, and why in this shape.** A wall-clock "it is
- * faster" assertion in jsdom would be worthless — there is no decoder, no
- * paint, no compositor. What jsdom CAN measure exactly, and what the fix
- * actually is, is **how many React commits a played frame causes**. So the
- * assertions are commit counts from a real `React.Profiler`, frame counts from
- * the real `<img>`'s `src`, and call counts at the real IPC boundary. Those
- * are exact numbers with correct answers, and each one fails on the pre-D-290
- * code for the right reason.
- *
- * **Tier and its honest limits.** jsdom, sharing every caveat the sibling
- * `PreviewPane.*.dom.test.tsx` headers spell out: no layout engine, no real
- * decode, no real paint. This proves the loop stopped doing the work; it
- * cannot prove how many milliseconds that is worth on the owner's machine —
- * that is what `debug_frame_timing`'s new `fetch`/`tick` spans are for, live.
+ * **Tier and its honest limits.** jsdom: no presenter, no decode, no paint.
+ * The test plays the Rust loop's part by firing its event. The milliseconds
+ * are measured live (`debug_frame_timing`, `debug_native_preview_stats`).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import React, { act } from 'react';
+import React from 'react';
 
 import {
+  PREVIEW_SURFACE_STUBS,
   actSync,
   captureConsole,
   createInvokeStub,
-  installObjectUrlStub,
   installPointerCaptureStub,
   installResizeObserverStub,
   mount,
   stubOffsetMetrics,
   waitFrames,
   type MountedComponent,
-  type ObjectUrlStub,
 } from './testUtils/pointerHarness';
+import { fireEvent, resetEventBus } from './testUtils/eventBus';
 
 const CANVAS_W = 1000;
 const CANVAS_H = 500;
 const FPS = 25;
-
-const STUB_FRAME = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer;
 const NATURAL_FULL_FRAME = { naturalWidth: 1, naturalHeight: 1 };
 
-/** Every `chroma_timeline_frame` position asked for, in order — the IPC
- *  boundary the redundant-fetch assertions are made at. */
-const framesAsked = vi.hoisted(() => ({ pos: [] as number[] }));
-
-/** B-370 — while `hold` is set, every `chroma_timeline_frame` stays pending
- *  until a test calls `release()`, so the play loop's clock can be observed
- *  running on while the decoder's round trip is still out. */
-const gate = vi.hoisted(() => ({
-  hold: false,
-  waiting: [] as (() => void)[],
-  release(): void {
-    const w = gate.waiting;
-    gate.waiting = [];
-    for (const r of w) r();
-  },
-}));
+/** Every position the preview was asked to SHOW (a draw), in order — the IPC
+ *  boundary the redundant-draw assertions are made at. */
+const shown = vi.hoisted(() => ({ pos: [] as number[] }));
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
-    chroma_timeline_frame: (args: Record<string, unknown> | undefined) => {
-      framesAsked.pos.push(Number(args?.pos));
-      if (!gate.hold) return STUB_FRAME;
-      return new Promise<ArrayBuffer>((resolve) => gate.waiting.push(() => resolve(STUB_FRAME)));
+    ...PREVIEW_SURFACE_STUBS,
+    chroma_preview_surface_show: (args: Record<string, unknown> | undefined) => {
+      shown.pos.push(Number(args?.position));
+      return { position: Number(args?.position), renderMs: 0, acquireMs: 0 };
     },
     chroma_timeline_composition_size: () => ({
       compWidth: CANVAS_W,
@@ -99,10 +74,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   }),
 }));
 
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: () => Promise.resolve(() => {}),
-  emit: () => Promise.resolve(),
-}));
+vi.mock('@tauri-apps/api/event', async () => (await import('./testUtils/eventBus')).eventModule);
 
 import { useEditorTimelineStore } from './timelineStore';
 import { PreviewPane } from './PreviewPane';
@@ -137,12 +109,10 @@ function fixtureTimeline(): Timeline {
 let restoreOffsets: () => void;
 let restoreResizeObserver: () => void;
 let restorePointerCapture: () => void;
-let objectUrls: ObjectUrlStub;
 let mounted: MountedComponent | null = null;
 let console_: ReturnType<typeof captureConsole>;
 
-/** React commits of the `PreviewPane` subtree, counted by a real `Profiler`.
- *  This is the number the fix is about. */
+/** React commits of the `PreviewPane` subtree, counted by a real `Profiler`. */
 const commits = { count: 0 };
 
 function Harness(): React.ReactElement {
@@ -158,10 +128,8 @@ function Harness(): React.ReactElement {
   );
 }
 
-/** Mounted WITHOUT StrictMode, deliberately: StrictMode's double-invoke is
- *  exactly the thing that would make a commit COUNT meaningless, and every
- *  behaviour this file asserts is already covered under StrictMode by the
- *  sibling `PreviewPane.*.dom.test.tsx` files. */
+/** Mounted WITHOUT StrictMode, deliberately: its double-invoke would make a
+ *  commit COUNT meaningless. */
 async function mountHarness(): Promise<MountedComponent> {
   actSync(() =>
     useEditorTimelineStore.setState({
@@ -181,10 +149,14 @@ async function mountHarness(): Promise<MountedComponent> {
   return mounted;
 }
 
-function previewImg(container: HTMLElement): HTMLImageElement {
-  const img = container.querySelector('img');
-  if (!img) throw new Error('no preview <img> mounted');
-  return img as HTMLImageElement;
+/** Play, with the Rust loop's part played by `frames` events. */
+async function playThrough(frames: number[]): Promise<void> {
+  actSync(() => useEditorTimelineStore.getState().setPlaying(true));
+  await waitFrames(2);
+  for (const frame of frames) {
+    actSync(() => fireEvent('chroma://preview-playhead', { frame, ended: false }));
+    await waitFrames(1);
+  }
 }
 
 beforeEach(() => {
@@ -192,10 +164,7 @@ beforeEach(() => {
   restoreOffsets = stubOffsetMetrics(1200, 600);
   restoreResizeObserver = installResizeObserverStub();
   restorePointerCapture = installPointerCaptureStub();
-  objectUrls = installObjectUrlStub();
-  framesAsked.pos = [];
-  gate.hold = false;
-  gate.waiting = [];
+  shown.pos = [];
   commits.count = 0;
   resetPreviewTiming();
 });
@@ -203,121 +172,59 @@ beforeEach(() => {
 afterEach(() => {
   mounted?.unmount();
   mounted = null;
-  objectUrls.restore();
   restorePointerCapture();
   restoreResizeObserver();
   restoreOffsets();
+  resetEventBus();
   actSync(() => useEditorTimelineStore.setState({ playing: false, playbackRate: 1 }));
   console_.restore();
 });
 
-describe('a displayed preview frame (D-290 / B-146)', () => {
-  it('reaches the <img> without React managing its src at all', async () => {
-    const { container } = await mountHarness();
-    const img = previewImg(container);
+const PLAYED = Array.from({ length: 30 }, (_, i) => 101 + i);
 
-    // The first frame is on screen and came from a real object URL...
-    expect(img.getAttribute('src')).toMatch(/^blob:/);
-    const first = img.getAttribute('src');
-
-    // ...and React is not the thing holding it: nothing re-renders here, yet
-    // a new frame still lands on the element. (Pre-D-290 this attribute was a
-    // JSX prop, so it could only ever change via a commit.)
-    const before = commits.count;
-    actSync(() => useEditorTimelineStore.getState().setPlayhead(140));
-    await waitFrames(3);
-
-    expect(img.getAttribute('src')).not.toBe(first);
-    expect(img.getAttribute('src')).toMatch(/^blob:/);
-    // The element itself was never replaced — the same node was written to.
-    expect(previewImg(container)).toBe(img);
-    // A scrub still commits (the playhead moved); the point is that the
-    // PICTURE did not add a second one on top of it.
-    expect(commits.count).toBeGreaterThan(before);
-  });
-
-  it('costs at most one React commit per frame during playback, not two', async () => {
-    const { container } = await mountHarness();
-    const img = previewImg(container);
-
-    // Count the frames that were really put on the <img> by watching its `src`
-    // writes, not by sampling it once per animation frame: a sampler misses
-    // frames when the machine is loaded (painted comes out low while commits do
-    // not), which made this ratio depend on speed. Every write is observed.
-    const seen = new Set<string>();
-    const src = () => img.getAttribute('src') ?? '';
-    seen.add(src());
-    const observer = new MutationObserver(() => seen.add(src()));
-    observer.observe(img, { attributes: true, attributeFilter: ['src'] });
-
-    commits.count = 0;
-    actSync(() => useEditorTimelineStore.getState().setPlaying(true));
-    for (let i = 0; i < 40; i += 1) await waitFrames(1);
-    actSync(() => useEditorTimelineStore.getState().setPlaying(false));
-    await waitFrames(2);
-    // `takeRecords` flushes any write the observer has not delivered yet.
-    observer.takeRecords().forEach(() => seen.add(src()));
-    observer.disconnect();
-
-    const painted = seen.size - 1; // the frame already showing before Play
-    expect(painted).toBeGreaterThan(2); // the loop really did run
-
-    // THE assertion. Every displayed frame necessarily commits once (the
-    // playhead moved, and the timecode/timeline cursor have to follow it).
-    // What must NOT happen any more is a SECOND commit per frame for the
-    // picture — that is what the pre-D-290 `setFrameSrc(url)` cost, and it is
-    // the single biggest thing this side of the IPC was spending a frame on.
-    // The `+ 4` is slack for the transport's own start/stop commits, not for
-    // per-frame work: a per-frame regression scales with `painted` and blows
-    // straight through a constant.
-    expect(commits.count).toBeLessThanOrEqual(painted + 4);
-  });
-
-  it('does not re-decode the frame already on screen when playback is paused', async () => {
+describe('a played preview frame (D-290 / B-146 / D-454)', () => {
+  it('moves the playhead and asks the backend for nothing: the picture is already on the glass', async () => {
     await mountHarness();
+    const before = shown.pos.length;
+    await playThrough(PLAYED);
+    expect(useEditorTimelineStore.getState().playhead).toBe(PLAYED.at(-1));
+    expect(shown.pos.length).toBe(before);
+  });
 
+  it('costs at most one React commit per frame', async () => {
+    await mountHarness();
     actSync(() => useEditorTimelineStore.getState().setPlaying(true));
-    for (let i = 0; i < 12; i += 1) await waitFrames(1);
+    await waitFrames(2);
+    commits.count = 0;
+    for (const frame of PLAYED) {
+      actSync(() => fireEvent('chroma://preview-playhead', { frame, ended: false }));
+      await waitFrames(1);
+    }
+    // A per-frame regression scales with the frame count and blows through
+    // this; the constant is the transport's own churn.
+    expect(commits.count).toBeLessThanOrEqual(PLAYED.length + 2);
+  });
 
-    const beforePause = framesAsked.pos.length;
-    const lastShown = framesAsked.pos[beforePause - 1];
+  it('does not redraw the frame already on screen when playback is paused', async () => {
+    await mountHarness();
+    await playThrough(PLAYED);
+    const before = shown.pos.length;
     actSync(() => useEditorTimelineStore.getState().setPlaying(false));
     await waitFrames(4);
-
-    // Pausing parks the paused playhead in the loop's `pending` slot, and that
-    // is the frame the loop had just decoded and painted. Fetching it again
-    // cost a whole extra round trip AND asked the decode pipe for a frame it
-    // had already passed — a backward target, which D-125 documents as an
-    // ffmpeg respawn plus a keyframe seek.
-    const afterPause = framesAsked.pos.slice(beforePause);
-    expect(afterPause).not.toContain(lastShown);
+    expect(shown.pos.slice(before)).not.toContain(PLAYED.at(-1));
   });
 
-  it('never leaks an object URL per played frame', async () => {
+  it('records each shown frame in the paint channel', async () => {
     await mountHarness();
-
-    actSync(() => useEditorTimelineStore.getState().setPlaying(true));
-    for (let i = 0; i < 25; i += 1) await waitFrames(1);
-    actSync(() => useEditorTimelineStore.getState().setPlaying(false));
-    await waitFrames(2);
-
-    // One live URL: the frame currently on screen. Every previous one was
-    // revoked as it was replaced — unchanged by D-290's move to an imperative
-    // `src`, and worth re-proving precisely because that move is what could
-    // have broken it.
-    expect(objectUrls.live()).toHaveLength(1);
+    resetPreviewTiming();
+    await playThrough(PLAYED);
+    expect(previewTimingReport().paint.samples).toBe(PLAYED.length);
   });
 });
 
 describe('the preview surface during playback (D-290 / B-146)', () => {
   it('does not tear down and re-add its capture-phase pointer listener every frame', async () => {
     await mountHarness();
-
-    // `useCanvasClipPick` owns the only capture-phase `pointerdown` listener
-    // on the preview surface. It used to list `layers` — an array rebuilt on
-    // every render by design — in its effect dependencies, so it re-registered
-    // that listener once per RENDER, which during playback is once per
-    // displayed frame, on the hottest surface in the tab.
     const added: string[] = [];
     const realAdd = HTMLElement.prototype.addEventListener;
     const spy = vi
@@ -327,104 +234,13 @@ describe('the preview surface during playback (D-290 / B-146)', () => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return (realAdd as any).call(this, type, ...rest);
       } as typeof HTMLElement.prototype.addEventListener);
-
     try {
-      actSync(() => useEditorTimelineStore.getState().setPlaying(true));
-      for (let i = 0; i < 25; i += 1) await waitFrames(1);
+      await playThrough(PLAYED);
       actSync(() => useEditorTimelineStore.getState().setPlaying(false));
       await waitFrames(2);
     } finally {
       spy.mockRestore();
     }
-
-    // Nothing about which clips are under the playhead changed across those
-    // frames — it is one clip, 2000 frames long — so the listener had no
-    // reason to be rebuilt even once. A small constant is allowed for the
-    // transport's own start/stop churn; what must not happen is a count that
-    // tracks the frame count.
     expect(added.length).toBeLessThanOrEqual(2);
-  });
-});
-
-describe('the play loop reports where its time went (D-290, B-370)', () => {
-  it('records a fetch span and a tick span; since B-370 the tick no longer contains the fetch', async () => {
-    await mountHarness();
-
-    actSync(() => useEditorTimelineStore.getState().setPlaying(true));
-    for (let i = 0; i < 20; i += 1) await waitFrames(1);
-    actSync(() => useEditorTimelineStore.getState().setPlaying(false));
-    await waitFrames(2);
-
-    const report = previewTimingReport();
-    expect(report.fetch.samples).toBeGreaterThan(0);
-    expect(report.tick.samples).toBeGreaterThan(0);
-    expect(report.fetch.medianMs).not.toBeNull();
-    expect(report.tick.medianMs).not.toBeNull();
-    // B-370: one tick per animation frame, whether or not a frame was asked
-    // for in it, so the tick channel holds at least as many samples as the
-    // fetch channel (the pre-B-370 loop recorded a tick only after its fetch).
-    expect(report.tick.samples).toBeGreaterThanOrEqual(report.fetch.samples);
-    // Costs, not moments: a duration channel reports no cadence.
-    expect(report.fetch).not.toHaveProperty('fps');
-    expect(report.tick).not.toHaveProperty('hitches');
-  });
-});
-
-describe('the play loop clock does not wait on the decoder (B-370)', () => {
-  it('keeps ticking and moving the playhead while a frame round trip is still out', async () => {
-    await mountHarness();
-    gate.hold = true;
-    const asked = framesAsked.pos.length;
-
-    actSync(() => useEditorTimelineStore.getState().setPlaying(true));
-    // Wait until the first request is out (and held).
-    for (let i = 0; i < 30 && framesAsked.pos.length === asked; i += 1) await waitFrames(1);
-    expect(framesAsked.pos.length - asked).toBe(1);
-    const ticksAtRequest = previewTimingReport().raf.samples;
-    const playheadAtRequest = useEditorTimelineStore.getState().playhead;
-
-    // Let real time pass across many animation frames with the round trip
-    // still out: at 25 fps, ~200 ms is ~5 timeline frames.
-    await new Promise((r) => setTimeout(r, 200));
-    await waitFrames(3);
-
-    // Still exactly one request in flight (never two: the decode pipes are shared)...
-    expect(framesAsked.pos.length - asked).toBe(1);
-    // ...yet the rAF callback kept running (the pre-B-370 loop sat inside its
-    // `await` and recorded no further tick) and the playhead followed the clock.
-    expect(previewTimingReport().raf.samples - ticksAtRequest).toBeGreaterThan(2);
-    expect(useEditorTimelineStore.getState().playhead).toBeGreaterThan(playheadAtRequest);
-
-    actSync(() => useEditorTimelineStore.getState().setPlaying(false));
-    gate.hold = false;
-    await act(async () => gate.release());
-    await waitFrames(2);
-  });
-
-  it('asks for the next due frame as soon as a round trip returns, not on the next animation frame', async () => {
-    await mountHarness();
-    gate.hold = true;
-    actSync(() => useEditorTimelineStore.getState().setPlaying(true));
-    await waitFrames(2);
-    await new Promise((r) => setTimeout(r, 120));
-    const asked = framesAsked.pos.length;
-    const firstAsked = framesAsked.pos[asked - 1];
-
-    // Release the held frame and let ONLY microtasks run — no animation frame.
-    await act(async () => {
-      gate.release();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    // The decoder re-issued straight away, for a frame later than the one it
-    // had out (time moved on while it was held).
-    expect(framesAsked.pos.length).toBe(asked + 1);
-    expect(framesAsked.pos[asked]).toBeGreaterThan(firstAsked);
-
-    actSync(() => useEditorTimelineStore.getState().setPlaying(false));
-    gate.hold = false;
-    await act(async () => gate.release());
-    await waitFrames(2);
   });
 });

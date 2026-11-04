@@ -317,15 +317,17 @@ impl ApellesMcp {
         inline: also return the image itself, not just its path.
 
     LIMITS — read these before trusting a shot:
-      * WEBVIEW, PLUS one deliberate exception. The native title bar, native
+      * WEBVIEW, PLUS two deliberate exceptions. The native title bar, native
         menus, a native file/save dialog, and anything from another app are
         NOT in the image. If you opened a native dialog, the screenshot shows
-        the page behind it. The one exception: the Colorist tab's picture is
-        composited in on top of the webview capture (B-151) — it is a native
-        wgpu surface painted behind the webview, invisible to a plain webview
-        snapshot, so it is read back and pasted in separately. That overlay is
-        a standard resize, not a byte-exact copy of the live shader output;
-        for a pixel-exact colour check use `inspect_color`/`sample`/
+        the page behind it. The exceptions are the two pictures drawn by the
+        GPU on native layers behind the webview, invisible to a plain webview
+        snapshot, so each is read back and pasted in separately: the
+        Colorist tab's picture (B-151), on top of the capture, and the Edit
+        tab's preview (D-454), under the capture's transparent preview area so
+        the on-canvas handles and guides stay on top as on screen. Both are a
+        standard resize of the frame, not a byte-exact copy of the screen; for
+        a pixel-exact colour check use `inspect_color`/`sample`/
         `sample_region` instead of reading pixels out of this screenshot.
       * The image is in real device pixels: `width`/`height` are CSS pixels x
         `scaleFactor` (2 on a Retina display). Divide by `scaleFactor` to map a
@@ -628,62 +630,43 @@ impl ApellesMcp {
 
     #[tool(
         name = "debug_frame_timing",
-        description = r#"Read what the Edit tab's preview playback loop ACTUALLY did: the real
-    frame-to-frame intervals, in the webview, as measured by the app itself.
+        description = r#"Read what the Edit tab's preview playback ACTUALLY did: the real
+    frame-to-frame intervals, as the app itself measured them.
 
-    Use it to answer "is playback smooth?" — a question no Rust-side timing and
-    no screenshot can answer. Two CADENCE channels, and the difference between
+    Use it to answer "is playback smooth?" — a question no screenshot can
+    answer. Since D-454 the preview is drawn natively (a Metal layer under the
+    webview) and played by a loop in Rust that is clocked by the display and
+    follows the audio clock. Two CADENCE channels, and the difference between
     them is the diagnosis:
-      * `paint` — frames actually put on screen. Low fps here = decode/
-        composite is too slow.
-      * `raf`   — requestAnimationFrame ticks, i.e. how often the play loop got
-        to run at all. Near-zero here with healthy `paint` means the WINDOW is
-        throttled (backgrounded/occluded), not that rendering is slow. Bring
-        the window to the front and measure again.
+      * `paint` — NEW frames put on the glass (each frame the playback loop
+        shows; each paused show). Low fps here with a healthy `raf` = the
+        engine's draw (decode + composite) is too slow for the timeline's rate.
+      * `raf`   — the playback loop's ticks, one per present (the display's
+        refresh, ~60 fps on a 60 Hz display while playing). Near zero while
+        playing = the loop is not running.
 
     Each returns {samples, intervalsMs, minMs, medianMs, p95Ms, maxMs, fps,
     hitches} — `hitches` counts intervals over twice the median, which is the
     "stutter" a human reports. min/median/p95/max/fps cover the whole ring
-    buffer (240 samples); `intervalsMs` is just the tail.
+    buffer (240 samples); `intervalsMs` is just the tail. A 30 fps timeline on
+    a 60 Hz display reads paint ~30, raf ~60.
 
-    Plus two COST channels (D-282), which answer the next question — "the loop
-    is at 40 fps, so where did the 25 ms GO?":
-      * `fetch` — the `chroma_timeline_frame` round trip: Tauri IPC plus all of
-        Rust's decode + composite + JPEG. Everything below the webview.
-      * `tick`  — one whole pass of the play loop.
-    Each returns {samples, msLatest, minMs, medianMs, p95Ms, maxMs, meanMs} —
-    costs, so no fps and no hitches. Read them by SUBTRACTION:
-      * `fetch.medianMs`                  → Rust + IPC
-      * `tick.medianMs - fetch.medianMs`  → the loop's own JavaScript
-      * `raf.medianMs  - tick.medianMs`   → React's render/commit + the wait
-                                            for the next animation frame
-    D-282's own profile of the owner's project, for comparison: 25.0 ms a
-    frame, of which only ~3.5 ms was Rust — the preview's frame-rate ceiling is
-    set on the webview side, not by the decoder.
-
-    `scrub` (D-336) is a FIFTH channel and a separate question. `fetch`/`tick`/
-    `raf` are recorded only inside the play loop; `scrub` times the same
-    `chroma_timeline_frame` round trip on the PAUSED path, which the play
-    numbers never covered. Compare the two directly: `scrub.medianMs` far above
-    `fetch.medianMs` means the cost is the decode pipe being asked for frames
-    BEHIND its read head — a kill-and-respawn plus an ffmpeg keyframe seek,
-    measured at 248-337 ms against 6.7 ms for a sequential read — and not a
-    slow webview. To fill this channel, move the playhead while PAUSED
-    (`editor_set_playhead`) rather than playing.
+    Plus one COST channel, `scrub` (D-334): the PAUSED show round trip
+    (`chroma_preview_surface_show`: IPC, decode, composite, present). A
+    `scrub.medianMs` in the hundreds of ms is the decoder seeking to a new
+    spot, not a slow webview. To fill it, move the playhead while PAUSED
+    (`editor_set_playhead`). (D-290's `fetch` / `tick` channels went with the
+    webview play loop D-454 replaced: no frame crosses the IPC while playing.)
 
     Measure properly: `debug_frame_timing(reset=True)` to clear, then
     `editor_set_playing(True)`, wait a few seconds, `editor_set_playing(False)`,
     then read. Numbers from before a reset mix scrubbing in with playback.
-    Two traps worth knowing, both hit live while D-282 was profiling: a
-    playhead already parked on the LAST frame makes playback stop instantly
-    (one raf sample, no movement — check `editor_get_state`'s playhead against
-    the timeline's length), and a stretch of timeline with a GAP under it
-    decodes nothing at all, so it measures the loop's floor rather than real
-    playback. Both look exactly like "it stalled" in the numbers.
+    A playhead already parked on the LAST frame makes playback stop instantly
+    (check `editor_get_state`'s playhead against the timeline's length).
 
     Args:
         limit: how many raw samples to return per channel. Default 60.
-        reset: clear all four buffers first (and return the now-empty report).
+        reset: clear every buffer first (and return the now-empty report).
         window_ms: derive every channel from only the last N milliseconds of
             samples instead of the whole 240-sample ring buffer. Omit for the
             whole buffer (the historical behaviour). Pass 2000 to read exactly
@@ -780,9 +763,10 @@ impl ApellesMcp {
 
     IT CAPTURES THE WEBVIEW, NOT THE SCREEN — same mechanism and same limits
     as `debug_screenshot` (no macOS Screen Recording permission is involved or
-    needed). Native window chrome, menus and dialogs are invisible to it, and
-    the Colorist tab's picture is a native surface behind the webview, so it
-    does NOT appear. This is for the Edit tab. No audio is recorded.
+    needed). Native window chrome, menus and dialogs are invisible to it. The
+    Edit tab's preview is a native surface behind the webview (D-454) and is
+    composited into every recorded frame, so playback shows; the Colorist
+    tab's picture is not. This is for the Edit tab. No audio is recorded.
 
     PUT THE WINDOW IN FRONT FIRST. A backgrounded macOS window has its
     requestAnimationFrame throttled to a stop, so playback does not really

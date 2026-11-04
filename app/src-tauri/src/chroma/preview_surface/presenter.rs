@@ -1,57 +1,48 @@
-//! The preview presenter (D-451): shows a frame the GPU engine drew, in the
-//! preview's native layer, without the frame leaving the GPU.
+//! The preview presenter (D-451, made the product preview by D-454): shows a
+//! frame the GPU engine drew, in the preview's native layer, without the frame
+//! leaving the GPU.
 //!
-//! **The seam.** The engine (or anything else) hands over a [`PreviewFrame`]:
-//! a [`FrameSource`] on the presenter's device ([`super::gpu`]) plus the
-//! timeline position and the instant it was handed over. [`Presenter::present`]
-//! acquires the layer's next drawable, runs one render pass that samples the
-//! source into its [`Placement`], and presents. The source is only READ; the
-//! caller keeps ownership and may reuse it for the next frame once `present`
-//! returns (wgpu orders the work on the one queue).
+//! **Two steps, two submissions.**
+//! 1. [`Presenter::write_frame`] is the engine's preview terminal (the third
+//!    one beside the read-back and the encoder's pixel buffer): recorded into
+//!    the ENGINE's own command buffer, it unpacks the finished canvas into the
+//!    presenter's retained frame texture, 1:1, exact bytes. The canvas can go
+//!    back to the engine's pool as soon as that submission is done.
+//! 2. [`Presenter::present`] acquires the layer's next drawable and draws the
+//!    retained frame into its picture box (linear filter) with the letterbox
+//!    around it, then presents. A playback refresh that has no new frame, a
+//!    moved or resized preview and a zoom all re-present the retained frame
+//!    without asking the engine for anything.
 //!
-//! **What it does NOT do:** read anything back to the CPU (there is no
-//! `MAP_READ` buffer and no `map_async` in this module), upload pixels, or
+//! The retained frame is also what `debug_screenshot` reads back on demand
+//! (debug builds only, [`Presenter::read_frame`]), as the Colorist's surface
+//! does (B-151).
+//!
+//! **Pacing.** `Fifo` with a frame latency of 1: Core Animation holds two
+//! drawables, one on screen and at most one queued, so a present never runs
+//! more than one refresh ahead of the glass and `get_current_texture` blocks
+//! until the display has taken the previous one. The playback loop
+//! (`super::player`) is clocked by exactly that wait.
+//!
+//! **What it does NOT do:** read anything back on the frame path (the only
+//! `MAP_READ` buffer here is the debug screenshot's), upload pixels, or
 //! decide which frame to show.
 
-use std::collections::VecDeque;
+use std::cell::RefCell;
 use std::num::NonZero;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Instant;
 
-use serde::Serialize;
+use crate::chroma::gpu_compositor::RenderDevice;
 
-/// How many per-frame samples the stats keep (about 4 s at 60 Hz).
-const STATS_CAPACITY: usize = 240;
+/// Drawables queued beyond the one on screen: one, so the picture is never
+/// more than one refresh behind the clock that chose it (D-454; the
+/// prototype's 2 queued up to two refreshes, `docs/notes/preview-gpu-surface.md`
+/// §5).
+const FRAME_LATENCY: u32 = 1;
 
-/// How long `present` waits for the GPU to finish a frame before calling it a
-/// fault rather than a slow frame.
-const GPU_WAIT: Duration = Duration::from_secs(2);
-
-/// Drawables in flight beyond the one on screen. 2 is wgpu's default and
-/// what Core Animation itself uses (three drawables); 1 shortens the queue by
-/// one refresh at the cost of stalls when a frame runs long.
-const FRAME_LATENCY: u32 = 2;
-
-/// One frame on the GPU, handed to the presenter.
-pub(crate) struct PreviewFrame<'a> {
-    pub source: FrameSource<'a>,
-    /// The timeline position the frame is for (reported in the stats).
-    pub position: u64,
-    /// When the producer finished submitting the frame's GPU work.
-    pub handed_over: Instant,
-}
-
-/// Where a frame's pixels are. Both live on [`super::gpu`]'s device.
-pub(crate) enum FrameSource<'a> {
-    /// An `Rgba8Unorm` texture with `TEXTURE_BINDING`.
-    Texture(&'a wgpu::Texture),
-    /// `apelles-compositor`'s canvas: a `STORAGE` buffer of `width * height`
-    /// little-endian RGBA8 words, row-major, no row padding.
-    PackedRgba8 {
-        buffer: &'a wgpu::Buffer,
-        width: u32,
-        height: u32,
-    },
-}
+/// The retained frame's format: what the engine's canvas holds, unpacked.
+const FRAME_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// Where the picture goes, in drawable pixels, and what fills the rest.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -65,16 +56,46 @@ pub(crate) struct Placement {
     pub background: [f32; 4],
 }
 
-/// What one `present` measured.
-#[derive(Clone, Copy, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+impl Placement {
+    /// The size the engine should draw a frame at for this placement: the
+    /// picture box's long edge, capped at the drawable's long edge (a zoomed-in
+    /// view gets more pixels, never more than the screen can show), rounded up
+    /// to [`RENDER_EDGE_STEP`] so a live resize changes it rarely. `None`
+    /// before the first placement.
+    pub(crate) fn render_long_edge(&self) -> Option<u32> {
+        let (dw, dh) = self.drawable;
+        let long = self.picture[2].max(self.picture[3]);
+        if dw == 0 || dh == 0 || long.is_nan() || long < 1.0 {
+            return None;
+        }
+        let cap = dw.max(dh);
+        let want = (long.ceil() as u32).min(cap);
+        Some(want.div_ceil(RENDER_EDGE_STEP) * RENDER_EDGE_STEP)
+    }
+}
+
+/// The granularity of [`Placement::render_long_edge`], in pixels. The decode
+/// pipes are opened at the render size (D-125: a new size respawns them), so a
+/// panel drag must not change it on every pixel; 128 px is well under the
+/// difference anyone sees in a preview and keeps a full-width drag of the
+/// Inspector to a handful of steps.
+pub(crate) const RENDER_EDGE_STEP: u32 = 128;
+
+/// What one `present` measured (D-454 stats).
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct PresentTiming {
-    /// Waiting for a free drawable (Fifo pacing: this is where vsync shows up).
+    /// Waiting for a free drawable: the display's pacing.
     pub acquire_ms: f64,
-    /// Hand-over to `present()` called.
-    pub to_present_ms: f64,
-    /// Hand-over to the GPU having finished the present pass.
-    pub to_gpu_done_ms: f64,
+    /// From asking for a drawable to `present()` returning (debug stats).
+    #[cfg(debug_assertions)]
+    pub total_ms: f64,
+    /// When the drawable became available (the playback loop's clock tick).
+    pub acquired_at: Instant,
+    /// `false` when the layer had no drawable to give: the window is occluded
+    /// (or the display asleep), so nothing was presented and the display set
+    /// no cadence (Core Animation's `nextDrawable` timed out or wgpu reported
+    /// the surface occluded).
+    pub shown: bool,
 }
 
 #[repr(C)]
@@ -86,94 +107,80 @@ struct Params {
     _pad: [u32; 2],
 }
 
-/// Running per-frame measurements.
-#[derive(Default)]
-struct Stats {
-    presented_at: VecDeque<Instant>,
-    acquire_ms: VecDeque<f64>,
-    to_present_ms: VecDeque<f64>,
-    to_gpu_done_ms: VecDeque<f64>,
-    frames: u64,
-    reconfigures: u64,
-    last_position: u64,
+/// The engine's finished frame, kept on the GPU.
+struct Retained {
+    /// Read back by the debug screenshot only; the view keeps it alive.
+    #[cfg(debug_assertions)]
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    size: (u32, u32),
 }
 
-fn push<T>(q: &mut VecDeque<T>, v: T) {
-    if q.len() == STATS_CAPACITY {
-        q.pop_front();
+/// **The engine's preview terminal (D-454), as `chroma::gpu_compositor`'s
+/// `Destination::Present` carries it**: the presenter a frame is drawn into,
+/// lent for one frame. A `RefCell` because the destination is shared (`&`)
+/// down the render path while the terminal needs the presenter mutably, once,
+/// on the thread that submits.
+pub(crate) struct PresentTarget<'a> {
+    presenter: RefCell<&'a mut Presenter>,
+}
+
+impl<'a> PresentTarget<'a> {
+    pub(crate) fn new(presenter: &'a mut Presenter) -> Self {
+        Self {
+            presenter: RefCell::new(presenter),
+        }
     }
-    q.push_back(v);
-}
 
-/// Min / median / p95 / max of a channel, in ms.
-#[derive(Serialize, Default)]
-pub(crate) struct Spread {
-    pub n: usize,
-    pub min: f64,
-    pub p50: f64,
-    pub p95: f64,
-    pub max: f64,
-}
-
-fn spread(values: &VecDeque<f64>) -> Spread {
-    if values.is_empty() {
-        return Spread::default();
+    /// Nothing to draw and no size to draw black at: show the letterbox alone.
+    pub(crate) fn clear_frame(&self) -> Result<(), String> {
+        self.presenter
+            .try_borrow_mut()
+            .map_err(|_| "the preview is already being drawn".to_string())?
+            .clear_frame();
+        Ok(())
     }
-    let mut v: Vec<f64> = values.iter().copied().collect();
-    v.sort_by(f64::total_cmp);
-    let at = |q: f64| v[((v.len() - 1) as f64 * q).round() as usize];
-    Spread {
-        n: v.len(),
-        min: v[0],
-        p50: at(0.5),
-        p95: at(0.95),
-        max: v[v.len() - 1],
+
+    /// Record the unpack of the engine's finished canvas into the retained
+    /// frame, in the engine's own submission.
+    pub(crate) fn write(
+        &self,
+        out: &mut apelles_compositor::FrameOutput,
+        canvas: &apelles_compositor::Canvas<'_>,
+    ) -> Result<(), apelles_compositor::ComposeError> {
+        let mut presenter = self.presenter.try_borrow_mut().map_err(|_| {
+            apelles_compositor::ComposeError::Gpu("the preview is already being drawn".into())
+        })?;
+        presenter
+            .write_frame(out.encoder(), canvas.buffer, (canvas.width, canvas.height))
+            .map_err(apelles_compositor::ComposeError::Gpu)
     }
 }
 
-/// A snapshot of the presenter's stats.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct StatsReport {
-    pub frames: u64,
-    pub reconfigures: u64,
-    pub last_position: u64,
-    /// Presents per second over the kept window.
-    pub fps: f64,
-    /// Intervals between consecutive presents.
-    pub interval_ms: Spread,
-    pub acquire_ms: Spread,
-    pub to_present_ms: Spread,
-    pub to_gpu_done_ms: Spread,
-    pub drawable: (u32, u32),
-    pub format: String,
-}
-
-/// Owns the surface and the one render pass.
+/// Owns the surface, the retained frame and the two passes.
 pub(crate) struct Presenter {
-    device: std::sync::Arc<wgpu::Device>,
-    queue: std::sync::Arc<wgpu::Queue>,
+    device: Arc<RenderDevice>,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
-    texture_pipeline: wgpu::RenderPipeline,
-    packed_pipeline: wgpu::RenderPipeline,
-    texture_layout: wgpu::BindGroupLayout,
-    packed_layout: wgpu::BindGroupLayout,
+    present_pipeline: wgpu::RenderPipeline,
+    unpack_pipeline: wgpu::RenderPipeline,
+    present_layout: wgpu::BindGroupLayout,
+    unpack_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     params: wgpu::Buffer,
-    placement: Placement,
-    stats: Stats,
+    frame: Option<Retained>,
+    reconfigures: u64,
 }
 
 impl Presenter {
-    /// Build the presenter on `surface` (made from `gpu`'s instance).
+    /// Build the presenter on `surface` (made from `device`'s instance).
     pub(crate) fn new(
-        gpu: &apelles_gpu::GpuContext,
+        device: Arc<RenderDevice>,
         surface: wgpu::Surface<'static>,
     ) -> Result<Self, String> {
-        let caps = surface.get_capabilities(&gpu.adapter);
+        let caps = surface.get_capabilities(&device.gpu.adapter);
         // Non-sRGB, so the frame's bytes reach the drawable unchanged and the
-        // layer's colour space tag alone says what they mean.
+        // layer's colour space tag alone says what they mean (§6).
         let format = [
             wgpu::TextureFormat::Bgra8Unorm,
             wgpu::TextureFormat::Rgba8Unorm,
@@ -199,8 +206,8 @@ impl Presenter {
             alpha_mode,
             view_formats: vec![],
         };
-        let device = gpu.device.clone();
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let gpu = &device.gpu.device;
+        let module = gpu.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("preview presenter"),
             source: wgpu::ShaderSource::Wgsl(include_str!("blit.wgsl").into()),
         });
@@ -214,8 +221,8 @@ impl Presenter {
             },
             count: None,
         };
-        let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("preview presenter (texture)"),
+        let present_layout = gpu.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("preview present"),
             entries: &[
                 params_entry,
                 wgpu::BindGroupLayoutEntry {
@@ -236,8 +243,8 @@ impl Presenter {
                 },
             ],
         });
-        let packed_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("preview presenter (packed)"),
+        let unpack_layout = gpu.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("preview unpack"),
             entries: &[
                 params_entry,
                 wgpu::BindGroupLayoutEntry {
@@ -252,13 +259,13 @@ impl Presenter {
                 },
             ],
         });
-        let pipeline = |layout: &wgpu::BindGroupLayout, entry: &str| {
-            let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let pipeline = |layout: &wgpu::BindGroupLayout, entry: &str, target| {
+            let pl = gpu.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("preview presenter"),
                 bind_group_layouts: &[Some(layout)],
                 immediate_size: 0,
             });
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            gpu.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("preview presenter"),
                 layout: Some(&pl),
                 vertex: wgpu::VertexState {
@@ -271,7 +278,7 @@ impl Presenter {
                     module: &module,
                     entry_point: Some(entry),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format,
+                        format: target,
                         blend: None,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -284,9 +291,9 @@ impl Presenter {
                 cache: None,
             })
         };
-        let texture_pipeline = pipeline(&texture_layout, "fs_texture");
-        let packed_pipeline = pipeline(&packed_layout, "fs_packed");
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let present_pipeline = pipeline(&present_layout, "fs_present", format);
+        let unpack_pipeline = pipeline(&unpack_layout, "fs_unpack", FRAME_FORMAT);
+        let sampler = gpu.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("preview presenter"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -294,7 +301,7 @@ impl Presenter {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let params = device.create_buffer(&wgpu::BufferDescriptor {
+        let params = gpu.create_buffer(&wgpu::BufferDescriptor {
             label: Some("preview presenter params"),
             size: std::mem::size_of::<Params>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -302,136 +309,196 @@ impl Presenter {
         });
         Ok(Self {
             device,
-            queue: gpu.queue.clone(),
             surface,
             config,
-            texture_pipeline,
-            packed_pipeline,
-            texture_layout,
-            packed_layout,
+            present_pipeline,
+            unpack_pipeline,
+            present_layout,
+            unpack_layout,
             sampler,
             params,
-            placement: Placement {
-                drawable: (0, 0),
-                picture: [0.0; 4],
-                background: [0.0, 0.0, 0.0, 1.0],
-            },
-            stats: Stats::default(),
+            frame: None,
+            reconfigures: 0,
         })
     }
 
-    /// Where the next frames go. Takes effect on the next [`Self::present`].
-    pub(crate) fn set_placement(&mut self, placement: Placement) {
-        self.placement = placement;
+    /// The render device this presenter's surface is configured with.
+    pub(crate) fn device(&self) -> &Arc<RenderDevice> {
+        &self.device
     }
 
-    pub(crate) fn placement(&self) -> Placement {
-        self.placement
+    /// Drop the retained frame: the next present shows the letterbox alone (a
+    /// timeline with no frame size has no picture to show).
+    pub(crate) fn clear_frame(&mut self) {
+        self.frame = None;
     }
 
-    /// Show `frame`. Blocks while every drawable is queued for the display
-    /// (Fifo), then until the GPU has finished the pass, so the timing it
-    /// returns is real rather than a submission time.
-    pub(crate) fn present(&mut self, frame: &PreviewFrame<'_>) -> Result<PresentTiming, String> {
-        let (w, h) = self.placement.drawable;
+    /// **The engine's preview terminal.** Record, into `encoder` (the engine's
+    /// own, after the frame's work), the unpack of `canvas` — the engine's
+    /// packed RGBA8 canvas of `size` — into the retained frame. No pixel
+    /// leaves the GPU.
+    pub(crate) fn write_frame(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        canvas: &wgpu::Buffer,
+        size: (u32, u32),
+    ) -> Result<(), String> {
+        let (w, h) = size;
+        let need = u64::from(w) * u64::from(h) * 4;
+        if w == 0 || h == 0 || canvas.size() < need {
+            return Err(format!(
+                "the canvas holds {} bytes, {w}x{h} needs {need}",
+                canvas.size()
+            ));
+        }
+        let gpu = self.device.gpu.device.clone();
+        if self.frame.as_ref().is_none_or(|f| f.size != size) {
+            let texture = gpu.create_texture(&wgpu::TextureDescriptor {
+                label: Some("preview frame"),
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: FRAME_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            self.frame = Some(Retained {
+                #[cfg(debug_assertions)]
+                texture,
+                view,
+                size,
+            });
+        }
+        let frame = self
+            .frame
+            .as_ref()
+            .ok_or("the preview frame was not created")?;
+        // Its own small uniform: `params` is the present pass's, and both are
+        // written before either submission runs.
+        let params = wgpu::util::DeviceExt::create_buffer_init(
+            gpu.as_ref(),
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("preview unpack params"),
+                contents: bytemuck::bytes_of(&Params {
+                    picture: [0.0, 0.0, w as f32, h as f32],
+                    background: [0.0, 0.0, 0.0, 1.0],
+                    src_size: [w, h],
+                    _pad: [0; 2],
+                }),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+        let bind_group = gpu.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("preview unpack"),
+            layout: &self.unpack_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: canvas.as_entire_binding(),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("preview unpack"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &frame.view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    // Every pixel is written by the pass.
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: NonZero::new(0),
+        });
+        pass.set_pipeline(&self.unpack_pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.draw(0..3, 0..1);
+        Ok(())
+    }
+
+    /// Show the retained frame (or the letterbox alone before the first one)
+    /// at `placement`: acquire a drawable — waiting while the one queued
+    /// drawable is still waiting for the display — draw, present.
+    pub(crate) fn present(&mut self, placement: Placement) -> Result<PresentTiming, String> {
+        let (w, h) = placement.drawable;
         if w == 0 || h == 0 {
             return Err("the preview surface has no size yet".to_string());
         }
+        let gpu = self.device.gpu.device.clone();
         if (self.config.width, self.config.height) != (w, h) {
             self.config.width = w;
             self.config.height = h;
-            self.surface.configure(&self.device, &self.config);
-            self.stats.reconfigures += 1;
+            self.surface.configure(&gpu, &self.config);
+            self.reconfigures += 1;
         }
-        let acquire_started = Instant::now();
+        let started = Instant::now();
         let output = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(&self.device, &self.config);
-                self.stats.reconfigures += 1;
+                self.surface.configure(&gpu, &self.config);
+                self.reconfigures += 1;
                 match self.surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(t)
                     | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
                     other => return Err(format!("no drawable after reconfigure: {other:?}")),
                 }
             }
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                let now = Instant::now();
+                let ms = now.saturating_duration_since(started).as_secs_f64() * 1000.0;
+                return Ok(PresentTiming {
+                    acquire_ms: ms,
+                    #[cfg(debug_assertions)]
+                    total_ms: ms,
+                    acquired_at: now,
+                    shown: false,
+                });
+            }
             other => return Err(format!("no drawable: {other:?}")),
         };
-        let acquired = Instant::now();
+        let acquired_at = Instant::now();
 
-        let src_size = match frame.source {
-            FrameSource::Texture(t) => [t.width(), t.height()],
-            FrameSource::PackedRgba8 { width, height, .. } => [width, height],
+        // Before the first frame the picture box shows the letterbox colour:
+        // a 1x1 source outside every picture box.
+        let (src_size, picture) = match &self.frame {
+            Some(f) => ([f.size.0, f.size.1], placement.picture),
+            None => ([1, 1], [0.0, 0.0, 0.0, 0.0]),
         };
-        let params = Params {
-            picture: self.placement.picture,
-            background: self.placement.background,
-            src_size,
-            _pad: [0; 2],
-        };
-        self.queue
-            .write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
-        let params_binding = wgpu::BindGroupEntry {
-            binding: 0,
-            resource: self.params.as_entire_binding(),
-        };
-        let texture_view;
-        let (pipeline, bind_group) = match frame.source {
-            FrameSource::Texture(t) => {
-                texture_view = t.create_view(&wgpu::TextureViewDescriptor::default());
-                let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("preview frame"),
-                    layout: &self.texture_layout,
-                    entries: &[
-                        params_binding,
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(&texture_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::Sampler(&self.sampler),
-                        },
-                    ],
-                });
-                (&self.texture_pipeline, bg)
-            }
-            FrameSource::PackedRgba8 {
-                buffer,
-                width,
-                height,
-            } => {
-                let need = u64::from(width) * u64::from(height) * 4;
-                if buffer.size() < need {
-                    return Err(format!(
-                        "packed frame buffer holds {} bytes, {width}x{height} needs {need}",
-                        buffer.size()
-                    ));
-                }
-                let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("preview frame"),
-                    layout: &self.packed_layout,
-                    entries: &[
-                        params_binding,
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: buffer.as_entire_binding(),
-                        },
-                    ],
-                });
-                (&self.packed_pipeline, bg)
-            }
-        };
-
+        let queue = &self.device.gpu.queue;
+        queue.write_buffer(
+            &self.params,
+            0,
+            bytemuck::bytes_of(&Params {
+                picture,
+                background: placement.background,
+                src_size,
+                _pad: [0; 2],
+            }),
+        );
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("preview present"),
-            });
+        let mut encoder = gpu.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("preview present"),
+        });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("preview present"),
@@ -440,8 +507,12 @@ impl Presenter {
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
-                        // Every pixel is written by the pass, so nothing to load.
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: f64::from(placement.background[0]),
+                            g: f64::from(placement.background[1]),
+                            b: f64::from(placement.background[2]),
+                            a: 1.0,
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -450,67 +521,116 @@ impl Presenter {
                 occlusion_query_set: None,
                 multiview_mask: NonZero::new(0),
             });
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-            pass.draw(0..3, 0..1);
-        }
-        let index = self.queue.submit(Some(encoder.finish()));
-        output.present();
-        let presented = Instant::now();
-        self.device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(index),
-                timeout: Some(GPU_WAIT),
-            })
-            .map_err(|e| format!("the present pass did not finish: {e}"))?;
-        let done = Instant::now();
-
-        let ms = |a: Instant, b: Instant| b.saturating_duration_since(a).as_secs_f64() * 1000.0;
-        let timing = PresentTiming {
-            acquire_ms: ms(acquire_started, acquired),
-            to_present_ms: ms(frame.handed_over, presented),
-            to_gpu_done_ms: ms(frame.handed_over, done),
-        };
-        let s = &mut self.stats;
-        s.frames += 1;
-        s.last_position = frame.position;
-        push(&mut s.presented_at, presented);
-        push(&mut s.acquire_ms, timing.acquire_ms);
-        push(&mut s.to_present_ms, timing.to_present_ms);
-        push(&mut s.to_gpu_done_ms, timing.to_gpu_done_ms);
-        Ok(timing)
-    }
-
-    pub(crate) fn reset_stats(&mut self) {
-        self.stats = Stats::default();
-    }
-
-    pub(crate) fn stats(&self) -> StatsReport {
-        let s = &self.stats;
-        let intervals: VecDeque<f64> = s
-            .presented_at
-            .iter()
-            .zip(s.presented_at.iter().skip(1))
-            .map(|(a, b)| b.duration_since(*a).as_secs_f64() * 1000.0)
-            .collect();
-        let fps = match (s.presented_at.front(), s.presented_at.back()) {
-            (Some(a), Some(b)) if s.presented_at.len() > 1 => {
-                (s.presented_at.len() - 1) as f64 / b.duration_since(*a).as_secs_f64()
+            if let Some(frame) = &self.frame {
+                let bind_group = gpu.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("preview present"),
+                    layout: &self.present_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: self.params.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&frame.view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&self.sampler),
+                        },
+                    ],
+                });
+                pass.set_pipeline(&self.present_pipeline);
+                pass.set_bind_group(0, &bind_group, &[]);
+                pass.draw(0..3, 0..1);
             }
-            _ => 0.0,
-        };
-        StatsReport {
-            frames: s.frames,
-            reconfigures: s.reconfigures,
-            last_position: s.last_position,
-            fps,
-            interval_ms: spread(&intervals),
-            acquire_ms: spread(&s.acquire_ms),
-            to_present_ms: spread(&s.to_present_ms),
-            to_gpu_done_ms: spread(&s.to_gpu_done_ms),
-            drawable: (self.config.width, self.config.height),
-            format: format!("{:?}", self.config.format),
         }
+        queue.submit(Some(encoder.finish()));
+        output.present();
+        #[cfg(debug_assertions)]
+        let done = Instant::now();
+        let ms = |a: Instant, b: Instant| b.saturating_duration_since(a).as_secs_f64() * 1000.0;
+        Ok(PresentTiming {
+            acquire_ms: ms(started, acquired_at),
+            #[cfg(debug_assertions)]
+            total_ms: ms(started, done),
+            acquired_at,
+            shown: true,
+        })
+    }
+
+    /// The drawable's size and how many times the surface was reconfigured.
+    #[cfg(debug_assertions)]
+    pub(crate) fn surface_report(&self) -> ((u32, u32), u64, String) {
+        (
+            (self.config.width, self.config.height),
+            self.reconfigures,
+            format!("{:?}", self.config.format),
+        )
+    }
+
+    /// **Debug only (B-151's pattern):** the retained frame read back to the
+    /// CPU, for `debug_screenshot` to composite at the native view's rect. One
+    /// on-demand copy, never on the frame path.
+    #[cfg(debug_assertions)]
+    pub(crate) fn read_frame(&self) -> Result<Option<image::RgbaImage>, String> {
+        let Some(frame) = &self.frame else {
+            return Ok(None);
+        };
+        let (w, h) = frame.size;
+        let gpu = &self.device.gpu.device;
+        let row = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let buffer = gpu.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("preview screenshot read-back"),
+            size: u64::from(row) * u64::from(h),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = gpu.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("preview screenshot read-back"),
+        });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &frame.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        let index = self.device.gpu.queue.submit(Some(encoder.finish()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |r| drop(tx.send(r)));
+        gpu.poll(wgpu::PollType::Wait {
+            submission_index: Some(index),
+            timeout: Some(std::time::Duration::from_secs(5)),
+        })
+        .map_err(|e| format!("the screenshot read-back did not finish: {e}"))?;
+        rx.recv()
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("the screenshot read-back could not be mapped: {e}"))?;
+        let mapped = buffer.slice(..).get_mapped_range();
+        let mut pixels = Vec::with_capacity((w * h * 4) as usize);
+        for r in mapped.chunks(row as usize).take(h as usize) {
+            pixels.extend_from_slice(&r[..(w * 4) as usize]);
+        }
+        drop(mapped);
+        buffer.unmap();
+        Ok(image::RgbaImage::from_raw(w, h, pixels))
     }
 }
 
@@ -518,28 +638,36 @@ impl Presenter {
 mod tests {
     use super::*;
 
-    #[test]
-    fn spread_of_an_empty_channel_is_zero() {
-        let s = spread(&VecDeque::new());
-        assert_eq!((s.n, s.p50, s.max), (0, 0.0, 0.0));
-    }
-
-    #[test]
-    fn spread_reports_the_order_statistics() {
-        let v: VecDeque<f64> = (1..=100).map(f64::from).collect();
-        let s = spread(&v);
-        assert_eq!((s.n, s.min, s.max), (100, 1.0, 100.0));
-        assert_eq!(s.p50, 51.0);
-        assert_eq!(s.p95, 95.0);
-    }
-
-    #[test]
-    fn the_channel_keeps_only_the_last_window() {
-        let mut q = VecDeque::new();
-        for i in 0..(STATS_CAPACITY + 10) {
-            push(&mut q, i);
+    fn at(drawable: (u32, u32), picture: [f32; 4]) -> Placement {
+        Placement {
+            drawable,
+            picture,
+            background: [0.0, 0.0, 0.0, 1.0],
         }
-        assert_eq!(q.len(), STATS_CAPACITY);
-        assert_eq!(q.front(), Some(&10));
+    }
+
+    #[test]
+    fn the_render_follows_the_picture_box_in_steps() {
+        // A 1356x640 drawable with a 1138x640 picture: 1138 -> 1152.
+        let p = at((1356, 640), [109.0, 0.0, 1138.0, 640.0]);
+        assert_eq!(p.render_long_edge(), Some(1152));
+        // One more pixel of panel does not change it.
+        let p = at((1358, 640), [110.0, 0.0, 1139.0, 640.0]);
+        assert_eq!(p.render_long_edge(), Some(1152));
+    }
+
+    #[test]
+    fn a_zoomed_in_picture_is_capped_at_the_drawable() {
+        let p = at((1356, 640), [-1000.0, -500.0, 4552.0, 2560.0]);
+        assert_eq!(p.render_long_edge(), Some(1408));
+    }
+
+    #[test]
+    fn no_placement_means_no_render_size() {
+        assert_eq!(at((0, 0), [0.0; 4]).render_long_edge(), None);
+        assert_eq!(
+            at((100, 100), [0.0, 0.0, 0.0, 0.0]).render_long_edge(),
+            None
+        );
     }
 }

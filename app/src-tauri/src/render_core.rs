@@ -92,11 +92,18 @@ pub fn render(
 /// app-side `display` field (always `None` here; only the GUI path ever
 /// populates it), so the return type and every call site are unchanged.
 pub fn init_gpu_context() -> Result<GpuContext, String> {
-    let headless = apelles_gpu::init_gpu_context()?;
-    Ok(GpuContext {
-        device: headless.device,
-        queue: headless.queue,
-        limits: headless.limits,
+    Ok(headless_context(&apelles_gpu::init_gpu_context()?))
+}
+
+/// The app-side [`GpuContext`] over an already-open device, with no display
+/// surface. The process's one render device (`chroma::gpu_compositor`, D-454)
+/// hands this to the Colorist's `GpuProcessor` so the grade shader runs on the
+/// same device as the engine and the preview presenter.
+pub fn headless_context(gpu: &apelles_gpu::GpuContext) -> GpuContext {
+    GpuContext {
+        device: gpu.device.clone(),
+        queue: gpu.queue.clone(),
+        limits: gpu.limits.clone(),
         display: Arc::new(Mutex::new(None)),
-    })
+    }
 }

@@ -504,7 +504,7 @@ mod motion_relink_tests {
 
     /// The mid-frame pixel of the real preview frame the Edit tab would show.
     fn preview_pixel(frame: u64) -> [u8; 3] {
-        let jpeg = super::super::edit::timeline_frame(
+        let jpeg = super::super::edit::preview_frame_png(
             frame,
             Some(W),
             super::super::edit::FrameIntent::Single,

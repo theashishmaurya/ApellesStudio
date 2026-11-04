@@ -2094,30 +2094,27 @@ mod tests {
 
         // and the real preview command doesn't error and returns a real (not
         // blank) frame for the top-wins position, a blank one past the end.
-        // `edit::timeline_frame` is `chroma_timeline_frame`'s whole body —
-        // the command itself is now just a `spawn_blocking` wrapper (D-125),
-        // so calling it here needs no tokio runtime.
-        // D-217: raw JPEG bytes now, not a base64 data URL — so "is a real
-        // frame" is checked against the JPEG SOI marker and the decoded size.
+        // `edit::preview_frame_png` is the live preview's picture read back
+        // (D-454: the preview itself never leaves the GPU), so "is a real
+        // frame" is checked against its decoded size.
         // B-290: "nothing visible" is black at the composition's size now (the
         // picture the export writes there), not the 1×1 frame it used to be.
-        let jpeg =
-            super::super::edit::timeline_frame(0, None, super::super::edit::FrameIntent::Single)
+        let frame =
+            super::super::edit::preview_frame_png(0, None, super::super::edit::FrameIntent::Single)
                 .unwrap();
-        assert_eq!(&jpeg[..2], &[0xFF, 0xD8], "a JPEG");
-        let real = image::load_from_memory(&jpeg).expect("decode preview jpeg");
+        let real = image::load_from_memory(&frame).expect("decode preview frame");
         assert!(
             real.width() > 1 && real.height() > 1,
             "a real frame, not the blank one"
         );
-        let blank = super::super::edit::timeline_frame(
+        let blank = super::super::edit::preview_frame_png(
             dur_b as u64,
             None,
             super::super::edit::FrameIntent::Single,
         )
         .unwrap();
         let blank = image::load_from_memory(&blank)
-            .expect("decode blank jpeg")
+            .expect("decode blank frame")
             .to_rgb8();
         assert_eq!(
             blank.dimensions(),

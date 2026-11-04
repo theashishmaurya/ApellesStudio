@@ -1,4 +1,4 @@
-# The Edit preview on a native GPU surface (D-451)
+# The Edit preview on a native GPU surface (D-451, D-454)
 
 **Question (owner, 2026-11-03, roadmap 00r item 5a).** Apelles gets one GPU render engine for export and the
 Edit preview (D-448, `apelles-compositor`). How does a frame that engine draws reach the screen at 60 fps, with
@@ -8,8 +8,8 @@ smooth scrubbing, and with no GPU→CPU read-back, no copy through Tauri IPC and
 `WKWebView`, kept exactly under the preview's DOM rectangle, presented to by wgpu on the engine's own device. The
 webview's preview area is transparent ("the hole"), so the React overlays draw on top and keep the pointer. The
 Colorist has shown its picture this way since B-006 (one full-window surface); this is the same idea with a
-layer of the preview's own size. Prototype: `app/src-tauri/src/chroma/preview_surface/` (debug-gated), measured
-below.
+layer of the preview's own size. Prototyped in §4–§9 (D-451); **since D-454 it is the product preview, in
+release builds too — §10 is what was built, how it is clocked, and what was deleted.**
 
 ## 1. Today's path, measured
 
@@ -295,7 +295,7 @@ they move).
 - **The machine.** All numbers come from a shared machine under heavy, varying load; the pacing and the zero-copy
   facts are robust to that, the millisecond figures are ranges for that reason.
 
-## 9. Files
+## 9. Files (the D-451 prototype; §10.8 for the product)
 
 - `app/src-tauri/src/chroma/preview_surface/mod.rs` — module doc, `gpu()` (the shared instance + device).
 - `…/presenter.rs` — `Presenter`, `PreviewFrame`, `FrameSource`, `Placement`, the stats. Product-shaped.
@@ -310,3 +310,254 @@ they move).
   holds the one rule that clears them.
 - `packages/debug/src/debugOps.ts` — `debug_native_preview`, `debug_native_preview_play`,
   `debug_native_preview_stats`.
+
+---
+
+# 10. As built: the product preview (D-454, roadmap 00r 5c, 2026-11-04)
+
+§1–§9 are the D-451 research and prototype, kept as written. This section is what replaced the `<img>` path,
+in release builds too.
+
+## 10.1 One device for everything
+
+Before: three wgpu devices in one process. The Colorist's `gpu_processing::get_or_init_gpu_context` opened an
+instance and device of its own for its window surface (B-006); `gpu_compositor::device()` opened a second one
+(through `render_core::init_gpu_context`) for the engine and the grade pass (D-450); the D-451 prototype's
+`preview_surface::gpu()` opened a third for its presenter.
+
+Now: **one instance, adapter, device and queue**, opened by `gpu_compositor::device()`
+(`apelles_gpu::init_gpu_context`), carried in `RenderDevice::gpu` (an `apelles_gpu::GpuContext`, which keeps
+`instance` and `adapter`). On it:
+
+- the engine (`apelles_compositor::Engine::with_device`) and the grade shader's `Grader` (D-450), through
+  `RenderDevice::ctx` (`render_core::headless_context`);
+- the Edit preview's presenter, whose `CAMetalLayer` surface is made from `RenderDevice::gpu.instance`;
+- **the Colorist tab itself**: `get_or_init_gpu_context` no longer opens a device; it makes its full-window
+  surface from the shared instance, configures it with the shared device, and caches an app `GpuContext` over
+  them. Feasible, and done: on Apple silicon there is one Metal device, so the adapter the shared context picks
+  without a `compatible_surface` is the one a surface-compatible request would pick. RapidRAW's Windows
+  default (primary backends unless `WGPU_BACKEND`) moved into `apelles_gpu::init_gpu_context` with it.
+- `preview_surface::gpu()` is deleted.
+
+**After a GPU failure** (`gpu_compositor::forget_device`), the next frame opens a fresh device. A holder of a
+surface notices by identity (`RenderDevice::is_current`, `Arc::ptr_eq` on the device): the preview session
+rebuilds its presenter on the new device (`commands::current`), and the Colorist's cached context is rebuilt,
+with its `GpuProcessor` dropped, on its next `get_or_init_gpu_context`.
+
+## 10.2 The output API: one "frame finished on the GPU" step, three terminals
+
+D-452 (step 1, on main) made the engine's one public output step
+`Engine::submit_with(plan, terminal: FnOnce(&mut FrameOutput, &Canvas) -> Result<T>) -> (PendingGpu, T)`:
+the frame is recorded into its canvas, the terminal records what happens to the finished canvas on the
+**same command encoder**, and everything is submitted as one command buffer. `submit` (read-back) and
+`submit_into` (an encoder's IOSurface pixel buffer, VideoToolbox) are terminals of it. **The preview is the
+third**, with no change to the engine (agreed with D-452's agent through the coordinator):
+
+```text
+render_timeline_frame_deferred(…, to: &Destination)          chroma::edit (layers → FramePlan)
+    └─ gpu_compositor::submit(plan, to)
+         ├─ Destination::ReadBack          → engine.submit            → GpuFrame::ReadBack(PendingFrame)
+         ├─ Destination::Encoder{..}       → engine.submit_into       → GpuFrame::Written(PendingGpu)   (D-452 step 2)
+         └─ Destination::Present(target)   → engine.submit_with(plan, |out, canvas| target.write(out, canvas))
+                                              └─ Presenter::write_frame(out.encoder(), canvas.buffer, (w, h))
+                                                 = one render pass: canvas (packed RGBA8) → retained frame
+                                                 → GpuFrame::Presented { _in_flight: PendingGpu }
+```
+
+`Destination` is app-side (`chroma::gpu_compositor`), threaded through `render_timeline_frame_deferred`,
+`composite_video_frame` and `captions_over_black` as their last parameter (D-452 step 2's export uses the same
+threading for its `Encoder { buffer, format }` arm → `engine.submit_into` → `GpuFrame::Written`). `PendingGpu` is held by the preview session until the next
+frame (a refresh later, so its waiting drop does not wait) so the pooled canvas returns only after the GPU.
+
+**The presenter retains the frame** (`presenter.rs`): the terminal unpacks the canvas into the presenter's own
+`Rgba8Unorm` texture of the frame's size, 1:1 (`fs_unpack`, exact bytes), inside the engine's submission;
+`Presenter::present` then draws that texture into a fresh drawable in its picture box (`fs_present`, linear) with
+the letterbox around it. Two passes instead of the prototype's one, because a drawable is not preserved
+between presents and three things re-present without a new frame: a playback refresh on a timeline slower
+than the display, a moved or resized view, a zoom or pan. Each of those costs a ~0.1 ms blit and no engine
+work. The retained frame is also what the debug screenshot reads back (§10.6).
+
+**Sizing.** The render's long edge is the picture box's (in drawable pixels), capped at the drawable's long
+edge (`Placement::render_long_edge`), rounded up to 128 px (`RENDER_EDGE_STEP`) so a panel drag changes it a
+handful of times rather than on every pixel. A zoomed-in view gets more pixels, never more than the screen
+shows. While paused, a size change is redrawn once the layout has held still for 150 ms
+(`RERENDER_SETTLE_MS`); until then the retained frame is resampled.
+
+## 10.3 Playback: clocked by the display, slaved to the sound
+
+`preview_surface::player` (one thread per play; the webview no longer runs a play loop):
+
+- **The clock tick is the drawable.** `Fifo` with frame latency 1 (Core Animation holds two drawables: one on
+  screen, at most one queued). `get_current_texture` returns only when the display has taken the previous
+  drawable, so the loop runs once per refresh with no timer, and **never more than one drawable is queued**.
+  A frame drawn right after a present is presented on the next drawable and shown one refresh after that, so
+  each turn asks the clock for the time at `last acquire + 2 refreshes` (the refresh is measured from
+  acquire-to-acquire intervals).
+- **The clock is the audio's.** `apelles_media::audio_clock` (new): the output device's callback reports, per
+  buffer, how many of its samples were real timeline audio and when the device plays the buffer's first sample
+  (`cpal`'s `OutputStreamTimestamp::playback − callback`); the play session says which timeline time its first
+  played sample is (start frame + D-125's warm-up discard). `audio_clock::position(t)` extrapolates from the
+  latest buffer at the session's playback rate. With no session sounding (a silent timeline, the 150–600 ms
+  warm-up, a gap the mixer is not producing) the loop uses the wall clock from Play; it never steps backwards
+  (a clock that dips behind the drawn frame holds the picture rather than seeking the decoders back).
+- **A refresh with no new frame re-presents** the retained frame (a 30 fps timeline on a 60 Hz display draws
+  every other refresh). A frame the engine is too slow for is dropped: the next turn asks for where the
+  clock is then.
+- **The webview follows.** Each newly shown frame is emitted as `chroma://preview-playhead {frame, ended}`; the
+  hook moves the store's playhead (so the timecode, the timeline cursor and every reader follow the picture,
+  not a clock of their own) and stops the transport on `ended`. A rate change or a seek while playing restarts
+  the loop from the playhead (B-326), with the audio session, as before.
+- **An occluded window** gives no drawable (`Timeout` / `Occluded`): nothing is presented and the loop waits
+  one refresh's worth instead of spinning. The only time it is not clocked by the display; nothing is visible
+  then.
+
+## 10.4 Colour: Rec.709 (owner, 2026-11-04)
+
+The layer is tagged `kCGColorSpaceITUR_709`; the presenter writes the engine's bytes to a non-sRGB
+`Bgra8Unorm` drawable unchanged. What that means on a Display P3 panel (every Apple-silicon MacBook):
+
+- The window server (ColorSync) converts the layer from BT.709 to the display's profile: BT.709 primaries and
+  D65 white, decoded with the inverse of the BT.709 camera OETF (a power segment with a linear toe), then
+  mapped into the panel's P3 primaries.
+- **Gamut:** P3 contains all of BT.709, so every colour lands inside the panel's gamut unclipped, and
+  saturated colours are shown as BT.709 saturated, **not** stretched to P3's wider primaries (an untagged or
+  "display" picture would be).
+- **Tone:** the BT.709 decoding curve renders shadows and mid-darks lighter than an sRGB tag on the same bytes
+  (the long-known "QuickTime gamma" difference). The old `<img>` preview was untagged, which WebKit treats as
+  sRGB, so the new viewer is lighter in the shadows than the old one, and matches what a ColorSync-managed
+  player (QuickTime Player) shows for the exported file, which D-452 tags Rec.709. That match is the point of
+  the owner's call.
+- **Not** a reference monitor path: no BT.1886 / 2.4 display gamma is applied (a broadcast reference display
+  would decode BT.709 with 2.4), no EDR, no HDR. Those are one property on the layer or one more pass, if
+  the owner ever wants a "broadcast" viewing mode.
+- The Colorist's own full-window surface is unchanged: its layer carries no colour space, so Core Animation
+  does no colour matching and its bytes reach the panel as the panel's own RGB (on P3, slightly more
+  saturated than either tag). The Edit viewer and the Colorist can therefore differ for the same graded clip. Tagging the Colorist the same way is a one-line
+  follow-up with the same product question attached; it is logged in the roadmap, not done here.
+
+## 10.5 The §8 risks, resolved
+
+| Risk (§8) | Outcome |
+|---|---|
+| **Fullscreen** | The viewer's button now toggles the **window's native fullscreen** (`chroma_preview_surface_fullscreen`, `setPreviewFullscreen`) and the layout gives the viewer the window: `<html data-viewer-fullscreen>` makes everything in `#root` stop painting (`visibility: hidden`) except the preview pane, which goes `position: fixed; inset: 0` (`app/src/styles.css`); portals (menus, popovers) stay visible. The window's state comes back as `chroma://window-fullscreen` from the resize handler, so Esc, the green button and Ctrl-Cmd-F all leave it. DOM `requestFullscreen` is gone. Verified live (§10.7). |
+| **Live panel drags** | While paused, `place` re-presents the retained frame inside the same `CATransaction` that moves the view, with `presentsWithTransaction` on (wgpu-hal reads it at each acquire and then presents after `waitUntilScheduled`, inside the transaction): the move and the picture are one commit. While playing it is off and the next refresh's present follows the new placement (≤ 1 refresh, a frame the loop draws anyway). The main thread never waits for a frame being drawn (`try_lock`). 5.4 ms p50 per move on the main thread (§10.7). |
+| **Clocking** | §10.3; 60 presents a second at a 16.2 ms drawable wait, A/V within half a frame where the engine keeps up (§10.7). |
+| **One device** | §10.1, including the Colorist. |
+| **Screenshots** | `debug_screenshot` composites the native picture (debug builds only, B-151's pattern): `screenshot_frame` reads the retained frame back on demand, draws it at its picture box over the letterbox colour inside the native view's AppKit frame, under the webview snapshot (whose hole is transparent), so the overlays stay on top as on screen. `debug_record_video` (raw webview frames, D-330) does not composite, and says so in its tool text. |
+| **Overlays outside the hole** | Unchanged rule; the shell root is now marked `data-preview-hole` too, so no store flag (B-006's `wgpuSurfaceActive`) has to be shared between the Colorist and the Edit preview. |
+| **Colour** | §10.4. |
+
+## 10.6 What was deleted
+
+- `chroma_timeline_frame` (decode → composite → read back → JPEG → IPC), `timeline_frame`,
+  `nothing_visible_jpeg`, `blank_frame_jpeg`, `black_frame_jpeg` and its memo, and the D-217 phase-breakdown
+  test that measured only the deleted wire format. `encode_preview_jpeg` stays for its two remaining callers
+  (the launcher thumbnail, the two-up trim viewer's source frames); `timeline_frame_image` stays for the
+  thumbnail and the tests (`preview_frame_png`, test-only, reads the same render back losslessly).
+- `PreviewPane`'s `<img>`, its object-URL bookkeeping, the rAF play loop, the scrub/skim fetch queue, the
+  imperative `src` writes (D-290), the CSS `transform` zoom of the picture (the presenter draws into the zoomed
+  box instead) and DOM fullscreen. `PreviewPane.tsx` no longer imports `@tauri-apps/*` (its audio commands are
+  `@apelles/bridge`'s `audioTransport`), so it left the D-447 allowlist.
+- The D-451 prototype scaffolding: `sources.rs`, `pattern.wgsl`, the `pattern` / `pattern-packed` / `timeline`
+  sources, the `srgb` / `p3` colour tags, `preview_surface::gpu()`, the timer play loop, the debug ops
+  `debug_native_preview` and `debug_native_preview_play`, and `nativePreview.ts`'s debug store.
+- `previewTiming`'s `fetch` / `tick` channels (they split a webview play loop that no longer exists).
+- The `debug_assertions` gate on `chroma::preview_surface` (it is now `#[cfg(target_os = "macos")]`, the
+  product preview). Debug-only stays debug-only: `stats.rs`, `chroma_preview_surface_stats`,
+  `Presenter::read_frame` / `screenshot_frame`, and the per-present event that feeds `debug_frame_timing`'s
+  `raf` channel.
+
+## 10.7 Measured
+
+Debug bundles `studio.apelles.perf11`, window 1470×923 on a 60 Hz built-in display, quiet machine (load
+1.9–4.7), both on the same scratch project: generated `testsrc2` 3840×2160 and `mandelbrot` 1920×1080 H.264
+`.mov`s with tones, three 3840×2160 30 fps timelines — `plain4k` (one 4K layer), `graded4k` (the same with the
+Colorist's local-tone grade), `stacked` (a 4K base with 1080p and 4K picture-in-pictures, four layers). **Before**
+= main at `4770faa9` (D-452 step 1: VideoToolbox decode, the engine, then read-back → JPEG → IPC → `<img>`);
+**after** = this branch. Driver: `editor_*` ops over the control bridge, `debug_frame_timing`,
+`debug_native_preview_stats`, `ps` for CPU; the UI harness for perf-300. Nothing of the owner's was opened.
+
+**Playback** (8 s from frame 0; paint = new frames on screen, loop = the play loop's ticks; cost per frame =
+before: the `chroma_timeline_frame` round trip, after: the engine's draw call on the playback thread):
+
+| timeline | paint fps before → after | loop fps before → after | cost per frame p50 / p95 before → after | app CPU before → after |
+|---|---|---|---|---|
+| `plain4k` | 30.0 → 30.0 | 60.0 → 60.0 | 17 / 22 ms → 0.47 / 0.67 ms | 24.1% → 9.3–9.7% |
+| `graded4k` | 23.7 → 25.2–25.4 | 60.0 → 25–29 | 40 / 49 ms → 33 / 39 ms | 23.6% → 13.4% |
+| `stacked` | 29.9 → 30.0 | 60.0 → 59.8–60.0 | 23 / 35 ms → 1.1 / 1.9 ms | 29.7% → 17.5% |
+
+- The presenter's pacing (after): presents 60.0 / s with the drawable wait at 16.2 ms p50 (the display's
+  refresh) on `plain4k` and `stacked`: one drawable queued, no timer. A 30 fps timeline shows 29.8 new frames
+  a second; each other refresh re-presents the retained frame.
+- `graded4k` is bound by the grade pass at the source's 4K size (D-450's 25–40 ms), which runs on the playback
+  thread: the loop drops to the frames it can draw (25 fps) instead of the display's 60, and the picture
+  follows the sound by dropping frames, as designed. Grading at the render size, or on a thread ahead of the
+  loop, is the next lever (logged).
+- WebContent CPU (summed over every WebKit WebContent process on the machine, so it carries other apps'
+  idle load, 0.2–7%): 27–29% before, 25–32% after. The JPEG decode left WebContent, but the playhead now moves
+  once per shown frame through the store (the timecode, the timeline cursor and their readers re-render),
+  which is the same per-frame React work the rAF loop did; the webview's share of playback is now that, and
+  only that.
+
+**Scrub** (paused, `editor_set_playhead` every 250 ms; the round trip from the request to the frame being
+presented; `step` = +1 frame, `jump` = random positions in 20 s):
+
+| | before p50 / p95 | after p50 / p95 |
+|---|---|---|
+| `plain4k` step | 25 / 43 ms | 18–19 / 20 ms |
+| `plain4k` jump | 55 / 72 ms | 36–37 / 48–49 ms |
+| `stacked` step | 34 / 69 ms | 19–21 / 21–36 ms |
+| `stacked` jump | 92 / 111 ms | 75–88 / 94–115 ms |
+
+Every request lands on its exact frame (`show(position)` draws that position; the queue is latest-wins, so a
+fast drag skips the positions it has passed, never shows a wrong one). A jump is bound by the decoder's seek to
+the sync sample before it (VideoToolbox, D-452).
+
+**A/V sync** (after; before had none to measure — two open-loop clocks started together, D-050): for each
+shown frame, the frame's midpoint time minus the audio clock's position at the instant the frame is predicted
+to reach the glass. `plain4k` +6 to +10 ms (p95 |offset| 6.5–10 ms), `stacked` +4 to +11 ms (p95 4.4–11.6 ms),
+`graded4k` −3 to −6 ms signed, |offset| p50 8–10 / p95 21–28 ms (the dropped frames). At 30 fps a frame spans
+±16.7 ms around its midpoint, so on the two timelines that keep up every shown frame contains the moment
+being heard; broadcast tolerance is about +45 / −125 ms.
+
+**perf-300** (UI harness, 300 clips, same bundle pair): 12/12 pass both. Playback paint 29.48 → 29.84 fps,
+loop 60.01 → 59.55 (since D-454 the loop is the display-clocked present, capped at the display's 60 Hz; the
+floor's "≥ 60" is the display rate). Drag p95 19–21 → 19–23 ms (floor ≤ 30). `commitFrameMs` 23–34 → 17–35 ms
+and release frames 29–48 → 26–49 ms, in a debug build both ways (the production floors are measured in a
+production bundle; the before/after pair moved within the run-to-run spread). The four over-budget pinch /
+wheel steps are the same pre-existing ones (B-375) before and after.
+
+**Live panel moves** (paused, the Inspector toggled four times): 8 placements, each re-presented inside the
+move's own Core Animation transaction, 5.4 ms p50 / 9.4 ms max on the main thread; no frame the engine had to
+redraw (the picture box was height-bound). On glass it could not be filmed (no Screen Recording in an agent
+session); by Core Animation's model the move and the picture are one commit.
+
+**Fullscreen**: the viewer's button took the window to native fullscreen (1470×956, the whole display) with the
+viewer filling it, header and transport kept (`debug_screenshot` with the native picture composited); Esc
+left it and restored the layout.
+
+**A defect found by this measurement and fixed before commit**: on the second play in a session the presents
+ran unpaced (1,400–4,500 a second, drawable wait 0.1 ms, app CPU ~125%). Cause: `chroma_preview_surface_play`
+toggled the layer's `presentsWithTransaction` per play, and a Pause and the next Play run as independent tasks,
+so the Pause's "on" could land after the Play's "off"; a transactional present from the playback thread is not
+paced by the display. Fixed by scoping `presentsWithTransaction` to `place`'s own present (on for its
+`within`, off before the commit), by a monotonic `seq` on play requests (the D-130 pattern: an overtaken request
+is dropped), and by a guard that never presents to a hidden layer (whose drawables also come back at once).
+The repeated runs above are after the fix.
+
+## 10.8 Files
+
+- `app/src-tauri/src/chroma/gpu_compositor.rs` — the one device (`RenderDevice::gpu`, `is_current`),
+  `Destination`, `GpuFrame`.
+- `app/src-tauri/src/gpu_processing.rs` — the Colorist's context on the shared device and instance.
+- `app/src-tauri/src/render_core.rs` — `headless_context`.
+- `crates/apelles-gpu/src/lib.rs` — the Windows backend default (moved).
+- `app/src-tauri/src/chroma/preview_surface/` — `presenter.rs` (`Presenter`, `PresentTarget`, `Placement`),
+  `blit.wgsl` (`fs_unpack`, `fs_present`), `player.rs` (the loop), `native_view.rs` (Rec.709, transactional
+  place with `presentsWithTransaction` for its own present only), `commands.rs` (the seven commands, `screenshot_frame`), `stats.rs` (debug).
+- `app/src-tauri/src/chroma/edit.rs` — `draw_preview_frame`, `nothing_visible_canvas`, `to: &Destination`.
+- `crates/apelles-media/src/audio_clock.rs` (new) and `audio.rs` (the callback's report, `ClockSession`).
+- `app/src-tauri/src/chroma/debug_capture.rs` — `composite_edit_preview`.
+- `packages/bridge/src/previewSurface.ts`, `audioTransport.ts`; `packages/editor/src/nativePreview.ts`
+  (`useNativePreview`, `createShowQueue`, `pictureRect`), `PreviewPane.tsx`, `previewTiming.ts`,
+  `testUtils/eventBus.ts`; `packages/shell/src/Shell.tsx`; `app/src/styles.css`.

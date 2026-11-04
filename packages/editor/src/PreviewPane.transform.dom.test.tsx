@@ -37,6 +37,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 
 import {
+  PREVIEW_SURFACE_STUBS,
   actSync,
   captureConsole,
   createInvokeStub,
@@ -55,11 +56,6 @@ const CANVAS_W = 1000;
 const CANVAS_H = 500;
 const FPS = 24;
 
-/** Whatever `chroma_timeline_frame` answers with — since D-217 that is the
- *  JPEG's raw bytes, not a data URL. Nothing here inspects the picture; the
- *  frame just has to arrive so the preview surface (and with it the transform
- *  overlay) mounts at all. */
-const STUB_FRAME = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer;
 
 /** `1/1` — this source exactly fills the composition at `scale: 1`, so every
  *  box below is `scale` (or the override) directly. */
@@ -73,7 +69,7 @@ let clipGeometryCalls = 0;
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
-    chroma_timeline_frame: () => STUB_FRAME,
+    ...PREVIEW_SURFACE_STUBS,
     chroma_timeline_composition_size: () => ({
       compWidth: CANVAS_W,
       compHeight: CANVAS_H,

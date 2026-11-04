@@ -43,10 +43,11 @@ use std::sync::Arc;
 pub struct GpuContext {
     /// The instance the adapter and device came from. Kept (D-451) because a
     /// window surface can only be configured with a device of the SAME
-    /// instance: the Edit preview's on-screen presenter
-    /// (`app/src-tauri`'s `chroma::preview_surface`) creates its
-    /// `CAMetalLayer` surface from this instance so that frames the GPU
-    /// engine draws on `device` can be shown without leaving the GPU.
+    /// instance. Since D-454 the app opens one of these for the whole process
+    /// (`chroma::gpu_compositor::device`): the Edit preview's `CAMetalLayer`
+    /// surface and the Colorist's window surface are both made from this
+    /// instance, so frames the GPU engine draws on `device` are shown without
+    /// leaving the GPU.
     pub instance: wgpu::Instance,
     /// The adapter `device` was opened on (surface capabilities are asked of
     /// it).
@@ -65,7 +66,14 @@ pub struct GpuContext {
 /// change is the return type dropping the `display` field, which the
 /// app-side wrapper now adds back.
 pub fn init_gpu_context() -> Result<GpuContext, String> {
-    let instance_desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+    #[allow(unused_mut)]
+    let mut instance_desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+    // RapidRAW's own default, kept when the Colorist moved onto this device
+    // (D-454): the primary backends on Windows unless `WGPU_BACKEND` says.
+    #[cfg(target_os = "windows")]
+    if std::env::var("WGPU_BACKEND").is_err() {
+        instance_desc.backends = wgpu::Backends::PRIMARY;
+    }
     let instance = wgpu::Instance::new(instance_desc);
 
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {

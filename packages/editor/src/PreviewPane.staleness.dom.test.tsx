@@ -5,7 +5,8 @@
  * be on disk before the edit.
  *
  * **Why this file exists, and why it models the backend the way it does.**
- * `chroma_timeline_frame` (the live-preview compositor, `chroma::edit`) does
+ * `chroma_preview_surface_show` (the live preview, `chroma::edit::
+ * draw_preview_frame` since D-454; `chroma_timeline_frame` before) does
  * not receive a timeline — it resolves the open project's **persisted**
  * manifest off disk (`apelles_project::timeline::resolve_timeline_and_settings`)
  * and composites from that. `timelineStore`'s `applyOp`, meanwhile, updates
@@ -19,10 +20,10 @@
  * "the box moves but the clip doesn't" symptom B-088 was filed for.
  *
  * So the invoke stub below is not an arbitrary fake: it reproduces the ONE
- * property of the real backend this bug turns on — `chroma_timeline_frame`
- * renders the last thing `chroma_timeline_set` persisted, never the store's
- * in-memory timeline. The assertion is the user-visible outcome (what the
- * preview `<img>` actually ends up showing), not "some command was called".
+ * property of the real backend this bug turns on — the preview draws the
+ * last thing `chroma_timeline_set` persisted, never the store's in-memory
+ * timeline. The assertion is the user-visible outcome (what the native
+ * surface ends up showing), not "some command was called".
  *
  * **Tier and its honest limits.** jsdom, not real Chromium and not the real
  * Rust compositor: this proves the FETCH ORDERING contract end to end through
@@ -37,14 +38,13 @@ import { describe, expect, it, vi } from 'vitest';
 import React from 'react';
 
 import {
+  PREVIEW_SURFACE_STUBS,
   actSync,
-  installObjectUrlStub,
   installResizeObserverStub,
   mount,
   waitFrames,
   waitMs,
   type MountedComponent,
-  type ObjectUrlStub,
 } from './testUtils/pointerHarness';
 
 /**
@@ -58,7 +58,7 @@ import {
  * `createInvokeStub` (the harness's own helper) is deliberately not used
  * here — it maps a command to a canned answer, and the whole point of this
  * stub is that two commands share mutable state: what `chroma_timeline_set`
- * writes is what `chroma_timeline_frame` reads. That relationship is the
+ * writes is what `chroma_preview_surface_show` draws. That relationship is the
  * backend property B-088 turns on, so it has to be modelled, not stubbed
  * away.
  */
@@ -70,30 +70,32 @@ const backend = vi.hoisted(() => {
   const state = {
     /** The backend's persisted timeline, reduced to the one field this test
      *  is about: the `position_y` of the fixture's single clip.
-     *  `chroma_timeline_set` writes it, `chroma_timeline_frame` renders it —
-     *  exactly the real disk round trip. */
+     *  `chroma_timeline_set` writes it, the preview draws it — exactly the
+     *  real disk round trip. */
     persistedPositionY: 0,
-    /** Every `pos` `chroma_timeline_frame` was asked for, in order — so a
-     *  test can assert a refetch happened at all, separately from what it
-     *  returned. */
+    /** Every position the preview was asked to show, in order — so a test
+     *  can assert a redraw happened at all, separately from what it drew. */
     framesFetched: [] as number[],
-    /** The frame payload for a given persisted state. A real backend returns
-     *  the raw JPEG bytes of composited pixels (D-217); this returns bytes
-     *  spelling out the persisted `position_y`, which is the same thing for
-     *  this test's purpose: "does the picture on screen reflect the edit."
-     *  `PreviewPane` wraps whatever comes back in a `Blob` object URL, so the
-     *  test reads it back through `installObjectUrlStub`. */
-    frameBytesFor: (positionY: number): ArrayBuffer =>
-      new TextEncoder().encode(`POSITION_Y=${positionY}`).buffer as ArrayBuffer,
+    /** What the native surface is showing: the persisted `position_y` the
+     *  last draw composited, which is this test's question — "does the
+     *  picture on screen reflect the edit." */
+    onScreen: null as string | null,
     reset(): void {
       state.persistedPositionY = 0;
       state.framesFetched.length = 0;
+      state.onScreen = null;
     },
     async invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
       switch (cmd) {
-        case 'chroma_timeline_frame':
-          state.framesFetched.push(Number(args?.pos ?? 0));
-          return state.frameBytesFor(state.persistedPositionY);
+        case 'chroma_preview_surface_show':
+          state.framesFetched.push(Number(args?.position ?? 0));
+          state.onScreen = `POSITION_Y=${state.persistedPositionY}`;
+          return { position: Number(args?.position ?? 0), renderMs: 0, acquireMs: 0 };
+        case 'chroma_preview_surface_start':
+        case 'chroma_preview_surface_place':
+        case 'chroma_preview_surface_play':
+        case 'chroma_preview_surface_stop':
+          return PREVIEW_SURFACE_STUBS[cmd](args);
         case 'chroma_timeline_set': {
           // The real command "stores whatever is sent verbatim" (its own
           // Rust doc). Mirror that: the sent timeline's clip transform
@@ -187,18 +189,9 @@ function setPositionY(positionY: number): void {
   });
 }
 
-/** What the preview `<img>` is actually showing, as the bytes the backend
- *  handed over — resolved through the object-URL stub, since since D-217 the
- *  `src` itself is an opaque `blob:` URL rather than the payload inline. */
-async function previewFrameContent(
-  objectUrls: ObjectUrlStub,
-  container: HTMLElement,
-): Promise<string | null> {
-  const src = container.querySelector('img')?.getAttribute('src');
-  if (!src) return null;
-  const blob = objectUrls.blobFor(src);
-  if (!blob) throw new Error(`the preview <img> points at an unknown or revoked URL: ${src}`);
-  return blob.text();
+/** What the native preview is showing. */
+function previewFrameContent(): string | null {
+  return backend.onScreen;
 }
 
 async function settle(ms: number): Promise<void> {
@@ -212,13 +205,9 @@ describe('B-088 — the live preview reflects a clip transform edit', () => {
    *  own teardown, so each test states only what it is actually about. */
   async function openPreview(): Promise<{
     view: MountedComponent;
-    objectUrls: ObjectUrlStub;
     close: () => void;
   }> {
     const restoreResizeObserver = installResizeObserverStub();
-    // D-217 — jsdom has no `URL.createObjectURL`, and `PreviewPane` now shows
-    // every frame through one.
-    const objectUrls = installObjectUrlStub();
     backend.reset();
 
     actSync(() => {
@@ -238,20 +227,18 @@ describe('B-088 — the live preview reflects a clip transform edit', () => {
     await settle(50);
     return {
       view,
-      objectUrls,
       close: () => {
         view.unmount();
-        objectUrls.restore();
         restoreResizeObserver();
       },
     };
   }
 
   it('repaints with the edited transform once the edit has actually been persisted', async () => {
-    const { view, objectUrls, close } = await openPreview();
+    const { close } = await openPreview();
     try {
       // Baseline: the untouched clip, straight from the (empty) persisted state.
-      expect(await previewFrameContent(objectUrls, view.container)).toBe('POSITION_Y=0');
+      expect(previewFrameContent()).toBe('POSITION_Y=0');
       const framesBeforeEdit = backend.framesFetched.length;
 
       actSync(() => setPositionY(0.25));
@@ -265,32 +252,28 @@ describe('B-088 — the live preview reflects a clip transform edit', () => {
       // Note the middle assertion passing either way: a frame WAS always
       // fetched. "Did we refetch?" was never the right question, and a test
       // that only asked it would have shipped green over this bug — which is
-      // exactly why the assertion that matters is the rendered `src`.
+      // exactly why the assertion that matters is what is on screen.
       expect(backend.persistedPositionY).toBe(0.25);
       expect(backend.framesFetched.length).toBeGreaterThan(framesBeforeEdit);
-      expect(await previewFrameContent(objectUrls, view.container)).toBe('POSITION_Y=0.25');
-
-      // D-217 — one object URL per displayed frame would be a real leak if
-      // the previous one were not revoked. Only the frame on screen is live.
-      expect(objectUrls.live()).toHaveLength(1);
+      expect(previewFrameContent()).toBe('POSITION_Y=0.25');
     } finally {
       close();
     }
   });
 
   it('repaints again on a SECOND consecutive edit — the preview never lags one edit behind', async () => {
-    const { view, objectUrls, close } = await openPreview();
+    const { close } = await openPreview();
     try {
       actSync(() => setPositionY(0.25));
       await settle(PAST_SAVE_DEBOUNCE_MS);
-      expect(await previewFrameContent(objectUrls, view.container)).toBe('POSITION_Y=0.25');
+      expect(previewFrameContent()).toBe('POSITION_Y=0.25');
 
       // Pre-fix, this second edit is what made the bug look like "the preview
       // is one edit behind" rather than "the preview is dead": the stale
       // fetch it triggered would finally have picked up edit #1.
       actSync(() => setPositionY(-0.4));
       await settle(PAST_SAVE_DEBOUNCE_MS);
-      expect(await previewFrameContent(objectUrls, view.container)).toBe('POSITION_Y=-0.4');
+      expect(previewFrameContent()).toBe('POSITION_Y=-0.4');
     } finally {
       close();
     }

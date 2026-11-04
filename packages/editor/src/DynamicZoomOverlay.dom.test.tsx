@@ -24,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 
 import {
+  PREVIEW_SURFACE_STUBS,
   actSync,
   captureConsole,
   createInvokeStub,
@@ -43,12 +44,11 @@ const CANVAS_H = 500;
 const FPS = 24;
 const DURATION = 240;
 
-const STUB_FRAME = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer;
 const NATURAL_FULL_FRAME = { naturalWidth: 1, naturalHeight: 1 };
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
-    chroma_timeline_frame: () => STUB_FRAME,
+    ...PREVIEW_SURFACE_STUBS,
     chroma_timeline_composition_size: () => ({
       compWidth: CANVAS_W,
       compHeight: CANVAS_H,

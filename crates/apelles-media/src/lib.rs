@@ -63,6 +63,7 @@
 //! - **No GPU, no grade, no `AppState`.**
 
 pub mod audio;
+pub mod audio_clock;
 pub mod conform;
 pub mod decode_pipe;
 pub mod ffmpeg_gate;

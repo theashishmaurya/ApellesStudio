@@ -21,7 +21,7 @@ Machine: the owner's MacBook (Apple silicon), window 1470×923. The machine load
 
 | Measure | Floor | Build it was measured in | Source |
 |---|---|---|---|
-| Playback, play loop | **≥ 60 fps** | dev | B-370 |
+| Playback, play loop | **≥ 60 fps** (the display rate: since D-454 the loop is the display-clocked native present, so it cannot exceed the refresh; 59.6–60.0 measured) | dev | B-370, D-454 |
 | Playback, paint | **≥ 27 fps** on a 30 fps timeline | dev | B-370 |
 | Drag during trim / roll / slip / slide / move, p95 | **≤ 30 ms** | dev | D-437 |
 | Release frame: trim | **≤ 39 ms** | production | B-374 |

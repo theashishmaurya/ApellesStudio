@@ -35,6 +35,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React, { act } from 'react';
 
 import {
+  PREVIEW_SURFACE_STUBS,
   actSync,
   captureConsole,
   createInvokeStub,
@@ -58,7 +59,6 @@ const FPS = 25;
  *  lays nothing out, so this is the one width every drawn column is against. */
 const STRIP_WIDTH = 600;
 
-const STUB_FRAME = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer;
 const NATURAL_FULL_FRAME = { naturalWidth: 1, naturalHeight: 1 };
 
 /** Every `chroma_audio_waveform` call the tree made, so the tile/window
@@ -67,7 +67,7 @@ const invoked = vi.hoisted(() => ({ waveform: [] as Record<string, unknown>[] })
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
-    chroma_timeline_frame: () => STUB_FRAME,
+    ...PREVIEW_SURFACE_STUBS,
     chroma_timeline_composition_size: () => ({
       compWidth: CANVAS_W,
       compHeight: CANVAS_H,

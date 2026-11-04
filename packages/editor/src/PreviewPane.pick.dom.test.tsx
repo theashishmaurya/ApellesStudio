@@ -39,6 +39,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 
 import {
+  PREVIEW_SURFACE_STUBS,
   actSync,
   captureConsole,
   createInvokeStub,
@@ -59,14 +60,6 @@ import {
 const CANVAS_W = 1000;
 const CANVAS_H = 500;
 
-/** A 1×1 transparent GIF — `PreviewPane` only renders its overlay stack once
- *  `chroma_timeline_frame` has produced SOME frame; nothing here inspects the
- *  pixels (that is the Rust compositor's own concern). */
-/** Whatever `chroma_timeline_frame` answers with — since D-217 that is the
- *  JPEG's raw bytes, not a data URL. Nothing here inspects the picture; the
- *  frame just has to arrive for the preview surface to mount. */
-const STUB_FRAME = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer;
-
 /** Per-clip natural footprints, keyed by the clip index the geometry command
  *  is actually called with, per track. `1/1` is "this source exactly fills
  *  the composition"; the fixtures below vary `scale`/`position_*` instead, so
@@ -74,26 +67,29 @@ const STUB_FRAME = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer;
 const NATURAL_FULL_FRAME = { naturalWidth: 1, naturalHeight: 1 };
 
 /**
- * How long `chroma_timeline_frame` takes to answer, in ms — B-085's second
- * (WKWebView-only) half, made reproducible.
+ * How long the first frame takes to reach the screen
+ * (`chroma_preview_surface_show`), in ms — B-085's second (WKWebView-only)
+ * half, made reproducible.
  *
  * `0` (the default for every test below) is what a stub backend does: the
- * frame and the composition size land in the SAME microtask flush, so React
- * commits both in one render. That coincidence is the whole reason the first
- * fix passed here and in the browser harness while still being broken in the
- * real app — see this file's `real backend ordering` block and B-085's
- * 2026-09-07 follow-up. Set it non-zero to get the REAL app's ordering: a
- * cheap `chroma_timeline_composition_size` resolving first, and a real
- * ffmpeg decode arriving hundreds of ms later in its own commit.
+ * frame and the composition size land in the SAME microtask flush. Set it
+ * non-zero to get the REAL app's ordering: a cheap
+ * `chroma_timeline_composition_size` resolving first, and the first frame's
+ * decode arriving hundreds of ms later. (Since D-454 the surface element is
+ * mounted before any frame exists, so the ordering no longer decides whether
+ * the overlays can measure; these tests keep it covered.)
  */
 let frameDelayMs = 0;
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
-    chroma_timeline_frame: () =>
-      frameDelayMs === 0
-        ? STUB_FRAME
-        : new Promise<ArrayBuffer>((resolve) => setTimeout(() => resolve(STUB_FRAME), frameDelayMs)),
+    ...PREVIEW_SURFACE_STUBS,
+    chroma_preview_surface_show: (args) => {
+      const shown = { position: Number(args?.position ?? 0), renderMs: 0, acquireMs: 0 };
+      return frameDelayMs === 0
+        ? shown
+        : new Promise((resolve) => setTimeout(() => resolve(shown), frameDelayMs));
+    },
     chroma_timeline_composition_size: () => ({
       compWidth: CANVAS_W,
       compHeight: CANVAS_H,
@@ -415,7 +411,7 @@ describe('canvas click-to-select (D-204 / B-085)', () => {
    * B-085's second half — the one the first fix shipped without covering.
    *
    * Every test above (and the whole real-Chromium harness pass) answers
-   * `chroma_timeline_frame` and `chroma_timeline_composition_size` in the
+   * the first frame and `chroma_timeline_composition_size` in the
    * same microtask flush, because both are synchronous stubs. The real app
    * does not: the composition size is a cheap settings/probe read that
    * answers in milliseconds, while the frame is a real ffmpeg decode over

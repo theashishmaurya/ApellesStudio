@@ -1,25 +1,36 @@
-//! **The process's one GPU render engine (D-449), on the device the Colorist's
-//! grade shader also runs on (D-450).**
+//! **The process's one GPU device (D-454), with the render engine (D-449) and
+//! the Colorist's grade shader (D-450) on it.**
 //!
-//! What it is: the `apelles_compositor::Engine` every timeline frame is drawn
-//! by: the Edit tab's live preview (`chroma::edit::composite_video_frame`),
-//! the Colorist's framed clip preview (`chroma::colorist_view`), and every
-//! export segment worker (`chroma::edit_render`). One engine for playback and
-//! export, as Final Cut Pro, DaVinci Resolve and Premiere Pro each run one
-//! image engine for both.
+//! What it is: the one wgpu instance, adapter, device and queue the app opens,
+//! and the `apelles_compositor::Engine` every timeline frame is drawn by: the
+//! Edit tab's live preview (`chroma::preview_surface`), the Colorist's framed
+//! clip preview (`chroma::colorist_view`), and every export segment worker
+//! (`chroma::edit_render`). One engine for playback and export, as Final Cut
+//! Pro, DaVinci Resolve and Premiere Pro each run one image engine for both,
+//! and one device for everything that draws, as they do.
 //!
-//! What it does: opens one headless wgpu device on first use, as the app's own
-//! `GpuContext` (`render_core::init_gpu_context`), and builds the engine on
-//! it, so a clip graded by the Colorist's `GpuProcessor`
-//! (`chroma::grade_pass`) hands its pixels to the engine without leaving the
-//! GPU; hands both out to any thread; and turns their errors into the
-//! `String` errors this crate's commands return.
+//! What it does: opens the device on first use (`apelles_gpu::init_gpu_context`)
+//! and builds the engine on it. Everything else that draws reaches the device
+//! through here, so what one of them makes another can read without leaving
+//! the GPU:
+//! - the Colorist's `GpuProcessor`, through [`RenderDevice::ctx`] (the grade in
+//!   the engine, `chroma::grade_pass`) and through
+//!   `gpu_processing::get_or_init_gpu_context` (the Colorist tab itself, whose
+//!   full-window surface, B-006, is made from [`RenderDevice::gpu`]'s instance);
+//! - the Edit preview's presenter (`chroma::preview_surface`), whose
+//!   `CAMetalLayer` surface must come from the same instance as the device it
+//!   is configured with (D-451).
+//!
+//! It hands them out to any thread and turns their errors into the `String`
+//! errors this crate's commands return.
 //!
 //! What it does NOT do: fall back to a CPU path. There is none (D-449): a
 //! machine without a usable GPU cannot render a frame, and says so. After a
 //! GPU error the device is dropped, so the next frame opens a fresh one rather
 //! than drawing on one that may have been lost; the failed frame itself is
-//! still an error, never a silently different picture.
+//! still an error, never a silently different picture. The holders of a
+//! surface (the Colorist's context, the preview presenter) notice the new
+//! device by identity ([`RenderDevice::is_current`]) and rebuild on it.
 
 use std::sync::{Arc, Mutex};
 
@@ -28,7 +39,10 @@ use image::RgbaImage;
 
 /// The device every frame is drawn on, with what runs on it.
 pub(crate) struct RenderDevice {
-    /// The app's own context for the device (no display surface): what the
+    /// The one instance, adapter, device and queue (D-454). A surface is made
+    /// from `gpu.instance` and configured with `gpu.device`.
+    pub(crate) gpu: apelles_gpu::GpuContext,
+    /// The app's own headless context over the same device: what the
     /// Colorist's `GpuProcessor` is built on.
     pub(crate) ctx: crate::image_processing::GpuContext,
     pub(crate) engine: Arc<Engine>,
@@ -38,14 +52,21 @@ pub(crate) struct RenderDevice {
 }
 
 impl RenderDevice {
-    /// The engine and the grade shader's slot, on `ctx`'s device.
-    pub(crate) fn on(ctx: crate::image_processing::GpuContext) -> Self {
-        let engine = Arc::new(Engine::with_device(ctx.device.clone(), ctx.queue.clone()));
+    /// The engine and the grade shader's slot, on `gpu`'s device.
+    pub(crate) fn on(gpu: apelles_gpu::GpuContext) -> Self {
+        let engine = Arc::new(Engine::with_device(gpu.device.clone(), gpu.queue.clone()));
         Self {
-            ctx,
+            ctx: crate::render_core::headless_context(&gpu),
+            gpu,
             engine,
             grader: Mutex::new(None),
         }
+    }
+
+    /// Whether `device` is this render device's, not one forgotten after a
+    /// failure: how a cached surface or processor knows to rebuild.
+    pub(crate) fn is_current(&self, device: &Arc<wgpu::Device>) -> bool {
+        Arc::ptr_eq(&self.gpu.device, device)
     }
 }
 
@@ -57,9 +78,8 @@ pub(crate) fn device() -> Result<Arc<RenderDevice>, String> {
     if let Some(d) = slot.as_ref() {
         return Ok(d.clone());
     }
-    let ctx =
-        crate::render_core::init_gpu_context().map_err(|e| describe(ComposeError::NoDevice(e)))?;
-    let device = Arc::new(RenderDevice::on(ctx));
+    let gpu = apelles_gpu::init_gpu_context().map_err(|e| describe(ComposeError::NoDevice(e)))?;
+    let device = Arc::new(RenderDevice::on(gpu));
     *slot = Some(device.clone());
     Ok(device)
 }
@@ -106,33 +126,50 @@ pub(crate) fn stats() -> apelles_compositor::EngineStats {
         .unwrap_or_default()
 }
 
-/// Draw `plan`.
+/// Draw `plan` and read it back.
 pub(crate) fn render(plan: &FramePlan) -> Result<RgbaImage, String> {
     submit(plan, &Destination::ReadBack)?.wait()
 }
 
-/// D-452 — where a finished frame goes: back to the CPU as pixels (the
-/// preview's JPEG, any picture a caller needs), or into an encoder's pixel
-/// buffer with no read-back (the export).
-pub(crate) enum Destination {
+/// Where a finished frame goes: the engine's terminals of its one output step
+/// (D-452's `Engine::submit_with`).
+pub(crate) enum Destination<'a> {
+    /// Back to the CPU as pixels (a thumbnail, any picture a caller needs).
     ReadBack,
+    /// D-452 — into an encoder's pixel buffer with no read-back (the export).
     Encoder {
         buffer: apelles_types::video_frame::PixelBuffer,
         format: apelles_compositor::OutputFormat,
     },
+    /// **D-454 — into the Edit preview's native surface**, unpacked by the
+    /// presenter's pass in the frame's own submission; nothing is read back.
+    #[cfg(target_os = "macos")]
+    Present(&'a super::preview_surface::presenter::PresentTarget<'a>),
+    #[cfg(not(target_os = "macos"))]
+    #[doc(hidden)]
+    _Lifetime(std::marker::PhantomData<&'a ()>),
 }
 
-/// Hand `plan` to the GPU and return at once; [`GpuFrame::wait`] for its
-/// pixels, or [`GpuFrame::wait_written`] for its encoder buffer. The export's
-/// writer thread does the waiting, so the GPU draws one frame while the render
-/// worker decodes the next.
-pub(crate) fn submit(plan: &FramePlan, to: &Destination) -> Result<GpuFrame, String> {
+/// Hand `plan` to the GPU, to `to`, and return at once; [`GpuFrame::wait`] for
+/// a read-back's pixels, or [`GpuFrame::wait_written`] for an encoder buffer.
+/// The export's writer thread does the waiting, so the GPU draws one frame
+/// while the render worker decodes the next.
+pub(crate) fn submit(plan: &FramePlan, to: &Destination<'_>) -> Result<GpuFrame, String> {
     let engine = engine()?;
     match to {
         Destination::ReadBack => settle(engine.submit(plan)).map(GpuFrame::ReadBack),
         Destination::Encoder { buffer, format } => {
             settle(engine.submit_into(plan, buffer, *format)).map(GpuFrame::Written)
         }
+        #[cfg(target_os = "macos")]
+        Destination::Present(target) => settle(
+            engine.submit_with(plan, |out, canvas| target.write(out, canvas)),
+        )
+        .map(|(pending, ())| GpuFrame::Presented {
+            _in_flight: pending,
+        }),
+        #[cfg(not(target_os = "macos"))]
+        Destination::_Lifetime(_) => Err("no such destination".to_string()),
     }
 }
 
@@ -142,6 +179,12 @@ pub(crate) enum GpuFrame {
     ReadBack(apelles_compositor::PendingFrame),
     /// Being written into an encoder's buffer (D-452).
     Written(apelles_compositor::PendingGpu),
+    /// D-454 — drawn into the preview's surface. Held (never read) until the
+    /// next frame, so the engine's pooled buffers go back only once the GPU is
+    /// done (`PendingGpu`'s waiting drop).
+    Presented {
+        _in_flight: apelles_compositor::PendingGpu,
+    },
 }
 
 impl GpuFrame {
@@ -152,6 +195,9 @@ impl GpuFrame {
             GpuFrame::Written(_) => {
                 Err("this frame was written into an encoder's buffer, not read back".into())
             }
+            GpuFrame::Presented { .. } => {
+                Err("a frame drawn into the preview has no pixels to read back".into())
+            }
         }
     }
 
@@ -159,7 +205,9 @@ impl GpuFrame {
     pub(crate) fn wait_written(self) -> Result<(), String> {
         match self {
             GpuFrame::Written(f) => settle(f.wait()),
-            GpuFrame::ReadBack(_) => Err("this frame is a read-back, not an encoder write".into()),
+            GpuFrame::ReadBack(_) | GpuFrame::Presented { .. } => {
+                Err("this frame is not an encoder write".into())
+            }
         }
     }
 }
