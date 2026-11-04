@@ -26,11 +26,15 @@
 //!   `color_space`, BT.601 when untagged, as swscale defaults), the range, the
 //!   chroma subsampling and the bit depth.
 //!
+//! - **Drops the frames AVAssetReader synthesizes for an empty edit** (a
+//!   delayed start, a gap): ffmpeg presents nothing there, so its conform holds
+//!   the neighbouring real frame, and so does this (B-384).
+//!
 //! What it does NOT do: convert colour, scale, or read audio; read containers
 //! AVFoundation cannot open (Matroska / WebM, AVI, MPEG-TS, MXF: see
-//! [`is_engine_container`] and `decode_pipe`, which still serves those through
-//! ffmpeg pending the owner's decision); or fall back to anything. A source the
-//! media engine cannot decode is an error naming the file.
+//! [`is_engine_container`]; those are converted once into a `.mov` by
+//! `optimized_media`, D-453, and this reads that); or fall back to anything. A
+//! source the media engine cannot decode is an error naming the file.
 //!
 //! **Why `AVAssetReader` and not a bare `VTDecompressionSession`.** A
 //! decompression session needs a demuxer to feed it compressed samples and a
@@ -78,12 +82,12 @@ pub const READ_AHEAD: usize = 2;
 
 /// The container extensions AVFoundation opens: the QuickTime file family.
 /// Everything else the importer accepts (`video::VIDEO_EXTENSIONS`) is
-/// decoded by `decode_pipe`'s ffmpeg pipe until the owner decides between
-/// refusing those sources and conforming them on import (D-452).
+/// converted once into a `.mov` this module reads instead
+/// (`optimized_media`, D-453).
 const ENGINE_CONTAINERS: &[&str] = &["mov", "mp4", "m4v"];
 
-/// Whether `path` is decoded by the media engine (this module) rather than
-/// by ffmpeg.
+/// Whether the media engine opens `path` as it is (otherwise it is read
+/// through its converted file).
 pub fn is_engine_container(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -293,6 +297,7 @@ impl ReadJob {
         // SAFETY: a property read on a loaded track.
         let range = unsafe { track.timeRange() };
         let stream_end = add(range.start, range.duration);
+        let empty = empty_edits(&track);
 
         // SAFETY: `asset` is a live AVAsset; the error is surfaced, not ignored.
         let reader = unsafe { AVAssetReader::assetReaderWithAsset_error(&asset) }
@@ -350,6 +355,11 @@ impl ReadJob {
                 // frame for the grid.
                 let Some(image) = image else { continue };
                 if !pts.flags.contains(CMTimeFlags::Valid) {
+                    continue;
+                }
+                // A frame AVAssetReader synthesizes for an empty edit is not a
+                // source frame (B-384).
+                if empty.iter().any(|r| within(pts, r)) {
                     continue;
                 }
                 return Ok(Some(Decoded {
@@ -528,6 +538,35 @@ fn load_video_track(asset: &AVURLAsset) -> Result<Retained<AVAssetTrack>> {
         .ok_or_else(|| anyhow!("the file has no video track the media engine can read"))
 }
 
+/// The track-time ranges of the track's empty edits: where the file presents no
+/// media (a delayed start, a gap). AVAssetReader hands out a synthesized black
+/// frame for one; ffmpeg's demuxer presents nothing there, so its conform holds
+/// the neighbouring real frame (the first one, for a leading empty edit). The
+/// decoder drops frames presented inside these ranges so the grid sees what
+/// ffmpeg's does (B-384).
+fn empty_edits(track: &AVAssetTrack) -> Vec<CMTimeRange> {
+    // SAFETY: property reads on a loaded track and its segments.
+    unsafe {
+        track
+            .segments()
+            .iter()
+            .filter(|segment| segment.isEmpty())
+            .map(|segment| segment.timeMapping().target)
+            .collect()
+    }
+}
+
+/// `a` compared with `b`, exactly, across timescales.
+fn compare(a: CMTime, b: CMTime) -> std::cmp::Ordering {
+    (i128::from(a.value) * i128::from(b.timescale))
+        .cmp(&(i128::from(b.value) * i128::from(a.timescale)))
+}
+
+/// Whether `t` falls in `[range.start, range.start + range.duration)`.
+fn within(t: CMTime, range: &CMTimeRange) -> bool {
+    compare(t, range.start).is_ge() && compare(t, add(range.start, range.duration)).is_lt()
+}
+
 /// The track's codec (`CMVideoCodecType`) and whether it declares full-range
 /// video.
 fn track_format(track: &AVAssetTrack) -> Result<(u32, bool)> {
@@ -569,6 +608,54 @@ fn output_settings(pixel_format: u32) -> Retained<NSDictionary<NSString, AnyObje
     };
     let values: [&AnyObject; 3] = [&format, &iosurface, &yes];
     NSDictionary::from_slices(&keys, &values)
+}
+
+/// Coded frame `index` of `path` as the media engine decodes it to BGRA, rows
+/// packed, with its width: what AVFoundation itself makes of a file's colour
+/// and alpha. Test-only (the optimized-media tests check an HEVC-with-alpha
+/// file's alpha plane with it); production decodes stay Y'CbCr.
+#[cfg(test)]
+pub(crate) fn bgra_frame(path: &Path, index: usize) -> Result<(Vec<u8>, usize)> {
+    use objc2_core_video as cv;
+    let url = NSURL::from_file_path(path).ok_or_else(|| anyhow!("not a file path"))?;
+    // SAFETY: a plain file URL and no options.
+    let asset = unsafe { AVURLAsset::URLAssetWithURL_options(&url, None) };
+    let track = load_video_track(&asset)?;
+    // SAFETY: as in `ReadJob::decode`.
+    let reader = unsafe { AVAssetReader::assetReaderWithAsset_error(&asset) }
+        .map_err(|e| anyhow!(describe(&e)))?;
+    let settings = output_settings(cv::kCVPixelFormatType_32BGRA);
+    let output = unsafe {
+        AVAssetReaderTrackOutput::assetReaderTrackOutputWithTrack_outputSettings(
+            &track,
+            Some(&settings),
+        )
+    };
+    // SAFETY: plain calls on objects this thread owns.
+    unsafe {
+        reader.addOutput(&output);
+        if !reader.startReading() {
+            return Err(anyhow!("could not start reading"));
+        }
+    }
+    let mut seen = 0;
+    loop {
+        // SAFETY: the output is attached to a reader that is reading.
+        let sample = unsafe { output.copyNextSampleBuffer() }
+            .ok_or_else(|| anyhow!("{path:?} has no frame {index}"))?;
+        // SAFETY: a getter on a valid sample buffer.
+        let Some(image) = (unsafe { sample.image_buffer() }) else {
+            continue;
+        };
+        if seen < index {
+            seen += 1;
+            continue;
+        }
+        let (bytes, row, _) = read_plane(&PixelBuffer::new(image), 0);
+        // SAFETY: cancelling a reader this thread started.
+        unsafe { reader.cancelReading() };
+        return Ok((bytes, row / 4));
+    }
 }
 
 #[cfg(test)]

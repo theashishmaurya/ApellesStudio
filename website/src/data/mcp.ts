@@ -93,6 +93,10 @@ export interface ToolGroup {
  * `motion_refill_template` and `motion_delete_template` (Motion 52 → 59).
  * Re-counted against the real file.
  *
+ * 275 → 276 on 2026-11-04 (D-453): `editor_cancel_media_conversion`, the
+ * cancel for a source's one conversion to optimized media (Edit 122 → 123).
+ * Re-counted against the real file.
+ *
  * 255 → 275 on 2026-11-03 (D-441), re-counted against the real file: this
  * pass's own `editor_cancel_export`, `editor_list_export_presets` and
  * `editor_save_export_preset` (the Export panel's Cancel, presets and saved
@@ -161,15 +165,15 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 275,
-  shipped: 256,
+  all: 276,
+  shipped: 257,
   debugOnly: 19,
 } as const;
 
 export const TOOL_GROUPS: readonly ToolGroup[] = [
   {
     name: 'Edit',
-    count: 122,
+    count: 123,
     blurb:
       'The whole multi-track NLE. Browse and organise the media pool, place and trim clips, perform any of the seven edit types at the playhead, roll/slip/slide, manage tracks, key transforms, set transitions, markers, captions and per-clip EQ, then render the timeline to a real file.',
     sample: [

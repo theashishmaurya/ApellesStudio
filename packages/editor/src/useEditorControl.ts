@@ -108,6 +108,7 @@ import { listen, emit } from '@tauri-apps/api/event';
 
 import {
   assertRequestLive,
+  awaitsConversion,
   isAudioOnlyItem,
   type MediaItem,
   newBridgeClaim,
@@ -650,6 +651,14 @@ function mediaItemDto(m: MediaItem) {
     hasThumb: !!m.thumb,
     // D-260 — set only on a Motion render's own output file.
     motionSceneId: m.motionSceneId ?? null,
+    // D-453 — a source the macOS media engine cannot open (mkv, webm, avi,
+    // mts/m2ts, mxf) is converted ONCE into optimized media. `null` = it needs
+    // no conversion (a .mov/.mp4/.m4v, an audio-only source, a still).
+    // Otherwise `{ state: queued|converting|ready|failed|cancelled, progress
+    // 0..1, error? }`; `previewable` is false until it is `ready` — the clip
+    // can still be placed, but the preview and an export cannot draw it yet.
+    conversion: m.conversion ?? null,
+    previewable: !awaitsConversion(m),
     usable: placeable,
     problem: placeable
       ? undefined
@@ -3054,6 +3063,10 @@ export function useEditorControl(): void {
           // the symptom a session actually hits — so the list names the
           // unusable items up front instead of handing back an opaque array.
           unusable: s.items.filter((m) => !isPlaceable(m)).map((m) => m.id),
+          // D-453 — the items that cannot be previewed or exported yet because
+          // their one conversion to optimized media has not finished (each
+          // row's `conversion` says where it stands).
+          awaitingConversion: s.items.filter(awaitsConversion).map((m) => m.id),
         };
       },
 
@@ -3084,6 +3097,30 @@ export function useEditorControl(): void {
           // rather than failing the batch — say so instead of letting it look
           // like a silent success.
           unknownIds,
+        };
+      },
+
+      // D-453 — stop a source's conversion to optimized media. The same store
+      // action, into the same `chroma_media_cancel_conversion` command, as the
+      // Sources tile's Cancel. Parallel to `editor_cancel_export`. Reports each
+      // item's conversion as it now stands, so "cancelled" is read back, not
+      // assumed; re-probing an item (`editor_reprobe_media`) converts it again.
+      editor_cancel_media_conversion: async (a) => {
+        const ids: unknown = a?.ids;
+        if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string') || ids.length === 0) {
+          return { error: 'ids must be a non-empty array of media-pool item ids (editor_list_media reports each item\'s conversion)' };
+        }
+        const res = await useMediaPoolStore.getState().cancelConversion(ids as string[]);
+        if (!res.ok) return { error: res.error ?? 'could not cancel the conversion' };
+        return {
+          ok: true,
+          items: (res.items ?? []).map((c) => ({
+            id: c.id,
+            sourcePath: c.sourcePath,
+            wasConverting: c.wasConverting,
+            conversion: c.conversion ?? null,
+          })),
+          unknownIds: res.unknownIds ?? [],
         };
       },
 

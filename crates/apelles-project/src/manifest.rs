@@ -620,6 +620,15 @@ pub struct MediaItemDto {
     /// item predates D-059 and hasn't been re-imported).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thumb: Option<String>,
+    /// D-453 — where this source's one conversion to optimized media stands
+    /// (`queued` / `converting` with `progress` / `ready` / `failed` with
+    /// `error` / `cancelled`), read live from
+    /// `apelles_media::optimized_media` like `offline` and `thumb`. `None` for a
+    /// source the media engine opens as it is (QuickTime family), an
+    /// audio-only source, a still, or one not asked for yet. Until it is
+    /// `ready`, the source cannot be shown in the preview or exported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversion: Option<apelles_media::optimized_media::ConversionStatus>,
 }
 
 /// `true` if `path` is a readable video, audio or still-image file right now.
@@ -725,6 +734,11 @@ impl From<&MediaItem> for MediaItemDto {
             folder: m.folder.clone(),
             motion_scene_id: m.motion_scene_id.clone(),
             thumb: read_cached_thumb(&m.source_path, &m.id),
+            conversion: m
+                .video
+                .as_ref()
+                .filter(|v| v.resolution.width > 0)
+                .and_then(|_| apelles_media::optimized_media::status(Path::new(&m.source_path))),
         }
     }
 }

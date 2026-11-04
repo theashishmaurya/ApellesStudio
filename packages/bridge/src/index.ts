@@ -12,11 +12,18 @@
  * (`./beats`), which the Edit and Motion tabs share.
  */
 
-export { useMediaPoolStore, isAudioOnlyItem } from './media';
+export { useMediaPoolStore, isAudioOnlyItem, awaitsConversion, MEDIA_CONVERSION_EVENT } from './media';
 
 export { beatEntry, beatKey, detectBeats, useBeatStore, useBeats } from './beats';
 export type { BeatEntry, BeatQuery } from './beats';
-export type { MediaItem, MediaVideoInfo, MediaImageInfo } from './media';
+export type {
+  MediaItem,
+  MediaVideoInfo,
+  MediaImageInfo,
+  MediaConversion,
+  MediaConversionState,
+  MediaConversionCancel,
+} from './media';
 
 export { trackEvent } from './telemetry';
 export type { TelemetryEvent } from './telemetry';

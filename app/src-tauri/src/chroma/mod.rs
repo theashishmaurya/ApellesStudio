@@ -9,6 +9,10 @@
 //! - `media_cache` — persistent, source-keyed disk cache for derived media
 //!   artefacts: filmstrip tiles, probes, waveform peaks (D-128); a re-export
 //!   shim since D-146 — the real code is `apelles-media`
+//! - `media_conversion` — the app's half of optimized media (D-453): asks for
+//!   a project's sources the media engine cannot open to be converted (on open
+//!   and import), forwards progress to the GUI, and the cancel command; the
+//!   conversion itself is `apelles_media::optimized_media`
 //! - `filmstrip` — windowed, level-of-detail Edit-tab filmstrip tiles on top
 //!   of `media_cache` (D-128; supersedes D-119/D-121/D-124's whole-clip strip);
 //!   since D-146 just the `chroma_clip_thumbnails` command — the real code is
@@ -190,6 +194,7 @@ pub mod keyframes;
 pub mod load;
 pub mod mask;
 pub mod media_cache;
+pub mod media_conversion;
 pub mod media_understanding;
 pub mod motion;
 pub mod motion_components;

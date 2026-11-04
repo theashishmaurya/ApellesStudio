@@ -576,5 +576,75 @@
       "OUT"
     ],
     "pipeFrames": 240
+  },
+  "sound": {
+    "source": "sound.mp4",
+    "color": [
+      60,
+      90,
+      150
+    ],
+    "sourceFrames": 60,
+    "audioShortBySec": 0.021333333333333333,
+    "durationSec": 2,
+    "timeline": {
+      "id": "sound",
+      "name": "export sound",
+      "rate": {
+        "num": 30,
+        "den": 1
+      },
+      "tracks": [
+        {
+          "kind": "video",
+          "clips": [
+            {
+              "id": "snd",
+              "name": "snd",
+              "source_path": "sound.mp4",
+              "source_start": 0,
+              "duration": 60,
+              "source_len": 60,
+              "source_fps": 30,
+              "start_frame": 0
+            }
+          ]
+        }
+      ]
+    },
+    "muxArgs": [
+      "-y",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-f",
+      "concat",
+      "-safe",
+      "0",
+      "-i",
+      "{{APELLES_CONCAT_LIST}}",
+      "-ss",
+      "0",
+      "-t",
+      "2",
+      "-i",
+      "sound.mp4",
+      "-filter_complex_threads",
+      "2",
+      "-filter_complex",
+      "[1:a]apad[outa]",
+      "-map",
+      "0:v",
+      "-map",
+      "[outa]",
+      "-c:a",
+      "pcm_s24le",
+      "-c:v",
+      "copy",
+      "-t",
+      "2",
+      "OUT"
+    ],
+    "pipeFrames": 60
   }
 }

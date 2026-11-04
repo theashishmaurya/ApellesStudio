@@ -18,6 +18,10 @@
 //!   command through it so they cannot disagree (D-228, B-104).
 //! - [`decode_pipe`] — the long-lived sequential-decode `ffmpeg` pipe pool,
 //!   one slot per playback stream (D-030, D-125).
+//! - [`optimized_media`] — a source the media engine cannot open (Matroska /
+//!   WebM, AVI, MPEG-TS, MXF) converted once, on the hardware HEVC encoder, into
+//!   a `.mov` in the project's `optimized-media/` folder that every decode of it
+//!   reads instead; the conversion queue, its progress and its cancel (D-453).
 //! - [`media_cache`] — the persistent, source-keyed disk cache for derived
 //!   artefacts: probes, filmstrip chunks, waveform peaks (D-128).
 //! - [`probe`] — the two-layer (memory → disk) probe cache in front of
@@ -67,6 +71,8 @@ pub mod filmstrip;
 pub mod loudness;
 pub mod media_cache;
 pub mod ocr;
+#[cfg(target_os = "macos")]
+pub mod optimized_media;
 pub mod probe;
 pub mod scenes;
 pub mod scrub;

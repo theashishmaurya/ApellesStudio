@@ -4,6 +4,21 @@ Real defects only — in our code or the engine. Not setup/housekeeping. Move to
 Issues once public.
 
 ```
+## B-385 — an export's sound ended where its last sound source ended, short of the picture (a 10 s ProRes master had 9.979 s of sound)
+
+status: **fixed 2026-11-04** (found in D-452 step 2's measurement, root-caused in step 3) · severity: low–medium (a master whose sound track is shorter than its picture: most players pad it, but an editor or a delivery check reading the file sees two lengths; with silence at the end of a timeline the gap is that whole silence) · area: `packages/editor/src/timelinePipeExport.ts` (`buildPipeAudioGraph`)
+
+- **Pre-existing, not step 2's.** The export's sound has been the mix of its sources with no padding since the remux argv existed (D-197): the old ffmpeg-encoded export ended its sound in the same place. Step 2 only made it visible on a ProRes master, whose sound is PCM and so shows the exact length.
+- **Cause.** The mix ends where its last source's sound ends (`amix duration=longest`, or a single source mapped as it is), and the mux's `-t` only cuts. Reproduced on its own: a source whose AAC stream stops one frame (1024 samples, 21 ms) before its picture, exported as ProRes, gave 9.979 s of 24-bit PCM against 10.000 s of picture; ordinary sources with full-length sound gave 10.000 s, which is why the export benchmark never showed it. The loudness pass, `amix`, `asoftclip` and the input trims were each measured and do not shorten the sound.
+- **Fix.** The mix ends with `apad`: silence continues it, and the mux's `-t` ends picture and sound at the same instant (sample-exact in PCM; AAC rounds to its frame). Test: the export parity fixture gained a `sound` case (compiled by `buildPipeExportPlan`, rendered for real by `edit_render::parity_tests::a_prores_master_s_sound_runs_the_picture_s_whole_length`): a source 21 ms short exported as ProRes; the master's sound must equal its picture within one sample. It fails without the fix (1.984 s against 2.000 s) and passes with it. The bench fixture's argv re-generated.
+
+## B-384 — a QuickTime file whose track starts with an empty edit decoded black where ffmpeg holds the first frame
+
+status: **fixed 2026-11-04** (found by D-453's conversion tests) · severity: low (the media engine's decode of a `.mov` / `.mp4` with a delayed start — the MPEG-TS conversions have one, and ffmpeg writes one for any stream whose timestamps do not start at zero — showed black for the slots before the first frame) · area: `crates/apelles-media/src/vt_decode.rs`
+
+- **Cause.** For an empty edit, AVAssetReader hands out a synthesized black frame at the edit's start, with an image buffer and a valid time. ffmpeg's demuxer presents nothing there, so its conform (D-228) holds the first real frame over those slots; the media engine conformed the black frame instead. A converted `.mts` (timestamps from 1.47 s) decoded black for its first 44 slots (6.5 dB against the original's decode).
+- **Fix.** The reader reads the track's segments and drops any frame presented inside an empty one, in exact `CMTime` arithmetic. Tests: `vt_decode::tests::an_empty_edit_at_the_start_holds_the_first_frame_not_black` (luma bit-exact against ffmpeg's conformed decode from five starts) and the `.mts` case of `optimized_media::tests::every_container_converts_to_a_mov_that_decodes_to_the_originals_frames`.
+
 ## B-383 — a title with an out-of-range size crashed the preview and hung the export (debug builds)
 
 status: **fixed 2026-11-04** (found in the live check after D-448) · severity: low (only a size far outside the Inspector's 0.5–100% range triggers it, which the GUI cannot set; an agent passing pixels to `editor_add_text_clip`'s fractional `size` can) · area: `packages/editor/src/timeline.ts` (`newTextLayer`), `app/src-tauri/src/chroma/text.rs` (`layer_px`), `crates/apelles-timeline/src/lib.rs`

@@ -199,7 +199,12 @@ static PROJECT: Lazy<Mutex<Option<ProjectRef>>> = Lazy::new(|| Mutex::new(None))
 
 /// Bind (or clear) the loaded project so `chroma_project_save` knows where to
 /// write. Set on open / new / relink; cleared only on an explicit close.
+///
+/// D-453 — and where optimized media lives: the open project's own
+/// `optimized-media/` folder. Switching projects cancels the outgoing one's
+/// conversions; they resume when it is opened again.
 pub fn set_project(p: Option<ProjectRef>) {
+    apelles_media::optimized_media::set_project_dir(p.as_ref().map(|p| p.path.as_path()));
     *PROJECT.lock().unwrap_or_else(|e| e.into_inner()) = p;
 }
 

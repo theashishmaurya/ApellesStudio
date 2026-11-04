@@ -12,7 +12,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }));
 
-const { useMediaPoolStore } = await import('./media');
+/** D-453 — the conversion progress event: the handler the store registers, so a
+ *  test can deliver an event the way the backend would. */
+const events = vi.hoisted(() => ({
+  handlers: new Map<string, (e: { payload: unknown }) => void>(),
+  unlistened: 0,
+}));
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: (name: string, handler: (e: { payload: unknown }) => void) => {
+    events.handlers.set(name, handler);
+    return Promise.resolve(() => {
+      events.unlistened += 1;
+      events.handlers.delete(name);
+    });
+  },
+}));
+
+const { useMediaPoolStore, MEDIA_CONVERSION_EVENT, awaitsConversion } = await import('./media');
 import type { MediaItem } from './media';
 
 const PROJECT_A = '/projects/a.chroma';
@@ -204,5 +220,87 @@ describe('refreshPaths (D-260)', () => {
     expect(res.ok).toBe(false);
     expect(res.error).toContain('no project open');
     expect(useMediaPoolStore.getState().items).toBe(before);
+  });
+});
+
+describe('conversion to optimized media (D-453)', () => {
+  const MKV: MediaItem = {
+    id: 'id-mkv',
+    sourcePath: '/media/talk.mkv',
+    name: 'talk.mkv',
+    added: '2026-11-04T00:00:00Z',
+    offline: false,
+    conversion: { state: 'queued', progress: 0 },
+  };
+
+  function installPool(items: MediaItem[]) {
+    invokeMock.mockImplementation((cmd: string, args?: { ids?: string[] }) => {
+      if (cmd === 'chroma_media_list') return Promise.resolve(items);
+      if (cmd === 'chroma_media_folders') return Promise.resolve([]);
+      if (cmd === 'chroma_media_cancel_conversion') {
+        const ids = args?.ids ?? [];
+        return Promise.resolve({
+          items: ids
+            .filter((id) => items.some((m) => m.id === id))
+            .map((id) => ({
+              id,
+              sourcePath: items.find((m) => m.id === id)?.sourcePath ?? '',
+              wasConverting: true,
+              conversion: { state: 'cancelled', progress: 0 },
+            })),
+          unknownIds: ids.filter((id) => !items.some((m) => m.id === id)),
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+  }
+
+  it('applies the backend’s progress events to the item with that source while a project is open', async () => {
+    installPool([MKV, itemNamed('A')]);
+    useMediaPoolStore.getState().setOpenProject(PROJECT_A);
+    await vi.waitFor(() => expect(useMediaPoolStore.getState().items).toHaveLength(2));
+    const emit = events.handlers.get(MEDIA_CONVERSION_EVENT);
+    expect(emit).toBeDefined();
+    emit?.({ payload: { sourcePath: MKV.sourcePath, conversion: { state: 'converting', progress: 0.42 } } });
+    const mkv = useMediaPoolStore.getState().items.find((m) => m.id === MKV.id);
+    expect(mkv?.conversion).toEqual({ state: 'converting', progress: 0.42 });
+    expect(mkv && awaitsConversion(mkv)).toBe(true);
+    // An event for a source not in the pool changes nothing.
+    const unchanged = useMediaPoolStore.getState().items;
+    emit?.({ payload: { sourcePath: '/elsewhere.mkv', conversion: { state: 'ready', progress: 1 } } });
+    expect(useMediaPoolStore.getState().items).toBe(unchanged);
+    emit?.({ payload: { sourcePath: MKV.sourcePath, conversion: { state: 'ready', progress: 1 } } });
+    const ready = useMediaPoolStore.getState().items.find((m) => m.id === MKV.id);
+    expect(ready && awaitsConversion(ready)).toBe(false);
+  });
+
+  it('stops listening when the project closes', async () => {
+    installPool([MKV]);
+    useMediaPoolStore.getState().setOpenProject(PROJECT_A);
+    await vi.waitFor(() => expect(useMediaPoolStore.getState().items).toHaveLength(1));
+    const unlistenedBefore = events.unlistened;
+    useMediaPoolStore.getState().setOpenProject(null);
+    await flush();
+    expect(events.unlistened).toBe(unlistenedBefore + 1);
+    expect(events.handlers.has(MEDIA_CONVERSION_EVENT)).toBe(false);
+  });
+
+  it('cancels through the one command and writes the answer back onto the items', async () => {
+    installPool([MKV]);
+    useMediaPoolStore.getState().setOpenProject(PROJECT_A);
+    await vi.waitFor(() => expect(useMediaPoolStore.getState().items).toHaveLength(1));
+    const res = await useMediaPoolStore.getState().cancelConversion([MKV.id, 'nope']);
+    expect(invokeMock).toHaveBeenLastCalledWith('chroma_media_cancel_conversion', { ids: [MKV.id, 'nope'] });
+    expect(res.ok).toBe(true);
+    expect(res.unknownIds).toEqual(['nope']);
+    expect(res.items?.[0]?.wasConverting).toBe(true);
+    expect(useMediaPoolStore.getState().items[0]?.conversion?.state).toBe('cancelled');
+  });
+
+  it('a source that needs no conversion, or is ready, does not await one', () => {
+    expect(awaitsConversion({ conversion: null })).toBe(false);
+    expect(awaitsConversion({})).toBe(false);
+    expect(awaitsConversion({ conversion: { state: 'ready', progress: 1 } })).toBe(false);
+    expect(awaitsConversion({ conversion: { state: 'failed', progress: 0, error: 'x' } })).toBe(true);
   });
 });

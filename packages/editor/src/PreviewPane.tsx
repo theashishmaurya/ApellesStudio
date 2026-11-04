@@ -213,6 +213,7 @@ import { notifyPreviewFrameShown } from './loadPerf';
 import { nextAudioSeq } from './audioTransport';
 import { beginScrub, endScrub, isScrubbing, updateScrub } from './scrubAudio';
 import { ScrubWaveform } from './ScrubWaveform';
+import { PreviewConversionNotice, usePendingConversionsAtPlayhead } from './PreviewConversionNotice';
 
 /**
  * One preview resolution for both scrub and play (D-125). D-031 originally
@@ -396,6 +397,11 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
   // hook's own doc for why no z-ordered overlay div can make that call
   // correctly.
   useCanvasClipPick(surfaceEl, compSize);
+
+  // D-453 — a source under the playhead still being converted to optimized
+  // media cannot be drawn: say so (which file, how far along, Cancel) instead
+  // of a black frame or the decode's error. Changes only when that set does.
+  const pendingConversions = usePendingConversionsAtPlayhead();
 
   // ---- D-218: preview viewport zoom + pan --------------------------------
   //
@@ -665,6 +671,20 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
       if (st.playhead !== prev.playhead && !st.playing) show(st.playhead);
     });
   }, [playing, hasTimeline, savedVersion, fetchFrame]);
+
+  // D-453 — the last source under the playhead finished converting (or the
+  // playhead left it): the frame that failed while it converted is fetched
+  // again, so the picture appears without the user having to nudge the
+  // playhead.
+  const hadPendingConversions = useRef(false);
+  useEffect(() => {
+    const has = pendingConversions.length > 0;
+    if (hadPendingConversions.current && !has && !useEditorTimelineStore.getState().playing) {
+      shownFrame.current = null;
+      fetchFrame(useEditorTimelineStore.getState().playhead, PREVIEW_LONG_EDGE);
+    }
+    hadPendingConversions.current = has;
+  }, [pendingConversions, fetchFrame]);
 
   // D-432 P3 — skimming (S): the timeline asks for the frame under its pointer
   // through `previewPeek.ts`, and this subscribes OUTSIDE React, so a skim
@@ -1102,7 +1122,9 @@ export function PreviewPane({ headerStart, headerEnd }: PreviewPaneProps) {
           // this spinner only ever appears on a genuine first-load, not on
           // ordinary scrub/play frame-to-frame fetches, which still keep the
           // previous frame visible while the next one loads (unchanged).
-          decodeErr ? (
+          pendingConversions.length > 0 ? (
+            <PreviewConversionNotice pending={pendingConversions} />
+          ) : decodeErr ? (
             <div className="text-sm text-text-secondary">preview error: {decodeErr}</div>
           ) : hasFrame ? (
             // D-218 — `overflow-hidden`: a zoomed-in picture (and the

@@ -12,8 +12,8 @@
 //! the environment they report on backs AI features in two different tabs — filing them
 //! under either one would misdescribe both.
 //!
-//! **All 176 of `mcp/server.py`'s tools are ported (D-312, +2 in D-315, +2 in D-330, +4 in D-332,
-//! +1 in D-339)** and passing
+//! **All of `mcp/server.py`'s tools are ported — 276 in a debug build, 257 in a release
+//! one (D-312 onward; D-453 added `editor_cancel_media_conversion`)** — and passing
 //! the parity harness. `tests/golden/ported.json` lists them, and `tests/parity.rs`
 //! checks that ledger against both the running server and the golden corpus in both
 //! directions — so a tool cannot be quietly dropped, quietly added, or listed under a

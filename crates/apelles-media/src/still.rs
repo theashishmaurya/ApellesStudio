@@ -146,8 +146,8 @@ fn decode_cache() -> &'static DecodeCache {
 /// `path`'s pixels as RGBA, optionally resized to `target`, memoised (see
 /// [`DECODE_CACHE_CAPACITY`]).
 ///
-/// **The still counterpart of [`crate::decode_pipe::playback_frame_scaled`]**,
-/// down to the `Option<(u32, u32)>` target the compositor computes with
+/// **The still counterpart of [`crate::decode_pipe::playback_frame`]**, sized
+/// by the `Option<(u32, u32)>` target the compositor computes with
 /// [`crate::decode_pipe::scale_target`] — so a still layer and a video layer are
 /// asked for their pixels the same way and arrive at the same size. `None` =
 /// full resolution.
@@ -157,7 +157,7 @@ fn decode_cache() -> &'static DecodeCache {
 /// PNG held for three seconds would be decoded and resampled 72 times, which is
 /// exactly the kind of preview stutter CLAUDE.md's performance-first rule calls
 /// a defect. With it, a still costs one decode and then a pointer copy per
-/// frame — cheaper than the `ffmpeg` pipe a video layer needs.
+/// frame — cheaper than the decode stream a video layer needs.
 ///
 /// RGBA rather than RGB because that is what the compositor's paint step wants
 /// (`image::imageops::overlay` onto an RGBA canvas), and because a PNG/WebP

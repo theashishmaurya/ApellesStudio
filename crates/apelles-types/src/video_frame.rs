@@ -89,7 +89,7 @@ pub enum YcbcrMatrix {
 impl YcbcrMatrix {
     /// The matrix ffmpeg converts a source of probed `color_space` with: its
     /// tag when it names one of these, else swscale's default, BT.601 — so
-    /// the engine's RGB is the RGB the ffmpeg pipe produced for the same
+    /// the engine's RGB is the RGB ffmpeg produces for the same
     /// source.
     pub fn from_probe(color_space: &str) -> Self {
         match color_space {

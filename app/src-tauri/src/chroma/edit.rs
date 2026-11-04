@@ -181,9 +181,9 @@ fn decode_scale(source_size: (u32, u32), max_long_edge: Option<u32>) -> Option<(
 /// keeps it on the GPU while the cache does (the same path a rasterised title
 /// takes). A video frame from the media engine is handed over still in the
 /// decoder's IOSurface, at the source's full size, and the engine converts and
-/// resamples it on the GPU (D-452); one from the ffmpeg pipe (a container the
-/// media engine does not open) as the RGB buffer it produced, widened to RGBA
-/// on the GPU (D-449). No CPU pass touches a decoded frame's pixels.
+/// resamples it on the GPU (D-452); a source the media engine cannot open is
+/// read through its converted file (D-453), and one not converted yet is an
+/// error naming it. No CPU pass touches a decoded frame's pixels.
 fn decode_clip_rgba(
     source_path: &str,
     source_size: (u32, u32),
@@ -200,27 +200,20 @@ fn decode_clip_rgba(
             .map_err(|e| format!("decode still {source_path}: {e}"));
     }
     let info = probe_cached(&path)?;
-    decode_pipe::playback_frame_scaled(lane, slot, &path, &info, source_frame, scale)
-        .map(decoded_source)
+    decode_pipe::playback_frame(lane, slot, &path, &info, source_frame)
+        .map(apelles_compositor::Source::Video)
         .map_err(|e| format!("decode {source_path} @ src frame {source_frame}: {e}"))
-}
-
-/// A decoded frame as the GPU engine's layer source (D-452).
-pub(crate) fn decoded_source(frame: decode_pipe::Decoded) -> apelles_compositor::Source {
-    match frame {
-        decode_pipe::Decoded::Video(video) => apelles_compositor::Source::Video(video),
-        decode_pipe::Decoded::Rgb(rgb) => apelles_compositor::Source::Rgb(rgb),
-    }
 }
 
 /// A decoded frame as pixels on the CPU, at `scale` (its own size when
 /// `None`), through the GPU engine's conversion (D-452) — for the callers that
 /// need the picture itself rather than a layer of a timeline frame.
 pub(crate) fn decoded_picture(
-    frame: decode_pipe::Decoded,
+    frame: decode_pipe::VideoFrame,
     scale: Option<(u32, u32)>,
 ) -> Result<DynamicImage, String> {
-    super::gpu_compositor::picture(decoded_source(frame), scale).map(DynamicImage::ImageRgba8)
+    super::gpu_compositor::picture(apelles_compositor::Source::Video(frame), scale)
+        .map(DynamicImage::ImageRgba8)
 }
 
 /// **One source frame as a picture on the CPU** — the two-up trim viewer's
@@ -1554,7 +1547,7 @@ pub(crate) fn render_timeline_frame_deferred(
     // the keep-list with what is about to be visible keeps at most half a
     // second of extra lifetime per slot, which is exactly the lookahead.
     let upcoming = match intent {
-        FrameIntent::Playing => upcoming_boundary_targets(timeline, pos, max_long_edge),
+        FrameIntent::Playing => upcoming_boundary_targets(timeline, pos),
         // A scrub/thumbnail predicts nothing, so it also extends nothing — the
         // keep-list stays exactly the pre-D-324 visible set.
         FrameIntent::Single => Vec::new(),
@@ -1590,7 +1583,7 @@ pub(crate) fn render_timeline_frame_deferred(
     // before.
     //
     // Order is load-bearing, and getting it wrong is silent: a standby is
-    // consulted by `playback_frame_scaled` whenever the live pipe cannot serve
+    // consulted by `playback_frame` whenever the live pipe cannot serve
     // the frame being asked for, which is exactly the situation on the first
     // frame of a clip. Priming first therefore had this very frame's decode
     // pick up the pipe meant for the NEXT clip, find it could not serve the
@@ -1610,10 +1603,10 @@ pub(crate) fn render_timeline_frame_deferred(
 /// **Must be called on every frame, including with an empty `targets`.** That
 /// call is the only thing that releases a standby in the normal course of play:
 /// `sync_prefetch` is told the complete set of boundaries still worth holding a
-/// process open for, and drops everything else. So a scrub (which predicts
+/// reader open for, and drops everything else. So a scrub (which predicts
 /// nothing, and therefore wants nothing primed) has to say so rather than
 /// simply not calling — otherwise the standbys playback left behind would sit
-/// holding `ffmpeg` processes until the slot went away.
+/// holding decode readers until the slot went away.
 fn prime(lane: decode_pipe::PipeLane, targets: &[PrefetchTarget]) {
     let specs: Vec<decode_pipe::PrefetchSpec<'_>> = targets
         .iter()
@@ -1622,7 +1615,6 @@ fn prime(lane: decode_pipe::PipeLane, targets: &[PrefetchTarget]) {
             path: &t.path,
             info: &t.info,
             target: t.target,
-            scale: t.scale,
         })
         .collect();
     decode_pipe::sync_prefetch(lane, &specs);
@@ -1848,11 +1840,7 @@ pub(crate) enum FrameIntent {
 /// Never fails the frame. Every step that could error (an unprobeable source, a
 /// clip whose media has gone offline) simply skips that layer: the fallback is
 /// the respawn that would have happened anyway.
-fn upcoming_boundary_targets(
-    timeline: &Timeline,
-    pos: u64,
-    max_long_edge: Option<u32>,
-) -> Vec<PrefetchTarget> {
+fn upcoming_boundary_targets(timeline: &Timeline, pos: u64) -> Vec<PrefetchTarget> {
     let fps = timeline.fps();
     let scan = prefetch_scan_frames(fps);
     let mut out: Vec<PrefetchTarget> = Vec::new();
@@ -1900,8 +1888,7 @@ fn upcoming_boundary_targets(
             {
                 continue; // the same boundary, seen again a frame later
             }
-            let (Ok(size), Ok(info)) = (clip_source_size(&clip.source_path), probe_cached(&path))
-            else {
+            let Ok(info) = probe_cached(&path) else {
                 continue;
             };
             *primed += 1;
@@ -1910,7 +1897,6 @@ fn upcoming_boundary_targets(
                 path,
                 info,
                 target,
-                scale: decode_scale(size, max_long_edge),
             });
         }
     }
@@ -1928,7 +1914,6 @@ struct PrefetchTarget {
     path: PathBuf,
     info: apelles_media::video::VideoInfo,
     target: u64,
-    scale: Option<(u32, u32)>,
 }
 
 /// D-226 — the decode-pipe slot a clip layer belongs in: the track's own slot
