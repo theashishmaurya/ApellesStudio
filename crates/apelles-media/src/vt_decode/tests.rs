@@ -168,3 +168,41 @@ fn layouts_name_the_biplanar_format_for_the_source() {
     assert_eq!(l.matrix, YcbcrMatrix::Bt601);
     assert!(YcbcrLayout::for_source("yuvj420p", "", false).full_range);
 }
+
+/// B-384 — a QuickTime file whose track starts with an empty edit (the
+/// presentation of its first frame delayed, as ffmpeg's mov muxer writes for a
+/// stream whose timestamps do not start at zero). AVAssetReader hands out a
+/// synthesized black frame for the empty edit; ffmpeg's conform holds the
+/// first real frame over those slots. The decoder must agree with ffmpeg.
+#[test]
+fn an_empty_edit_at_the_start_holds_the_first_frame_not_black() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ts = synth(
+        dir.path(),
+        "offset.ts",
+        "testsrc2=size=320x240:rate=30:duration=2",
+        &[
+            "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "-bf", "0", "-f", "mpegts",
+        ],
+    );
+    // -copyts keeps the transport stream's 1.4 s start: the mov muxer writes it
+    // as an empty edit.
+    let path = dir.path().join("offset.mov");
+    let status = crate::ffmpeg_locate::ffmpeg()
+        .expect("ffmpeg")
+        .args(["-v", "error", "-y", "-copyts", "-i"])
+        .arg(&ts)
+        .args(["-c", "copy"])
+        .arg(&path)
+        .status()
+        .expect("remux");
+    assert!(status.success());
+    let info = crate::video::probe(&path).expect("probe");
+    for start in [0u64, 10, 43, 44, 45] {
+        let want = ffmpeg_luma(&path, &info, start, 8);
+        let got = engine_luma(&path, &info, start, want.len());
+        for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+            assert_same(g, w, start + i as u64, start);
+        }
+    }
+}

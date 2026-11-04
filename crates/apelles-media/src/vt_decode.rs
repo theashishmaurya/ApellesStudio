@@ -293,6 +293,7 @@ impl ReadJob {
         // SAFETY: a property read on a loaded track.
         let range = unsafe { track.timeRange() };
         let stream_end = add(range.start, range.duration);
+        let empty = empty_edits(&track);
 
         // SAFETY: `asset` is a live AVAsset; the error is surfaced, not ignored.
         let reader = unsafe { AVAssetReader::assetReaderWithAsset_error(&asset) }
@@ -350,6 +351,11 @@ impl ReadJob {
                 // frame for the grid.
                 let Some(image) = image else { continue };
                 if !pts.flags.contains(CMTimeFlags::Valid) {
+                    continue;
+                }
+                // A frame AVAssetReader synthesizes for an empty edit is not a
+                // source frame (B-384).
+                if empty.iter().any(|r| within(pts, r)) {
                     continue;
                 }
                 return Ok(Some(Decoded {
@@ -526,6 +532,35 @@ fn load_video_track(asset: &AVURLAsset) -> Result<Retained<AVAssetTrack>> {
     tracks
         .firstObject()
         .ok_or_else(|| anyhow!("the file has no video track the media engine can read"))
+}
+
+/// The track-time ranges of the track's empty edits: where the file presents no
+/// media (a delayed start, a gap). AVAssetReader hands out a synthesized black
+/// frame for one; ffmpeg's demuxer presents nothing there, so its conform holds
+/// the neighbouring real frame (the first one, for a leading empty edit). The
+/// decoder drops frames presented inside these ranges so the grid sees what
+/// ffmpeg's does (B-384).
+fn empty_edits(track: &AVAssetTrack) -> Vec<CMTimeRange> {
+    // SAFETY: property reads on a loaded track and its segments.
+    unsafe {
+        track
+            .segments()
+            .iter()
+            .filter(|segment| segment.isEmpty())
+            .map(|segment| segment.timeMapping().target)
+            .collect()
+    }
+}
+
+/// `a` compared with `b`, exactly, across timescales.
+fn compare(a: CMTime, b: CMTime) -> std::cmp::Ordering {
+    (i128::from(a.value) * i128::from(b.timescale))
+        .cmp(&(i128::from(b.value) * i128::from(a.timescale)))
+}
+
+/// Whether `t` falls in `[range.start, range.start + range.duration)`.
+fn within(t: CMTime, range: &CMTimeRange) -> bool {
+    compare(t, range.start).is_ge() && compare(t, add(range.start, range.duration)).is_lt()
 }
 
 /// The track's codec (`CMVideoCodecType`) and whether it declares full-range
