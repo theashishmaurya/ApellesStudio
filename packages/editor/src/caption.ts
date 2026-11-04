@@ -9,7 +9,8 @@
 // **What it does NOT do:** no rendering, no file parsing, no ffmpeg. Reading
 // `.srt`/`.vtt` is the Rust side's `apelles_timeline::subtitle_import` (reached
 // through the `chroma_import_subtitles` command) — deliberately ONE parser, not
-// one per language; compiling the export filtergraph is `timelineExport.ts`.
+// one per language; drawing a caption, in the preview and the export alike, is
+// the Rust side's `chroma::caption_render` (D-449).
 //
 // ## Why this file is a mirror rather than a shared package
 //
@@ -203,8 +204,9 @@ export function captionCps(text: string, secs: number): number | null {
  *  `apelles_timeline::caption::CaptionLine`. */
 export interface CaptionLineGeometry {
   index: number;
-  /** Top of this line's FONT LINE BOX — `drawtext`'s `y` under
-   *  `y_align=font`, and the top of the background box before padding. */
+  /** Top of this line's FONT LINE BOX (what ffmpeg's `drawtext` called `y`
+   *  under `y_align=font`, the convention kept from the deleted ffmpeg export),
+   *  and the top of the background box before padding. */
   line_top: number;
   /** Normalised horizontal anchor in composition pixels, before the alignment
    *  rule is applied to the line's measured advance width. */
@@ -214,11 +216,13 @@ export interface CaptionLineGeometry {
 /** The resolved, font-independent geometry of one cue — mirrors
  *  `apelles_timeline::caption::CaptionLayout`. */
 export interface CaptionLayoutResult {
-  /** `drawtext`'s `fontsize`, in composition pixels. */
+  /** The font size in composition pixels (ffmpeg `drawtext`'s `fontsize`
+   *  convention, kept from the deleted ffmpeg export, D-212). */
   font_px: number;
   /** Vertical distance between consecutive lines' `line_top`. */
   line_step: number;
-  /** `drawtext`'s `boxborderw`, in composition pixels. */
+  /** The background box's padding in composition pixels (`drawtext`'s
+   *  `boxborderw` convention, kept from the deleted ffmpeg export). */
   box_padding: number;
   lines: CaptionLineGeometry[];
 }

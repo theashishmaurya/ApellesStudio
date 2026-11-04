@@ -53,12 +53,13 @@
 //!   *timeline lifecycle* (`ensure_timeline`/`resolve_timeline`) is
 //!   `apelles_project::timeline`, wrapped here to supply the open project's dir
 //! - `edit_render` — **the Edit tab's headless timeline renderer (D-350)**: the
-//!   picture half of `editor_export`, composited by `edit`'s OWN live-preview
-//!   compositor frame by frame and piped as one raw RGBA stream into a single
-//!   `ffmpeg` process that only compresses and muxes. Replaces the old
-//!   one-`-i`-per-clip `-filter_complex` picture path (B-228/B-229/B-230) and,
+//!   picture half of `editor_export`, drawn by the live preview's own GPU
+//!   engine frame by frame straight into VideoToolbox encoders' buffers in
+//!   segments (D-452), then joined and given its sound by one `ffmpeg` remux.
+//!   The one export renderer since D-448 deleted the one-`-i`-per-clip
+//!   `-filter_complex` picture path (B-228/B-229/B-230), and with it,
 //!   structurally, the preview-vs-export parity-bug class (B-201/B-208/B-218/
-//!   B-223) — there is one compositor now, not two. Builds no ffmpeg arguments
+//!   B-223) — there is one compositor, not two. Builds no ffmpeg arguments
 //!   and mixes no audio; both come from `packages/editor/src/timelineExport.ts`
 //! - `render_cost` — **what one frame of that render costs, estimated from the
 //!   document alone (B-234 lever 2, D-373)**: a pure integer per-frame work
@@ -88,9 +89,10 @@
 //!   the running window, with the app's own measured frame rate burned in by
 //!   the `debug_set_fps_overlay` half. Gated identically
 //! - `caption_render` — rasterise a subtitle cue into an RGBA layer the
-//!   compositor draws OVER the finished frame (D-229). Multi-line, and
-//!   line-for-line identical to what the ffmpeg export's `drawtext` draws;
-//!   see `docs/notes/subtitles.md` for the measurement that makes that true
+//!   compositor draws OVER the finished frame (D-229), in the preview and the
+//!   export alike (D-449). Multi-line, laid out line-for-line as the deleted
+//!   ffmpeg export's `drawtext` did (D-448); see `docs/notes/subtitles.md` for
+//!   the measurement
 //! - `subtitles` — read a `.srt`/`.vtt` file into cues already on the
 //!   project's own timebase, and write a subtitle track back out as one
 //!   (D-229). The parsing itself is `apelles_timeline::subtitle_import`
@@ -98,11 +100,10 @@
 //! - `export_job` — **the Edit export's job lifecycle (D-441)**: a real Cancel
 //!   for a running export on either renderer (`chroma_cancel_editor_export`),
 //!   the partial-file cleanup it owes, and creating the output folder
-//! - `ffmpeg_run` — `ffmpeg <argv>` spawn/capture (D-183): the Edit-tab
-//!   timeline exporter's filter-graph run (`packages/editor/src/
-//!   timelineExport.ts` builds the argv; this runs it, cancellable, with the
-//!   D-401 loudness pass inside the run — D-441) and the debug recorder's
-//!   streaming sink. No ffmpeg-arg knowledge lives here
+//! - `ffmpeg_run` — `ffmpeg <argv>` spawn/capture (D-183): the debug
+//!   recorder's streaming sink and its command builder (the Edit export's
+//!   filter-graph runner that lived here was deleted by D-448). No ffmpeg-arg
+//!   knowledge lives here
 //! - `gpu_compositor` — **the one GPU render engine (D-449)**: the process-wide
 //!   `apelles_compositor::Engine` that paints every timeline frame, for the
 //!   Edit preview, the Colorist's framed clip and every export segment alike.

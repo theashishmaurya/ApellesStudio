@@ -2408,8 +2408,9 @@ pub fn run() {
             chroma::export::chroma_export_video,
             chroma::export::chroma_export_progress,
             chroma::export::chroma_bake_lut,
-            // D-441 — the Edit export's filter-graph run, cancellable, and the
-            // cancel itself (either renderer). See `chroma::export_job`.
+            // D-441 — the cancel of a running Edit export (the compositor's,
+            // the only renderer since D-448), and its output path. See
+            // `chroma::export_job`.
             chroma::export_job::chroma_cancel_editor_export,
             chroma::export_job::chroma_unused_export_path,
             // D-350 — the Edit tab's headless timeline render path: composite

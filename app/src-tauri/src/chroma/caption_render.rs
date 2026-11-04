@@ -21,13 +21,14 @@
 //!
 //! A caption is the first **multi-line** text Apelles draws, and D-211
 //! deliberately forbade multi-line titles because inter-line layout is the
-//! one thing `ab_glyph` and ffmpeg's `drawtext` genuinely disagree about.
-//! This module is allowed to draw multiple lines only because it never asks
-//! either engine to lay out a second line: each line is an independent,
-//! single-line glyph run at a `y` the shared layout computed. See
-//! `apelles_timeline::caption`'s module doc for the measured evidence behind
-//! that, and for why `ab_glyph`'s `ScaleFont::ascent()` /
-//! `height() + line_gap()` reproduce `drawtext`'s `y_align=font` box exactly.
+//! one thing `ab_glyph` and ffmpeg's `drawtext` genuinely disagreed about,
+//! when the ffmpeg filter export drew the export's captions (deleted by D-448;
+//! since D-449 this module draws them in the preview and the export alike).
+//! Each line is an independent, single-line glyph run at a `y` the shared
+//! layout computed, and the line box is `ab_glyph`'s `ScaleFont::ascent()` /
+//! `height() + line_gap()`, which was measured to reproduce `drawtext`'s
+//! `y_align=font` box exactly (`apelles_timeline::caption`'s module doc), so
+//! a caption sits where it always sat.
 
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -205,9 +206,9 @@ fn rasterise_caption(
     let layout = CaptionLayout::resolve(style, canvas_w, canvas_h, lines.len());
     let scale = freetype_equivalent_scale(&font, layout.font_px as f32);
     let scaled = font.as_scaled(scale);
-    // The font's own line box, exactly as ffmpeg's `drawtext` derives it under
-    // `y_align=font` — see `apelles_timeline::caption`'s module doc for the
-    // measurement that pins these two expressions to ffmpeg's.
+    // The font's own line box, as ffmpeg's `drawtext` derived it under
+    // `y_align=font` when it drew the export's captions (D-448 deleted that) —
+    // see `apelles_timeline::caption`'s module doc for the measurement.
     let ascent = scaled.ascent();
     let line_box_h = scaled.height() + scaled.line_gap();
 
@@ -223,8 +224,8 @@ fn rasterise_caption(
     }
     let mut placed = Vec::with_capacity(lines.len());
     for (line, geom) in lines.iter().zip(layout.lines()) {
-        // The same advance-and-kern walk `render_text_layer` performs, and the
-        // same one FreeType (so `drawtext`) performs — no shaping beyond it.
+        // The same advance-and-kern walk `render_text_layer` performs (the
+        // one FreeType performs) — no shaping beyond it.
         let mut pen = 0.0f32;
         let mut prev: Option<GlyphId> = None;
         let mut outlines = Vec::new();
@@ -329,11 +330,10 @@ fn rasterise_caption(
 /// **What makes this different from the static path:** the static path hands a
 /// whole LINE to one glyph run and lets its advance decide the line's width.
 /// This path positions every WORD itself — one level further down the same
-/// move D-229 made for lines, for the same reason: it is the only way this
-/// rasteriser and ffmpeg's `drawtext` put a word in the same place (the
-/// filter-graph export D-448 deleted). Each word is an independent single-word
-/// draw at an x this function computes from `ab_glyph` advance + kern, so no
-/// engine is ever asked to lay out a run of words.
+/// move D-229 made for lines, made when it was the only way this rasteriser
+/// and ffmpeg's `drawtext` (the filter-graph export D-448 deleted) put a word
+/// in the same place. Each word is an independent single-word draw at an x
+/// this function computes from `ab_glyph` advance + kern.
 fn rasterise_animated_caption(
     lines: &[&str],
     style: &CaptionStyle,
@@ -501,11 +501,10 @@ fn rasterise_animated_caption(
 
     // Pass 2 — the active word's highlight box.
     //
-    // A SQUARE rect, deliberately: ffmpeg's `drawbox` has no corner radius, so
-    // a rounded box here would be a preview the export cannot reproduce —
-    // exactly the divergence class D-211/D-229 refused to open. A real rounded
-    // highlight needs a rounded-rect primitive in BOTH engines and is a named
-    // follow-up in D-243.
+    // A SQUARE rect, deliberately: the rule dates from the ffmpeg `drawbox`
+    // export (deleted by D-448), which had no corner radius, and this one
+    // renderer (preview and export since D-449) keeps it so a preset looks as
+    // it always did. A rounded highlight is a named follow-up in D-243.
     if let Some((hr, hg, hb)) = anim.active_box_rgb() {
         let pad_x = (anim.active_box_pad_x.max(0.0) as f32) * font_px;
         let pad_y = (anim.active_box_pad_y.max(0.0) as f32) * font_px;

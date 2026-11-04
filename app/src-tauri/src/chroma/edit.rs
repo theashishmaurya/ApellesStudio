@@ -1629,9 +1629,10 @@ fn caption_steps(
 /// every caller turns into plain black.
 ///
 /// This is what a voiceover timeline with captions shows at every position,
-/// and it is what the filter export already wrote there (its captions are
-/// drawn over the `color=black` base whatever is or is not under them). Before
-/// this, the preview and the compositor export dropped a caption over a gap.
+/// and it is what the ffmpeg filter export (deleted by D-448) wrote there (its
+/// captions were drawn over a `color=black` base whatever was under them).
+/// Before this, the preview and the compositor export dropped a caption over a
+/// gap.
 ///
 /// A timeline with no frame size at all has no canvas to draw on, so it stays
 /// `None`: a project holding nothing but audio and no size set, whose preview
@@ -2331,19 +2332,17 @@ fn resolve_clip_transform(clip: &Clip, source_frame: i64) -> ClipTransform {
 /// (static-or-keyframed, fade-multiplied) `opacity`/`position_x`/`position_y`,
 /// with every other field pinned to its identity value.
 ///
-/// **The pinning is the point, and it is not a shortcut.** The export half of
-/// this feature compiles a text clip to ffmpeg's `drawtext`, which can place a
-/// text box (`x`/`y` expressions), fade it (`alpha`), and nothing else — it
-/// cannot scale, rotate or crop one. If the live preview honoured `scale` and
-/// the export ignored it, the preview would be showing a picture the export
-/// cannot produce: precisely the class of defect B-053 (a lone clip's
-/// transform silently dropped in the preview), B-090 (a keyframed `scale`
-/// silently dropped in the export) and B-094 each closed. Making the preview
-/// deliberately match the narrower engine is what keeps "preview matches
-/// export" a fact for Phase 1. Widening BOTH sides — by compiling a text clip
-/// to a rasterised overlay input instead of `drawtext`, which then rides the
-/// identical `overlay` chain a video layer does and gets every transform for
-/// free — is the Phase 2 route, recorded in `docs/notes/text-title-clips.md`.
+/// **The pinning is the point, and it is not a shortcut.** It dates from the
+/// ffmpeg filter export (deleted by D-448), which compiled a text clip to
+/// `drawtext`: that could place a text box (`x`/`y` expressions), fade it
+/// (`alpha`), and nothing else, so the preview matched the narrower engine to
+/// keep "preview matches export" a fact (the class of defect B-053, B-090 and
+/// B-094 each closed). Since D-449 one renderer draws the preview and the
+/// export, and it rasterises a title at the canvas's size and paints it like
+/// any layer, so it could now honour every transform; the boundary is kept
+/// as the documented Phase 1 contract (`editor_set_clip_transform` refuses
+/// those fields for a title), and widening it is the Phase 2 route recorded
+/// in `docs/notes/text-title-clips.md`.
 ///
 /// The GUI never offers those fields for a text clip and
 /// `editor_set_clip_transform` refuses a non-default value for one, so this
@@ -2362,10 +2361,9 @@ fn resolve_text_clip_transform(clip: &Clip, source_frame: i64) -> ClipTransform 
         crop_top: 0.0,
         crop_right: 0.0,
         crop_bottom: 0.0,
-        // D-344 — pinned for this function's own stated reason: the export
-        // compiles a title to `drawtext`, which cannot mask its own corners,
-        // so a preview that rounded one would be showing a picture the export
-        // cannot produce.
+        // D-344 — pinned with the rest of the Phase 1 boundary (this
+        // function's doc): the ffmpeg `drawtext` export it dates from could
+        // not mask a title's corners.
         corner_radius: 0.0,
         stretch: false,
     }
@@ -2607,8 +2605,7 @@ fn composite_video_frame(
         // D-230 — an ADJUSTMENT clip contributes no picture. It becomes a
         // `Step::Adjust` in the same ordered list, so the reverse walk below
         // reaches it at exactly its own z-position and applies it to the canvas
-        // built from every layer below — no separate ordering rule, the same
-        // way D-213's `drawtext` splices into the export's overlay chain.
+        // built from every layer below — no separate ordering rule.
         //
         // An adjustment whose correction provably does nothing (`None` from
         // `adjustment_ops`) is dropped here rather than pushed, so a
@@ -2955,8 +2952,8 @@ fn crop_pixel_rect(w: u32, h: u32, t: &ClipTransform) -> Option<(u32, u32, u32, 
 /// - a **text** layer is generated at exactly canvas size with `scale` pinned
 ///   to `1.0` (see `resolve_text_clip_transform` and `composite_video_frame`'s
 ///   text arm), so it is the same identity: `cw/2 - cw/2 + px*cw == px*cw`.
-///   Titles are untouched by this change, and still agree with `drawtext`'s
-///   own centred-plus-offset placement on the export side.
+///   Titles were untouched by this change (they agreed with the ffmpeg
+///   export's `drawtext` placement, D-448 deleted that export).
 /// - `scale` now grows a layer about its top-left corner rather than about the
 ///   canvas centre — which is what the exporter has always done, so this is
 ///   the same divergence being closed rather than a new one. The GUI's corner
@@ -4738,10 +4735,9 @@ mod composite_tests {
         assert!(mid > 0.0 && mid < 20.0, "expected a real ramp, got {mid}");
     }
 
-    /// A TEXT clip's radius is pinned to zero: the export compiles a title to
-    /// `drawtext`, which cannot mask its own corners, so a preview that
-    /// rounded one would be showing a picture the export cannot produce — the
-    /// same parity reasoning that pins `scale`/`rotation`/`crop_*` there.
+    /// A TEXT clip's radius is pinned to zero, with `scale`/`rotation`/`crop_*`:
+    /// the Phase 1 title boundary (`resolve_text_clip_transform`'s doc), which
+    /// dates from the ffmpeg `drawtext` export that could not mask corners.
     #[test]
     fn a_text_clips_corner_radius_is_pinned_to_zero() {
         let clip = Clip {
@@ -4915,8 +4911,8 @@ mod composite_tests {
 
     /// The Phase 1 boundary, enforced at the compositor: a text clip's
     /// opacity, fade and position are honoured; scale/rotation/crop/box are
-    /// pinned to identity because `drawtext` (the export path) cannot
-    /// reproduce them. See `resolve_text_clip_transform`'s own doc.
+    /// pinned to identity (the boundary dates from the deleted `drawtext`
+    /// export). See `resolve_text_clip_transform`'s own doc.
     #[test]
     fn a_text_clips_transform_keeps_position_and_opacity_and_drops_the_rest() {
         let clip = Clip {
@@ -5586,8 +5582,8 @@ mod audio_only_preview_tests {
     }
 
     /// A caption over a voiceover is drawn over black at the preview canvas —
-    /// the same picture the filter export writes (captions over its
-    /// `color=black` base). Before B-290 the `layers.is_empty()` return ran
+    /// the picture the deleted filter export wrote (captions over its
+    /// `color=black` base), and the export's now. Before B-290 the `layers.is_empty()` return ran
     /// ahead of the caption pass, so a caption with no video under it was never
     /// drawn by the preview or the compositor export.
     #[test]

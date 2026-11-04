@@ -1,14 +1,9 @@
 // @apelles/editor — the text/title clip primitive's pure logic (D-211/D-213,
 // `docs/notes/text-title-clips.md`): the `TextLayer` validator, the
-// `set_text_clip` reducer, and the `drawtext` compilation in
-// `timelineExport.ts`.
-//
-// The REAL ffmpeg execution / pixel-level half is
-// `timelineExportText.ffmpeg.test.ts` — kept separate for the reason that
-// file's own header gives: string-matching an argv proves the compiler's
-// logic, not that ffmpeg accepts the graph or that the text lands where it
-// should. Both exist because B-075/B-076/B-090 each shipped past a green
-// argv-only test.
+// `set_text_clip` reducer, and the export's missing-font check. (The
+// `drawtext` compilation these tests once covered went with the ffmpeg
+// filter export, D-448; titles are drawn by the one GPU renderer, whose
+// pixel tests are `chroma::edit`'s `preview_text_tests`.)
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -59,14 +54,6 @@ function timeline(tracks: Track[]): Timeline {
 
 function track(kind: Track['kind'], clips: Clip[], overrides: Partial<Track> = {}): Track {
   return { kind, clips, ...overrides };
-}
-
-const OPTS = { fps: 24, width: 640, height: 360, fontFiles: FONTS };
-
-/** The single `drawtext=` node in a compiled argv, or `null`. */
-function drawtextNode(args: string[]): string | null {
-  const graph = args[args.indexOf('-filter_complex') + 1] ?? '';
-  return graph.split(';').find((s) => s.includes('drawtext=')) ?? null;
 }
 
 // --------------------------------------------------------------------------- //

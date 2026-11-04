@@ -2095,8 +2095,10 @@ impl ApellesMcp {
        then whips backwards at 2x, then forwards again. Reversing does not
        change how long a run occupies: `-2.0` and `2.0` take exactly the same
        timeline space, so flipping a sign never moves the clip's out-point.
-       Reverse costs REAL MEMORY at export (ffmpeg buffers the reversed run's
-       frames), bounded to that run rather than the whole source file.
+       Reverse costs time and memory at export: the picture's reversed run is
+       decoded frame by frame backwards (each frame a seek), and its sound is
+       reversed by ffmpeg's `areverse`, which buffers that run's audio,
+       bounded to the run rather than the whole source file.
     6. **Smoothed S-curve speed transitions are still not supported** -- a
        speed change is a step. A gradual ramp can be approximated by adding
        more points.
@@ -3880,10 +3882,10 @@ impl ApellesMcp {
       from it, so a cue growing to two lines keeps its bottom line put.
 
     These are the only geometry a caption has: `editor_set_clip_transform`,
-    fades and opacity keyframes do NOT apply to a caption (D-228 — the export
-    draws it with ffmpeg's `drawtext`, which cannot scale, rotate or crop a
-    text box, so offering those would let the preview show something the export
-    cannot reproduce).
+    fades and opacity keyframes do NOT apply to a caption (D-228). The rule
+    dates from the ffmpeg `drawtext` export (deleted by D-448), which could
+    not scale, rotate or crop a text box; the one renderer that draws captions
+    now (`caption_render`, in the preview and the export alike) keeps it.
 
     ## Animation (D-243)
 
@@ -3911,11 +3913,12 @@ impl ApellesMcp {
       animated caption positions each word itself, so this stands in for a
       space.
 
-    **Deliberately absent: per-word SCALE.** ffmpeg's `fontsize` is the input
-    to the very measurement that makes the preview and the export agree
-    (D-212), so animating it would re-open a divergence D-229 closed. The
-    highlight box is square and switches on/off per word for the same class of
-    reason — `drawbox` has neither a corner radius nor an alpha expression.
+    **Deliberately absent: per-word SCALE**, a rounded highlight box and a
+    fading one (the box is square and switches on/off per word). Those limits
+    date from the ffmpeg `drawtext`/`drawbox` export (deleted by D-448), where
+    the font size was the input to the measurement that made the preview and
+    the export agree (D-212) and a box had no corner radius or alpha
+    expression; the one renderer that draws captions now keeps the same rules.
 
     Every one of these is a plain style field, so a preset applied with
     `editor_add_caption_preset` can be adjusted afterwards with this tool."#
@@ -4046,12 +4049,12 @@ impl ApellesMcp {
     **Its OPACITY is how strongly the correction is mixed in** (`1.0` = full,
     `0.5` = half), via the ordinary `editor_set_clip_transform`. It is read
     STATICALLY: keyframing it or fading the clip will NOT animate the
-    correction, in either the preview or the export, because ffmpeg fixes
-    these filter coefficients when the filter starts. Position, scale,
-    rotation and crop do not apply at all — the correction is full-frame.
+    correction, in either the preview or the export, because the correction
+    is built once from the clip's static fields. Position, scale, rotation
+    and crop do not apply at all — the correction is full-frame.
 
-    The preview and `editor_export` run the same maths, verified against real
-    ffmpeg to within 1/255."#
+    The preview and `editor_export` are drawn by the same GPU engine
+    (D-448/D-449), so they apply the identical correction."#
     )]
     pub async fn editor_add_adjustment_clip(
         &self,
@@ -5532,8 +5535,8 @@ impl ApellesMcp {
     a track/canvas. `overlay_width = width * clip.scale` always; the
     overlay's HEIGHT depends on `fit_overrides` (`{clip_id: "fit" |
     "stretch"}`, EXPORT-TIME-ONLY, mirrors `speed_overrides`'s own shape):
-    `"fit"` (the default for any clip with no entry here) lets ffmpeg
-    compute height from the clip's own real, post-crop aspect ratio — the
+    `"fit"` (the default for any clip with no entry here) lets the
+    renderer compute height from the clip's own real, post-crop aspect ratio — the
     overlay is correctly proportioned, undistorted, and generally will NOT
     exactly fill a target box unless you chose `width`/`height`/`scale` to
     make it so. `"stretch"` forces height to `height * clip.scale` too —
@@ -5547,8 +5550,8 @@ impl ApellesMcp {
     aspect ratio necessarily differs from the canvas's own — use `"fit"`
     (the default) for that layout, and compute `position_y` yourself from
     the clip's own known resolution (`editor_import_media`'s probe result)
-    to center or top-align the resulting box within its slot; ffmpeg
-    round-trips height to the nearest even pixel count under `"fit"`, so
+    to center or top-align the resulting box within its slot; the
+    renderer rounds the height to a whole pixel under `"fit"`, so
     treat the exact rendered height as approximate when computing that
     offset.
 
@@ -5603,8 +5606,9 @@ impl ApellesMcp {
     audio-less export is left untouched and says so in `loudness.skipped`.
 
     **One image engine (D-448).** Every frame is drawn by the app's own
-    compositor — the same one the Edit tab previews with — and piped into one
-    ffmpeg process that only encodes and muxes. `speed_overrides`,
+    compositor — the same one the Edit tab previews with — and encoded in
+    process on VideoToolbox (D-452); ffmpeg only joins the segments and muxes
+    the sound. `speed_overrides`,
     `fit_overrides` ("Stretch to fill") and `freeze_overrides` ("Hold last
     frame") are applied as clip data on the copy of the timeline it draws."#
     )]
@@ -5641,7 +5645,8 @@ impl ApellesMcp {
         if !env.get("ok").and_then(Value::as_bool).unwrap_or(false) {
             env = self.await_export_job(env, &out_path, &job_id).await;
         }
-        // The result carries the whole ffmpeg argv, which is long, noisy and of no use
+        // The result carries the whole ffmpeg argv (the join-and-mux step and its audio
+        // graph since D-448/D-452), which is long, noisy and of no use
         // to a caller deciding what to do next — so it is dropped from the answer.
         if let Some(Value::Object(result)) = env.get_mut("result")
             && result.contains_key("args")
@@ -5811,7 +5816,7 @@ impl ApellesMcp {
     (`fade_in_frames`/`fade_out_frames`), audio ducking
     (`Track.duck_from`/`duck_db`/...) — FCPXML itself has no static
     equivalent for ducking, matching the format's own documented exclusion
-    of audio volume automation — and `editor_export`'s own ffmpeg-only,
+    of audio volume automation — and `editor_export`'s own
     non-persisted export-time parameters (`speed_overrides`/
     `fit_overrides`/`freeze_overrides`), which have no `Clip` field to read
     here at all.

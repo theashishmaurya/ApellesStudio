@@ -78,9 +78,9 @@ export const MIN_DRAG_SCALE = 0.02;
  *    leftover: a title's layer is RASTERISED AT CANVAS SIZE with its ink
  *    centred inside it (`chroma::text::render_text_layer`), and only then
  *    offset by `position_*`. So the ink a user sees really does start centred
- *    and move from there, which is exactly what ffmpeg's `drawtext` does on
- *    the export side too (`x='(w-text_w)/2+w*(position_x)'`). Both engines
- *    already agreed about titles before D-338 and still do — a title's
+ *    and move from there, which is exactly what ffmpeg's `drawtext` did on
+ *    the export side (`x='(w-text_w)/2+w*(position_x)'`) until D-448 deleted
+ *    that export. Both engines agreed about titles before D-338 — a title's
  *    canvas-sized layer makes `cw/2 - cw/2 + px*cw` and `px*cw` the same
  *    expression — so this is the one place where drawing a centre-anchored
  *    box is CORRECT rather than the B-201 bug. B-130 is the regression test. */

@@ -964,8 +964,9 @@ fn default_text_color() -> String {
 ///
 /// **Single-line only, enforced at the write path** (`@apelles/editor`'s
 /// `newTextLayer`/`set_text_clip` reject a `\n`). Not a shortcut: the live
-/// preview rasterises with `ab_glyph` and the export rasterises with ffmpeg's
-/// `drawtext`/libfreetype, and the ONE thing those two genuinely disagree
+/// preview rasterised with `ab_glyph` and the export with ffmpeg's
+/// `drawtext`/libfreetype (until D-448 deleted that export; one renderer
+/// draws both since D-449), and the ONE thing those two genuinely disagreed
 /// about is inter-line layout (line height, per-line alignment). Restricting
 /// Phase 1 to the case where they provably agree is what makes "preview
 /// matches export" a fact rather than a hope — the exact discipline B-088/
@@ -980,11 +981,10 @@ pub struct TextLayer {
     pub content: String,
     /// A font-family **key** into `chroma::text`'s catalogue (`sans`,
     /// `sans-bold`, `serif`, …), NOT a path or a system family name. The
-    /// catalogue is what maps a key to a real font FILE, and both renderers
-    /// read that same file: the live compositor loads it with `ab_glyph`, the
-    /// export passes the identical path to `drawtext`'s `fontfile=`. That
-    /// shared file is the whole reason preview and export produce the same
-    /// glyphs at all (D-212).
+    /// catalogue is what maps a key to a real font FILE, which the compositor
+    /// loads with `ab_glyph` for the preview and the export alike (D-449; the
+    /// deleted ffmpeg export passed the same path to `drawtext`'s
+    /// `fontfile=`, D-212).
     #[serde(default = "default_text_font")]
     pub font: String,
     /// Font size as a fraction of the COMPOSITION's height — see
@@ -1611,10 +1611,10 @@ pub struct Clip {
     /// narrower than for a media clip in Phase 1 — `opacity` (with its fade)
     /// and `position_x`/`position_y` do, `scale`/`rotation`/`box_*`/the crop
     /// insets do NOT, in EITHER renderer. See `docs/notes/text-title-clips.md`
-    /// §"What applies to a text clip" for why (short version: the export path
-    /// is `drawtext`, which can place and fade a text box but cannot scale,
-    /// rotate or crop one, and a preview that did what the export cannot is
-    /// the B-053 class of defect this repo keeps closing).
+    /// §"What applies to a text clip" for why (short version: the boundary
+    /// dates from the ffmpeg `drawtext` export, deleted by D-448, which could
+    /// place and fade a text box but not scale, rotate or crop one; widening
+    /// it is the note's Phase 2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<TextLayer>,
 
@@ -1636,11 +1636,10 @@ pub struct Clip {
     /// ones.** A caption is positioned, sized and coloured entirely by its
     /// resolved [`caption::CaptionStyle`] — `position_x`/`position_y`,
     /// `scale`, `rotation`, the crop insets, `opacity` and the fades are all
-    /// ignored by both renderers. That is a deliberate line, drawn for
-    /// D-211's reason one step further: the export draws a caption with
-    /// `drawtext`, which cannot scale, rotate or crop a text box, and a
-    /// preview offering controls the export silently ignores is the B-053
-    /// class of defect this repo keeps closing. See D-229.
+    /// ignored by the renderer (preview and export). That is a deliberate
+    /// line, drawn for D-211's reason one step further when the export drew a
+    /// caption with ffmpeg's `drawtext` (deleted by D-448), which could not
+    /// scale, rotate or crop a text box. See D-229.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption: Option<CaptionCue>,
 

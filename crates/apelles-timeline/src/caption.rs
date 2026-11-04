@@ -10,8 +10,15 @@
 //! It never opens a font (it carries a font *key*, exactly as
 //! [`crate::TextLayer`] does — see [`crate::DEFAULT_TEXT_FONT`]) and never
 //! measures a glyph. Reading `.srt`/`.vtt`/`.ttml` is
-//! [`crate::subtitle_import`]; drawing is `chroma::text` (`app/src-tauri`) for
-//! the live preview and `@apelles/editor`'s `timelineExport.ts` for the export.
+//! [`crate::subtitle_import`]; drawing is `chroma::caption_render`
+//! (`app/src-tauri`), for the live preview and the export alike.
+//!
+//! **Since D-448 / D-449 there is one renderer.** `chroma::caption_render`
+//! draws every caption in the preview and in the export alike; the ffmpeg
+//! `drawtext` export and `timelineExport.ts` are deleted. The two-engine
+//! reasoning below (written when the export was ffmpeg's) is why the layout
+//! and the vocabulary are what they are, and is kept as the history of that
+//! contract: a saved caption still looks as it always did.
 //!
 //! ## Why this module exists at all: the two-engine parity problem
 //!

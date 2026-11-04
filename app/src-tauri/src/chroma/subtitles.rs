@@ -112,8 +112,9 @@ pub fn chroma_import_subtitles(
 ///
 /// The other half of the round trip Blackmagic's own copy promises —
 /// "[subtitles] can be rendered into the final video **or exported as separate
-/// TTMLs, SRT or VTT files**". Rendering-into-the-video is the export
-/// compiler's `drawtext` path; this is the sidecar-file half.
+/// TTMLs, SRT or VTT files**". Rendering-into-the-video is the compositor's
+/// caption pass (`caption_render`, D-229/D-449); this is the sidecar-file
+/// half.
 ///
 /// The format is chosen by `path`'s extension, falling back to SubRip — the
 /// same "degrade to the common case rather than erroring" posture the rest of

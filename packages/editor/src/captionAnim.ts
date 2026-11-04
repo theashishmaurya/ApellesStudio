@@ -6,8 +6,10 @@
 // what a renderer should draw for it at a given moment.
 //
 // **What it does NOT do:** no rendering, no font measurement, no ffmpeg.
-// Compiling the animation into a filtergraph is `timelineExport.ts`; drawing
-// it live is the Rust side's `chroma::caption_render`.
+// Drawing it, in the preview and the export alike, is the Rust side's
+// `chroma::caption_render` (D-449). The filtergraph compiler this once fed
+// (`timelineExport.ts`, the ffmpeg export) was deleted by D-448; the kinds'
+// limits below date from it and are kept so a preset looks as it did.
 //
 // ## Why this file is a mirror rather than a shared package
 //
@@ -51,12 +53,12 @@ export const DEFAULT_CAPTION_ACTIVE_BOX_PAD_Y = 0.075;
  *  implemented TWICE, pixel-compatibly, and five is auditable where an
  *  open-ended effect language is not. */
 export type CaptionAnimKind =
-  /** No animation — D-229's static, whole-cue caption, one `drawtext` per
+  /** No animation — D-229's static, whole-cue caption, one glyph run per
    *  LINE. The default, and what every pre-D-243 project deserialises to. */
   | 'none'
   /** Line stays up; the active word gets a filled box behind it. The box is
-   *  SQUARE — ffmpeg's `drawbox` has no corner radius, so a rounded one would
-   *  be a preview the export cannot reproduce (D-243). */
+   *  SQUARE — a rule from the deleted ffmpeg `drawbox` export, which had no
+   *  corner radius (D-243, D-448). */
   | 'highlight'
   /** Line stays up; words recolour as they are spoken, active word may
    *  additionally carry a pill. */
@@ -212,9 +214,9 @@ export type CaptionWordPhase = 'upcoming' | 'active' | 'spoken';
 
 /** What to draw for one word at one moment — mirrors `CaptionWordState`.
  *
- *  Holds a PHASE rather than a resolved colour because the export resolves a
- *  phase to a separate `drawtext` node rather than to a value (`fontcolor` is
- *  not an ffmpeg expression). */
+ *  Holds a PHASE rather than a resolved colour, a shape that dates from the
+ *  deleted ffmpeg export, which resolved a phase to a separate `drawtext`
+ *  node (`fontcolor` is not an ffmpeg expression). */
 export interface CaptionWordState {
   visible: boolean;
   /** `0..1`. */
@@ -311,9 +313,9 @@ export function captionWordState(
     }
     case 'highlight':
     case 'karaoke': {
-      // BINARY, not ramped with `entered`: ffmpeg's `drawbox` takes a colour
-      // string, not a per-frame alpha expression, so a box that faded in here
-      // could not be reproduced in the export (D-243).
+      // BINARY, not ramped with `entered`: a rule from the deleted ffmpeg
+      // `drawbox` export, which took a colour string, not a per-frame alpha
+      // expression (D-243, D-448); the renderer keeps it.
       const boxAlpha =
         phase === 'active' && anim.active_box_color
           ? Math.min(1, Math.max(0, anim.active_box_opacity))

@@ -1,10 +1,9 @@
 // @apelles/editor — the adjustment-clip MODEL and OP layer (D-230).
 //
-// The pixel-level claims live in the two real-render suites
-// (`timelineExportAdjustment.ffmpeg.test.ts` and `chroma::edit`'s
-// `preview_adjustment_tests`). This file covers the parts underneath them that
-// those cannot reach cheaply: the validator both interfaces share, the reducer's
-// refusals, and the filtergraph strings the exporter emits.
+// The pixel-level claims live in `chroma::edit`'s `preview_adjustment_tests`
+// (one renderer for the preview and the export since D-449). This file covers
+// the parts underneath them that those cannot reach cheaply: the validator
+// both interfaces share, the reducer's refusals and the clip body's summary.
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -21,7 +20,7 @@ import {
   type Clip,
   type Timeline,
 } from './timeline';
-import { buildAdjustmentOps, buildAdjustmentSteps, clipAdjustmentOps, adjustmentSummary } from './adjustment';
+import { adjustmentSummary } from './adjustment';
 
 function adjustmentClip(overrides: Partial<Clip> = {}): Clip {
   return {
@@ -134,81 +133,6 @@ describe('the set_adjustment_clip reducer', () => {
       kind: 'set_adjustment_clip', track: 0, clip: 0, patch: { exposure: 1 },
     });
     expect(next.tracks[0].clips[0].adjustment).toEqual(IDENTITY_ADJUSTMENT);
-  });
-});
-
-describe('clipAdjustmentOps — what the exporter and the preview both resolve', () => {
-  it('is null for a clip that is not an adjustment clip', () => {
-    expect(clipAdjustmentOps({ opacity: 1 })).toBeNull();
-  });
-
-  it('is null for an identity correction, so a neutral clip costs nothing', () => {
-    expect(clipAdjustmentOps({ adjustment: { ...IDENTITY_ADJUSTMENT }, opacity: 1 })).toBeNull();
-  });
-
-  it('is null at zero opacity — a fully un-mixed correction is a no-op', () => {
-    const layer: AdjustmentLayer = { ...IDENTITY_ADJUSTMENT, exposure: 1 };
-    expect(clipAdjustmentOps({ adjustment: layer, opacity: 0 })).toBeNull();
-  });
-
-  it('reads opacity STATICALLY as the mix amount', () => {
-    const layer: AdjustmentLayer = { ...IDENTITY_ADJUSTMENT, exposure: 1 };
-    const half = clipAdjustmentOps({ adjustment: layer, opacity: 0.5 });
-    expect(half?.gain[0]).toBeCloseTo(1.5, 10);
-    // …and defaults to a full mix when the clip has no explicit opacity.
-    expect(clipAdjustmentOps({ adjustment: layer })?.gain[0]).toBeCloseTo(2, 10);
-  });
-});
-
-describe('buildAdjustmentSteps — the emitted filtergraph', () => {
-  const ops = buildAdjustmentOps({ ...IDENTITY_ADJUSTMENT, exposure: 0.5, saturation: -0.5 }, 1);
-  const steps = buildAdjustmentSteps(ops, 'ov1', 'ov2', 1.5, 2.5);
-
-  it('emits exactly two nodes, chained through one intermediate label', () => {
-    expect(steps).toHaveLength(2);
-    expect(steps[0]).toContain('[ov1]');
-    expect(steps[0]).toContain('[ov2_adj]');
-    expect(steps[1]).toContain('[ov2_adj]');
-    expect(steps[1]).toContain('[ov2]');
-  });
-
-  // Verified empirically against real ffmpeg (D-230): without an explicit alpha
-  // format the graph can settle on a format with no alpha plane and the colour
-  // stage silently does less than it says. Pinned here so a refactor cannot
-  // quietly drop it.
-  it('pins format=rgba before the colour stages', () => {
-    expect(steps[0]).toContain('format=rgba');
-    expect(steps[0].indexOf('format=rgba')).toBeLessThan(steps[0].indexOf('lutrgb'));
-  });
-
-  it('gates BOTH nodes to the clip’s own timeline window', () => {
-    for (const s of steps) expect(s).toContain("enable='between(t,1.5,2.5)'");
-  });
-
-  it('uses lutrgb for the gain stage and colorchannelmixer for the saturation matrix', () => {
-    expect(steps[0]).toContain('lutrgb=');
-    expect(steps[1]).toContain('colorchannelmixer=');
-  });
-
-  // The ±2 cap is ffmpeg's, on `colorchannelmixer` only. The whole reason the
-  // gain lives in `lutrgb` is that it can exceed it; this asserts stage 2 never
-  // does, across the parameter space, so no clamp or fallback is needed.
-  it('never emits a colorchannelmixer coefficient outside ffmpeg’s ±2 range', () => {
-    for (const saturation of [-1, -0.5, 0, 0.5, 1]) {
-      for (const mix of [0, 0.5, 1]) {
-        const o = buildAdjustmentOps({ ...IDENTITY_ADJUSTMENT, saturation }, mix);
-        for (const row of o.sat) {
-          for (const v of row) expect(Math.abs(v)).toBeLessThanOrEqual(2);
-        }
-      }
-    }
-  });
-
-  it('never emits exponential notation, which ffmpeg’s option parser rejects', () => {
-    const tiny = buildAdjustmentOps({ ...IDENTITY_ADJUSTMENT, exposure: 1e-7 }, 1);
-    for (const s of buildAdjustmentSteps(tiny, 'a', 'b', 0, 1)) {
-      expect(s).not.toMatch(/e[+-]\d/i);
-    }
   });
 });
 

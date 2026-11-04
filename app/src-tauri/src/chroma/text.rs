@@ -14,10 +14,11 @@
 //!   font FILES (`.ttf`/`.otf` in `<project>.chroma/brand/assets/`), keyed by
 //!   their content-hash asset id, after the fixed entries.
 //! - [`chroma_text_fonts`] — that catalogue, resolved against this machine,
-//!   as a Tauri command. **One source of truth for both renderers**: the
-//!   Inspector's font picker lists it, and `@apelles/editor`'s export compiler
-//!   reads the SAME resolved `path` into `drawtext`'s `fontfile=`, which is
-//!   the whole reason live preview and export draw the same glyphs (D-212).
+//!   as a Tauri command: the Inspector's font picker lists it, and the one
+//!   renderer (preview and export since D-449) draws from the SAME resolved
+//!   `path`. It was the one source of truth for two renderers while the
+//!   ffmpeg export read it into `drawtext`'s `fontfile=` (D-212; deleted by
+//!   D-448).
 //!   Each entry also carries D-240's `group`/`bold`/`italic` metadata, which
 //!   is what a Bold/Italic TOGGLE composes across — the composition itself
 //!   lives once in `@apelles/editor`'s `textFonts.ts`, not here or duplicated
@@ -105,9 +106,10 @@ pub struct FontFamily {
 /// The Edit tab's font catalogue.
 ///
 /// **Only single-face `.ttf` files, never a `.ttc` collection** — and that is
-/// load-bearing, not incidental: ffmpeg's `drawtext` takes a `fontfile=` with
-/// no face index and uses face 0, while `ab_glyph` would need to be told
-/// which face to parse out of the collection. A single-face file is the only
+/// load-bearing, not incidental (it dates from the ffmpeg `drawtext` export,
+/// deleted by D-448, which took a `fontfile=` with no face index and used
+/// face 0): `ab_glyph` would need to be told which face to parse out of a
+/// collection. A single-face file is the only
 /// shape where "both renderers read the same file" also means "both
 /// renderers read the same *face*". That is why the obvious macOS choices
 /// (Helvetica, Avenir, SF) are absent — they ship only as `.ttc`.
@@ -569,10 +571,11 @@ fn layer_cache() -> &'static Mutex<Vec<(LayerKey, Arc<RgbaImage>)>> {
 /// right place with `scale == 1.0` and no resize step at all.
 ///
 /// **The INK box, not the font's ascent/descent box** (D-213). ffmpeg's
-/// `drawtext` — the export half of this feature — measures `text_h` from the
-/// rendered glyphs' own bitmap extents, so centring on font metrics here
-/// would put an all-caps title (no descenders, cap height well under the
-/// ascent) visibly higher in the preview than in the export. Both sides
+/// `drawtext` — the export half of this feature until D-448 deleted it —
+/// measured `text_h` from the rendered glyphs' own bitmap extents, so
+/// centring on font metrics would have put an all-caps title (no descenders,
+/// cap height well under the ascent) visibly higher in the preview than in
+/// the export; titles keep that placement. Both sides
 /// centre the same measured ink, which is what makes the two agree.
 ///
 /// `layer.size` is a fraction of the canvas HEIGHT (see
@@ -606,8 +609,9 @@ pub fn render_text_layer(
 }
 
 /// The [`PxScale`] at which `ab_glyph` draws the same glyph size ffmpeg's
-/// `drawtext` does for `fontsize = px` — **the single number that makes the
-/// live preview and the export agree** (D-212/D-213).
+/// `drawtext` does for `fontsize = px` — **the single number that made the
+/// live preview and the ffmpeg export agree** (D-212/D-213), kept since one
+/// renderer draws both (D-449) so a title's size never changed.
 ///
 /// **The two libraries mean different things by "size", and the difference is
 /// real and visible.** `ab_glyph`'s `PxScale` is the **em** size: the font's
@@ -619,9 +623,9 @@ pub fn render_text_layer(
 /// of ink wide from `ab_glyph` and 144 px from `drawtext` (144/129 = 1.116)
 /// before this conversion, and matches to within antialiasing after it.
 ///
-/// The export's convention is the one that wins, deliberately: ffmpeg's
-/// `fontsize` is what actually ships in the rendered file, so the preview is
-/// what must be taught to agree.
+/// The export's convention was the one that won, deliberately: ffmpeg's
+/// `fontsize` was what shipped in the rendered file, so the preview was
+/// taught to agree, and every saved title's `size` means that.
 ///
 /// Falls back to a plain em-sized scale for a face reporting a nonsense
 /// `units_per_em` (a bitmap-only or malformed font) rather than dividing by
@@ -707,7 +711,7 @@ fn lay_out_text(layer: &TextLayer, px: u32) -> Result<Option<TextInk>, String> {
 
     // Pass 1 — lay the glyphs out along a baseline at y = 0, x growing by
     // each glyph's own advance plus the kerning pair with its predecessor.
-    // The same advance-and-kern walk FreeType (and so `drawtext`) performs;
+    // The same advance-and-kern walk FreeType performs;
     // no shaping beyond that, by design (see the module doc).
     let mut pen_x = 0.0f32;
     let mut prev: Option<GlyphId> = None;
@@ -793,8 +797,8 @@ fn layer_px(layer: &TextLayer, canvas_h: u32) -> u32 {
 /// unmeasurable.
 ///
 /// The fractions are NOT clamped to 1.0. A title whose text is wider than the
-/// frame really does overflow it — the export's `drawtext` crops it at the
-/// frame edge exactly as the preview does — and a box that silently stopped at
+/// frame really does overflow it — the frame edge crops it, in the preview
+/// and the export alike — and a box that silently stopped at
 /// the frame edge would be the same "the box does not match the text" defect
 /// this function exists to fix, in the other direction.
 pub fn text_layer_ink_fraction(

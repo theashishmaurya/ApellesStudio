@@ -50,8 +50,9 @@
  *   "propagate to the whole caption" half of the ask.
  *
  * - **Corner drag = FONT SIZE.** A caption has no `scale`, and inventing one
- *   would be B-053's shape all over again: a value the model would store, the
- *   preview would ignore and `drawtext` could not honour on export. Its one
+ *   would be B-053's shape all over again: a value the model would store and
+ *   the renderer would ignore (the caption contract dates from the ffmpeg
+ *   `drawtext` export, deleted by D-448, and the one renderer keeps it). Its one
  *   real size field is `CaptionStyle.size` (a fraction of composition height),
  *   which is precisely what the reference tools' own corner handle drives on a
  *   text object. The whole box — every line, the leading between them and the

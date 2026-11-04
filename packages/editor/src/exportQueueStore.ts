@@ -88,10 +88,8 @@ export interface ExportJob {
   status: ExportJobStatus;
   /** D-362 — this job's LIVE progress while it runs on the compositor path,
    *  polled from the renderer's own counters (`editor_export_status`'s exact
-   *  snapshot). `null` when the job is not running, and also for a
-   *  filter-graph job: that path hands the whole export to one ffmpeg and
-   *  learns nothing until it exits, so there is no honest number to show and
-   *  the dialog keeps its spinner rather than inventing one. */
+   *  snapshot). `null` when the job is not running (the compositor is the
+   *  only export renderer since D-448). */
   progress: TimelineExportStatus | null;
   /** Populated only for `status === 'failed'` — ffmpeg's own stderr tail,
    *  or a compile-time validation error. */

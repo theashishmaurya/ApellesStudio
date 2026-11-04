@@ -7,9 +7,15 @@
 //!
 //! **What it does NOT do:** no rasterising, no font loading, no glyph
 //! measurement, no ffmpeg. It never opens a font. Like
-//! [`crate::caption::CaptionLayout`] it is pure arithmetic that BOTH renderers
-//! consume — `chroma::caption_render` for the live preview, `@apelles/editor`'s
-//! `timelineExport.ts` for the ffmpeg export.
+//! [`crate::caption::CaptionLayout`] it is pure arithmetic the renderer
+//! consumes (`chroma::caption_render`, preview and export).
+//!
+//! **Since D-448 / D-449 there is one renderer.** `chroma::caption_render`
+//! draws every caption in the preview and in the export alike; the ffmpeg
+//! `drawtext` export and `timelineExport.ts` are deleted. The two-engine
+//! reasoning below (written when the export was ffmpeg's) is why the layout
+//! and the vocabulary are what they are, and is kept as the history of that
+//! contract: a saved caption still looks as it always did.
 //!
 //! ## Why the vocabulary is this small, and deliberately excludes scale
 //!

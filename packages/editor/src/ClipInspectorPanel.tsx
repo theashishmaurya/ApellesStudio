@@ -877,7 +877,8 @@ export function ClipInspectorPanel({
 
           {/* D-132 / v0.3.0 (D-443) — Crop: one L · R · T · B row in %, and
               the header's crop button for the viewer's crop mode (Final
-              Cut's). Hidden for a title (`drawtext` has no crop). Crop stays
+              Cut's). Hidden for a title (a title keeps its position/opacity-only
+              boundary, `chroma::edit`'s text-clip doc). Crop stays
               keyframeable through "Key everything here"; an animated crop's
               edit lands on its keyframe at the playhead. */}
           {!clip.text && (

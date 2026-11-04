@@ -178,10 +178,10 @@ export function AdjustmentClipInspectorPanel() {
           {error && <p className="text-[10px] leading-snug text-red-400">{error}</p>}
 
           {/* Stated, not implied. The Transform panel below shows this clip's
-              Opacity row with a keyframe diamond like any other clip's, but a
-              keyframed mix is not expressible in the export (ffmpeg fixes
-              `lutrgb`/`colorchannelmixer` coefficients at filter init), so
-              both renderers read `opacity` statically here. Saying so is the
+              Opacity row with a keyframe diamond like any other clip's, but
+              the correction is built once from the clip's static fields, so
+              the one renderer reads `opacity` statically here (a rule that
+              dates from the ffmpeg filter export D-448 deleted). Saying so is the
               same disclosure discipline `TextClipInspectorPanel` uses for its
               own Phase 1 gap. */}
           <p className="text-text-secondary/60 pt-1 text-[10px] leading-snug">

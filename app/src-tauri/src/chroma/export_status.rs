@@ -17,12 +17,10 @@
 //!   `exportQueueStore` runs one job at a time (D-198) and `editor_export` is
 //!   a single blocking op. A second concurrent render would overwrite the
 //!   first's numbers — which is why [`begin`] refuses to start one.
-//! - **Cover the FILTER-graph export path.** That path hands the whole job to
-//!   one ffmpeg and learns nothing until it exits; progress for it would mean
-//!   parsing ffmpeg's stderr, which is exactly what D-350 exists to stop doing.
-//!   A filter-path export never opens a job here at all, so this answers
-//!   whatever the last COMPOSITOR export left behind — `idle` on a session
-//!   that has run none. Both MCP tool descriptions say so outright, since
+//! - **Answer for anything but the compositor's export.** It is the only
+//!   export renderer since D-448 deleted the filter-graph path (which handed
+//!   the whole job to one ffmpeg and could only have reported progress by
+//!   parsing its stderr). A session that has run no export answers `idle`;
 //!   "no progress" and "no progress yet" are not the same answer.
 //! - **Push events.** It is polled, matching this repo's own established
 //!   progress pattern (`chroma::export`'s `chroma_export_progress` for the
