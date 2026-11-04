@@ -143,12 +143,19 @@ function buildPipeAudioGraph(timeline: Timeline, opts: TimelineExportOptions): A
   });
 
   if (audioRefs.length === 0) return { inputs, filterSteps, mapArg: null };
+  // B-385 — the sound runs to the end of the picture. The mix ends where its
+  // last source's sound ends, which is short of the picture whenever a source's
+  // audio stream stops before its video (measured: an AAC source 21 ms short
+  // gave a ProRes master 9.979 s of sound against 10.000 s of picture) or the
+  // timeline's last seconds have no sound at all. `apad` continues it with
+  // silence and the mux's `-t` cuts both streams at the same instant.
   if (audioRefs.length === 1) {
-    return { inputs, filterSteps, mapArg: audioRefMapArg(audioRefs[0]) };
+    filterSteps.push(`${audioRefBracket(audioRefs[0])}apad[outa]`);
+    return { inputs, filterSteps, mapArg: '[outa]' };
   }
   const mixInputs = audioRefs.map(audioRefBracket).join('');
   filterSteps.push(`${mixInputs}amix=inputs=${audioRefs.length}:duration=longest:normalize=0[mixa]`);
-  filterSteps.push(`[mixa]asoftclip=type=tanh[outa]`);
+  filterSteps.push(`[mixa]asoftclip=type=tanh,apad[outa]`);
   return { inputs, filterSteps, mapArg: '[outa]' };
 }
 

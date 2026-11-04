@@ -2238,6 +2238,20 @@ mod parity_tests {
         pipe_frames: u64,
     }
 
+    /// B-385 — a ProRes export of one clip whose sound ends before its picture.
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SoundCase {
+        source: String,
+        color: [u8; 3],
+        source_frames: u32,
+        audio_short_by_sec: f64,
+        duration_sec: f64,
+        timeline: Timeline,
+        mux_args: Vec<String>,
+        pipe_frames: u64,
+    }
+
     struct ParityFixture {
         comp_width: u32,
         comp_height: u32,
@@ -2254,6 +2268,7 @@ mod parity_tests {
         mux_args: Vec<String>,
         pipe_frames: u64,
         stress: StressCase,
+        sound: SoundCase,
     }
 
     fn load_fixture() -> ParityFixture {
@@ -2283,6 +2298,7 @@ mod parity_tests {
             mux_args: Vec<String>,
             pipe_frames: u64,
             stress: StressCase,
+            sound: SoundCase,
         }
         let w: Wire = serde_json::from_str(&raw).expect("parity fixture is not valid JSON");
         ParityFixture {
@@ -2297,6 +2313,7 @@ mod parity_tests {
             mux_args: w.mux_args,
             pipe_frames: w.pipe_frames,
             stress: w.stress,
+            sound: w.sound,
         }
     }
 
@@ -2503,6 +2520,120 @@ mod parity_tests {
             solid_share: solid as f64 / px,
             bbox,
         }
+    }
+
+    /// Each stream's duration in seconds, by codec type (`video`, `audio`).
+    fn stream_seconds(path: &Path) -> std::collections::HashMap<String, f64> {
+        let out = ffmpeg_locate::ffprobe()
+            .expect("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type,codec_name,duration",
+                "-of",
+                "json",
+            ])
+            .arg(path)
+            .output()
+            .expect("spawn ffprobe");
+        let json: serde_json::Value =
+            serde_json::from_slice(&out.stdout).expect("ffprobe answers JSON");
+        json["streams"]
+            .as_array()
+            .expect("a stream list")
+            .iter()
+            .filter_map(|s| {
+                let kind = s["codec_type"].as_str()?.to_string();
+                let secs = s["duration"].as_str()?.parse::<f64>().ok()?;
+                Some((kind, secs))
+            })
+            .collect()
+    }
+
+    /// **B-385 — a ProRes master's sound runs the picture's whole length.**
+    ///
+    /// The export's mix ended where its last source's sound ended, so a source
+    /// whose audio stops before its video — one AAC frame (21 ms) here, the
+    /// shape that gave a 10 s ProRes export 9.979 s of sound — produced a
+    /// master with a short sound track. The compiled argv (the fixture's
+    /// `sound` case, from `buildPipeExportPlan`) pads the mix with silence and
+    /// the mux's `-t` ends both streams together; this renders it for real,
+    /// ProRes picture and 24-bit PCM sound, and measures both.
+    #[test]
+    fn a_prores_master_s_sound_runs_the_picture_s_whole_length() {
+        if !ffmpeg_available() {
+            eprintln!("skipping: ffmpeg/ffprobe not on PATH");
+            return;
+        }
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let fx = load_fixture();
+        let snd = &fx.sound;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = dir.path();
+        let picture_secs = f64::from(snd.source_frames) / fx.fps;
+        let tone_secs = picture_secs - snd.audio_short_by_sec;
+        let src = dir.join(&snd.source);
+        let [r, g, b] = snd.color;
+        run_ffmpeg(&[
+            "-v".into(),
+            "error".into(),
+            "-y".into(),
+            "-f".into(),
+            "lavfi".into(),
+            "-i".into(),
+            format!(
+                "color=c=0x{r:02x}{g:02x}{b:02x}:size={}x{}:rate={}:duration={picture_secs}",
+                fx.comp_width, fx.comp_height, fx.fps
+            ),
+            "-f".into(),
+            "lavfi".into(),
+            "-i".into(),
+            format!("sine=frequency=440:sample_rate=48000:duration={tone_secs}"),
+            "-c:v".into(),
+            "libx264".into(),
+            "-pix_fmt".into(),
+            "yuv420p".into(),
+            "-c:a".into(),
+            "aac".into(),
+            src.to_string_lossy().into_owned(),
+        ])
+        .expect("generate the source");
+        let source = stream_seconds(&src);
+        assert!(
+            source["audio"] < source["video"] - 0.01,
+            "the source's sound must really end first: {source:?}"
+        );
+
+        let out = dir.join("master.mov");
+        let timeline = localise_timeline(&snd.timeline, dir);
+        let settings = settings_for(&fx);
+        let mut req = request(
+            localise(&snd.mux_args, dir, &out),
+            (fx.comp_width, fx.comp_height),
+            snd.pipe_frames,
+            fx.fps,
+        );
+        req.format = ExportVideoFormat::ProresHq;
+        let outcome = render_timeline(&timeline, &settings, &req).expect("the ProRes export");
+        assert_eq!(outcome.frames, snd.pipe_frames);
+
+        let master = stream_seconds(&out);
+        let (video, audio) = (master["video"], master["audio"]);
+        eprintln!(
+            "B-385: source sound {:.4}s / picture {:.4}s -> master sound {audio:.4}s / picture {video:.4}s",
+            source["audio"], source["video"]
+        );
+        assert!(
+            (video - snd.duration_sec).abs() < 1e-3,
+            "the picture is the timeline's length: {video}"
+        );
+        assert!(
+            (audio - video).abs() <= 1.0 / 48000.0 + 1e-9,
+            "the master's sound ({audio}s) must run the picture's length ({video}s)"
+        );
     }
 
     fn settings_for(fx: &ParityFixture) -> ProjectSettings {

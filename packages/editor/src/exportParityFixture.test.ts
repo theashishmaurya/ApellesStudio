@@ -289,6 +289,31 @@ export function stressOpts(): TimelineExportOptions {
   return { fps: FPS, width: STRESS_W, height: STRESS_H };
 }
 
+// --------------------------------------------------------------------------- #
+// The SOUND case — B-385: a ProRes master whose sound stopped short.
+// --------------------------------------------------------------------------- #
+
+/** The source: a flat picture `SOUND_FRAMES` long with a tone that stops one
+ *  AAC frame (1024 samples at 48 kHz) before the picture does — the shape that
+ *  gave a 10 s ProRes export 9.979 s of sound. The Rust half generates it. */
+const SOUND_MEDIA = 'sound.mp4';
+const SOUND_COLOR: [number, number, number] = [60, 90, 150];
+const SOUND_FRAMES = 60;
+const SOUND_SHORT_BY_SEC = 1024 / 48000;
+
+export function soundTimeline(): Timeline {
+  return {
+    id: 'sound',
+    name: 'export sound',
+    rate: { num: FPS, den: 1 },
+    tracks: [{ kind: 'video', clips: [clip('snd', SOUND_MEDIA, { duration: SOUND_FRAMES, source_len: SOUND_FRAMES })] }],
+  };
+}
+
+export function soundOpts(): TimelineExportOptions {
+  return { fps: FPS, width: COMP_W, height: COMP_H, format: 'prores_hq', hasAudioOverrides: { snd: true } };
+}
+
 interface ParityFixture {
   note: string;
   compWidth: number;
@@ -321,6 +346,36 @@ interface ParityFixture {
     muxArgs: string[];
     pipeFrames: number;
   };
+  /** B-385 — a ProRes export of one clip whose sound ends before its picture:
+   *  the master's sound must still run the picture's whole length. */
+  sound: {
+    source: string;
+    color: [number, number, number];
+    sourceFrames: number;
+    /** how much sooner the source's tone ends than its picture */
+    audioShortBySec: number;
+    durationSec: number;
+    timeline: Timeline;
+    muxArgs: string[];
+    pipeFrames: number;
+  };
+}
+
+function buildSound(): ParityFixture['sound'] {
+  const timeline = soundTimeline();
+  const opts = soundOpts();
+  const durationSec = exportTotalDurationSec(timeline, opts);
+  const plan = buildPipeExportPlan(timeline, 'OUT', opts, durationSec);
+  return {
+    source: SOUND_MEDIA,
+    color: SOUND_COLOR,
+    sourceFrames: SOUND_FRAMES,
+    audioShortBySec: SOUND_SHORT_BY_SEC,
+    durationSec,
+    timeline,
+    muxArgs: plan.args,
+    pipeFrames: plan.frames,
+  };
 }
 
 function buildFixture(): ParityFixture {
@@ -344,6 +399,7 @@ function buildFixture(): ParityFixture {
     muxArgs: plan.args,
     pipeFrames: plan.frames,
     stress: buildStress(),
+    sound: buildSound(),
   };
 }
 
@@ -413,6 +469,19 @@ describe('D-350 — the export fixture the Rust render-path tests read', () => {
     const tOf = (args: string[]) => args[args.lastIndexOf('-t') + 1];
     expect(tOf(muxArgs)).toBe(String(durationSec));
     expect(pipeFrames).toBe(Math.round(durationSec * FPS));
+  });
+
+  it('B-385 — the sound is padded with silence to the picture, and the master keeps PCM', () => {
+    const { sound } = buildFixture();
+    const fc = sound.muxArgs[sound.muxArgs.indexOf('-filter_complex') + 1] ?? '';
+    expect(fc).toBe('[1:a]apad[outa]');
+    expect(sound.muxArgs).toContain('[outa]');
+    expect(sound.muxArgs.slice(sound.muxArgs.indexOf('-c:a'), sound.muxArgs.indexOf('-c:a') + 2)).toEqual([
+      '-c:a',
+      'pcm_s24le',
+    ]);
+    // The padding is endless; the mux's `-t` is what ends both streams.
+    expect(sound.muxArgs[sound.muxArgs.lastIndexOf('-t') + 1]).toBe(String(sound.durationSec));
   });
 
   it('D-360 — the remux reads the segments and writes the output', () => {
