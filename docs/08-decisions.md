@@ -38412,3 +38412,12 @@ the reason (the surface's shape is what step 4's numbers decide).
 - **Choice.** (c). `@apelles/bridge` gains `respondToControlRequest(id, body)` and `announceBridgeClaim(claim)` (D-447: the bridge is the one place that invokes the backend), and all five registries (Colorist, Edit, Motion, Debug, Brand) use them. `control.rs` keeps the waiting ops in a map by request id and the registry claims in one process-wide `BridgeRegistry`.
 - **Why.** A command call has no listener registry to race: it runs the handler or fails visibly. It also removes the per-op listen/unlisten churn on Tauri's registry, and the handshake can no longer be missed either. Worth reporting upstream to Tauri (the owner's call: it's outward-facing).
 - **Rule.** New page → Rust messages on the control path are commands. An event is still right for Rust → page notifications.
+
+## D-456 — Apelles' window is excluded from other apps' screen capture, in every build
+
+**decided (2026-11-04, owner: "I want Apelles to be 100% invisible from external screenshots / screen captures and only internal should work… in dev and all of them")**
+
+- **Context.** The owner runs screenshot software that should not capture Apelles. Apelles' own screenshots (`debug_screenshot`, `debug_record_video`, the UI harness, the Colorist's captures) do not go through the window server: they are WebKit's `takeSnapshot` of the webview composited with the GPU engine's own picture (D-454, B-151), so they keep working when the window refuses outside capture.
+- **Options.** (a) A per-build or debug-only switch; (b) a user setting; (c) **the main window's `contentProtected: true` in the base `tauri.conf.json`**, which Tauri applies through tao as `NSWindow.sharingType = .none` for every build (dev, debug bundles, release; no platform config overrides the window list).
+- **Choice.** (c): the owner asked for every build, and one config line is the canonical Tauri way.
+- **What it does and does not do.** Capture tools that honour the window's sharing type (the macOS screen-capture APIs they use) get no picture of the window. It does not hide that Apelles is running or in front: activity trackers that log the frontmost app and its title still see it, and a tool that captures in a way that ignores the sharing type is outside this. Whether a specific third-party tool honours it is verified with that tool, not assumed.
