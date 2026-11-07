@@ -147,6 +147,10 @@ export const TIMELINE_TEST_IDS = {
   /** Overlays. */
   marquee: 'timeline-marquee',
   gapSelection: 'timeline-gap-selection',
+  /** B-393 — the reason a selected gap cannot be closed, shown beside it
+   *  without a hover, and the ring drawn around the clip that blocks it. */
+  gapBlockedReason: 'timeline-gap-blocked-reason',
+  gapBlocker: 'timeline-gap-blocker',
   dragGhost: 'timeline-drag-ghost',
   /** D-432 P2 — the edit-gesture feedback layer (`EditFeedbackLayer`): the
    *  trim bracket(s) (`data-chroma-bracket-side` in/out, `data-chroma-limit`),

@@ -165,6 +165,52 @@ describe('B-236 — a split-made gap on a sync-locked timeline', () => {
     expect(useEditorTimelineStore.getState().selectedGap).toEqual({ track: 0, frame: 110 });
   });
 
+  // B-393 — the owner's complaint was not that the refusal is wrong, it is
+  // that pressing Delete produced a highlighted gap and no information: the
+  // reason lived ONLY in the Close Gap button's tooltip, which a key press
+  // never opens. These assert the on-screen half.
+  it('says why it will not close, beside the gap, without anyone hovering a button', async () => {
+    clickAt(110, 0);
+    await waitFrames();
+    pressDelete();
+    await waitFrames();
+
+    const note = mounted!.container.querySelector('[data-testid="timeline-gap-blocked-reason"]');
+    expect(note, 'a refused gap close should state its reason on screen').not.toBeNull();
+    expect(note!.textContent).toMatch(/sync lock/i);
+    expect(note!.textContent).toMatch(/track 1/);
+    // The person's register, not the wire's: the agent-facing sentence opens
+    // with "remove_gap refused (B-033)", which is noise on screen.
+    expect(note!.textContent).not.toMatch(/B-033|remove_gap/);
+  });
+
+  it('rings the clip that is blocking it, so the sentence points at something', async () => {
+    clickAt(110, 0);
+    await waitFrames();
+    const ring = mounted!.container.querySelector('[data-testid="timeline-gap-blocker"]');
+    expect(ring, 'the straddling clip should be marked on its own track').not.toBeNull();
+  });
+
+  it('reads as blocked, not as an ordinary selection', async () => {
+    clickAt(110, 0);
+    await waitFrames();
+    const sel = mounted!.container.querySelector('[data-testid="timeline-gap-selection"]');
+    expect(sel!.getAttribute('data-chroma-gap-blocked')).toBe('true');
+  });
+
+  it('shows no reason and no ring once the close is actually possible', async () => {
+    actSync(() =>
+      useEditorTimelineStore.getState().applyOp({ kind: 'set_track_sync_locked', track: 1, syncLocked: false }),
+    );
+    clickAt(110, 0);
+    await waitFrames();
+    expect(mounted!.container.querySelector('[data-testid="timeline-gap-blocked-reason"]')).toBeNull();
+    expect(mounted!.container.querySelector('[data-testid="timeline-gap-blocker"]')).toBeNull();
+    expect(
+      mounted!.container.querySelector('[data-testid="timeline-gap-selection"]')!.getAttribute('data-chroma-gap-blocked'),
+    ).toBeNull();
+  });
+
   it('closes once the straddling track is out of sync-lock — the remedy the refusal names', async () => {
     actSync(() =>
       useEditorTimelineStore.getState().applyOp({ kind: 'set_track_sync_locked', track: 1, syncLocked: false }),

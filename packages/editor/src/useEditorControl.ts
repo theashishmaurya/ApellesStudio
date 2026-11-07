@@ -4309,7 +4309,10 @@ export function useEditorControl(): void {
         // false success; the reference-equality check below is a backstop
         // for any rejection path this pre-check doesn't (yet) mirror.
         const check = checkRemoveGap(tl, track, frame, timelineFps(tl));
-        if (!check.ok) return { error: check.reason };
+        // B-393 — `blocking` rides along so an agent can act on the refusal
+        // (unlock that track, or move that clip) without parsing the sentence
+        // for a track number, the same fact the GUI now rings on screen.
+        if (!check.ok) return { error: check.reason, blocking: check.blocking };
         useEditorTimelineStore.getState().applyOp({ kind: 'remove_gap', track, frame });
         if (useEditorTimelineStore.getState().timeline === tl) {
           return { error: 'remove_gap made no change for an unrecognised reason — this is a bug, please file it' };

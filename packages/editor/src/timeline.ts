@@ -5550,7 +5550,16 @@ export function checkRemoveGap(
   track: number,
   frame: number,
   fps: number,
-): { ok: true; gap: { gapStart: number; gapEnd: number } } | { ok: false; reason: string } {
+):
+  | { ok: true; gap: { gapStart: number; gapEnd: number } }
+  // B-393 — `reason` is the full sentence an agent gets back. `hint` is the
+  // same fact in a person's register (the GUI shows it beside the gap, where
+  // "remove_gap refused (B-033)" would be noise), and `blocking` names the
+  // track and frame so the UI can POINT at what blocks the close instead of
+  // only describing it — the owner's 2026-09-04 directive ("when i select one
+  // i should see all the sync selected": a proactive visual, not a reactive
+  // error) applied to a gap rather than a clip.
+  | { ok: false; reason: string; hint?: string; blocking?: { track: number; frame: number } } {
   const tr = tl.tracks[track];
   if (!tr) return { ok: false, reason: `no track ${track} (0..${tl.tracks.length - 1})` };
   if (tr.locked) return { ok: false, reason: `track ${track} is locked` };
@@ -5570,6 +5579,10 @@ export function checkRemoveGap(
         `${straddling} has a clip straddling the gap's end frame (${gap.gapEnd}) — a sync-locked track's clip ` +
         `can't be split by a ripple. Unlink/unlock track ${straddling}, move or trim its straddling clip clear ` +
         `of frame ${gap.gapEnd}, or unlink track ${track} from sync-lock, then retry.`,
+      hint:
+        `Closing this gap would ripple every sync-locked track, and a clip on track ${straddling} sits across ` +
+        `the point it would close to. Turn off sync lock on track ${straddling}, or move that clip clear.`,
+      blocking: { track: straddling, frame: gap.gapEnd },
     };
   }
   return { ok: true, gap };

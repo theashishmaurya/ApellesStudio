@@ -2587,6 +2587,12 @@ export function TimelinePane({
     // D-105 — a selected gap takes the same key as a selected clip; the two
     // are mutually exclusive (see `selectedGap`'s own doc), so at most one
     // branch ever fires.
+    //
+    // B-393 — a refused gap close keeps the gap SELECTED rather than clearing
+    // it, so the blocked styling, the reason beside the gap and the ring on the
+    // blocking clip all stay on screen. Before this, Delete on a blocked gap
+    // returned silently from `doRemoveGap` and the person was left with a
+    // highlighted gap and no information at all.
     if (selection.length > 0) doRemove();
     else if (selectedGap) doRemoveGap();
   });
@@ -4020,24 +4026,78 @@ export function TimelinePane({
                   const t = tracks[selectedGap.track];
                   const gap = t && gapAt(t, selectedGap.frame, fps);
                   if (!gap) return null;
+                  // B-393 — a refused close reads as refused, on screen,
+                  // without a hover. The reason used to live ONLY in the Close
+                  // Gap button's tooltip, so pressing Delete (the owner's
+                  // actual gesture) highlighted the gap, did nothing, and
+                  // explained nothing: "select GAP and delete does not works".
+                  const blocked = gapCloseCheck && !gapCloseCheck.ok ? gapCloseCheck : null;
+                  const left = START_LEFT_PX + (gap.gapStart / fps) * pxPerSec;
+                  const width = ((gap.gapEnd - gap.gapStart) / fps) * pxPerSec;
                   return (
-                    <div
-                      // Owner feedback, 2026-09-10: the old dashed outline read
-                      // as an unstyled placeholder ("this looks bad"). A glassy
-                      // translucent fill — soft gradient, backdrop blur, a
-                      // hairline border instead of a dashed one, rounded
-                      // corners — reads as a real selection state rather than
-                      // scaffolding, matching this kit's other glass surfaces
-                      // (e.g. the transport bar's own popovers).
-                      data-testid={TIMELINE_TEST_IDS.gapSelection}
-                      className="pointer-events-none absolute z-(--z-timeline-overlay) rounded-xs border border-selection/60 bg-selection/10"
-                      style={{
-                        left: START_LEFT_PX + (gap.gapStart / fps) * pxPerSec,
-                        width: ((gap.gapEnd - gap.gapStart) / fps) * pxPerSec,
-                        top: rowTops[selectedGap.track],
-                        height: rowHeights[selectedGap.track],
-                      }}
-                    />
+                    <>
+                      <div
+                        // Owner feedback, 2026-09-10: the old dashed outline read
+                        // as an unstyled placeholder ("this looks bad"). A glassy
+                        // translucent fill — soft gradient, backdrop blur, a
+                        // hairline border instead of a dashed one, rounded
+                        // corners — reads as a real selection state rather than
+                        // scaffolding, matching this kit's other glass surfaces
+                        // (e.g. the transport bar's own popovers).
+                        data-testid={TIMELINE_TEST_IDS.gapSelection}
+                        data-chroma-gap-blocked={blocked ? 'true' : undefined}
+                        className={
+                          blocked
+                            ? 'pointer-events-none absolute z-(--z-timeline-overlay) rounded-xs border border-destructive/70 bg-destructive/10'
+                            : 'pointer-events-none absolute z-(--z-timeline-overlay) rounded-xs border border-selection/60 bg-selection/10'
+                        }
+                        style={{
+                          left,
+                          width,
+                          top: rowTops[selectedGap.track],
+                          height: rowHeights[selectedGap.track],
+                        }}
+                      />
+                      {blocked && (
+                        <div
+                          data-testid={TIMELINE_TEST_IDS.gapBlockedReason}
+                          className="pointer-events-none absolute z-(--z-timeline-overlay) max-w-[28rem] rounded-xs border border-destructive/40 bg-surface/95 px-2 py-1 text-xs text-text-secondary shadow-sm backdrop-blur-sm"
+                          style={{
+                            left,
+                            // Below the gap's own row, so it never covers the
+                            // clips the sentence is telling the person to look at.
+                            top: rowTops[selectedGap.track] + rowHeights[selectedGap.track] + 2,
+                          }}
+                        >
+                          {blocked.hint ?? blocked.reason}
+                        </div>
+                      )}
+                      {/* The clip actually blocking the close, ringed on its own
+                          track — the proactive visual the owner asked for on
+                          2026-09-04, rather than a sentence the person then has
+                          to go hunting through the timeline to act on. */}
+                      {blocked?.blocking &&
+                        (() => {
+                          const bt = tracks[blocked.blocking.track];
+                          const at = bt?.clips.find(
+                            (c) =>
+                              c.start_frame < blocked.blocking!.frame && endFrame(c, fps) > blocked.blocking!.frame,
+                          );
+                          if (!at) return null;
+                          return (
+                            <div
+                              data-testid={TIMELINE_TEST_IDS.gapBlocker}
+                              className="pointer-events-none absolute z-(--z-timeline-overlay) rounded-xs border-2 border-destructive/70"
+                              style={{
+                                left: START_LEFT_PX + (at.start_frame / fps) * pxPerSec,
+                                width: ((endFrame(at, fps) - at.start_frame) / fps) * pxPerSec,
+                                top: rowTops[blocked.blocking.track],
+                                height: rowHeights[blocked.blocking.track],
+                              }}
+                            />
+                          );
+                        })()}
+                    </>
                   );
                 })()}
               {/* D-226 — one badge per transition, spanning its own window and
