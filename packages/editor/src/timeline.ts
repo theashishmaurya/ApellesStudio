@@ -6724,6 +6724,22 @@ function applyOpCopy(tl: Timeline, op: EditOp): Timeline {
     if (!c) return tl;
     const next = clone(tl);
     const nc = next.tracks[op.track].clips[op.clip];
+    // B-392 — carry the NAME across with the media. Without this the swap works
+    // (the clip really does read the new file) while every surface that shows a
+    // name — the timeline, `editor_get_timeline`, the Inspector — keeps showing
+    // the old one, for the rest of the project's life. It reads as "the swap
+    // silently did nothing and reported success", which is how it was first
+    // diagnosed.
+    //
+    // Only an AUTO-DERIVED name is replaced: if the clip's name is still the old
+    // source's basename, it was never chosen by anyone and should follow the
+    // media. A name the person (or a tool) set deliberately is theirs and
+    // survives the relink — the same instinct as `swap_media`'s existing policy
+    // of preserving transform, keyframes, fades and link group.
+    const basename = (p: string | null | undefined) => (p ? p.replace(/^.*[/\\]/, '') : '');
+    if (!nc.name || nc.name === basename(nc.source_path)) {
+      nc.name = basename(op.source_path) || nc.name;
+    }
     nc.media_id = op.media_id;
     nc.source_path = op.source_path;
     reclampToSource(nc, op.source_len, op.source_fps);

@@ -82,3 +82,40 @@ describe('an audio-only source is refused on a video track (B-389)', () => {
     expect(after).toBe(before);
   });
 });
+
+describe('swapping a clip carries its name across (B-392)', () => {
+  const withClip = (name: string, sourcePath: string): Timeline => ({
+    id: 't',
+    name: 't',
+    tracks: [
+      {
+        kind: 'video',
+        clips: [{ ...clip(sourcePath), name }],
+        gain: 1,
+        sync_locked: true,
+      },
+    ],
+  });
+  const swap = (tl: Timeline) =>
+    applyOp(tl, {
+      kind: 'swap_media',
+      track: 0,
+      clip: 0,
+      media_id: 'm2',
+      source_path: '/nasa/moon-lro.mp4',
+      source_len: 900,
+      source_fps: 25,
+    } as never);
+
+  it('an auto-derived name follows the new media', () => {
+    const after = swap(withClip('press2.mkv', '/lib/press2.mkv'));
+    expect(after.tracks[0].clips[0].source_path).toBe('/nasa/moon-lro.mp4');
+    expect(after.tracks[0].clips[0].name).toBe('moon-lro.mp4');
+  });
+
+  it('a name someone chose is kept — the relink does not clobber it', () => {
+    const after = swap(withClip('Odessa Steps', '/lib/press2.mkv'));
+    expect(after.tracks[0].clips[0].source_path).toBe('/nasa/moon-lro.mp4');
+    expect(after.tracks[0].clips[0].name).toBe('Odessa Steps');
+  });
+});
