@@ -107,6 +107,30 @@ pub(crate) trait Screen {
     fn shown(&mut self, frame: u64, clock_at_glass: Option<f64>);
 }
 
+/// Where playback stopped, and why — B-395. The message alone was not enough:
+/// the caller reported `req.from` as the stopping point, so a failure mid-play
+/// snapped the playhead back to where the person had pressed play, which read
+/// as "the playhead does not move forward".
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct PlayError {
+    /// The last frame actually shown before the failure.
+    pub at: u64,
+    pub message: String,
+}
+
+/// How many consecutive frames may fail to DRAW before playback gives up.
+///
+/// B-395 — a frame the engine cannot draw (an offline source, a clip still
+/// waiting for its optimized-media conform) used to abort the whole loop
+/// through `?`, so a single bad clip stopped the transport for the entire
+/// timeline and the only clue was a preview-error string. A missing source is
+/// an ordinary state — an unplugged drive, a moved file — so the loop now holds
+/// the last good picture, keeps the clock running and plays THROUGH the bad
+/// clip's span. The ceiling exists so a genuinely dead engine (every frame
+/// failing, not one clip's worth) still stops instead of spinning forever: at
+/// 60 Hz this is a little over four seconds of unbroken failure.
+const MAX_CONSECUTIVE_DRAW_FAILURES: u32 = 256;
+
 /// The loop itself: run until `stop` or the end of the timeline. Returns the
 /// last frame shown and whether the end was reached.
 pub(crate) fn run(
@@ -114,12 +138,18 @@ pub(crate) fn run(
     screen: &mut dyn Screen,
     stop: &AtomicBool,
     mut on_frame: impl FnMut(PlayheadEvent),
-) -> Result<(u64, bool), String> {
+) -> Result<(u64, bool), PlayError> {
     let started = Instant::now();
     let mut drawn = req.from;
     let mut refresh = DEFAULT_REFRESH;
     let mut last_acquired: Option<Instant> = None;
     let last = req.end.saturating_sub(1);
+    // B-395 — the loop's own tolerance for frames it cannot draw. `shown`
+    // tracks the furthest frame really put on the glass, so a failure reports
+    // where playback got to rather than where it began.
+    let mut shown = req.from;
+    let mut consecutive_failures = 0u32;
+    let mut reported_failure = false;
     while !stop.load(Ordering::Relaxed) {
         // A frame drawn now is presented on the next free drawable, which the
         // display shows one refresh after that (`Presenter`'s pacing): two
@@ -136,8 +166,17 @@ pub(crate) fn run(
         if due > last {
             // Show the last frame, then stop.
             if drawn != last {
-                screen.draw(last)?;
-                screen.present()?;
+                // A final frame that will not draw must not turn reaching the
+                // end of the timeline into a failure (B-395): the end is still
+                // the end, so fall through to report it.
+                if let Err(e) = screen.draw(last) {
+                    log::warn!("preview playback: could not draw the last frame {last}: {e}");
+                } else if let Err(e) = screen.present() {
+                    return Err(PlayError {
+                        at: shown,
+                        message: e,
+                    });
+                }
             }
             on_frame(PlayheadEvent {
                 frame: last,
@@ -145,12 +184,48 @@ pub(crate) fn run(
             });
             return Ok((last, true));
         }
+        // B-395 — a draw that fails does NOT stop the transport. The frame is
+        // counted as passed (so the clock and the playhead keep moving through
+        // the unplayable clip) and the retained picture is re-presented, which
+        // holds the last good frame exactly as a refresh with nothing new to
+        // show already does. Only an unbroken run of failures — a dead engine
+        // rather than one bad clip — gives up.
         let fresh = due != drawn;
+        let mut failed_to_draw = false;
         if fresh {
-            screen.draw(due)?;
+            match screen.draw(due) {
+                Ok(()) => {
+                    consecutive_failures = 0;
+                    reported_failure = false;
+                }
+                Err(e) => {
+                    failed_to_draw = true;
+                    consecutive_failures += 1;
+                    if !reported_failure {
+                        // Once per run of failures, not once per frame: an
+                        // offline clip would otherwise fill the log at the
+                        // display's refresh rate.
+                        log::warn!(
+                            "preview playback: holding on frame {due}, which will not draw: {e}"
+                        );
+                        reported_failure = true;
+                    }
+                    if consecutive_failures >= MAX_CONSECUTIVE_DRAW_FAILURES {
+                        return Err(PlayError {
+                            at: shown,
+                            message: format!(
+                                "{consecutive_failures} consecutive frames could not be drawn, last at {due}: {e}"
+                            ),
+                        });
+                    }
+                }
+            }
             drawn = due;
         }
-        let acquired = screen.present()?;
+        let acquired = screen.present().map_err(|e| PlayError {
+            at: shown,
+            message: e,
+        })?;
         if let Some(prev) = last_acquired {
             let interval = acquired.saturating_duration_since(prev);
             if interval > Duration::ZERO && interval < MAX_REFRESH {
@@ -162,8 +237,15 @@ pub(crate) fn run(
         }
         last_acquired = Some(acquired);
         if fresh {
-            let on_glass = acquired + refresh;
-            screen.shown(drawn, apelles_media::audio_clock::position(on_glass));
+            // A frame that failed to draw is not announced to the A/V
+            // measurement (nothing new reached the glass), but the playhead is
+            // still moved: the person must see the transport running through
+            // the gap rather than apparently frozen (B-395).
+            if !failed_to_draw {
+                let on_glass = acquired + refresh;
+                screen.shown(drawn, apelles_media::audio_clock::position(on_glass));
+                shown = drawn;
+            }
             on_frame(PlayheadEvent {
                 frame: drawn,
                 ended: false,
@@ -200,13 +282,20 @@ impl Handle {
                     }
                 };
                 if let Err(e) = run(req, &mut screen, &flag, emit) {
-                    log::warn!("preview playback stopped: {e}");
+                    log::warn!("preview playback stopped at {}: {}", e.at, e.message);
                     // The transport must not stay "playing" over a frozen
                     // picture: report where it stopped, as an end.
+                    //
+                    // B-395 — `e.at`, not `req.from`. This used to report the
+                    // frame play STARTED from, so a failure mid-play yanked the
+                    // playhead back to where the person had pressed play: "why
+                    // when i play it comes back playhead does not move
+                    // forward". Where it actually stopped is the honest answer
+                    // and leaves the playhead on the clip that caused it.
                     let _ = app.emit(
                         PLAYHEAD_EVENT,
                         PlayheadEvent {
-                            frame: req.from,
+                            frame: e.at,
                             ended: true,
                         },
                     );
@@ -303,6 +392,114 @@ mod tests {
         assert_eq!(seen, screen.drawn);
         // Fewer draws than presents: refreshes with nothing new re-present.
         assert!(screen.drawn.len() as u32 <= screen.presents);
+    }
+
+    /// B-395 — a screen that refuses to draw a band of frames (one unplayable
+    /// clip's span) and draws everything else.
+    struct PartlyBroken {
+        drawn: Vec<u64>,
+        shown: Vec<u64>,
+        presents: u32,
+        stop_after: u32,
+        stop: Arc<AtomicBool>,
+        bad: std::ops::Range<u64>,
+    }
+
+    impl Screen for PartlyBroken {
+        fn draw(&mut self, frame: u64) -> Result<(), String> {
+            self.drawn.push(frame);
+            if self.bad.contains(&frame) {
+                return Err(format!("{frame} is waiting to be converted"));
+            }
+            Ok(())
+        }
+        fn present(&mut self) -> Result<Instant, String> {
+            self.presents += 1;
+            if self.presents >= self.stop_after {
+                self.stop.store(true, Ordering::Relaxed);
+            }
+            std::thread::sleep(Duration::from_millis(2));
+            Ok(Instant::now())
+        }
+        fn shown(&mut self, frame: u64, _clock: Option<f64>) {
+            self.shown.push(frame);
+        }
+    }
+
+    /// A screen that can never draw anything — a dead engine, not one bad clip.
+    struct NeverDraws {
+        presents: u32,
+    }
+
+    impl Screen for NeverDraws {
+        fn draw(&mut self, frame: u64) -> Result<(), String> {
+            Err(format!("no device for {frame}"))
+        }
+        fn present(&mut self) -> Result<Instant, String> {
+            self.presents += 1;
+            Ok(Instant::now())
+        }
+        fn shown(&mut self, _frame: u64, _clock: Option<f64>) {}
+    }
+
+    #[test]
+    fn one_unplayable_clip_does_not_stop_the_transport() {
+        // The owner's report: play from before a clip whose source is offline,
+        // and the whole timeline appears unplayable. Frames 10..20 refuse to
+        // draw; playback must run through them and out the other side. (The
+        // band is small because this loop runs on the real clock: the presents
+        // below buy about a second of timeline.)
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut screen = PartlyBroken {
+            drawn: Vec::new(),
+            shown: Vec::new(),
+            presents: 0,
+            stop_after: 400,
+            stop: stop.clone(),
+            bad: 10..20,
+        };
+        let mut seen = Vec::new();
+        let result = run(req(0, 100_000), &mut screen, &stop, |e| seen.push(e));
+        assert!(
+            result.is_ok(),
+            "a bad clip must not fail the loop: {result:?}"
+        );
+        // The playhead kept moving through the bad band and past it.
+        let reached = seen.last().expect("frames were reported").frame;
+        assert!(
+            reached > 20,
+            "playback should have run past the bad clip, reached {reached}"
+        );
+        assert!(
+            seen.iter().any(|e| (10..20).contains(&e.frame)),
+            "the playhead should advance THROUGH the gap, not jump it"
+        );
+        // Nothing in the bad band was announced as really shown.
+        assert!(
+            screen.shown.iter().all(|f| !(10..20).contains(f)),
+            "a frame that would not draw must not be reported as shown: {:?}",
+            screen.shown
+        );
+        // And no event claimed the timeline had ended.
+        assert!(
+            !seen.iter().any(|e| e.ended),
+            "a bad clip is not the end of the timeline"
+        );
+    }
+
+    #[test]
+    fn a_dead_engine_still_gives_up_and_says_where() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut screen = NeverDraws { presents: 0 };
+        let err = run(req(7, 100_000), &mut screen, &stop, |_| {})
+            .expect_err("every frame failing must stop playback");
+        // Reported against where playback got to, not where it began — except
+        // that nothing was ever shown here, so `from` IS the furthest point.
+        assert_eq!(err.at, 7);
+        assert!(
+            err.message
+                .contains("consecutive frames could not be drawn")
+        );
     }
 
     #[test]
