@@ -3,7 +3,16 @@
 Real defects only — in our code or the engine. Not setup/housekeeping. Move to GitHub
 Issues once public.
 
-```
+## B-397 — one test in `apelles --lib` fails intermittently, but only under a full-workspace run, and has never been named
+
+status: **open, found 2026-11-07** (while verifying the B-389..B-395 batch) · severity: low-medium (nothing in the product is known to be wrong, but an intermittent suite is a real defect by this repo's standards: it destroys the signal every other check depends on, and it is what let a wrong "all green" claim be made) · area: unknown — somewhere in `app/src-tauri`'s lib tests
+
+- **What was observed, exactly.** `cargo test -p apelles --lib` returned `517 passed; 1 failed` twice, and once inside a `cargo test --workspace`, each time while other cargo jobs were running concurrently. Run on its own it has passed **518 / 0** every attempt: 4 consecutive isolated runs, plus two full clean `--workspace` runs after the last failure. It needs the parallel load of many test binaries at once, which is why it will not reproduce on demand.
+- **The name is still unknown, and capturing it is step one.** Both early sightings were read through a `grep` for `test result:` lines that dropped the `failures:` block entirely — so the failing test's name was never recorded, and a clean-looking summary was reported from output that did not contain the failure. Any hunt must keep the whole log (`cargo test --workspace > log 2>&1`) and read the `failures:` section.
+- **One lead, not a conclusion.** Several of these lib tests shell out to real `ffmpeg` (one synthesises a 3-second `tone.m4a`). A real subprocess plus a wall-clock expectation is the usual shape of a load-sensitive failure, and would be entirely independent of the B-389..B-395 work. Unverified.
+- **One candidate was found and fixed, and was not the whole cause.** `one_unplayable_clip_does_not_stop_the_transport` (added for B-395) stopped after a fixed number of `present` calls, tying it to how much timeline the host covered in that wall-clock time — a genuine load dependency, now stopping on the frames actually reported instead. A workspace run *after* that fix still failed once, so something else remains.
+- **Next step.** Loop `cargo test --workspace`, full log retained, until it fails; name the test; then judge whether it is a timing assumption in the test or a real race in the code beneath it. Until then the lib suite should not be trusted at single-run granularity.
+
 ## B-396 — Settings had no button anywhere, and its one shortcut only worked in the Colorist tab
 
 status: **fixed 2026-11-05** · severity: medium (the app appeared to have no settings at all: the owner, looking for D-433's AI-video-understanding flag, said "there is no setting in the GUI" — which was the only conclusion the interface supported) · area: `packages/shell/src/Shell.tsx`, `app/src/Root.tsx`, `app/src/App.tsx`, `packages/keymap/src/shortcuts.ts`, `app/src/hooks/useKeyboardShortcuts.ts`
@@ -762,6 +771,7 @@ status: **fixed** (2026-10-29, D-428) · severity: **major** · area: silence de
 - **fix (D-428):** the audio is the authority. Each word is clamped to its voiced span (loudness envelope) before it protects anything, so a mistimed word no longer swallows a pause. `editor_detect_silences` also takes `basis` (`vad+words` | `vad` | `energy` | `energy+words`), `threshold_db` / `auto_threshold`, `merge_gap_ms`, `pad_before_ms` / `pad_after_ms`, `keep_ms`, and reports per silence the raw range, a suggested `cut`, its basis and `wordCorrected`, plus `droppedForWords` / `correctedWords` / `noiseFloorDb`. Same knobs in the Recut panel (Advanced). Tests: `silenceAudio.test.ts`, `editByText.e2e.dom.test.tsx`, `RecutPanel.dom.test.tsx`, `energy.rs`.
 - **was wanted:** trust the audio when the two disagree. Use the waveform energy or VAD to correct a word whose span covers measured silence (clamp its end to the last voiced frame) before trimming, rather than discarding the silence. Also expose a `basis: "audio"` mode, and report how many silences were dropped because of a word.
 
+```
 ## B-NNN — title
 status: open | fixed | wontfix   ·   severity: blocker | high | medium | low   ·   area: …
 repro / expected / actual / cause / fix
