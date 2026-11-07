@@ -4084,6 +4084,28 @@
       }
     },
     {
+      "name": "editor_duplicate_clip",
+      "description": "Duplicate a clip, placing the copy immediately after itself on its own\n    track and rippling everything later out of the way \u2014 so the copy never\n    lands on top of a neighbour and never opens a gap.\n\n    The copy carries the per-clip work across: transform, keyframes, fades,\n    volume/pan, EQ, highlights, speed and crop. That is the same set\n    `editor_swap_clip_media` preserves, for the same reason \u2014 a duplicate that\n    silently dropped a clip's keyframes would be a worse trap than no duplicate.\n\n    An A/V link group duplicates WHOLE: every member is copied and the copies\n    share a new group, so they are linked to each other rather than to the\n    originals. Duplicating one half of a pair would desynchronise it, so a\n    locked track anywhere in the group refuses the op rather than doing half of\n    it.\n\n    Returns `{ok, duplicated: [{track, clip, id, startFrame}]}` \u2014 the copies\n    that actually landed, not the ones intended, so a refusal cannot read as a\n    success (same contract as `editor_remove_clip`'s `removed`).\n\n    B-394: this did not exist, though a timeline, a Motion scene and a Motion\n    layer could all be duplicated \u2014 so Cmd/Ctrl+D on the timeline landed on\n    nothing.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "clip": {
+            "title": "Clip",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "track",
+          "clip"
+        ],
+        "type": "object",
+        "title": "editor_duplicate_clipArguments"
+      }
+    },
+    {
       "name": "editor_duplicate_timeline",
       "description": "Duplicate a timeline \u2014 the tab menu's \"Duplicate\" (Premiere's\n    Duplicate Sequence). `id` omitted means the active timeline; `name`\n    defaults to \"<name> copy\". The copy lands right after the original and is\n    INDEPENDENT: every clip gets a new id and its Colorist grade is copied to\n    that id, so grading or editing the copy never changes the original. Its\n    own output size and markers travel with it. `activate` (default false)\n    switches to the copy. Returns the copy's summary, including its `id`.",
       "inputSchema": {
@@ -18827,6 +18849,31 @@
             "padBeforeMs": -12.3,
             "padAfterMs": -36.59,
             "keepMs": -21.84
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_duplicate_clip",
+      "case": "minimal",
+      "arguments": {
+        "track": 57,
+        "clip": 77
+      },
+      "requests": [
+        {
+          "op": "editor_duplicate_clip",
+          "args": {
+            "track": 57,
+            "clip": 77
           },
           "timeout_ms": 20000
         }

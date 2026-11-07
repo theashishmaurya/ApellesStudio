@@ -3662,6 +3662,35 @@ def editor_remove_clip(track: int, clip: int) -> str:
 
 
 @mcp.tool()
+def editor_duplicate_clip(track: int, clip: int) -> str:
+    """Duplicate a clip, placing the copy immediately after itself on its own
+    track and rippling everything later out of the way — so the copy never
+    lands on top of a neighbour and never opens a gap.
+
+    The copy carries the per-clip work across: transform, keyframes, fades,
+    volume/pan, EQ, highlights, speed and crop. That is the same set
+    `editor_swap_clip_media` preserves, for the same reason — a duplicate that
+    silently dropped a clip's keyframes would be a worse trap than no duplicate.
+
+    An A/V link group duplicates WHOLE: every member is copied and the copies
+    share a new group, so they are linked to each other rather than to the
+    originals. Duplicating one half of a pair would desynchronise it, so a
+    locked track anywhere in the group refuses the op rather than doing half of
+    it.
+
+    Returns `{ok, duplicated: [{track, clip, id, startFrame}]}` — the copies
+    that actually landed, not the ones intended, so a refusal cannot read as a
+    success (same contract as `editor_remove_clip`'s `removed`).
+
+    B-394: this did not exist, though a timeline, a Motion scene and a Motion
+    layer could all be duplicated — so Cmd/Ctrl+D on the timeline landed on
+    nothing."""
+    import json
+
+    return json.dumps(_op("editor_duplicate_clip", track=track, clip=clip), indent=2, default=str)
+
+
+@mcp.tool()
 def editor_remove_gap(track: int, frame: int) -> str:
     """Ripple-delete the empty gap on `track` at `frame` (any frame inside
     the gap works), shifting every later clip on that track earlier to close

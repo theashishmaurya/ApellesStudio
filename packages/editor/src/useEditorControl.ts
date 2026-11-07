@@ -4239,6 +4239,38 @@ export function useEditorControl(): void {
         return { ok: true, track: found.track };
       },
 
+      // B-394 — duplicate a clip in place. Reports the copies that actually
+      // landed rather than the ones intended, the same way `editor_remove_clip`
+      // below reports what was really removed: a locked track refuses the whole
+      // op, and a caller must be able to tell that from a success.
+      editor_duplicate_clip: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
+        const group = found.c.link_group;
+        if (group) {
+          const blocked = linkGroupMembers(tl, group).find(([ti]) => tl.tracks[ti]?.locked);
+          if (blocked) {
+            return {
+              error: `this clip is linked to one on track ${blocked[0]}, which is locked — duplicating only half of an A/V pair would desynchronise it. Unlock that track first.`,
+            };
+          }
+        }
+        const idsBefore = new Set<string>();
+        tl.tracks.forEach((t) => t.clips.forEach((c) => idsBefore.add(c.id)));
+        useEditorTimelineStore.getState().applyOp({ kind: 'duplicate_clip', track: found.track, clip: found.clip });
+        const after = useEditorTimelineStore.getState().timeline;
+        const added: Array<{ track: number; clip: number; id: string; startFrame: number }> = [];
+        after?.tracks.forEach((t, ti) =>
+          t.clips.forEach((c, ci) => {
+            if (!idsBefore.has(c.id)) added.push({ track: ti, clip: ci, id: c.id, startFrame: c.start_frame });
+          }),
+        );
+        if (added.length === 0) return { error: 'nothing was duplicated' };
+        return { ok: true, duplicated: added };
+      },
       editor_remove_clip: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();

@@ -170,6 +170,16 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     // key bound to it at all.
     defaultCombo: ['ctrl', 'KeyK'],
   },
+  // B-394 — Cmd/Ctrl+D, as in Premiere, Resolve and Final Cut. The owner
+  // pressed it live, on a clip, and nothing happened at all: the op did not
+  // exist. `combo.ts` renders `ctrl` as ⌘ on macOS, so this is Cmd+D there.
+  {
+    id: 'edit.duplicate_selection',
+    label: 'Duplicate selected clip',
+    category: 'timeline',
+    scope: 'edit',
+    defaultCombo: ['ctrl', 'KeyD'],
+  },
   {
     id: 'edit.delete_selection',
     label: 'Delete selected clip or gap',

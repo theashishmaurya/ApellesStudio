@@ -2422,6 +2422,18 @@ export function TimelinePane({
     }
   };
 
+  // B-394 — Cmd/Ctrl+D. Each selected clip is duplicated in place; the reducer
+  // ripples what follows and handles the A/V pair, so there is nothing to do
+  // per clip here beyond resolving its index. Re-resolved every iteration,
+  // because a duplicate inserts a clip and renumbers everything after it on
+  // that track — the same reason `doRemove` below re-resolves.
+  const doDuplicate = () => {
+    for (const s of selection) {
+      const at = locateClip(s.id);
+      if (at) applyOp({ kind: 'duplicate_clip', track: at.track, clip: at.clip });
+    }
+  };
+
   const doRemove = () => {
     for (const s of selection) {
       const at = locateClip(s.id);
@@ -2567,6 +2579,9 @@ export function TimelinePane({
   useShortcut('edit.add_marker_edit', () => doAddMarker(true));
   useShortcut('edit.split', () => {
     if (selection.length > 0) doSplit();
+  });
+  useShortcut('edit.duplicate_selection', () => {
+    if (selection.length > 0) doDuplicate();
   });
   useShortcut('edit.delete_selection', () => {
     // D-105 — a selected gap takes the same key as a selected clip; the two

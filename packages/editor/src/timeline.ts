@@ -4467,6 +4467,34 @@ export type EditOp =
       source_len: number;
       source_fps?: number;
     }
+  /** B-394 — duplicate a clip, in place, immediately after itself.
+   *
+   *  **Why it exists:** the app could duplicate a timeline
+   *  (`editor_duplicate_timeline`), a Motion scene and a Motion layer, but not
+   *  a clip — so Cmd/Ctrl+D on the timeline landed on nothing at all and the
+   *  only way to copy a clip was to read its fields and re-place it by hand.
+   *
+   *  **What it preserves:** everything about the clip except its identity and
+   *  its position — transform, keyframes, fades, volume/pan, EQ, highlights,
+   *  speed, crop. The same set `swap_media` documents preserving, for the same
+   *  reason: a duplicate that silently dropped a clip's keyframes would be a
+   *  worse trap than no duplicate at all.
+   *
+   *  **Where the copy goes:** immediately after the source clip on its own
+   *  track, with everything later on that track rippled out of the way, so the
+   *  duplicate never lands on top of a neighbour and never opens a gap. That is
+   *  what "duplicate" means in an NLE; placing it on a new track instead would
+   *  be a different verb (`place_on_top` already exists for that).
+   *
+   *  **A/V links lock-step**, unlike `swap_media`: both halves describe the
+   *  same recording, so duplicating one and not the other would desynchronise
+   *  the pair. Every member is duplicated and the copies share a NEW group, so
+   *  the copies are linked to each other rather than to the originals. */
+  | {
+      kind: 'duplicate_clip';
+      track: number;
+      clip: number;
+    }
   /** D-260 — a source file was REPLACED IN PLACE (same path, new content:
    *  what a Motion re-render to its fixed per-scene output path is), so every
    *  clip already reading it re-reads the new file's real length and rate.
@@ -4901,6 +4929,10 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return `Keyframe ${clipLabel(before, op.track, op.clip)}`;
     case 'swap_media':
       return `Swap media on ${clipLabel(before, op.track, op.clip)}`;
+    // B-394 — one entry for the whole duplicate, including an A/V pair's second
+    // half, so one Undo removes the copy entirely.
+    case 'duplicate_clip':
+      return `Duplicate ${clipLabel(before, op.track, op.clip)}`;
     // D-260 — names the FILE, not a clip: this op has no single clip to name
     // (it touches every clip reading that file), and the reason the user is
     // seeing an undo entry at all is that the file's length changed.
@@ -7237,6 +7269,41 @@ function applyOpCopy(tl: Timeline, op: EditOp): Timeline {
       );
       for (const ti of touchedTracks) {
         if (hasOverlap(next.tracks[ti], fps)) return tl;
+      }
+      return next;
+    }
+    case 'duplicate_clip': {
+      // B-394. Shaped like `split` above: resolve the link group, work
+      // descending so an insert never shifts an index still to be processed,
+      // and derive the copies' ids from the originals' the way `split` derives
+      // its right halves'.
+      const srcTrack = tl.tracks[op.track];
+      if (!srcTrack || srcTrack.locked) return tl;
+      const srcClip = srcTrack.clips[op.clip];
+      if (!srcClip) return tl;
+      const link = linkTargets(tl, op.track, op.clip);
+      // Refuse rather than half-duplicate when one member's track is locked:
+      // duplicating a pair onto a locked track would silently desynchronise it.
+      const members: Array<[number, number]> = link ? [...link.members] : [[op.track, op.clip]];
+      if (members.some(([ti]) => tl.tracks[ti]?.locked)) return tl;
+      const copyGroup = link ? `${link.group}·copy·${srcClip.start_frame}` : null;
+      const next = clone(tl);
+      const ordered = [...members].sort((a, b) => b[0] - a[0] || b[1] - a[1]);
+      for (const [ti, ci] of ordered) {
+        const clips = next.tracks[ti].clips;
+        const original = clips[ci];
+        const span = endFrame(original, fps) - original.start_frame;
+        // Ripple first, so the copy lands in real space rather than on top of
+        // whatever came next. `shiftClipsAtOrAfter` moves only clips at or
+        // after the copy's start, which is the original's end.
+        shiftClipsAtOrAfter(next.tracks[ti], endFrame(original, fps), span);
+        const copy: Clip = {
+          ...original,
+          id: `${original.id}·copy·${original.start_frame}`,
+          link_group: copyGroup,
+          start_frame: original.start_frame + span,
+        };
+        clips.splice(ci + 1, 0, copy);
       }
       return next;
     }

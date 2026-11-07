@@ -781,6 +781,13 @@ pub struct EditorRemoveClipArgs {
     pub clip: i64,
 }
 
+/// B-394 — duplicate a clip in place.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorDuplicateClipArgs {
+    pub track: i64,
+    pub clip: i64,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EditorRemoveGapArgs {
     pub track: i64,
@@ -4141,6 +4148,40 @@ impl ApellesMcp {
             .set("clip", p.clip)
             .set("atFrame", p.at_frame);
         let env = self.op("editor_split_clip", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_duplicate_clip",
+        description = r#"Duplicate a clip, placing the copy immediately after itself on its own
+    track and rippling everything later out of the way — so the copy never
+    lands on top of a neighbour and never opens a gap.
+
+    The copy carries the per-clip work across: transform, keyframes, fades,
+    volume/pan, EQ, highlights, speed and crop. That is the same set
+    `editor_swap_clip_media` preserves, for the same reason — a duplicate that
+    silently dropped a clip's keyframes would be a worse trap than no duplicate.
+
+    An A/V link group duplicates WHOLE: every member is copied and the copies
+    share a new group, so they are linked to each other rather than to the
+    originals. Duplicating one half of a pair would desynchronise it, so a
+    locked track anywhere in the group refuses the op rather than doing half of
+    it.
+
+    Returns `{ok, duplicated: [{track, clip, id, startFrame}]}` — the copies
+    that actually landed, not the ones intended, so a refusal cannot read as a
+    success (same contract as `editor_remove_clip`'s `removed`).
+
+    B-394: this did not exist, though a timeline, a Motion scene and a Motion
+    layer could all be duplicated — so Cmd/Ctrl+D on the timeline landed on
+    nothing."#
+    )]
+    pub async fn editor_duplicate_clip(
+        &self,
+        Parameters(p): Parameters<EditorDuplicateClipArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("track", p.track).set("clip", p.clip);
+        let env = self.op("editor_duplicate_clip", args).await?;
         Ok(render::json_text(&env))
     }
 
