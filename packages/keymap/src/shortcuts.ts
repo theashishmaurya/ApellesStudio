@@ -241,7 +241,20 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
   colorist('delete_selected', 'Delete selected', 'library', ['Delete']),
   colorist('preview_prev', 'Previous image', 'library', ['ArrowLeft']),
   colorist('preview_next', 'Next image', 'library', ['ArrowRight']),
-  colorist('open_settings', 'Open settings', 'library', ['ctrl', 'Comma']),
+  // B-396 — global, not `colorist`. Preferences belong to the whole app, and
+  // while this was a Colorist-scoped action the shortcut did nothing at all in
+  // Edit or Motion — which, with no gear in the chrome bar either, meant the
+  // app had no reachable Settings from two of its three tabs. The id keeps its
+  // unprefixed `open_settings` so existing user remaps in `appSettings.keybinds`
+  // and the 13 translated labels both keep working.
+  {
+    id: 'open_settings',
+    label: 'Open settings',
+    labelKey: 'settings.keybinds.actions.open_settings',
+    category: 'app',
+    scope: 'global',
+    defaultCombo: ['ctrl', 'Comma'],
+  },
   colorist('zoom_in_step', 'Zoom in a step', 'view', ['ArrowUp']),
   colorist('zoom_out_step', 'Zoom out a step', 'view', ['ArrowDown']),
   colorist('cycle_zoom', 'Cycle zoom', 'view', ['Space']),

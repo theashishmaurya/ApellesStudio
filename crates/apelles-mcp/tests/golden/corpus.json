@@ -2305,7 +2305,7 @@
     },
     {
       "name": "editor_add_clip",
-      "description": "Place a clip from an already-imported media-pool item (`editor_import_media`)\n    onto a track, trimmed to `[source_start, source_start+duration)` of the\n    source's own frames. Pass either `media_id` or `source_path` to identify\n    the pool item.\n\n    Calling this once per KEPT segment, with back-to-back `start_frame`\n    values, is how a gap or an unwanted section (a retake, a silence) is cut\n    out of a raw recording \u2014 you don't place the whole clip and then remove\n    a gap; you place only the parts you want, already sitting where they\n    should land. `source_start` defaults to 0 and `duration` to the rest of\n    the source if omitted. `at_index` inserts at a specific position on the\n    track instead of appending; `ripple=True` shifts later clips to make\n    room rather than overlapping them.\n\n    OMIT `track` to put the clip on a NEW track of the kind the source needs, in\n    one call and one undo (B-273): an audio-only source gets a new audio track\n    appended at the bottom; footage or a still gets a new video track at the\n    top (index 0, which renumbers every existing track by one). The response's\n    `track` is where the clip really landed, `createdTrack` says whether this\n    call made it, and `trackCount` is the new total. A `track` that is given is\n    validated: one that does not exist is refused, never redirected.\n\n    STILL IMAGES (D-292). A pool item that is a still (PNG/JPEG/TIFF/WebP/BMP \u2014\n    `editor_list_media` reports it with an `image` key instead of `video`) is\n    placed exactly like footage, on a VIDEO track. A still has no length of its\n    own, so two things differ:\n\n    * `duration` defaults to **3 seconds at the project's rate**, not \"the rest\n      of the source\" \u2014 pass `duration` explicitly for any other length, in\n      timeline frames. It is the same default a title gets, for the same reason.\n    * `source_start` is meaningless on a still (every frame is the same\n      picture); leave it at 0. Its reported `sourceLen` is a synthesized ONE\n      HOUR of trim headroom, not a real length \u2014 so a still can be extended\n      about as far as you like, and a `duration` up to that ceiling is accepted.\n\n    A still is refused on an audio track: it is picture with no audio stream.",
+      "description": "Place a clip from an already-imported media-pool item (`editor_import_media`)\n    onto a track, trimmed to `[source_start, source_start+duration)` of the\n    source's own frames. Pass either `media_id` or `source_path` to identify\n    the pool item.\n\n    **Prefer `duration_secs` / `source_start_secs` (B-390).** `duration` and\n    `source_start` are in the SOURCE's own frame rate, which differs per file \u2014\n    a 1925 silent transfer runs at 17.2 fps, a NASA clip at 59.94 \u2014 so\n    `duration=25` is one second of one and 0.42 s of the other, with no error\n    either way: the clip is simply the wrong length. The seconds forms say what\n    you mean and are converted app-side from that clip's real rate. They win if\n    both are given.\n\n    Calling this once per KEPT segment, with back-to-back `start_frame`\n    values, is how a gap or an unwanted section (a retake, a silence) is cut\n    out of a raw recording \u2014 you don't place the whole clip and then remove\n    a gap; you place only the parts you want, already sitting where they\n    should land. `source_start` defaults to 0 and `duration` to the rest of\n    the source if omitted. `at_index` inserts at a specific position on the\n    track instead of appending; `ripple=True` shifts later clips to make\n    room rather than overlapping them.\n\n    OMIT `track` to put the clip on a NEW track of the kind the source needs, in\n    one call and one undo (B-273): an audio-only source gets a new audio track\n    appended at the bottom; footage or a still gets a new video track at the\n    top (index 0, which renumbers every existing track by one). The response's\n    `track` is where the clip really landed, `createdTrack` says whether this\n    call made it, and `trackCount` is the new total. A `track` that is given is\n    validated: one that does not exist is refused, never redirected.\n\n    STILL IMAGES (D-292). A pool item that is a still (PNG/JPEG/TIFF/WebP/BMP \u2014\n    `editor_list_media` reports it with an `image` key instead of `video`) is\n    placed exactly like footage, on a VIDEO track. A still has no length of its\n    own, so two things differ:\n\n    * `duration` defaults to **3 seconds at the project's rate**, not \"the rest\n      of the source\" \u2014 pass `duration` explicitly for any other length, in\n      timeline frames. It is the same default a title gets, for the same reason.\n    * `source_start` is meaningless on a still (every frame is the same\n      picture); leave it at 0. Its reported `sourceLen` is a synthesized ONE\n      HOUR of trim headroom, not a real length \u2014 so a still can be extended\n      about as far as you like, and a `duration` up to that ceiling is accepted.\n\n    A still is refused on an audio track: it is picture with no audio stream.",
       "inputSchema": {
         "properties": {
           "track": {
@@ -2367,6 +2367,30 @@
             ],
             "default": null,
             "title": "Duration"
+          },
+          "duration_secs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Duration Secs"
+          },
+          "source_start_secs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Start Secs"
           },
           "start_frame": {
             "anyOf": [
@@ -17600,6 +17624,8 @@
         "source_path": "v_editor_add_clip.source_path",
         "source_start": 29,
         "duration": 77,
+        "duration_secs": 45.17,
+        "source_start_secs": -3.69,
         "start_frame": 52,
         "at_index": 77,
         "ripple": false,
@@ -17615,6 +17641,8 @@
             "sourcePath": "v_editor_add_clip.source_path",
             "sourceStart": 29,
             "duration": 77,
+            "durationSecs": 45.17,
+            "sourceStartSecs": -3.69,
             "startFrame": 52,
             "atIndex": 77,
             "name": "v_editor_add_clip.name"

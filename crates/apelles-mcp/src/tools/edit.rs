@@ -201,6 +201,11 @@ pub struct EditorAddClipArgs {
     pub source_start: Option<i64>,
     #[serde(default)]
     pub duration: Option<i64>,
+    /// B-390 — seconds, converted app-side from the source's own rate.
+    #[serde(default)]
+    pub duration_secs: Option<f64>,
+    #[serde(default)]
+    pub source_start_secs: Option<f64>,
     #[serde(default)]
     pub start_frame: Option<i64>,
     #[serde(default)]
@@ -1842,6 +1847,14 @@ impl ApellesMcp {
     source's own frames. Pass either `media_id` or `source_path` to identify
     the pool item.
 
+    **Prefer `duration_secs` / `source_start_secs` (B-390).** `duration` and
+    `source_start` are in the SOURCE's own frame rate, which differs per file —
+    a 1925 silent transfer runs at 17.2 fps, a NASA clip at 59.94 — so
+    `duration=25` is one second of one and 0.42 s of the other, with no error
+    either way: the clip is simply the wrong length. The seconds forms say what
+    you mean and are converted app-side from that clip's real rate. They win if
+    both are given.
+
     Calling this once per KEPT segment, with back-to-back `start_frame`
     values, is how a gap or an unwanted section (a retake, a silence) is cut
     out of a raw recording — you don't place the whole clip and then remove
@@ -1888,6 +1901,10 @@ impl ApellesMcp {
             .put("sourcePath", p.source_path)
             .put("sourceStart", p.source_start)
             .put("duration", p.duration)
+            // B-390 — the seconds forms, which the app converts from the clip's
+            // own rate; they win over the frame forms when both are present.
+            .put("durationSecs", p.duration_secs)
+            .put("sourceStartSecs", p.source_start_secs)
             .put("startFrame", p.start_frame)
             .put("atIndex", p.at_index)
             .put("name", p.name);

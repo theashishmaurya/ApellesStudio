@@ -10,7 +10,7 @@ import {
 } from '@apelles/editor';
 import { MotionTab, clipReadsItem, useMotionProjectStore, type SceneRenderResult } from '@apelles/motion';
 import { pageStart, takeWebviewTermination, trackEvent, useMediaPoolStore, watchPageUnload } from '@apelles/bridge';
-import { useKeymapStore } from '@apelles/keymap';
+import { useKeymapStore, useShortcut } from '@apelles/keymap';
 import { setProjectIdentityAlertSink } from '@apelles/store';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
@@ -27,8 +27,11 @@ import { openProgressView, type OpenProgressState } from './store/openProgress';
 import { useOpenProgressStore } from './store/useOpenProgressStore';
 import { SourcesPanel } from './components/chroma/SourcesPanel';
 import { SourcesImportButton } from './components/chroma/SourcesImportButton';
+import { SettingsButton } from './components/chroma/SettingsButton';
+import { SettingsOverlay } from './components/chroma/SettingsOverlay';
 import { selectProjectKey, useSessionStore } from './store/useSessionStore';
 import { useSettingsStore } from './store/useSettingsStore';
+import { useUIStore } from './store/useUIStore';
 import {
   reportActiveTab,
   restoreFailureMessage,
@@ -315,6 +318,13 @@ export function Root() {
   const keybinds = useSettingsStore((s) => s.appSettings?.keybinds);
   const osPlatform = useSettingsStore((s) => s.osPlatform);
 
+  // B-396 — `open_settings` became a GLOBAL action (it was `colorist`-scoped,
+  // so it did nothing in Edit or Motion). Its handler has to move with it:
+  // Colorist's own `useKeyboardShortcuts` only runs while that tab is
+  // frontmost, which is the whole bug. Registered here, beside the chrome-bar
+  // gear, so the key and the button drive the same flag.
+  useShortcut('open_settings', () => useUIStore.getState().setUI({ isSettingsOpen: true }));
+
   // B-217/D-358 — the guard's GUI voice. `@apelles/store` sits at the bottom of
   // the layer stack and may not depend on a toast library (or on React at all),
   // so the app injects where a divergence is shown, exactly like the keymap's
@@ -551,6 +561,10 @@ export function Root() {
         activityAction={<AgentActivityDock />}
         // D-416 — the Brand kit panel: one kit for all three tabs.
         brandAction={<BrandKitButton />}
+        // B-396 — Settings' only discoverable way in. Same injection direction
+        // as the three above: the open flag lives in this app's UI store, which
+        // `Shell` cannot import.
+        settingsAction={<SettingsButton />}
         onCloseProject={() => {
           void useSessionStore.getState().closeProject();
         }}
@@ -583,6 +597,12 @@ export function Root() {
           { id: 'colorist', label: 'Colorist', element: <App /> },
         ]}
       />
+      {/* B-396 — Settings, above the tabs rather than inside Colorist's own
+          container, so the chrome-bar gear (and `cmd/ctrl+,`) opens it from
+          Edit and Motion too. It used to render inside `App.tsx`, which IS the
+          Colorist tab, so from any other tab the flag flipped and nothing
+          appeared. */}
+      <SettingsOverlay />
       {/* B-369 — the branded loader over the workspace while a project opens. */}
       <ProjectOpenOverlay />
     </>

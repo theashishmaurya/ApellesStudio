@@ -17,7 +17,6 @@ import {
 import clsx from 'clsx';
 import { useShellStore } from '@apelles/shell';
 
-import SettingsPanel from './components/panel/SettingsPanel';
 import GlobalTooltip from './components/ui/GlobalTooltip';
 import AppModals from './components/modals/AppModals';
 
@@ -119,12 +118,11 @@ function ImageDragOverlayNode({ activeItem }: { activeItem: { path: string; path
 function App() {
   const [activeImageDragItem, setActiveImageDragItem] = useState<{ path: string; paths: string[] } | null>(null);
 
-  const { appSettings, theme, osPlatform, handleSettingsChange } = useSettingsStore(
+  const { appSettings, theme, osPlatform } = useSettingsStore(
     useShallow((state) => ({
       appSettings: state.appSettings,
       theme: state.theme,
       osPlatform: state.osPlatform,
-      handleSettingsChange: state.handleSettingsChange,
     })),
   );
 
@@ -139,7 +137,6 @@ function App() {
     compactEditorPanelHeightOverride,
     activePanel,
     activeLayoutDragItem,
-    isSettingsOpen,
     setUI,
     setPanel,
     setLayoutDragItem,
@@ -156,7 +153,6 @@ function App() {
       compactEditorPanelHeightOverride: state.compactEditorPanelHeightOverride,
       activePanel: state.activePanel,
       activeLayoutDragItem: state.activeLayoutDragItem,
-      isSettingsOpen: state.isSettingsOpen,
       setUI: state.setUI,
       setPanel: state.setPanel,
       setLayoutDragItem: state.setLayoutDragItem,
@@ -769,17 +765,11 @@ function App() {
                       at all" is handled one level up by the shell launcher. */}
                   <ColoristEmptyState />
                 </div>
-                {isSettingsOpen && appSettings && (
-                  <div className="absolute inset-0 z-50 flex bg-bg-secondary rounded-lg">
-                    <div className="w-full h-full flex flex-col p-4 lg:p-8 overflow-y-auto custom-scrollbar">
-                      <SettingsPanel
-                        appSettings={appSettings}
-                        onBack={() => setUI({ isSettingsOpen: false })}
-                        onSettingsChange={handleSettingsChange}
-                      />
-                    </div>
-                  </div>
-                )}
+                {/* B-396 — Settings used to be rendered HERE, inside the
+                    Colorist tab's own container, so it could never appear over
+                    Edit or Motion even though its one keyboard shortcut was the
+                    only way to open it. It now lives in `Root.tsx`, above the
+                    tabs, beside the chrome-bar gear that opens it. */}
               </div>
               {!useCompactPanels && hasMainContent && (
                 <PanelErrorBoundary panel="Colorist right panels" fallbackClassName="w-72 shrink-0">

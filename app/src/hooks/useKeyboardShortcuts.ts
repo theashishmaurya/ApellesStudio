@@ -344,13 +344,10 @@ export const useKeyboardShortcuts = ({
           }));
         },
       },
-      open_settings: {
-        shouldFire: () => true,
-        execute: (e: any, s: any) => {
-          e.preventDefault();
-          s.ui.setUI({ isSettingsOpen: true });
-        },
-      },
+      // B-396 — `open_settings` moved OUT of this map. It is a global action
+      // now, handled in `Root.tsx`: this hook only runs while the Colorist tab
+      // is frontmost, so handling it here is precisely why the shortcut did
+      // nothing in Edit or Motion.
       toggle_crop: {
         shouldFire: (s: any) => !!s.editor.selectedImage,
         execute: (e: any, s: any) => {

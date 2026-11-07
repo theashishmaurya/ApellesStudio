@@ -3343,7 +3343,20 @@ export function useEditorControl(): void {
         if (!newTrack && (!Number.isFinite(track) || track < 0)) {
           return { error: 'track must be a track index (0 = topmost), or omitted for a new track of the kind the source needs' };
         }
-        const sourceStart = a?.sourceStart !== undefined ? Math.round(Number(a.sourceStart)) : 0;
+        // B-390 — `duration`/`sourceStart` are in the SOURCE's own frames, so a
+        // caller asking for "one second" has to know this file runs at 17.2 fps
+        // (a 1925 silent transfer) while the next runs at 59.94. Getting it
+        // wrong is SILENT: the clip is simply the wrong length, and on a cut
+        // timed to music every shot after it is wrong too. The rate is known
+        // here, so accept the intent directly. The `*Secs` forms win when both
+        // are given; the frame forms are untouched, so nothing existing moves.
+        const srcFps = facts.sourceFps || timelineFps(useEditorTimelineStore.getState().timeline);
+        const sourceStart =
+          a?.sourceStartSecs !== undefined
+            ? Math.max(0, Math.round(Number(a.sourceStartSecs) * srcFps))
+            : a?.sourceStart !== undefined
+              ? Math.round(Number(a.sourceStart))
+              : 0;
         // D-292 — a still's default is its SYNTHESIZED span
         // (`DEFAULT_TITLE_SECONDS`), not "all of it": `sourceLen` for a still is
         // a one-hour trim ceiling, and placing an hour-long clip because the
@@ -3351,11 +3364,13 @@ export function useEditorControl(): void {
         // pre-D-292 "the rest of the file" default exactly. An explicit
         // `duration` always wins, for both.
         const duration =
-          a?.duration !== undefined
-            ? Math.round(Number(a.duration))
-            : facts.still
-              ? facts.defaultDuration
-              : frames - sourceStart;
+          a?.durationSecs !== undefined
+            ? Math.max(1, Math.round(Number(a.durationSecs) * srcFps))
+            : a?.duration !== undefined
+              ? Math.round(Number(a.duration))
+              : facts.still
+                ? facts.defaultDuration
+                : frames - sourceStart;
         if (!Number.isFinite(sourceStart) || sourceStart < 0 || sourceStart >= frames) {
           return { error: `sourceStart must be within [0, ${frames}) frames of the source` };
         }

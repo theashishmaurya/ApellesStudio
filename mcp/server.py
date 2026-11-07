@@ -2560,6 +2560,8 @@ def editor_add_clip(
     source_path: str | None = None,
     source_start: int | None = None,
     duration: int | None = None,
+    duration_secs: float | None = None,
+    source_start_secs: float | None = None,
     start_frame: int | None = None,
     at_index: int | None = None,
     ripple: bool = False,
@@ -2569,6 +2571,14 @@ def editor_add_clip(
     onto a track, trimmed to `[source_start, source_start+duration)` of the
     source's own frames. Pass either `media_id` or `source_path` to identify
     the pool item.
+
+    **Prefer `duration_secs` / `source_start_secs` (B-390).** `duration` and
+    `source_start` are in the SOURCE's own frame rate, which differs per file —
+    a 1925 silent transfer runs at 17.2 fps, a NASA clip at 59.94 — so
+    `duration=25` is one second of one and 0.42 s of the other, with no error
+    either way: the clip is simply the wrong length. The seconds forms say what
+    you mean and are converted app-side from that clip's real rate. They win if
+    both are given.
 
     Calling this once per KEPT segment, with back-to-back `start_frame`
     values, is how a gap or an unwanted section (a retake, a silence) is cut
@@ -2615,6 +2625,12 @@ def editor_add_clip(
         args["sourceStart"] = source_start
     if duration is not None:
         args["duration"] = duration
+    # B-390 — seconds, converted app-side from the SOURCE's own rate. Pass these
+    # instead of the frame forms unless you already know the file's fps.
+    if duration_secs is not None:
+        args["durationSecs"] = duration_secs
+    if source_start_secs is not None:
+        args["sourceStartSecs"] = source_start_secs
     if start_frame is not None:
         args["startFrame"] = start_frame
     if at_index is not None:

@@ -188,6 +188,14 @@ export interface ShellProps {
    *  shell-level. Injected by the composition root (`@apelles/brand/ui`), the
    *  `headerAction` direction: `Shell` never imports it. */
   brandAction?: ReactNode;
+  /** B-396 — Settings' opener, in the chrome bar beside Keyboard shortcuts and
+   *  Connect to MCP. Settings had NO button anywhere: the only way in was an
+   *  unlabelled `ctrl+,` that fired solely while the Colorist tab was
+   *  frontmost, so from Edit or Motion the app had no settings at all as far
+   *  as anyone could tell. Shell-level for the same reason as the two beside
+   *  it — preferences belong to every tab, not one — and injected rather than
+   *  imported because the open/closed flag lives in `app/src`'s UI store. */
+  settingsAction?: ReactNode;
   /** D-273 — i18next's `t`, injected for the Keyboard Shortcuts window so the
    *  fork's 13 translated locales keep rendering translated Colorist rows.
    *  Same app → shell direction as `launcher`: neither `@apelles/shell` nor
@@ -213,6 +221,7 @@ export function Shell({
   headerAction,
   activityAction,
   brandAction,
+  settingsAction,
   translate,
 }: ShellProps) {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -420,6 +429,10 @@ export function Shell({
               <PlugsConnectedIcon className="size-3.5" />
             </Button>
           )}
+          {/* B-396 — Settings, last of the three shell-level openers. Only
+              while a project is open, like its neighbours: the launcher has
+              its own route in. */}
+          {projectOpen && settingsAction}
           {/* D-432 P5 — Export last, at the right edge, as in the mockup (and
               where Final Cut's own toolbar puts Share). */}
           {projectOpen && headerAction}

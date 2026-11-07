@@ -698,6 +698,29 @@ export function isStillSource(sourcePath: string | null | undefined): boolean {
   return (STILL_EXTENSIONS as readonly string[]).includes(ext);
 }
 
+/** B-389 — the container extensions that carry sound and no picture. */
+export const AUDIO_ONLY_EXTENSIONS = ['mp3', 'wav', 'aac', 'm4a', 'flac', 'ogg', 'oga', 'aiff', 'aif', 'opus'] as const;
+
+/** B-389 — whether `sourcePath` names an audio-only source.
+ *
+ *  Derived from the path for the same reasons as {@link isStillSource}: it is a
+ *  fact about the SOURCE, every op applies to such a clip unchanged, and
+ *  storing it on the `Clip` would duplicate a derived value that `swap_media`
+ *  could silently invalidate.
+ *
+ *  Deliberately extension-based rather than "the probe found no video stream":
+ *  this gate runs inside the pure reducer, which has no pool access, and the
+ *  list is the same set `editor_import_audio` and the media pool already treat
+ *  as sound. A video container with no video stream is rare and falls through
+ *  to the old behaviour rather than being wrongly refused. */
+export function isAudioOnlySource(sourcePath: string | null | undefined): boolean {
+  if (!sourcePath) return false;
+  const dot = sourcePath.lastIndexOf('.');
+  if (dot < 0) return false;
+  const ext = sourcePath.slice(dot + 1).toLowerCase();
+  return (AUDIO_ONLY_EXTENSIONS as readonly string[]).includes(ext);
+}
+
 /** D-292 — the synthesized SOURCE extent of a still, in seconds: the ceiling a
  *  still clip may be trimmed/extended out to.
  *
@@ -1626,6 +1649,20 @@ export function checkAddClip(
     return {
       ok: false,
       reason: `A still image is picture with no audio stream — it cannot go on the ${tr.kind} track ${track}. Put it on a video track.`,
+    };
+  }
+  // B-389 — the mirror of the two guards above, which was missing. An
+  // audio-only source named onto a VIDEO track used to be accepted: it was
+  // placed as a picture clip (and, through the A/V-link path, could even
+  // manufacture a whole new video track for an .mp3), and the compositor then
+  // failed on every frame it spanned with "has no usable resolution", painting
+  // that over the preview until the clip was found and removed. Omitting
+  // `track` has always routed an audio-only source correctly (B-259/B-273); it
+  // was only the explicit-track path that had no check.
+  if (isAudioOnlySource(clip.source_path) && tr.kind !== 'audio') {
+    return {
+      ok: false,
+      reason: `That source is audio with no picture — it cannot go on the ${tr.kind} track ${track}. Put it on an audio track, or add it without naming one to get a new audio track.`,
     };
   }
   if (fps !== undefined && startFrame !== undefined && !ripple) {

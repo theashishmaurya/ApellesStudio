@@ -79,6 +79,84 @@ exists today — not assumed from a feature's plausibility.
     in flight this session) lands, since it needs the same composite the fixed preview
     will already be able to render.
 
+11. **Previewing a source before you place it (a source viewer)** — owner, 2026-11-04,
+    hit live while building the launch film: "when i click on something i should be able
+    to preview". Clicking a media tile in Sources does **nothing** unless you are in
+    multi-select mode — `SourcesPanel.tsx`'s tile is
+    `onClick={() => selecting && toggleSelected(it.id)}`, so outside that mode the click
+    is swallowed. The only ways to see what a source actually is today are its static
+    thumbnail, dragging it onto the timeline, or `editor_get_moment_view` from an agent.
+    Every NLE answers this with a source viewer: Premiere and Resolve open the clip in a
+    Source monitor with its own playhead and In/Out marks; Final Cut skims it in place
+    under the pointer. Apelles already has most of the parts — `scrubSource.ts` exists,
+    the preview surface can draw any `{sourcePath, sourceFrame}` pair (that is exactly
+    what `chroma_preview_surface_two_up` does for the trim viewer, roadmap 00r 5d c), and
+    the decode lanes are per-purpose already (`PipeLane::TRIM_VIEW`), so a `SOURCE_VIEW`
+    lane is the same shape. The missing pieces are the click-to-open behaviour, somewhere
+    to put the picture (the existing preview, switched to source mode, versus a second
+    pane), and In/Out on the source so a marked range can be dragged to the timeline.
+    Both halves per CLAUDE.md: the GUI click AND an MCP equivalent for setting/reading the
+    source-view position and its marks. Not scoped further here, per this note's rule.
+
+12. **Duplicating a clip** (B-394) — owner, 2026-11-04, hit live: "control D does not
+    dublicate". There is no `duplicate_clip` `EditOp`, no context-menu item and no key
+    binding, so Cmd/Ctrl+D lands on nothing. The verb already exists three times in the
+    app for other objects — `editor_duplicate_timeline` (and the Duplicate item in
+    `TimelineSwitcher.tsx`), `motion_duplicate_scene`, `motion_duplicate_layer` — which is
+    what makes its absence on clips surprising rather than merely missing. Scope: duplicate
+    the selection carrying transform, keyframes, fades, volume and link group (the same set
+    `swap_media` preserves), placed either immediately after the source clip or on the next
+    free track; plus the matching `editor_duplicate_clip` tool, per this repo's both-interfaces
+    rule. Today's workaround is to read the clip's fields and re-place it by hand.
+
+13. **Conform a music track to the timeline's length (a "Remix")** — owner, 2026-11-04,
+    after an hour of hand-splicing a bed for the launch film: "thats the skill we want to
+    build :( you should be able to do it". The job is ordinary and comes up on every edit:
+    a stock track is 82 s, the film is 51 s, and the cut has to lose ~31 s from the middle
+    while keeping the track's own intro AND its ending, with no audible join. Apelles has
+    the parts — `editor_detect_beats` (tempo, bars, strong beats), `editor_music_edit` /
+    `editor_propose_music_edits` (dropouts, breaths, dry opens, D-408), fades and
+    crossfades — but nothing that solves for LENGTH. So the agent ends up hand-cutting in
+    ffmpeg, which is exactly what this repo's tools exist to prevent, and every attempt was
+    audible.
+    **What it has to do, learned the hard way tonight:** remove a whole number of PHRASES
+    (4/8/16 bars), not bars — 17 bars broke the phrase structure and sounded wrong even
+    though the beat grid lined up; cut in the quiet valley just before a downbeat rather
+    than through a peak; match the ARRANGEMENT either side (a spectral match, not a
+    loudness match — two points can be identical in RMS and obviously different in
+    instrumentation); use a short butt-cut on the transient rather than a long crossfade,
+    which smears; and refuse honestly when the track's structure cannot support the target
+    length (a dense section with no quiet point has nowhere to hide a join — the right
+    answer is then "pick a track nearer the target length", which is what a human editor
+    does). Prior art to copy rather than invent: Adobe Audition's Remix, Audjust's beat
+    cutter. Both interfaces per CLAUDE.md: a GUI "fit to timeline" on a music clip and an
+    `editor_conform_music` tool that reports WHERE it cut and why, so the choice is
+    reviewable like `editor_propose_music_edits` already is.
+
+    **Prototyped 2026-11-07, and it is not enough.** `scratch`'s `music_conform.py`
+    (~140 lines, librosa + numpy, both already in `ai-env`) implements what Adobe
+    documents for Remix: beat-track the file, take beat-synchronous chroma + MFCC +
+    RMS, cost every beat against every other beat (scoring the lead-in as well as the
+    landing), then a DP over (beat, beats emitted) for the cheapest path of exactly the
+    target length, keeping the first and last beat. It runs in ~20 s, hits the target
+    to the frame, and on the launch film's 82.5 s track chose one jump, 43.40 s →
+    66.06 s. **The owner could still hear it**, on that and on every variant. Two real
+    limits found: librosa locks to the half-time grid (89.1 BPM on a ~126 BPM track)
+    and `start_bpm` is only a prior, so subdividing is the reliable way to get more
+    candidate points; and the minimum-jump constraint as written does not bind, so
+    "spread the removal over several cheap joins" was never actually tested. The
+    deeper problem is that rearranging a finished recording leaves a seam wherever the
+    arrangement differs, and a dense trailer bed differs almost everywhere.
+
+    **Generate at length rather than cut to length** (owner, 2026-11-07: "we need ai
+    solution for these"). Stable Audio 3.0 (Stability AI, May 2026) ships open weights
+    for its small and medium models, runs locally, is trained on licensed data, and its
+    generation length is adjustable **down to the second** — so a 51.64 s bed is
+    produced as 51.64 s with no edit anywhere, and the Content ID question goes with
+    it. That suits this repo's local-first rule and the existing `ai-media` sidecar
+    shape. Keep the conform path for a track the person brings themselves; generation
+    becomes the default once it exists.
+
 ## Multiple timelines — VERIFIED WORKING, not a gap (D-195, 2026-09-07)
 
 Confirmed live, not just from reading code: extended the D-142 browser harness
