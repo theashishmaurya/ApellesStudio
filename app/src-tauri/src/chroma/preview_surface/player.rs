@@ -446,20 +446,29 @@ mod tests {
     fn one_unplayable_clip_does_not_stop_the_transport() {
         // The owner's report: play from before a clip whose source is offline,
         // and the whole timeline appears unplayable. Frames 10..20 refuse to
-        // draw; playback must run through them and out the other side. (The
-        // band is small because this loop runs on the real clock: the presents
-        // below buy about a second of timeline.)
+        // draw; playback must run through them and out the other side.
+        //
+        // The finish is tied to the frames REPORTED, not to a number of
+        // presents: stopping after a fixed present count made this depend on
+        // how much timeline the host got through in that wall-clock time, which
+        // is nothing to do with the behaviour under test and failed under load.
         let stop = Arc::new(AtomicBool::new(false));
         let mut screen = PartlyBroken {
             drawn: Vec::new(),
             shown: Vec::new(),
             presents: 0,
-            stop_after: 400,
+            stop_after: u32::MAX,
             stop: stop.clone(),
             bad: 10..20,
         };
         let mut seen = Vec::new();
-        let result = run(req(0, 100_000), &mut screen, &stop, |e| seen.push(e));
+        let flag = stop.clone();
+        let result = run(req(0, 100_000), &mut screen, &stop, |e| {
+            seen.push(e);
+            if e.frame > 25 {
+                flag.store(true, Ordering::Relaxed);
+            }
+        });
         assert!(
             result.is_ok(),
             "a bad clip must not fail the loop: {result:?}"

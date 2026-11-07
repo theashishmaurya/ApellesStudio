@@ -6965,8 +6965,17 @@ def list_shots() -> str:
     """Every shot in the session and which one is active. A grading job is N
     shots from one shoot; each shot keeps its own grade (grade.json sidecar,
     D-025) and its own agent-activity feed. Returns {shots: [{path, name,
-    frameCount, frame, width, height, fps, ...}], active, count}. An empty
-    `shots` means a single still / nothing loaded."""
+    frameCount, frame, width, height, sourceWidth, sourceHeight, fps, ...}],
+    active, count}. An empty `shots` means a single still / nothing loaded.
+
+    **`width`/`height` vs `sourceWidth`/`sourceHeight` (B-391).** `width`/
+    `height` are the size of the frame the Colorist SHOWS, which for a shot
+    that came from a project is the timeline's composition size — so every
+    shot of a 1920x1080 timeline reports 1920x1080 whatever the file is.
+    `sourceWidth`/`sourceHeight` are the picture's own pixels (6000x3730 for a
+    full-size still, 480x360 for an old transfer). **Size a crop or a reframe
+    from the source pair**; reading `width`/`height` as "the picture" means
+    working from the output spec."""
     import json
 
     return json.dumps(_op("list_shots"), indent=2, default=str)

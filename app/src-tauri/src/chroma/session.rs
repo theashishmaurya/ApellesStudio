@@ -40,8 +40,24 @@ pub struct ShotDto {
     pub name: String,
     /// `apelles_types::Resolution` (D-053) via `#[serde(flatten)]` — same
     /// `width`/`height` JSON keys the frontend already reads.
+    ///
+    /// **This is the size of the frame the Colorist SHOWS**, which for a shot
+    /// that came from a project is the timeline's composition size, not the
+    /// source file's — deliberately, since B-154/D-294 made every number here
+    /// clip-aware. See `source_resolution` for the picture's own size.
     #[serde(flatten)]
     pub resolution: apelles_types::Resolution,
+    /// B-391 — the SOURCE's own pixel dimensions, which `resolution` above
+    /// does not carry for a project shot: every shot of a 1920×1080 timeline
+    /// reported 1920×1080 whatever the file really was (6000×3730 for the
+    /// mosaic still, 480×360 for the Méliès, 1360×1072 for the Potemkin), so an
+    /// agent sizing a crop or a reframe from `list_shots` was reading the output
+    /// spec and calling it the picture. Both facts are real and both are needed;
+    /// only one of them was on the wire.
+    #[serde(rename = "sourceWidth")]
+    pub source_width: u32,
+    #[serde(rename = "sourceHeight")]
+    pub source_height: u32,
     pub fps: f64,
     pub frame_count: u64,
     pub duration_secs: f64,
@@ -72,6 +88,8 @@ impl From<&Shot> for ShotDto {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| s.path.to_string_lossy().to_string()),
             resolution,
+            source_width: s.info.resolution.width,
+            source_height: s.info.resolution.height,
             fps: s.info.fps(),
             frame_count,
             duration_secs,

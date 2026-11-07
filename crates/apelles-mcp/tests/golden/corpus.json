@@ -9298,7 +9298,7 @@
     },
     {
       "name": "list_shots",
-      "description": "Every shot in the session and which one is active. A grading job is N\n    shots from one shoot; each shot keeps its own grade (grade.json sidecar,\n    D-025) and its own agent-activity feed. Returns {shots: [{path, name,\n    frameCount, frame, width, height, fps, ...}], active, count}. An empty\n    `shots` means a single still / nothing loaded.",
+      "description": "Every shot in the session and which one is active. A grading job is N\n    shots from one shoot; each shot keeps its own grade (grade.json sidecar,\n    D-025) and its own agent-activity feed. Returns {shots: [{path, name,\n    frameCount, frame, width, height, sourceWidth, sourceHeight, fps, ...}],\n    active, count}. An empty `shots` means a single still / nothing loaded.\n\n    **`width`/`height` vs `sourceWidth`/`sourceHeight` (B-391).** `width`/\n    `height` are the size of the frame the Colorist SHOWS, which for a shot\n    that came from a project is the timeline's composition size \u2014 so every\n    shot of a 1920x1080 timeline reports 1920x1080 whatever the file is.\n    `sourceWidth`/`sourceHeight` are the picture's own pixels (6000x3730 for a\n    full-size still, 480x360 for an old transfer). **Size a crop or a reframe\n    from the source pair**; reading `width`/`height` as \"the picture\" means\n    working from the output spec.",
       "inputSchema": {
         "properties": {},
         "type": "object",
