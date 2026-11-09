@@ -33,6 +33,7 @@ use std::num::NonZero;
 use std::sync::Arc;
 use std::time::Instant;
 
+use super::native_view::PREVIEW_SPACE;
 use crate::chroma::gpu_compositor::RenderDevice;
 
 /// Drawables queued beyond the one on screen: one, so the picture is never
@@ -52,7 +53,8 @@ pub(crate) struct Placement {
     /// The picture box (x, y, width, height) in drawable pixels, origin top
     /// left. May extend past the drawable (a zoomed-in preview).
     pub picture: [f32; 4],
-    /// The background, 0-1 display-referred RGBA.
+    /// The letterbox colour, 0-1 RGBA as the webview paints it (sRGB); the
+    /// presenter matches it into the layer's space before drawing it.
     pub background: [f32; 4],
 }
 
@@ -170,6 +172,9 @@ pub(crate) struct Presenter {
     params: wgpu::Buffer,
     frame: Option<Retained>,
     reconfigures: u64,
+    /// The last letterbox colour asked for (the UI's sRGB) and what is drawn
+    /// for it in the layer's Rec.709 (`viewer_space::ViewerSpace::ui_colour`, D-457).
+    letterbox: ([f32; 4], [f32; 4]),
 }
 
 impl Presenter {
@@ -319,7 +324,19 @@ impl Presenter {
             params,
             frame: None,
             reconfigures: 0,
+            letterbox: ([0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]),
         })
+    }
+
+    /// `ui`, the pane's colour as the webview paints it, as the layer must be
+    /// given it to show that same colour (B-398: the Rec.709 tag decodes with
+    /// a 2.4 power, so the raw sRGB value showed darker than the panel around
+    /// it). Matched by ColorSync once per colour, not per present.
+    fn letterbox(&mut self, ui: [f32; 4]) -> [f32; 4] {
+        if self.letterbox.0 != ui {
+            self.letterbox = (ui, PREVIEW_SPACE.ui_colour(ui));
+        }
+        self.letterbox.1
     }
 
     /// The render device this presenter's surface is configured with.
@@ -475,6 +492,7 @@ impl Presenter {
             other => return Err(format!("no drawable: {other:?}")),
         };
         let acquired_at = Instant::now();
+        let background = self.letterbox(placement.background);
 
         // Before the first frame the picture box shows the letterbox colour:
         // a 1x1 source outside every picture box.
@@ -488,7 +506,7 @@ impl Presenter {
             0,
             bytemuck::bytes_of(&Params {
                 picture,
-                background: placement.background,
+                background,
                 src_size,
                 _pad: [0; 2],
             }),
@@ -508,9 +526,9 @@ impl Presenter {
                     depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: f64::from(placement.background[0]),
-                            g: f64::from(placement.background[1]),
-                            b: f64::from(placement.background[2]),
+                            r: f64::from(background[0]),
+                            g: f64::from(background[1]),
+                            b: f64::from(background[2]),
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,

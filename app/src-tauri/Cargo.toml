@@ -215,6 +215,9 @@ objc2-core-graphics = { version = "0.3", default-features = false, features = [
     "CGEventTypes",
     # D-451 — the preview surface's colour tag (`CAMetalLayer.colorspace`).
     "CGColorSpace",
+    # D-457 — a viewer's letterbox colour matched into its layer's space by
+    # ColorSync (`chroma::viewer_space`).
+    "CGColor",
 ] }
 # D-451 — the Edit preview's native GPU surface (`chroma::preview_surface`): the
 # `CAMetalLayer` wgpu presents to, created by us so its colour space, opacity

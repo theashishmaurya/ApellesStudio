@@ -417,23 +417,25 @@ The layer is tagged `kCGColorSpaceITUR_709`; the presenter writes the engine's b
 `Bgra8Unorm` drawable unchanged. What that means on a Display P3 panel (every Apple-silicon MacBook):
 
 - The window server (ColorSync) converts the layer from BT.709 to the display's profile: BT.709 primaries and
-  D65 white, decoded with the inverse of the BT.709 camera OETF (a power segment with a linear toe), then
-  mapped into the panel's P3 primaries.
+  D65 white, decoded with a **pure 2.4 power** (BT.1886 with a zero black; measured on macOS 26.2 with
+  `CGColorCreateCopyByMatchingToColorSpace`, D-457 — this section first said the inverse camera OETF, which
+  is wrong), then mapped into the panel's P3 primaries.
 - **Gamut:** P3 contains all of BT.709, so every colour lands inside the panel's gamut unclipped, and
   saturated colours are shown as BT.709 saturated, **not** stretched to P3's wider primaries (an untagged or
   "display" picture would be).
-- **Tone:** the BT.709 decoding curve renders shadows and mid-darks lighter than an sRGB tag on the same bytes
-  (the long-known "QuickTime gamma" difference). The old `<img>` preview was untagged, which WebKit treats as
-  sRGB, so the new viewer is lighter in the shadows than the old one, and matches what a ColorSync-managed
-  player (QuickTime Player) shows for the exported file, which D-452 tags Rec.709. That match is the point of
-  the owner's call.
+- **Tone:** the 2.4 decoding renders shadows and mid-darks somewhat **darker** than an sRGB tag on the same
+  bytes (a 709-tagged 24 shows as sRGB 11, 128 as 121). The old `<img>` preview was untagged, which WebKit
+  treats as sRGB, so the new viewer is darker in the shadows than the old one, and matches what a
+  ColorSync-managed player (QuickTime Player) shows for the exported file, which D-452 tags Rec.709. That
+  match is the point of the owner's call.
+- **The letterbox** is the pane's CSS colour (sRGB) matched into the layer's Rec.709 by ColorSync
+  (`viewer_space::ViewerSpace::ui_colour`, B-398), so it shows as the panel colour around it.
 - **Not** a reference monitor path: no BT.1886 / 2.4 display gamma is applied (a broadcast reference display
   would decode BT.709 with 2.4), no EDR, no HDR. Those are one property on the layer or one more pass, if
   the owner ever wants a "broadcast" viewing mode.
-- The Colorist's own full-window surface is unchanged: its layer carries no colour space, so Core Animation
-  does no colour matching and its bytes reach the panel as the panel's own RGB (on P3, slightly more
-  saturated than either tag). The Edit viewer and the Colorist can therefore differ for the same graded clip. Tagging the Colorist the same way is a one-line
-  follow-up with the same product question attached; it is logged in the roadmap, not done here.
+- **The Colorist** (D-457): its full-window surface's layer (the one wgpu made, reached through
+  `Surface::as_hal`) is tagged Rec.709 while it shows a video and sRGB while it shows a still image, with its
+  letterbox matched the same way, so a graded clip looks the same in both tabs and in the export.
 
 ## 10.5 The §8 risks, resolved
 

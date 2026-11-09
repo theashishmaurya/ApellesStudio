@@ -306,12 +306,7 @@ async fn update_wgpu_transform(
             display.latest_transform.bg_primary = payload.bg_primary;
             display.latest_transform.bg_secondary = payload.bg_secondary;
             display.latest_transform.pixelated = if payload.pixelated { 1.0 } else { 0.0 };
-
-            context.queue.write_buffer(
-                &display.transform_buffer,
-                0,
-                bytemuck::bytes_of(&display.latest_transform),
-            );
+            display.write_transform(&context.queue);
             display.render(&context.device, &context.queue);
         }
     })
@@ -344,6 +339,21 @@ fn process_preview_job(
         .ok_or("No original image loaded")?
         .clone();
     drop(loaded_image_guard);
+    // D-457 — the display's layer is tagged with the space of what it is about
+    // to show: Rec.709 for a video's frame (as the Edit preview and the
+    // export), sRGB for a still image.
+    if let Some(display) = context
+        .display
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_mut()
+    {
+        let (source, _) = crate::file_management::parse_virtual_path(&loaded_image.path);
+        display.set_space(
+            crate::chroma::viewer_space::ViewerSpace::of_source(&source),
+            &context.queue,
+        );
+    }
 
     let new_transform_hash = calculate_transform_hash(&adjustments_clone);
     let settings = load_settings(app_handle.clone()).unwrap_or_default();

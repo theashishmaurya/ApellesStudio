@@ -3,6 +3,13 @@
 Real defects only — in our code or the engine. Not setup/housekeeping. Move to GitHub
 Issues once public.
 
+## B-398 — the Edit viewer's letterbox showed darker than the panel around it
+
+status: **fixed 2026-11-04** (found while tagging the Colorist, D-457; landed on main 2026-11-09) · severity: low (a visible seam where the viewer's letterbox meets the pane, since D-454) · area: `app/src-tauri/src/chroma/preview_surface/presenter.rs`, `app/src-tauri/src/chroma/viewer_space.rs`
+
+- **Cause.** The presenter clears the drawable to the pane's CSS background (an sRGB UI colour) and wrote that value raw into a layer tagged Rec.709. ColorSync decodes the tag with a 2.4 power, so the pane's 24 grey was shown as 11.
+- **Fix.** The letterbox is matched into the layer's space by ColorSync (`ViewerSpace::ui_colour`, `CGColorCreateCopyByMatchingToColorSpace`), once per colour. The Colorist's surface does the same (D-457). Test: `a_ui_colour_shows_as_itself_in_a_rec709_layer` (the matched colour, converted back by ColorSync, is the UI colour within 1e-3).
+
 ## B-397 — one test in `apelles --lib` fails intermittently, but only under a full-workspace run, and has never been named
 
 status: **open, found 2026-11-07** (while verifying the B-389..B-395 batch) · severity: low-medium (nothing in the product is known to be wrong, but an intermittent suite is a real defect by this repo's standards: it destroys the signal every other check depends on, and it is what let a wrong "all green" claim be made) · area: unknown — somewhere in `app/src-tauri`'s lib tests

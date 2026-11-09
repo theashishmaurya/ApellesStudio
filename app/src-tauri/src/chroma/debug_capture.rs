@@ -167,6 +167,21 @@ pub struct DebugScreenshot {
     /// screenshot coordinate back to a DOM/CSS coordinate.
     pub scale_factor: f64,
     pub bytes: usize,
+    /// D-457 — each native viewer composited into this screenshot and the
+    /// colour space its layer is really tagged with (read back from the
+    /// layer). The PNG carries the drawn bytes as they are; the window server
+    /// shows them through this tag.
+    pub native_layers: Vec<NativeLayer>,
+}
+
+/// D-457 — one native viewer in a [`DebugScreenshot`].
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeLayer {
+    /// `"colorist"` or `"edit"`.
+    pub viewer: &'static str,
+    /// `"rec709"`, `"srgb"`, `"untagged"`, or CoreGraphics' own name.
+    pub colorspace: String,
 }
 
 /// One pixel read back out of a saved PNG.
@@ -279,9 +294,20 @@ pub fn screenshot_to_file<R: Runtime>(
     let label = window.label().to_string();
     let scale_factor = window.scale_factor().unwrap_or(1.0);
     let mut frame = capture_webview_png(&window)?;
-    composite_wgpu_overlay(app, &mut frame);
+    let mut native_layers = Vec::new();
+    if let Some(colorspace) = composite_wgpu_overlay(app, &mut frame) {
+        native_layers.push(NativeLayer {
+            viewer: "colorist",
+            colorspace,
+        });
+    }
     #[cfg(target_os = "macos")]
-    composite_edit_preview(app, &mut frame, scale_factor);
+    if let Some(colorspace) = composite_edit_preview(app, &mut frame, scale_factor) {
+        native_layers.push(NativeLayer {
+            viewer: "edit",
+            colorspace,
+        });
+    }
 
     let path = match out_path {
         Some(p) if !p.trim().is_empty() => PathBuf::from(p),
@@ -303,6 +329,7 @@ pub fn screenshot_to_file<R: Runtime>(
         height: frame.height,
         scale_factor,
         bytes: frame.png.len(),
+        native_layers,
     })
 }
 
@@ -406,11 +433,16 @@ fn compute_overlay_placement(
 /// same-as-before blank is a strictly less useful failure mode than losing
 /// the screenshot outright over a best-effort overlay. A warning is logged
 /// either way so the gap is visible rather than silently swallowed.
-fn composite_wgpu_overlay<R: Runtime>(app: &tauri::AppHandle<R>, frame: &mut CapturedFrame) {
+///
+/// Returns the colour space the surface's layer is tagged with (D-457) when
+/// the picture was composited.
+fn composite_wgpu_overlay<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    frame: &mut CapturedFrame,
+) -> Option<String> {
     let state = app.state::<crate::AppState>();
-    let Some((overlay, transform)) = crate::gpu_processing::read_display_frame(&state) else {
-        return;
-    };
+    let (overlay, transform) = crate::gpu_processing::read_display_frame(&state)?;
+    let colorspace = colorist_colorspace(&state);
 
     let mut canvas = match image::load_from_memory(&frame.png) {
         Ok(img) => img.to_rgba8(),
@@ -419,7 +451,7 @@ fn composite_wgpu_overlay<R: Runtime>(app: &tauri::AppHandle<R>, frame: &mut Cap
                 "[chroma::debug_capture] could not decode the webview snapshot to composite \
                  the Colorist wgpu overlay onto it: {e}"
             );
-            return;
+            return None;
         }
     };
 
@@ -430,7 +462,7 @@ fn composite_wgpu_overlay<R: Runtime>(app: &tauri::AppHandle<R>, frame: &mut Cap
         frame.width,
         frame.height,
     ) else {
-        return;
+        return None;
     };
 
     let resized = image::imageops::resize(
@@ -459,9 +491,37 @@ fn composite_wgpu_overlay<R: Runtime>(app: &tauri::AppHandle<R>, frame: &mut Cap
             "[chroma::debug_capture] could not re-encode the screenshot after compositing the \
              Colorist wgpu overlay: {e}"
         );
-        return;
+        return None;
     }
     frame.png = png_bytes;
+    Some(colorspace)
+}
+
+/// What the Colorist surface's layer is tagged with (D-457).
+fn colorist_colorspace(state: &crate::AppState) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        let context = state
+            .gpu_context
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(context) = context
+            && let Some(display) = context
+                .display
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+        {
+            return display.tagged_space();
+        }
+        "no surface".to_string()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = state;
+        "untagged".to_string()
+    }
 }
 
 /// D-454 — the Edit preview's native picture as the window shows it: the
@@ -475,7 +535,7 @@ fn composite_wgpu_overlay<R: Runtime>(app: &tauri::AppHandle<R>, frame: &mut Cap
 fn edit_preview_pane<R: Runtime>(
     app: &tauri::AppHandle<R>,
     px_per_css: f64,
-) -> Option<(image::RgbaImage, i64, i64)> {
+) -> Option<(image::RgbaImage, i64, i64, String)> {
     let (picture, view, placement) =
         match crate::chroma::preview_surface::commands::screenshot_frame(app) {
             Ok(Some(shown)) => shown,
@@ -514,6 +574,7 @@ fn edit_preview_pane<R: Runtime>(
         pane,
         (view.x * s).round() as i64,
         (view.y * s).round() as i64,
+        view.colorspace,
     ))
 }
 
@@ -523,16 +584,17 @@ fn edit_preview_pane<R: Runtime>(
 /// pane goes UNDER the snapshot, so the overlays (handles, guides) it holds
 /// stay on top, exactly as on screen. Best-effort, like the Colorist's: a
 /// failure leaves the plain snapshot and logs why.
+///
+/// Returns the colour space the preview's layer is tagged with (D-457) when
+/// the picture was composited.
 #[cfg(target_os = "macos")]
 fn composite_edit_preview<R: Runtime>(
     app: &tauri::AppHandle<R>,
     frame: &mut CapturedFrame,
     scale_factor: f64,
-) {
+) -> Option<String> {
     // `CapturedFrame`: CSS pixels times the window's scale.
-    let Some((pane, x, y)) = edit_preview_pane(app, scale_factor) else {
-        return;
-    };
+    let (pane, x, y, colorspace) = edit_preview_pane(app, scale_factor)?;
     let canvas = match image::load_from_memory(&frame.png) {
         Ok(img) => img.to_rgba8(),
         Err(e) => {
@@ -540,7 +602,7 @@ fn composite_edit_preview<R: Runtime>(
                 "[chroma::debug_capture] could not decode the webview snapshot to composite \
                  the Edit preview onto it: {e}"
             );
-            return;
+            return None;
         }
     };
     let mut composed = image::RgbaImage::new(canvas.width(), canvas.height());
@@ -555,9 +617,10 @@ fn composite_edit_preview<R: Runtime>(
             "[chroma::debug_capture] could not re-encode the screenshot after compositing the \
              Edit preview: {e}"
         );
-        return;
+        return None;
     }
     frame.png = png_bytes;
+    Some(colorspace)
 }
 
 /// D-454 — [`composite_edit_preview`] for one raw video frame of
@@ -580,7 +643,7 @@ pub(crate) fn composite_edit_preview_raw<R: Runtime>(
         "abgr" => [3, 2, 1, 0],
         _ => return,
     };
-    let Some((pane, x0, y0)) = edit_preview_pane(app, px_per_css) else {
+    let Some((pane, x0, y0, _)) = edit_preview_pane(app, px_per_css) else {
         return;
     };
     let (fw, fh) = (i64::from(frame.width), i64::from(frame.height));

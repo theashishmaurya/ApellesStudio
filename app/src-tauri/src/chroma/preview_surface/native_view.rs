@@ -20,11 +20,15 @@ use std::cell::RefCell;
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSView, NSWindowOrderingMode};
-use objc2_core_graphics::CGColorSpace;
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 use objc2_quartz_core::{CAMetalLayer, CATransaction};
 use objc2_web_kit::WKWebView;
 use serde::{Deserialize, Serialize};
+
+use crate::chroma::viewer_space::ViewerSpace;
+
+/// The Edit preview's colour space: the timeline's (D-454, D-457).
+pub(crate) const PREVIEW_SPACE: ViewerSpace = ViewerSpace::Rec709;
 
 struct Installed {
     view: Retained<NSView>,
@@ -50,18 +54,18 @@ pub(crate) struct CssRect {
 /// keeps its own reference until [`remove`].
 ///
 /// **The layer is tagged ITU-R BT.709 (owner, 2026-11-04; D-454)**,
-/// `kCGColorSpaceITUR_709`: the engine's frames are the timeline's Rec.709
+/// `kCGColorSpaceITUR_709` (`chroma::viewer_space`, D-457, which the
+/// Colorist's surface shares): the engine's frames are the timeline's Rec.709
 /// R'G'B', the space the export is encoded and tagged in, so the viewer shows
 /// what a ColorSync-managed player (QuickTime Player) shows for the exported
 /// file. The window server converts the layer from BT.709 — its primaries and
-/// white point, decoded with the inverse of the BT.709 camera OETF — to the
+/// white point, decoded with a 2.4 power (measured, `viewer_space`) — to the
 /// display's own profile. On a Display P3 panel (every Apple-silicon MacBook)
 /// that is a gamut mapping INTO P3, which contains all of BT.709: nothing
 /// clips, and saturated colours are not stretched out to P3. The decoding
-/// curve renders shadows somewhat lighter than an sRGB tag on the same bytes
-/// would (the long-known "QuickTime gamma" difference); the old `<img>`
-/// preview was untagged, i.e. sRGB, and showed them darker.
-/// `docs/notes/preview-gpu-surface.md` §6.
+/// curve renders shadows somewhat darker than an sRGB tag on the same bytes
+/// would; the old `<img>` preview was untagged, i.e. sRGB, and showed them
+/// lighter. `docs/notes/preview-gpu-surface.md` §10.4.
 pub(crate) fn install(webview: &WKWebView) -> Result<Retained<CAMetalLayer>, String> {
     let mtm = MainThreadMarker::new().ok_or("native_view::install off the main thread")?;
     remove();
@@ -75,11 +79,7 @@ pub(crate) fn install(webview: &WKWebView) -> Result<Retained<CAMetalLayer>, Str
     // Implicit animations off for the layer's own geometry: a moved or resized
     // preview must land in one frame, not ease over 0.25 s.
     layer.setNeedsDisplayOnBoundsChange(false);
-    // SAFETY: a CoreGraphics constant, valid for the life of the process.
-    let name = unsafe { objc2_core_graphics::kCGColorSpaceITUR_709 };
-    let space =
-        CGColorSpace::with_name(Some(name)).ok_or("CoreGraphics has no BT.709 colour space")?;
-    layer.setColorspace(Some(&space));
+    PREVIEW_SPACE.tag(&layer)?;
 
     let view = NSView::initWithFrame(
         NSView::alloc(mtm),
@@ -162,7 +162,7 @@ pub(crate) fn place<T>(
 /// in their common superview, and its layer's scale. `debug_screenshot` uses
 /// it to put the picture where the window shows it.
 #[cfg(debug_assertions)]
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ViewReport {
     pub x: f64,
@@ -172,6 +172,8 @@ pub(crate) struct ViewReport {
     pub hidden: bool,
     pub below_webview: bool,
     pub contents_scale: f64,
+    /// What the layer is really tagged as (D-457): `rec709` here.
+    pub colorspace: String,
 }
 
 #[cfg(debug_assertions)]
@@ -207,6 +209,7 @@ pub(crate) fn describe(webview: &WKWebView) -> Result<ViewReport, String> {
             hidden: view.isHidden(),
             below_webview,
             contents_scale: installed.layer.contentsScale(),
+            colorspace: ViewerSpace::of_layer(&installed.layer),
         })
     })
 }

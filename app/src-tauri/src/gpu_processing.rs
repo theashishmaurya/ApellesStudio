@@ -59,6 +59,15 @@ pub struct DisplayTransform {
     pub bg_secondary: [f32; 4],
 }
 
+/// The Colorist's full-window display surface (B-006): the processor's
+/// output texture drawn behind the transparent webview.
+///
+/// **Colour (D-457):** the surface's `CAMetalLayer` is tagged with the space
+/// of what it shows (`chroma::viewer_space`): Rec.709 for a video's frames,
+/// the same tag as the Edit preview and the export, so a graded clip looks the
+/// same in both tabs and in the exported file; sRGB for a still image opened
+/// on its own. The output texture's bytes are drawn unchanged (a non-sRGB
+/// drawable); only the tag and the letterbox colours follow the space.
 pub struct WgpuDisplay {
     pub surface: wgpu::Surface<'static>,
     pub config: wgpu::SurfaceConfiguration,
@@ -66,12 +75,89 @@ pub struct WgpuDisplay {
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub sampler: wgpu::Sampler,
     pub transform_buffer: wgpu::Buffer,
+    /// The placement and the UI's letterbox colours (sRGB, as the webview
+    /// paints them) the shell last posted.
     pub latest_transform: DisplayTransform,
     pub current_bind_group: Option<wgpu::BindGroup>,
+    /// D-457 — what the layer is tagged as.
+    space: crate::chroma::viewer_space::ViewerSpace,
+    /// D-457 — the last UI letterbox colours (`bg_primary`, `bg_secondary`)
+    /// and what is drawn for them in [`Self::space`]: matched by ColorSync
+    /// when either changes, not on every present.
+    letterbox: Option<LetterboxColours>,
+}
+
+/// D-457 — a pair of UI colours and the same pair matched into a space.
+#[derive(Clone, Copy)]
+struct LetterboxColours {
+    space: crate::chroma::viewer_space::ViewerSpace,
+    ui: [[f32; 4]; 2],
+    drawn: [[f32; 4]; 2],
 }
 
 impl WgpuDisplay {
+    /// D-457 — tag the layer for what it now shows (`ViewerSpace::of_source`
+    /// of the loaded item), and re-upload the letterbox in that space. A no-op
+    /// when the space is unchanged.
+    pub(crate) fn set_space(
+        &mut self,
+        space: crate::chroma::viewer_space::ViewerSpace,
+        queue: &wgpu::Queue,
+    ) {
+        if self.space == space {
+            return;
+        }
+        #[cfg(target_os = "macos")]
+        if let Err(e) = space.tag_surface(&self.surface) {
+            log::warn!(
+                "Colorist display: could not tag the surface {}: {e}",
+                space.name()
+            );
+            return;
+        }
+        self.space = space;
+        self.write_transform(queue);
+    }
+
+    /// The letterbox colours as drawn: [`Self::latest_transform`]'s UI
+    /// colours matched into the layer's space, memoised.
+    fn letterbox(&mut self) -> [[f32; 4]; 2] {
+        let ui = [
+            self.latest_transform.bg_primary,
+            self.latest_transform.bg_secondary,
+        ];
+        match self.letterbox {
+            Some(l) if l.space == self.space && l.ui == ui => l.drawn,
+            _ => {
+                let drawn = ui.map(|c| self.space.ui_colour(c));
+                self.letterbox = Some(LetterboxColours {
+                    space: self.space,
+                    ui,
+                    drawn,
+                });
+                drawn
+            }
+        }
+    }
+
+    /// Upload [`Self::latest_transform`] for the display shader, its letterbox
+    /// colours matched into the layer's space (D-457).
+    pub fn write_transform(&mut self, queue: &wgpu::Queue) {
+        let [primary, secondary] = self.letterbox();
+        let mut t = self.latest_transform;
+        t.bg_primary = primary;
+        t.bg_secondary = secondary;
+        queue.write_buffer(&self.transform_buffer, 0, bytemuck::bytes_of(&t));
+    }
+
+    /// **Debug builds only:** what the layer is really tagged as.
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    pub fn tagged_space(&self) -> String {
+        crate::chroma::viewer_space::ViewerSpace::of_surface(&self.surface)
+    }
+
     pub fn render(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let [clear, _] = self.letterbox();
         if let Some(bind_group) = &self.current_bind_group {
             let output = match self.surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(tex)
@@ -99,10 +185,10 @@ impl WgpuDisplay {
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: self.latest_transform.bg_primary[0] as f64,
-                                g: self.latest_transform.bg_primary[1] as f64,
-                                b: self.latest_transform.bg_primary[2] as f64,
-                                a: self.latest_transform.bg_primary[3] as f64,
+                                r: clear[0] as f64,
+                                g: clear[1] as f64,
+                                b: clear[2] as f64,
+                                a: clear[3] as f64,
                             }),
                             store: wgpu::StoreOp::Store,
                         },
@@ -430,6 +516,17 @@ pub fn get_or_init_gpu_context(
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
+        // D-457 — Rec.709 until an item is loaded (`process_preview_job` sets
+        // the space of each item before drawing it): the Colorist's own
+        // footage type, and the Edit preview's tag.
+        let space = crate::chroma::viewer_space::ViewerSpace::Rec709;
+        #[cfg(target_os = "macos")]
+        if let Err(e) = space.tag_surface(&surface) {
+            log::warn!(
+                "Colorist display: could not tag the surface {}: {e}",
+                space.name()
+            );
+        }
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Display Shader"),
@@ -538,6 +635,8 @@ pub fn get_or_init_gpu_context(
             },
             sampler,
             current_bind_group: None,
+            space,
+            letterbox: None,
         })
     } else {
         None
@@ -2297,12 +2396,7 @@ pub(crate) fn process_and_get_dynamic_image_inner(
         display.latest_transform.image_size = [width as f32, height as f32];
         display.latest_transform.texture_size =
             [processor_state.width as f32, processor_state.height as f32];
-
-        queue.write_buffer(
-            &display.transform_buffer,
-            0,
-            bytemuck::bytes_of(&display.latest_transform),
-        );
+        display.write_transform(queue);
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &display.bind_group_layout,

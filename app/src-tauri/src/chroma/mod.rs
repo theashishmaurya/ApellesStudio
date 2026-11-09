@@ -144,6 +144,10 @@
 //!   command behind the Edit tab's beat lane / beat snapping and the Motion
 //!   tab's soundtrack beats; the real code (decode, analysis, content-hash
 //!   cache) is `apelles-beat`
+//! - `viewer_space` — **what the native viewers are tagged as (D-457)**: the
+//!   Edit preview's and the Colorist's `CAMetalLayer`s, Rec.709 for video and
+//!   sRGB for a still, with their letterbox matched into that space by
+//!   ColorSync so it shows as the panel colour around it
 //! - `write_text_file` — generic "write this UTF-8 text to this absolute path"
 //!   primitive (D-196), used by the Edit-tab FCPXML interchange exporter
 //!   (`packages/editor/src/timelineInterchange.ts` builds the XML string;
@@ -226,6 +230,9 @@ pub mod subtitles;
 pub mod text;
 pub mod video;
 pub mod video_understanding;
+/// D-457 — the colour space the native viewers' layers are tagged with
+/// (Rec.709 for video, sRGB for a still) and their letterbox matched into it.
+pub mod viewer_space;
 pub mod webview_lifecycle;
 pub mod write_text_file;
 
