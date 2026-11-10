@@ -149,36 +149,11 @@ pub async fn seek_and_install(
     });
     let view_for_task = view.clone();
     let decoded = tokio::task::spawn_blocking(move || -> Result<image::DynamicImage, String> {
-        // B-391 — a STILL is not a video stream, and this path had no branch
-        // for one: every shot went through the sequential video decode, which
-        // cannot open a JPEG, so a still selected in the Colorist left the
-        // canvas blank and its filmstrip thumbnail spinning forever while the
-        // Edit tab drew the very same file correctly (it has used
-        // `apelles_media::still` since D-292). The still path is the one the
-        // rest of the workspace already uses: header probe, memoised decode at
-        // the caller's target size.
-        let img = if apelles_media::still::is_image_file(&path) {
-            // A still has one frame, so `decode_frame_index` is meaningless
-            // here (D-292 gives a still a synthesized span; every frame of it
-            // is the same picture).
-            // `scale` already came from this source's own probed resolution,
-            // so a long-edge cap the caller asked for is honoured here too;
-            // `None` means native size, which is what a single-frame seek wants.
-            let rgba = apelles_media::still::decode_scaled(&path, scale)
-                .map_err(|e| format!("decode {}: {e}", path.display()))?;
-            image::DynamicImage::ImageRgba8((*rgba).clone())
-        } else {
-            let frame = decode_pipe::playback_frame(
-                decode_pipe::PipeLane::LIVE,
-                decode_pipe::PipeSlot::Current,
-                &path,
-                &info,
-                decode_frame_index,
-            )
-            .map_err(|e| e.to_string())?;
-            let size = scale.or(Some((info.resolution.width, info.resolution.height)));
-            super::edit::decoded_picture(frame, size)?
-        };
+        // B-391 / B-400 — still or video, one answer: `load::decode_shot_picture`.
+        // This branch used to live here, which is exactly why B-391's fix did
+        // not reach `session::decode_and_install` and a still stayed unopenable
+        // after a project reopen.
+        let img = super::load::decode_shot_picture(&path, &info, decode_frame_index, scale)?;
         // D-294 — the geometry pass, on the blocking thread with the decode it
         // belongs to (it is a CPU resize + rotate of a full frame). Free for an
         // untransformed clip: `apply_geometry` hands the buffer straight back.

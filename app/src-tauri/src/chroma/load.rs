@@ -110,6 +110,54 @@ pub fn register_probed_video_shot(
     }));
 }
 
+/// **Decode one picture for a shot — still or video — at `scale`.** The single
+/// answer to "where does a shot's picture come from", which is the question
+/// B-400 says to settle once instead of patching site by site.
+///
+/// What it does: a STILL (`still::is_image_file`) goes through
+/// `apelles_media::still` — header probe, memoised decode at the caller's
+/// target size — and anything else through the media engine's sequential
+/// decode (D-030/D-452, its converted file for a container the engine cannot
+/// open, D-453), converted by the GPU engine. `None` means the source's own
+/// size.
+///
+/// What it does NOT do: geometry. `ClipView::apply_geometry` (D-294) is the
+/// caller's, because each caller has its own long-edge cap to pass it.
+///
+/// **Why it exists.** The still branch had to be discovered three separate
+/// times, each by hitting it in the running app: the Colorist canvas (B-391),
+/// the shot-strip thumbnail (B-399), and this path, which left a still
+/// unopenable the moment its project was reopened (B-400) even though the same
+/// file had graded fine minutes earlier. `decode_and_install`'s own doc claimed
+/// it "mirrors `seek_and_install` exactly" — it did, until B-391 fixed one of
+/// them. Two copies of a branch do not stay mirrored; one function does.
+///
+/// `decode_frame_index` is meaningless for a still (D-292 gives one a
+/// synthesized span and every frame of it is the same picture), and is ignored
+/// on that branch rather than silently mapped to something.
+pub(crate) fn decode_shot_picture(
+    path: &Path,
+    info: &VideoInfo,
+    decode_frame_index: u64,
+    scale: Option<(u32, u32)>,
+) -> Result<DynamicImage, String> {
+    if apelles_media::still::is_image_file(path) {
+        let rgba = apelles_media::still::decode_scaled(path, scale)
+            .map_err(|e| format!("decode {}: {e}", path.display()))?;
+        return Ok(DynamicImage::ImageRgba8((*rgba).clone()));
+    }
+    let frame = super::decode_pipe::playback_frame(
+        super::decode_pipe::PipeLane::LIVE,
+        super::decode_pipe::PipeSlot::Current,
+        path,
+        info,
+        decode_frame_index,
+    )
+    .map_err(|e| e.to_string())?;
+    let size = scale.or(Some((info.resolution.width, info.resolution.height)));
+    super::edit::decoded_picture(frame, size)
+}
+
 /// Make an already-decoded video frame the loaded image + point `CurrentVideo` at
 /// it. The state-writing tail of [`load_video_frame`], split out so the transport
 /// (`chroma_seek`) can feed a frame it got from the fast [`super::decode_pipe`]

@@ -21,7 +21,7 @@ use crate::app_state::AppState;
 use crate::image_loader::LoadImageResult;
 
 use super::state::{self, Shot};
-use super::{colorist_view, decode_pipe, load, video};
+use super::{colorist_view, load, video};
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -285,20 +285,17 @@ async fn decode_and_install(
     let info = shot.info.clone();
     let view_for_task = view.clone();
     let decoded = tokio::task::spawn_blocking(move || -> Result<image::DynamicImage, String> {
-        // D-452 — one decode path: the media engine (through its converted
-        // file for a container it does not open, D-453), converted by the GPU
-        // engine. A failure — a source still being converted included — is the
-        // Colorist's error to show, not a cue to decode the frame a second,
-        // different way.
-        let frame = decode_pipe::playback_frame(
-            decode_pipe::PipeLane::LIVE,
-            decode_pipe::PipeSlot::Current,
-            &path,
-            &info,
-            decode_frame_index,
-        )
-        .map_err(|e| e.to_string())?;
-        let img = super::edit::decoded_picture(frame, None)?;
+        // B-400 — this is the path a shot takes when its project is REOPENED,
+        // and it decoded every shot as video: a still that had graded fine in
+        // the session it was added in became permanently unopenable from the
+        // next launch ("the media engine cannot open this file"), with the
+        // Colorist falling back to its empty state and saying nothing.
+        //
+        // D-452 still holds — one decode path, and a failure is the Colorist's
+        // error to show, not a cue to decode a second, different way. What was
+        // wrong was deciding WHICH path here instead of in the one place that
+        // knows: `load::decode_shot_picture`.
+        let img = super::load::decode_shot_picture(&path, &info, decode_frame_index, None)?;
         match view_for_task {
             Some(v) => v.apply_geometry(decode_frame_index, img, None),
             None => Ok(img),

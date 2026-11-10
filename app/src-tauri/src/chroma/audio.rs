@@ -1953,62 +1953,68 @@ mod tests {
 
         let played = chroma_audio_play(0, next_test_seq(), 1.0);
 
-        // Sample the meter repeatedly rather than once: it refreshes about once
-        // per second of audio the device has actually written (B-106), so a
-        // single read is a coin flip on where that window happens to land.
-        let mut samples: Vec<(u64, f32)> = Vec::new();
-        for i in 1..=10u64 {
+        /// A meter peak this far above zero is real signal, not silence.
+        const AUDIBLE: f32 = 0.001;
+        /// How often the warm-up below asks the meter.
+        const WARMUP_POLL_MS: u64 = 200;
+        /// How long it will wait for the device before calling it broken. The
+        /// tone runs to 12 s and the sampling below takes 3.6 s, so this stays
+        /// comfortably inside the material either way.
+        const WARMUP_LIMIT_MS: u64 = 6_000;
+
+        // B-255 / B-397 — WAIT for the device rather than assume how long it
+        // takes. Measured 2026-11-10: first audible is 1200 ms in 38 of 38
+        // runs of this test ALONE (8 plain, 30 under heavy CPU load), and
+        // 3600 ms inside a full `cargo test -p apelles --lib`, where hundreds
+        // of tests and their ffmpeg subprocesses compete for the machine and
+        // the audio device. That 3x is the whole of the intermittent failure
+        // those two entries chased: any fixed sampling grid turns a slow
+        // device start into a red test with nothing wrong in the product.
+        // Note the trigger is the SUITE's contention, not CPU load on its own
+        // — a hunt that loaded the CPU and ran this test alone never saw it.
+        let mut warmup_ms = 0u64;
+        let mut first_peak = 0.0f32;
+        while warmup_ms < WARMUP_LIMIT_MS {
+            thread::sleep(Duration::from_millis(WARMUP_POLL_MS));
+            warmup_ms += WARMUP_POLL_MS;
+            let (_rms, peak) = chroma_audio_level();
+            if peak > AUDIBLE {
+                first_peak = peak;
+                break;
+            }
+        }
+
+        // The guard this test exists for, unchanged in substance: once the
+        // tone HAS been heard, every later window must still carry signal.
+        // These windows all land past several cut boundaries (the first is at
+        // 0.5 s and the clips are 0.5 s each).
+        let mut samples: Vec<(u64, f32)> = vec![(warmup_ms, first_peak)];
+        for i in 1..=6u64 {
             thread::sleep(Duration::from_millis(600));
             let (_rms, peak) = chroma_audio_level();
-            samples.push((i * 600, peak));
+            samples.push((warmup_ms + i * 600, peak));
         }
         chroma_audio_stop(next_test_seq());
         super::super::state::set_project(None);
 
         played.expect("chroma_audio_play");
-        eprintln!("audio_keeps_playing_across_ripple_cut_boundaries: peaks by ms {samples:?}");
-
-        // B-255 / B-397 — anchor to the first window that carries signal, not
-        // to a wall-clock millisecond. Measured over 30 runs under deliberate
-        // load (2026-11-09): the 600 ms sample reads 0.0 on EVERY run and the
-        // meter first comes alive at ~1200 ms, because it refreshes about once
-        // per second of audio the device has actually written (B-106). The old
-        // `ms >= 1800` cut-off therefore sat barely one refresh past a window
-        // that is always silent, while the level margin is ~90x (0.089 against
-        // 0.001) — so a loaded run whose device start-up slips past 1.8 s
-        // failed on a hard 0.0 with nothing wrong in the product. That is the
-        // shape of the intermittent failure those two entries chased.
-        //
-        // The guard the test exists for is unchanged, and is what B-190 broke:
-        // once the tone HAS been heard, every later window must still carry
-        // signal. A run that is loud early and silent from the first boundary
-        // on still fails here.
-        let first_audible = samples
-            .iter()
-            .position(|(_, peak)| *peak > 0.001)
-            .unwrap_or_else(|| {
-                panic!(
-                    "playback never became audible at all in {:.1} s — got {samples:?}. The \
-                     tone runs to 12 s, so some signal must reach the meter.",
-                    samples.len() as f32 * 0.6
-                )
-            });
-        assert!(
-            first_audible <= 4,
-            "playback took more than 3 s to become audible — got {samples:?}. Warm-up is one \
-             meter refresh (~1 s, B-106); this is longer than load alone explains."
+        eprintln!(
+            "audio_keeps_playing_across_ripple_cut_boundaries: first audible at {warmup_ms} ms; \
+             peaks by ms {samples:?}"
         );
-        // The first cut boundary is at 0.5 s and the clips are 0.5 s each, so
-        // every window after the first audible one is past several boundaries.
-        let after: Vec<&(u64, f32)> = samples.iter().skip(first_audible + 1).collect();
+
         assert!(
-            after.iter().all(|(_, peak)| *peak > 0.001),
-            "playback must stay audible across cut boundaries — became audible at \
-             {:?} then got {after:?}. A run that is loud early and silent from the first \
-             boundary on is B-190: the mix loop decided the session was over because every \
-             source it had OPEN was exhausted, without first re-resolving the timeline for \
-             the clip that starts at that very frame.",
-            samples[first_audible]
+            first_peak > AUDIBLE,
+            "playback never became audible within {WARMUP_LIMIT_MS} ms — got {samples:?}. The \
+             tone runs to 12 s, so some signal must reach the meter."
+        );
+        assert!(
+            samples.iter().all(|(_, peak)| *peak > AUDIBLE),
+            "playback must stay audible across cut boundaries — became audible at {warmup_ms} ms \
+             then got {samples:?}. A run that is loud early and silent from the first boundary on \
+             is B-190: the mix loop decided the session was over because every source it had OPEN \
+             was exhausted, without first re-resolving the timeline for the clip that starts at \
+             that very frame."
         );
     }
 
