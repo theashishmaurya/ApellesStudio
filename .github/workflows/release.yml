@@ -133,6 +133,32 @@ jobs:
       # (macOS arm64, v1's one platform); the `url` points at THIS tag's asset
       # while the endpoint in the config points at `releases/latest/download`,
       # so an older app always resolves to the newest manifest.
+      # B-402 — RUN the thing. v0.3.0 shipped a startup panic that every other
+      # check here passed straight over: it compiled, 520 tests passed, the
+      # bundle verified, the DMG built. None of that executes the binary, and
+      # the app died in `tauri::Builder::build()` before a window existed, so
+      # the release was unlaunchable for everyone who downloaded it.
+      #
+      # Deliberately narrow: it fails on a PANIC, not on an early exit, because
+      # a GUI app on a headless runner may legitimately not stay up and a check
+      # that false-fails is a check someone will disable. A startup panic is
+      # exactly the class that shipped, and it is unambiguous in the log.
+      - name: Smoke-test the built app
+        run: |
+          app="target/release/bundle/macos/Apelles.app"
+          "$app/Contents/MacOS/apelles" > smoke.log 2>&1 &
+          pid=$!
+          sleep 25
+          kill $pid 2>/dev/null || true
+          wait $pid 2>/dev/null || true
+          echo "--- first 60 lines of the app's own output ---"
+          head -60 smoke.log || true
+          if grep -qE "panicked at|PluginInitialization|error while building tauri application" smoke.log; then
+            echo "::error::the built app failed at startup — see the output above (B-402)"
+            exit 1
+          fi
+          echo "no startup panic"
+
       - name: Build the update manifest
         if: env.UPDATER == '1'
         run: |

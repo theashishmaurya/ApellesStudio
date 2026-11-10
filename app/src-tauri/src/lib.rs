@@ -1849,11 +1849,18 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
-        // D-458 — the updater. Registered unconditionally; whether it can do
-        // anything depends on `plugins.updater` in the config, so a build
-        // without a public key simply reports that it is not configured
-        // rather than pretending to be up to date.
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        // D-458 — the updater plugin is NOT registered here, and must not be
+        // until `plugins.updater` exists in the config with a real public key.
+        //
+        // B-402: it was, briefly, on the assumption that an unconfigured
+        // updater would simply report itself unconfigured. It does not. The
+        // plugin deserializes `plugins.updater` during initialization, and a
+        // missing block is `invalid type: null, expected struct Config` — a
+        // panic in `Builder::build`, before any window exists. That shipped in
+        // v0.3.0 and made the release unlaunchable for everyone.
+        //
+        // Re-enable it in the SAME commit that adds the config block, and
+        // verify by running the built binary, not by compiling it.
         .plugin(tauri_plugin_shell::init())
         .plugin(PinchZoomDisablePlugin)
         // Apelles never customized the native menu bar before this (owner, live,

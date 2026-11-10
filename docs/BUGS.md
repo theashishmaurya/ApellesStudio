@@ -3,6 +3,26 @@
 Real defects only — in our code or the engine. Not setup/housekeeping. Move to GitHub
 Issues once public.
 
+## B-402 — v0.3.0 could not start at all: an unconfigured updater plugin panicked before any window existed
+
+status: **fixed 2026-11-10 in v0.3.1**, shipped broken in v0.3.1's predecessor · severity: **critical** (the published release was unlaunchable for every user; the app died at startup with no window and, on macOS, no crash report) · area: `app/src-tauri/src/lib.rs` (plugin registration), D-458
+
+- **What a user saw.** Replace v0.2.0 with v0.3.0, launch, nothing. No window, no crash dialog, and no `.ips` in `~/Library/DiagnosticReports` — so from the outside the app simply did not open. Run the binary from a terminal and the reason is immediate:
+
+  ```
+  thread 'main' panicked at app/src-tauri/src/lib.rs:2651:10:
+  error while building tauri application: PluginInitialization("updater",
+    "Error deserializing 'plugins.updater' within your Tauri configuration:
+     invalid type: null, expected struct Config")
+  ```
+
+- **Cause: an assumption written into a comment and never tested.** D-458 registered `tauri_plugin_updater` while deliberately leaving `plugins.updater` out of the config, because the public key was not available yet. The commit said so in as many words — "registered unconditionally; whether it can do anything depends on `plugins.updater` in the config, so a build without a public key simply reports that it is not configured rather than pretending to be up to date". That is not how the plugin behaves: it deserializes its config during `Builder::build()`, and a missing block is a hard error, not an empty one.
+- **Why every check passed.** `cargo check` and `cargo build` compile it; the 520 lib tests never construct the Tauri app; the release workflow verified the BUNDLE — binaries present, Motion pack intact, `CFBundleShortVersionString` correct, code signature valid — and built a DMG whose checksum matched. **Nothing in the pipeline ran the binary.** A panic inside `Builder::build()` is invisible to all of it.
+- **It was flagged and shipped anyway.** The session that released v0.3.0 wrote, twice, that CI verifies contents and not that the app runs, and that nobody had launched the build — then tagged. The missing control was the owner's own blocker 1 (smoke-test the release build), which was skipped.
+- **Fix.** The registration is removed, with the reason beside it: the plugin is not to be registered until the SAME commit adds a real `plugins.updater` block, and that commit must be verified by running the built binary. The rest of D-458 — the bridge binding, the CI signing path, the optional-artifacts logic — is untouched and still correct.
+- **Systemic fix, so this class cannot ship again:** the release workflow now LAUNCHES the built app and fails on `panicked at` / `PluginInitialization` / `error while building tauri application` in its output. Deliberately narrow — it fails on a panic, not on an early exit, because a GUI app on a headless runner may not stay up and a check that false-fails gets disabled.
+- **Verified before release this time**, which is the whole point: the rebuilt binary starts, reaches `motion-runtime Ready` and the sidecar lines, and stays up.
+
 ## B-401 — at 300 clips a move drag occasionally gets NO reply from the frontend for 90 s, and the scenario takes 137 s
 
 status: **open — REPRODUCED and diagnosed 2026-11-10; it is a total frontend freeze, not a lost reply** · severity: high (if this is the app and not the harness, it is a multi-second freeze during an ordinary drag on a real-sized timeline — the opposite of the "snappy at scale" priority this repo puts above everything but correctness) · area: unknown — the control bridge (`chroma::control`), `debug_pointer`, or the Edit tab's drag at scale
