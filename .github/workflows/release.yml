@@ -86,11 +86,20 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set; an update nobody can verify is worse than no updater (D-458)"
-            exit 1
+          # D-458 — the updater is OPTIONAL at release time. With the signing
+          # secret present the build also emits `Apelles.app.tar.gz` + `.sig`
+          # and the job publishes a manifest; without it the release is exactly
+          # what it was before, a DMG people download. What must never happen is
+          # publishing an update nobody can verify, so the choice is made by
+          # whether the secret exists — never by a flag someone can forget.
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "UPDATER=1" >> "$GITHUB_ENV"
+            npm run tauri:build -- --config '{"bundle":{"createUpdaterArtifacts":true}}'
+          else
+            echo "UPDATER=0" >> "$GITHUB_ENV"
+            echo "::notice::TAURI_SIGNING_PRIVATE_KEY is not set — releasing without updater artifacts (D-458)"
+            npm run tauri:build
           fi
-          npm run tauri:build -- --config '{"bundle":{"createUpdaterArtifacts":true}}'
 
       - name: Verify the bundle
         run: |
@@ -125,6 +134,7 @@ jobs:
       # while the endpoint in the config points at `releases/latest/download`,
       # so an older app always resolves to the newest manifest.
       - name: Build the update manifest
+        if: env.UPDATER == '1'
         run: |
           bundle=target/release/bundle/macos
           tar="$bundle/Apelles.app.tar.gz"
@@ -157,8 +167,11 @@ jobs:
           mkdir -p release
           cp "$DMG" release/
           # D-458 — what the installed app downloads, and the manifest it reads.
-          cp target/release/bundle/macos/Apelles.app.tar.gz release/
-          cp latest.json release/
+          # Only when the build was signed; see the build step.
+          if [ "$UPDATER" = "1" ]; then
+            cp target/release/bundle/macos/Apelles.app.tar.gz release/
+            cp latest.json release/
+          fi
           # GPL-3.0 corresponding source for the bundled ffmpeg (D-389).
           curl -fsSLo "release/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
             "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"

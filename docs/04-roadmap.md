@@ -9,9 +9,19 @@ numbers are actually calibrated).
 
 ---
 
-## Next release: v0.4.0, "the Motion release" (owner, 2026-10-27)
+## Released: v0.3.0 (2026-11-10) — and it DOES contain Motion
 
-Owner: *"Lets do it bigger one with Motion, we will take some time to get the motion right, That is the MOAT actually."* No v0.3.0 Edit-only release; everything merged since v0.2.0 ships together in v0.4.0, which is the first beta with the Motion tab. Get Motion right before tagging; no date. Must have:
+**Owner's call, 2026-11-10:** ship v0.3.0 now. Read this before using the list below, because the two framings in this file disagreed and this is how it resolved.
+
+The 2026-10-27 plan was *"Lets do it bigger one with Motion, we will take some time to get the motion right, That is the MOAT actually"* — **no v0.3.0 Edit-only release**, everything shipping together as v0.4.0, the first beta with the Motion tab. Section 00r (2026-11-01) then wrote a v0.3.0 "editor redesign" checklist, and the two sat in this file contradicting each other until a release was actually attempted.
+
+**What shipped:** v0.3.0, WITH Motion — D-417 lifted D-391's hide flag on 2026-10-27, so the Motion tab is in the bundle and was verified in the built app before tagging. So v0.3.0 is in substance the Motion release this section described, under the other number. The items below that are still unticked did NOT block it and remain open for v0.4.0:
+
+- the **Remotion licence** confirmation — the owner is checking it after the fact (2026-11-10); the Free License covers an individual or a for-profit entity with up to 3 employees, which is the expected case;
+- Motion **z-order** (B-308);
+- a full **release-checklist run on the installed app**, which v0.3.0 shipped without.
+
+Original list, kept for its ticks:
 
 - [x] **Motion ships in the bundle:** lift D-391's hide flag, with Motion's render runtime (Node.js + Chrome Headless Shell + the engine) downloaded on demand in the background the first time the Motion tab opens (owner decision recorded with D-391; editing works at once, Export waits). The D-409 component checker needs Node 22.18+. **Built: D-417** (the engine ships as a prebuilt pack, +33 MB to the DMG — measured 146 MB vs 113 MB; shipping it as one archive would make it ~15 MB, an owner call; Node, Chrome Headless Shell and the compositor download, 152 MB; `docs/notes/motion-runtime.md`). Still to do on the installed app: the release checklist's Motion runtime step.
 - [ ] **Remotion licence settled** for the founder-studio business: Remotion is free for individuals and companies of up to 3 people; a larger for-profit company needs a Remotion company licence. Confirm with the owner before tagging.
