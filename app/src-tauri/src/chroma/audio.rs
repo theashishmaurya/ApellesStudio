@@ -1968,16 +1968,47 @@ mod tests {
         played.expect("chroma_audio_play");
         eprintln!("audio_keeps_playing_across_ripple_cut_boundaries: peaks by ms {samples:?}");
 
-        // Everything from 1.8 s on is past several cut boundaries (the first is
-        // at 0.5 s), and the tone runs to 12 s, so every one of these windows
-        // must carry real signal.
-        let late: Vec<&(u64, f32)> = samples.iter().filter(|(ms, _)| *ms >= 1800).collect();
+        // B-255 / B-397 — anchor to the first window that carries signal, not
+        // to a wall-clock millisecond. Measured over 30 runs under deliberate
+        // load (2026-11-09): the 600 ms sample reads 0.0 on EVERY run and the
+        // meter first comes alive at ~1200 ms, because it refreshes about once
+        // per second of audio the device has actually written (B-106). The old
+        // `ms >= 1800` cut-off therefore sat barely one refresh past a window
+        // that is always silent, while the level margin is ~90x (0.089 against
+        // 0.001) — so a loaded run whose device start-up slips past 1.8 s
+        // failed on a hard 0.0 with nothing wrong in the product. That is the
+        // shape of the intermittent failure those two entries chased.
+        //
+        // The guard the test exists for is unchanged, and is what B-190 broke:
+        // once the tone HAS been heard, every later window must still carry
+        // signal. A run that is loud early and silent from the first boundary
+        // on still fails here.
+        let first_audible = samples
+            .iter()
+            .position(|(_, peak)| *peak > 0.001)
+            .unwrap_or_else(|| {
+                panic!(
+                    "playback never became audible at all in {:.1} s — got {samples:?}. The \
+                     tone runs to 12 s, so some signal must reach the meter.",
+                    samples.len() as f32 * 0.6
+                )
+            });
         assert!(
-            late.iter().all(|(_, peak)| *peak > 0.001),
-            "playback must stay audible across cut boundaries — got {late:?}. A run that is \
-             loud early and silent from the first boundary on is B-190: the mix loop decided \
-             the session was over because every source it had OPEN was exhausted, without \
-             first re-resolving the timeline for the clip that starts at that very frame."
+            first_audible <= 4,
+            "playback took more than 3 s to become audible — got {samples:?}. Warm-up is one \
+             meter refresh (~1 s, B-106); this is longer than load alone explains."
+        );
+        // The first cut boundary is at 0.5 s and the clips are 0.5 s each, so
+        // every window after the first audible one is past several boundaries.
+        let after: Vec<&(u64, f32)> = samples.iter().skip(first_audible + 1).collect();
+        assert!(
+            after.iter().all(|(_, peak)| *peak > 0.001),
+            "playback must stay audible across cut boundaries — became audible at \
+             {:?} then got {after:?}. A run that is loud early and silent from the first \
+             boundary on is B-190: the mix loop decided the session was over because every \
+             source it had OPEN was exhausted, without first re-resolving the timeline for \
+             the clip that starts at that very frame.",
+            samples[first_audible]
         );
     }
 
