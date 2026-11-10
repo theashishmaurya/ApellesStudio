@@ -3,6 +3,15 @@
 Real defects only — in our code or the engine. Not setup/housekeeping. Move to GitHub
 Issues once public.
 
+## B-401 — at 300 clips a move drag occasionally gets NO reply from the frontend for 90 s, and the scenario takes 137 s
+
+status: **open, found 2026-11-10** (live, 1 run in 5 on a `tauri build --debug` bundle, machine idle) · severity: medium-high (if this is the app and not the harness, it is a multi-second freeze during an ordinary drag on a real-sized timeline — the opposite of the "snappy at scale" priority this repo puts above everything but correctness) · area: unknown — the control bridge (`chroma::control`), `debug_pointer`, or the Edit tab's drag at scale
+
+- **What happened.** Five back-to-back `perf-300-move-clip` runs, nothing else on the machine. Four passed with `moveMaxMs` 22–35 ms. The third **failed**: `debug_pointer: op 'debug_pointer' got no reply from the frontend within 90s`, the scenario wall-clock 137.8 s against ~15 s for the others, and `0/0 measured steps` — so it never got far enough to measure anything, rather than measuring something slow.
+- **This is NOT B-376.** B-376 is a move drag that spikes to 49–66 ms. This is a 90-second silence. They were found in the same five runs and must not be conflated: B-376 did not reproduce at all here (numbers in `docs/perf/2026-11-10-perf300-after-b379.md`).
+- **Where to look first.** The shape is B-386's: a control-bridge reply lost under load, which D-455 addressed by routing replies and handshakes through commands instead of Tauri events "so none are lost under load". Either that fix does not cover this path, or the frontend genuinely blocked for 90 s. The timeout text itself warns the op may still COMPLETE afterwards, so the state after a failure is worth reading rather than assuming nothing happened.
+- **Not diagnosed.** Logged with its evidence rather than guessed at. The next hunt should loop that one scenario with the app's own log kept, and watch whether the window is responsive during the silence — that distinguishes a lost reply from a real freeze.
+
 ## B-400 — a STILL shot cannot be loaded again after its project is reopened: "the media engine cannot open this file"
 
 status: **open, found 2026-11-10** (live, while verifying B-391) · severity: medium (a still grades fine in the session it was added in, then is permanently unopenable in that project from the next launch on — the Colorist falls back to its "Add or select a shot" empty state with no indication anything failed) · area: the shot restore path on project open (`register_video_shot`), `apelles_media::vt_decode`
@@ -207,7 +216,12 @@ status: **open, in progress** (owner, 2026-11-03: "did we fix the export perform
 
 ## B-376 — the move drag at 300 clips still spikes to 49–66 ms on some runs (before release)
 
-status: open (logged 2026-11-03 at the owner's request, "log them, we will get them back"; after v0.3.0) · severity: low–medium (performance) · baseline: `docs/perf/README.md`
+status: **open — but does not reproduce as of 2026-11-10** · logged 2026-11-03 at the owner's request, "log them, we will get them back"; after v0.3.0 · severity: low–medium (performance) · baseline: `docs/perf/README.md`
+
+- **Five measurements on a `tauri build --debug` bundle, machine idle (2026-11-10): `moveMaxMs` 35, 23, 22, 30, 22** against the 50 ms budget — max 35, median 23, never near the reported 49–66. Full numbers and method in `docs/perf/2026-11-10-perf300-after-b379.md`.
+- **Plausibly already fixed by other work**, neither piece measured against this entry at the time: D-437 S11 (B-374 — the gesture cursor's `[data-chroma-edit-gesture] *` rule restyling all 300 clips) and B-379 (the Inspector remount after every release). Unproven.
+- **Deliberately NOT closed on five clean runs.** B-397 is the precedent, from this same session: an intermittent that stops reproducing is not a mechanism understood, and five runs of a "some runs" bug proves less than it looks. Close it at the next perf pass if it stays away, or on a cause.
+- **Found in those same five runs, and kept separate: B-401** — one run hung with no frontend reply for 90 s. A different defect, not this one.
 
 - the `perf-300-move-clip` move phase: moveMaxMs 49–66 ms on some runs against the 50 ms frame budget; the release itself is fixed (B-374). Suspects (unverified): dnd-kit's own renders during the drag, and the lane re-order. Profile with `debug_perf_entries {traceReleaseMs}` widened to the drag.
 
