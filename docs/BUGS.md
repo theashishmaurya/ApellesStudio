@@ -5,7 +5,7 @@ Issues once public.
 
 ## B-402 — v0.3.0 could not start at all: an unconfigured updater plugin panicked before any window existed
 
-status: **fixed 2026-11-10 in v0.3.1**, shipped broken in v0.3.1's predecessor · severity: **critical** (the published release was unlaunchable for every user; the app died at startup with no window and, on macOS, no crash report) · area: `app/src-tauri/src/lib.rs` (plugin registration), D-458
+status: **fixed 2026-11-10; v0.3.0 re-released with the fix** (the owner's call: the broken build was unusable by definition, so there was no working v0.3.0 to preserve and no reason to burn a version number) · severity: **critical** (the published release was unlaunchable for every user; the app died at startup with no window and, on macOS, no crash report) · area: `app/src-tauri/src/lib.rs` (plugin registration), D-458
 
 - **What a user saw.** Replace v0.2.0 with v0.3.0, launch, nothing. No window, no crash dialog, and no `.ips` in `~/Library/DiagnosticReports` — so from the outside the app simply did not open. Run the binary from a terminal and the reason is immediate:
 
