@@ -206,9 +206,13 @@ status: open (logged 2026-11-03 at the owner's request, "log them, we will get t
 
 ## B-379 — the Inspector re-mounts for the newly selected clip a frame or two after a release (10–20 ms)
 
-status: open (logged 2026-11-03 at the owner's request, "log them, we will get them back"; after v0.3.0) · severity: low–medium (performance) · baseline: `docs/perf/README.md`
+status: **fixed 2026-11-10** (structurally; the ms saving is not yet re-measured live — see below) · logged 2026-11-03 at the owner's request, "log them, we will get them back"; after v0.3.0 · severity: low–medium (performance) · baseline: `docs/perf/README.md`
 
 - measured in D-437 S11: the deferred Inspector mount (S10) lands after the first frame and costs 10–20 ms, including a forced layout from a Base UI component's `scrollIntoViewIfNeeded`. Fix: keep the Inspector mounted and swap its data, and avoid the forced scroll.
+- **The remount had exactly one cause, and it was deliberate.** D-193 put a `key` on `ClipInspectorPanel` keyed by the selected clip ids, purely so that component's own local ratio-lock state reset to the newly-selected clip's default. Everything else about the remount — the tabs, the sections, the Base UI composites and the layout one of them forces on first mount — was collateral.
+- **Fix.** The `key` is gone and the panel's data is swapped instead. The reset moved to whoever owns the state, using React's documented adjust-state-when-a-prop-changes pattern (same render, no effect, no extra commit): `ClipInspectorPanel` resets its ratio lock, and `ClipHighlightsSection` resets the `status`/`busy` of a suggest that belonged to the previous clip. Checked while doing it: `LevelMeter`'s `peakDb` needs no reset at all — it is the whole mix's live output level, not the clip's — so the remount was never doing anything for it.
+- **Tests.** `EditorInspectorPanel.noRemount.dom.test.tsx` (3) pins both halves, which is what makes this safe to keep: the panel element is the IDENTICAL DOM node across a selection change (a `key` change replaced it), and the ratio lock still returns to the new clip's default, including when the first clip is reselected. Full editor suite 3070 passed.
+- **Not done:** the live re-measurement. The structural cost is provably gone, but the 10–20 ms figure came from a 300-clip live profile and has not been re-read, so the saving is inferred rather than measured. Worth folding into the next perf pass with B-376.
 
 ## B-373 — a paused jump on a newly opened timeline did not scroll to the playhead when the previous timeline had just been scrolled by hand (B-359 item 6 follow-up)
 

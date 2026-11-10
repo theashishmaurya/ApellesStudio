@@ -653,12 +653,17 @@ export function EditorInspectorPanel() {
 
   return (
     <ClipInspectorPanel
-      // D-193 — remounts `ClipInspectorPanel` on every new clip selection,
-      // which is what resets that component's own local ratio-lock state
-      // (ephemeral UI state, not a `Clip` field — see that file's own doc)
-      // back to the right default for the newly-selected clip, without
-      // this file having to own or thread that state itself.
-      key={`${selectedClip?.id ?? 'none'}|${audioTarget?.clip.id ?? 'none'}`}
+      // B-379 — NO `key` here, deliberately. D-193 used one to remount
+      // `ClipInspectorPanel` per clip selection, purely so its local
+      // ratio-lock state reset to the new clip's default; that remount cost
+      // 10–20 ms after every release, including a forced layout from a Base
+      // UI composite's first mount. The panel stays mounted now and only its
+      // data is swapped. The two components that hold real per-clip local
+      // state reset it themselves when the shot changes (`ClipInspectorPanel`
+      // the ratio lock, `ClipHighlightsSection` its suggest status) — the
+      // state lives with whoever owns it, instead of being reset by
+      // destroying the whole subtree. `LevelMeter`'s peak needs no reset: it
+      // is the whole mix's live output level, not this clip's.
       clip={selectedClip}
       audioClip={audioTarget?.clip ?? null}
       audioTrack={audioTarget?.track ?? -1}

@@ -521,7 +521,20 @@ export function ClipInspectorPanel({
 }) {
   // D-193 — locked by default for a clip with no independent-axis override
   // yet; ephemeral UI state, reset per clip by the caller's `key={clip.id}`.
-  const [ratioLocked, setRatioLocked] = useState(() => clip?.box_width == null && clip?.box_height == null);
+  // B-379 — this panel is no longer remounted on every new clip selection.
+  // D-193 used a `key` on it for one reason: to reset the ratio lock below to
+  // the newly-selected clip's own default. That remount cost 10–20 ms after
+  // each release, including a forced layout from a Base UI composite's first
+  // mount. React's documented "adjust state when a prop changes" does the same
+  // reset in the same render, with no remount, no effect and no extra frame.
+  const shotIdentity = `${clip?.id ?? 'none'}|${audioClip?.id ?? 'none'}`;
+  const ratioDefault = clip?.box_width == null && clip?.box_height == null;
+  const [ratioLocked, setRatioLocked] = useState(ratioDefault);
+  const [ratioShot, setRatioShot] = useState(shotIdentity);
+  if (ratioShot !== shotIdentity) {
+    setRatioShot(shotIdentity);
+    setRatioLocked(ratioDefault);
+  }
   const setSectionOpen = useEditorTimelineStore((s) => s.setInspectorSectionOpen);
 
   if (!clip) {

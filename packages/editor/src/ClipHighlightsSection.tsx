@@ -66,6 +66,13 @@ export function ClipHighlightsSection() {
   const select = useHighlightEditStore((s) => s.select);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // B-379 — the Inspector is no longer remounted per clip selection, so this
+  // section resets its own per-clip state when the shot changes: a
+  // "suggesting…" status and its busy flag belong to the clip they were
+  // started for and must not carry over to the next one. The hook itself is
+  // unconditional; only the reset below is, which is what React's
+  // adjust-state-on-prop-change pattern prescribes.
+  const [statusShot, setStatusShot] = useState<string | null>(null);
 
   // B-334/D-430 — the picture half of a linked pair, whichever half is selected.
   const picture = canvasTarget(timeline, selection.length === 1 ? selection[0] : null);
@@ -74,6 +81,12 @@ export function ClipHighlightsSection() {
   const clip = found?.clip ?? null;
   const trackLocked = primary ? !!timeline?.tracks[primary.track]?.locked : false;
   if (!primary || !clip || !found) return null;
+
+  if (statusShot !== clip.id) {
+    setStatusShot(clip.id);
+    if (status !== null) setStatus(null);
+    if (busy) setBusy(false);
+  }
 
   const highlights = clip.highlights ?? [];
   const fps = timelineFps(timeline);
