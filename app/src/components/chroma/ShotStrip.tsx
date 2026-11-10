@@ -64,7 +64,15 @@ export default function ShotStrip() {
       fetching.current.add(shot.id);
       invoke<string>('chroma_session_thumbnail', { index: i, height: 96 })
         .then((url) => setThumbs((t) => ({ ...t, [shot.id]: url })))
-        .catch(() => {})
+        // B-399 — a failure here leaves the tile on its spinner forever, so it
+        // must not be swallowed. This is the same silent `.catch` D-121/B-037
+        // already removed from the Edit tab's filmstrip, for the same reason:
+        // a real backend failure (a codec, a missing file, a still with no
+        // video stream) was invisible, and the only symptom a person got was
+        // a thumbnail that never arrived.
+        .catch((e: unknown) => {
+          console.error(`shot thumbnail failed for ${shot.name ?? shot.id}:`, e);
+        })
         .finally(() => fetching.current.delete(shot.id));
     });
   }, [shots, thumbs]);

@@ -212,6 +212,23 @@ pub async fn chroma_session_thumbnail(index: usize, height: Option<u32>) -> Resu
         .ok_or_else(|| format!("shot index {index} out of range"))?
         .clone();
     let h = height.unwrap_or(96);
+    // B-399 — a STILL has no video stream, so the ffmpeg extraction below can
+    // never produce a frame for one: the Colorist's shot strip spun forever on
+    // a `.jpg` while the canvas beside it drew the same file correctly. This is
+    // the same gap B-391 closed for the canvas (`commands.rs`'s
+    // `seek_and_install`) and did not close here. `still::thumbnail` is
+    // documented as the drop-in for exactly this — the same data-URL wire shape
+    // and the same height bound `video::extract_thumb` produces — so nothing
+    // downstream needs a still branch. `spawn_blocking` because decoding a
+    // 6000 px JPEG is real work and must not sit on the async runtime.
+    if apelles_media::still::is_image_file(&shot.path) {
+        let path = shot.path.clone();
+        return tokio::task::spawn_blocking(move || {
+            apelles_media::still::thumbnail(&path, h).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("still thumbnail task for {}: {e}", shot.path.display()))?;
+    }
     // D-334/B-204 — cached and concurrency-bounded. This is called once per
     // shot from the strip's mount effect, so on a 75-clip recut it used to
     // spawn 75 uncached, unbounded 4K `ffmpeg` processes on every open; see
