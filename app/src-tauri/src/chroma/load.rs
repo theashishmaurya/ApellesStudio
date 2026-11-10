@@ -195,3 +195,110 @@ pub fn install_frame(
         is_raw: false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// A `VideoInfo` whose only job is to be ignored: `decode_shot_picture`
+    /// must not read it on the still branch, and these numbers are deliberately
+    /// nothing like the still's own so a test would notice if it did.
+    fn unrelated_info() -> VideoInfo {
+        VideoInfo {
+            resolution: apelles_types::Resolution::new(1920, 1080),
+            fps_num: 25,
+            fps_den: 1,
+            duration_secs: 4.0,
+            frame_count: 100,
+            codec: "hevc".into(),
+            pix_fmt: "yuv420p".into(),
+            color_primaries: String::new(),
+            color_transfer: String::new(),
+            color_space: String::new(),
+            has_audio: false,
+            audio_sample_rate: 0,
+            audio_channels: 0,
+        }
+    }
+
+    fn write_still(dir: &Path, name: &str, w: u32, h: u32) -> PathBuf {
+        let path = dir.join(name);
+        let img = image::RgbImage::from_fn(w, h, |x, _| {
+            if x < w / 2 {
+                image::Rgb([200, 30, 30])
+            } else {
+                image::Rgb([30, 30, 200])
+            }
+        });
+        image::DynamicImage::ImageRgb8(img)
+            .save(&path)
+            .expect("write the test still");
+        path
+    }
+
+    /// **B-391 / B-399 / B-400 — the one that was missing all three times.**
+    ///
+    /// The still branch had to be rediscovered at three separate call sites,
+    /// each by hitting it in the running app, because nothing pinned the
+    /// routing itself. A still must come back as a picture at its OWN size,
+    /// from a `VideoInfo` that says something else entirely — which it can
+    /// only do by never reaching the video decode.
+    #[test]
+    fn a_still_decodes_from_its_own_pixels_and_ignores_the_video_info() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let still = write_still(tmp.path(), "shot.jpg", 640, 400);
+
+        let img =
+            decode_shot_picture(&still, &unrelated_info(), 0, None).expect("a still must decode");
+
+        // Its own 640x400, not the info's 1920x1080.
+        assert_eq!((img.width(), img.height()), (640, 400));
+    }
+
+    /// Every frame of a still is the same picture (D-292 gives one a
+    /// synthesized span), so a frame index far past the info's `frame_count`
+    /// is not an error and not a different picture.
+    #[test]
+    fn a_stills_frame_index_is_ignored_rather_than_mapped() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let still = write_still(tmp.path(), "shot.png", 320, 200);
+
+        let first = decode_shot_picture(&still, &unrelated_info(), 0, None).expect("frame 0");
+        let far = decode_shot_picture(&still, &unrelated_info(), 9_999, None).expect("frame 9999");
+
+        assert_eq!((first.width(), first.height()), (320, 200));
+        assert_eq!(far.to_rgb8().into_raw(), first.to_rgb8().into_raw());
+    }
+
+    /// The caller's target size is honoured on the still branch too — this is
+    /// what lets the Colorist ask for a preview-sized picture of a 6000 px
+    /// still instead of decoding all of it.
+    #[test]
+    fn a_still_honours_the_callers_target_size() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let still = write_still(tmp.path(), "big.jpg", 1200, 800);
+
+        let img = decode_shot_picture(&still, &unrelated_info(), 0, Some((300, 200)))
+            .expect("a scaled still must decode");
+
+        assert_eq!((img.width(), img.height()), (300, 200));
+    }
+
+    /// The branch is taken on the EXTENSION, so a non-image goes to the media
+    /// engine — here a file that is not decodable at all, which must fail as a
+    /// decode rather than be mistaken for a still.
+    #[test]
+    fn a_non_image_extension_goes_to_the_media_engine_not_the_still_path() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let fake = tmp.path().join("clip.mov");
+        std::fs::write(&fake, b"not a real movie").expect("write");
+
+        let err = decode_shot_picture(&fake, &unrelated_info(), 0, None)
+            .expect_err("a bogus .mov must not decode");
+        // The still path's own message names the file it tried to decode; the
+        // engine's does not look like that. Either way it must be an error,
+        // never a silently-substituted picture.
+        assert!(!err.is_empty(), "a failure must say something");
+    }
+}

@@ -5,12 +5,26 @@ Issues once public.
 
 ## B-401 — at 300 clips a move drag occasionally gets NO reply from the frontend for 90 s, and the scenario takes 137 s
 
-status: **open, found 2026-11-10** (live, 1 run in 5 on a `tauri build --debug` bundle, machine idle) · severity: medium-high (if this is the app and not the harness, it is a multi-second freeze during an ordinary drag on a real-sized timeline — the opposite of the "snappy at scale" priority this repo puts above everything but correctness) · area: unknown — the control bridge (`chroma::control`), `debug_pointer`, or the Edit tab's drag at scale
+status: **open — REPRODUCED and diagnosed 2026-11-10; it is a total frontend freeze, not a lost reply** · severity: high (if this is the app and not the harness, it is a multi-second freeze during an ordinary drag on a real-sized timeline — the opposite of the "snappy at scale" priority this repo puts above everything but correctness) · area: unknown — the control bridge (`chroma::control`), `debug_pointer`, or the Edit tab's drag at scale
 
 - **What happened.** Five back-to-back `perf-300-move-clip` runs, nothing else on the machine. Four passed with `moveMaxMs` 22–35 ms. The third **failed**: `debug_pointer: op 'debug_pointer' got no reply from the frontend within 90s`, the scenario wall-clock 137.8 s against ~15 s for the others, and `0/0 measured steps` — so it never got far enough to measure anything, rather than measuring something slow.
 - **This is NOT B-376.** B-376 is a move drag that spikes to 49–66 ms. This is a 90-second silence. They were found in the same five runs and must not be conflated: B-376 did not reproduce at all here (numbers in `docs/perf/2026-11-10-perf300-after-b379.md`).
 - **Where to look first.** The shape is B-386's: a control-bridge reply lost under load, which D-455 addressed by routing replies and handshakes through commands instead of Tauri events "so none are lost under load". Either that fix does not cover this path, or the frontend genuinely blocked for 90 s. The timeout text itself warns the op may still COMPLETE afterwards, so the state after a failure is worth reading rather than assuming nothing happened.
-- **Not diagnosed.** Logged with its evidence rather than guessed at. The next hunt should loop that one scenario with the app's own log kept, and watch whether the window is responsive during the silence — that distinguishes a lost reply from a real freeze.
+- **Reproduced 2026-11-10, and the distinguishing question is answered.** 50 runs of `perf-300-move-clip` on the debug bundle, machine idle, with an INDEPENDENT poller hitting the control bridge once a second throughout — a different client, its own `source: "probe"`, a trivial `editor_get_state` read. Run 15 failed, 185 s.
+- **The app was wedged, not merely deaf to one op.** The poller's timeline across that run (t relative to its start):
+
+  | t | poll | latency |
+  |---|---|---|
+  | +2.1 s | ok | 27 ms |
+  | +9.2 s | **FAIL** | 6051 ms (timeout) |
+  | … 24 more, every ~7 s … | **FAIL** | ~6050 ms each |
+  | +179.4 s | **FAIL** | 6040 ms |
+  | +185.8 s | ok | 5371 ms |
+
+  So from +9 s to +179 s — about **170 seconds** — nothing reached the frontend at all, from any client. It then recovered on its own.
+- **This rules out the entry's own first guess.** It is NOT B-386's shape (a reply lost under load, which D-455 addressed by routing replies through commands): nothing was being lost, because nothing was being answered. The frontend's main thread is blocked for ~170 s and `debug_pointer`'s 90 s timeout is simply the first thing to notice.
+- **Rate depends heavily on machine state.** 1 in 5 when first seen (straight after a full 12-scenario suite and heavy cargo builds), then 0 in 12 and 1 in 50 on an idle machine — about 1 in 60 idle. The original conditions matter, so a hunt on an idle machine understates it.
+- **Still unknown, and this is the next step:** WHAT blocks the main thread. A 185 s scenario against a 3.4 s norm is not a slow path, it is something unbounded — a loop, a lock, or a synchronous wait that only sometimes resolves. The next hunt should attach a sampling profiler (`/usr/bin/sample` on the app pid) the moment the poller starts timing out; the freeze lasts ~3 minutes, which is ample to catch a stack.
 
 ## B-400 — a STILL shot cannot be loaded again after its project is reopened: "the media engine cannot open this file"
 
