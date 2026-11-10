@@ -60,19 +60,25 @@ jobs:
       # The Node the app downloads for Motion (apelles-motion-runtime's pin), so
       # the engine pack's build-time self-test runs the component check on the
       # same Node users get. Any 22.18+ would build it.
+      # No npm cache, deliberately — see the Rust note below.
       - uses: actions/setup-node@v4
         with:
           node-version: 24.22.1
-          cache: npm
-          cache-dependency-path: package-lock.json
 
       # rust-toolchain.toml pins the channel; rustup installs it here.
       - name: Rust toolchain
         run: rustup toolchain install
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: release-macos
+      # NO BUILD CACHE ON A RELEASE (owner, 2026-11-10). A release is published
+      # once and installed by everyone, so it is built from scratch: what ships
+      # is then a function of this commit alone, not of whatever a cache happened
+      # to be holding. Costs roughly 15-25 minutes a release, paid a few times a
+      # year, and removes a whole class of "works in CI, stale in the artifact"
+      # question that is miserable to debug after the fact.
+      #
+      # To be clear about what this does NOT fix: B-402 (v0.3.0 could not start)
+      # was a source bug and would have shipped identically from a cold build.
+      # The control that catches that one is the smoke-test step below.
 
       - run: npm ci
 
