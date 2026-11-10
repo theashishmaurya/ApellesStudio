@@ -100,6 +100,11 @@ ab_glyph = "0.2.32"
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "ndarray", "tracing", "load-dynamic"] }
 ndarray = "0.16"
 tauri-plugin-process = "2.3.1"
+# D-458 — the in-app updater. Checks a signed `latest.json` published by the
+# release workflow and installs the next DMG, so a user is not left on an old
+# build forever. Signature verification is the point: the public key lives in
+# `tauri.conf.json`, the private key only in the release secret.
+tauri-plugin-updater = "2"
 tauri-plugin-os = "2.3.2"
 log = "0.4"
 fern = "0.7"

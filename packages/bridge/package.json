@@ -13,6 +13,7 @@
     "@apelles/beats": "*",
     "@apelles/store": "*",
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-updater": "^2.14.1",
     "react": "^19.2.8",
     "zustand": "^5.0.15"
   },

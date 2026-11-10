@@ -78,6 +78,11 @@ export {
 } from './motionRuntime';
 export type { MotionRuntimeState, MotionRuntimeStatus } from './motionRuntime';
 
+// D-458 — the in-app updater; the only place `@tauri-apps/plugin-updater` is
+// imported, per D-447.
+export { checkForUpdate, clearPendingUpdate, installUpdate } from './appUpdate';
+export type { UpdateCheck, UpdateProgress } from './appUpdate';
+
 export {
   PREVIEW_PLAYHEAD_EVENT,
   WINDOW_FULLSCREEN_EVENT,

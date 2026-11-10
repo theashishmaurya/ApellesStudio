@@ -1849,6 +1849,11 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
+        // D-458 — the updater. Registered unconditionally; whether it can do
+        // anything depends on `plugins.updater` in the config, so a build
+        // without a public key simply reports that it is not configured
+        // rather than pretending to be up to date.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(PinchZoomDisablePlugin)
         // Apelles never customized the native menu bar before this (owner, live,

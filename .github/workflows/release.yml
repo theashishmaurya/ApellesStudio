@@ -76,8 +76,21 @@ jobs:
 
       - run: npm ci
 
+      # D-458 — the updater artifacts (`Apelles.app.tar.gz` + `.sig`) are enabled
+      # HERE, not in the committed config, so a local `npm run tauri:build` still
+      # works for anyone without the signing key. The private key exists only as
+      # this secret; its public half is compiled into the app from
+      # `tauri.conf.json`, and the app refuses an update signed by anything else.
       - name: Build the app and DMG
-        run: npm run tauri:build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set; an update nobody can verify is worse than no updater (D-458)"
+            exit 1
+          fi
+          npm run tauri:build -- --config '{"bundle":{"createUpdaterArtifacts":true}}'
 
       - name: Verify the bundle
         run: |
@@ -107,10 +120,45 @@ jobs:
           du -sh "$app" "$dmg"
           echo "DMG=$dmg" >> "$GITHUB_ENV"
 
+      # D-458 — the update manifest the installed app polls. One platform today
+      # (macOS arm64, v1's one platform); the `url` points at THIS tag's asset
+      # while the endpoint in the config points at `releases/latest/download`,
+      # so an older app always resolves to the newest manifest.
+      - name: Build the update manifest
+        run: |
+          bundle=target/release/bundle/macos
+          tar="$bundle/Apelles.app.tar.gz"
+          test -f "$tar" || { echo "::error::no updater artifact at $tar"; exit 1; }
+          test -f "$tar.sig" || { echo "::error::the updater artifact is unsigned"; exit 1; }
+          node -e '
+            const fs = require("fs");
+            const version = process.env.VERSION;
+            const tag = process.env.GITHUB_REF_NAME;
+            const sig = fs.readFileSync(process.argv[1], "utf8").trim();
+            const notes = fs.existsSync(`docs/releases/${tag}.md`)
+              ? fs.readFileSync(`docs/releases/${tag}.md`, "utf8").split("\n").slice(0, 3).join(" ").trim()
+              : `Apelles ${version}`;
+            fs.writeFileSync("latest.json", JSON.stringify({
+              version,
+              notes,
+              pub_date: new Date().toISOString(),
+              platforms: {
+                "darwin-aarch64": {
+                  signature: sig,
+                  url: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${tag}/Apelles.app.tar.gz`,
+                },
+              },
+            }, null, 2));
+          ' "$tar.sig"
+          cat latest.json
+
       - name: Collect release assets
         run: |
           mkdir -p release
           cp "$DMG" release/
+          # D-458 — what the installed app downloads, and the manifest it reads.
+          cp target/release/bundle/macos/Apelles.app.tar.gz release/
+          cp latest.json release/
           # GPL-3.0 corresponding source for the bundled ffmpeg (D-389).
           curl -fsSLo "release/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
             "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
