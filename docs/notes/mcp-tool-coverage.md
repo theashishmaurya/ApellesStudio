@@ -571,6 +571,21 @@ site (`apelles_ai::ai_env::explain_unreachable`), so the GUI gets the same expla
 and every future AI feature is covered without doing anything. Full contract:
 `docs/notes/ai-env-bootstrap.md`.
 
+## Planned, not built: the in-app agent chat's own surface (D-460, proposed)
+
+`docs/notes/agent-chat.md` designs the chat panel of roadmap 00h. It adds no ops to any
+tab — it is an MCP *client*, like Claude Code in a terminal — but its own surface needs
+three tools of its own, listed here so they are not forgotten on the GUI side:
+`agent_chat_status` (the CLI probe result, provider, model, conversation state;
+read-only), `agent_chat_send` and `agent_chat_get_transcript`.
+
+**And one deliberate asymmetry, the second this document records** (after `editor_scrub`
+above): there is **no MCP tool to approve a tier-2 call** — an export, a render, a delete.
+An approval is the human's by definition; a tool that let an agent approve its own export
+would dissolve the whole permission design it sits inside. The capability an agent gets
+instead is the same one it has today: it can *ask* (`request_human`), and it can read what
+happened (`agent_chat_status`, the activity feed). See D-460 §3 and §8.
+
 ## When shipping something new (going forward)
 
 Before calling a new capability "done," check: does this need an MCP tool, and if
