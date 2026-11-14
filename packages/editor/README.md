@@ -13,6 +13,15 @@ dragging a pool item in from the shell's Sources panel.
   uses `@phosphor-icons/react` icons (D-300); the timeline toolbar (`Scissors`
   split, `Trash` remove) and the empty-state action are `@apelles/ui` `<Button>`s, the toolbar
   buttons wrapped in `@apelles/ui` `<Tooltip>` (D-042).
+- `TimelineToolbar` / `TimelineTrackHeaders` (B-377 / D-461) — the timeline's
+  toolbar row and its left header column, extracted out of `TimelinePane` so
+  that an edit does not re-render them: each subscribes to the store slices it
+  needs (the selection, the track names, the two action gates) and takes only
+  primitives plus a fixed-identity action object (`useStableActions`, the
+  generalised `lanes/useLaneActions`). `TimelineToolbar` also exports the pure
+  gates `linkGate` / `gapGate` / `selectionIsLinked`, which the pane's own
+  actions share so a button and a key press can never disagree. Pinned by
+  `TimelinePane.editRenders.dom.test.tsx` (a render COUNT, not a behaviour).
 - `TimelineSwitcher` (D-046, tab strip D-058, management D-411 Phase 0) — one
   `@apelles/ui` tab per project timeline (D-045's `chroma_timeline_list`),
   switching via `chroma_timeline_set_active`, a `+` tab → `chroma_timeline_create`,
