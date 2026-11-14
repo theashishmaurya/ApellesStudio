@@ -7,7 +7,7 @@
  *      verbatim from `src/data/palette.ts`, which carries the provenance of every
  *      value and the 2025 PLOS ONE analysis they come from.
  *   2. THE PRODUCT (`--app-*`) — the desktop app's own Dark theme, verbatim from
- *      `app/src/utils/themes.ts`. Used ONLY where the site draws the application
+ *      `packages/tokens/src/themes.ts`. Used ONLY where the site draws the application
  *      itself, so a product frame is the app's real colour and not an impression
  *      of it.
  *
@@ -69,15 +69,23 @@
   --danger-inverse: color-mix(in srgb, var(--pigment-terracotta) 65%, var(--pigment-marble) 35%);
 
   /* ------------------------------------------------------------------
-   * THE PRODUCT — verbatim from app/src/utils/themes.ts, Theme.Dark. Only the
-   * six the site actually draws with; adding an unused one would be dead code.
+   * THE PRODUCT — verbatim from the app's own Dark theme, which since D-432 P1
+   * is defined in packages/tokens/src/themes.ts (`cssVariablesFor('dark')`);
+   * app/src/utils/themes.ts only pairs it with its id and splash image. Only
+   * the six the site actually draws with; adding an unused one would be dead
+   * code.
+   *
+   * Refreshed 2026-11-14 (B-404) for D-432's dark-chrome redesign: the greys
+   * warmed very slightly and the accent is no longer white — it is Apelles
+   * terracotta, the same hue as --pigment-terracotta, lifted to #c4502f so it
+   * clears 3:1 on the app's own dark surfaces.
    * ------------------------------------------------------------------ */
-  --app-bg-primary: rgb(24, 24, 24);
-  --app-surface: rgb(28, 28, 28);
-  --app-border-color: rgb(45, 45, 45);
-  --app-text-primary: rgb(232, 234, 237);
-  --app-text-secondary: rgb(158, 158, 158);
-  --app-accent: rgb(255, 255, 255);
+  --app-bg-primary: #1e1e20;
+  --app-surface: #262629;
+  --app-border-color: #333338;
+  --app-text-primary: #ebebf0;
+  --app-text-secondary: #9a9aa3;
+  --app-accent: #c4502f;
 
   /* ------------------------------------------------------------------
    * Type. Three families, each with one job — see src/data/palette.ts for why

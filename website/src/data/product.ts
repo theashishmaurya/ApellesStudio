@@ -38,15 +38,11 @@ export interface Tab {
   } | null;
   /** Said plainly when `shot` is null, so the absence is explained not hidden. */
   readonly shotNote?: string;
-  /**
-   * Set when the room is built but not in the current public build, said plainly
-   * where the room is shown. Motion: left out of the first beta (D-391).
-   */
-  readonly coming?: string;
 }
 
-// Shown in this order everywhere. Motion is last: it is the room not in the
-// first beta (D-391).
+// Shown in this order everywhere: the order a piece of footage moves through
+// the app. Motion is last; it is in the shipped build as of v0.3.0 (B-404 —
+// it used to be the room held out of the first beta, D-391).
 export const TABS: readonly Tab[] = [
   {
     id: 'edit',
@@ -106,9 +102,12 @@ export const TABS: readonly Tab[] = [
     plain:
       'Titles, callouts and graphics that animate — built in the same window as the cut, not exported out of a second app and imported back.',
     shipped: [
-      // Ten as of D-258, not the eight D-255 transcribed: the eight abstract
-      // explainer primitives plus the first two representational ones.
-      'Ten layer primitives — text, emphasis, matrix, graph, layers, particleflow, labelbox, layerstack, plus claudechat and deviceframe',
+      // Fifteen as of D-405, re-counted 2026-11-14 (B-404) against
+      // packages/motion-engine/src/engine/primitiveProps.ts. The line said
+      // "Ten" (the D-258 count) and had not noticed D-405's five
+      // representational primitives — plot, image, icon, shape, counter — or
+      // the `group` container. tests/render.test.ts now re-counts it.
+      'Fifteen layer primitives — text, emphasis, matrix, graph, layers, plot, image, icon, shape, counter, claudechat, deviceframe, and the three-dimensional particleflow, labelbox and layerstack — nestable inside a group container',
       'A multi-scene JSON manifest and compiler, with each scene optionally 3D',
       'A live Remotion player preview with its own transport',
       'On-canvas select, drag, resize, marquee and group-move in world coordinates',
@@ -117,9 +116,14 @@ export const TABS: readonly Tab[] = [
       'Render exports every scene as its own video file, auto-imported back into Sources',
     ],
     shot: null,
+    // Corrected 2026-11-14 (B-404): this said "Motion ships in v0.4.0" and
+    // carried an "Arrives in v0.4.0" badge. v0.3.0 shipped on 2026-11-10 and is
+    // the FIRST release containing Motion (docs/releases/v0.3.0.md,
+    // docs/CHANGELOG.md) — D-417 lifted D-391's hide flag — so the badge was
+    // telling visitors a shipped room was still unreleased. No screenshot is
+    // shown yet, which is a separate call (D-288) and still stands.
     shotNote:
-      'Motion ships in v0.4.0. Its renderer (Node.js and a headless Chrome) is not in the download: the app fetches it in the background the first time you open the Motion tab, and editing works while it does. No screenshot of it is shown until that release is out.',
-    coming: 'Arrives in v0.4.0',
+      'Motion shipped in v0.3.0, the first release to contain it. Its renderer (Node.js and a headless Chrome) is not in the download: the app fetches it in the background the first time you open the Motion tab, and editing works while it does. No screenshot of the room is shown here yet.',
   },
 ];
 
