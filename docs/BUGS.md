@@ -3,6 +3,15 @@
 Real defects only — in our code or the engine. Not setup/housekeeping. Move to GitHub
 Issues once public.
 
+## B-403 — the shot strip's Save-project button is labelled "FloppyDiskIcon project"
+
+status: **open — found 2026-11-14 by reading the file while adding B-399's regression tests; deliberately NOT fixed in that commit** (a test-coverage pass does not change product behaviour) · severity: low (cosmetic, but it is a visible nonsense word on a button in the Colorist, in the one state a new user is most likely to be in: a session that is not yet a project) · area: `app/src/components/chroma/ShotStrip.tsx`
+
+- **What it says.** The button shown while `projectName === 'Untitled'` renders `<FloppyDiskIcon size={12} /> FloppyDiskIcon project` — so the label a person reads is "FloppyDiskIcon project". Its `title` is right ("This session isn't saved as a project yet") and the click handler is right; only the visible text is wrong.
+- **Cause: a rename that ran over the label.** Before D-294 the line was `<Save size={12} /> Save project` (lucide-react). D-294's repo-wide swap to Phosphor renamed the component `Save` → `FloppyDiskIcon`, and the substitution took the WORD "Save" in the label with it. Verified: `git show ab934313^:app/src/components/chroma/ShotStrip.tsx` has "Save project"; the commit itself has "FloppyDiskIcon project".
+- **Scope: this is the only survivor.** Every other `<SomethingIcon … /> Word` label in `app/src` and `packages/*/src` was checked — "Add", "Settings", "Remove", "Import", "Cancel" and the rest are all intact. One line, one word.
+- **Fix (not done).** `FloppyDiskIcon project` → `Save project`. Nothing else in the component changes. Worth a glance at the other D-294 lines in the same commit for the same shape while in there, though the scan above found none.
+
 ## B-402 — v0.3.0 could not start at all: an unconfigured updater plugin panicked before any window existed
 
 status: **fixed 2026-11-10; v0.3.0 re-released with the fix** (the owner's call: the broken build was unusable by definition, so there was no working v0.3.0 to preserve and no reason to burn a version number) · severity: **critical** (the published release was unlaunchable for every user; the app died at startup with no window and, on macOS, no crash report) · area: `app/src-tauri/src/lib.rs` (plugin registration), D-458
