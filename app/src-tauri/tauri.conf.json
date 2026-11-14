@@ -26,10 +26,14 @@
     ],
     "security": {
       "csp": null,
-      "capabilities": ["default"],
+      "capabilities": [
+        "default"
+      ],
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPCACHE/thumbnails/*"]
+        "scope": [
+          "$APPCACHE/thumbnails/*"
+        ]
       }
     },
     "macOSPrivateApi": true
@@ -37,8 +41,17 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
-    "resources": ["resources", "lensfun_db"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "resources",
+      "lensfun_db"
+    ],
     "category": "Photography",
     "fileAssociations": [
       {
@@ -96,5 +109,13 @@
       }
     }
   },
-  "version": "../../package.json"
+  "version": "../../package.json",
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/theashishmaurya/ApellesStudio/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE4Mzk0RkYwMTRGNzZDODAKUldTQWJQY1U4RTg1cUI2Slp3by80MVI5QnMySVZQLzRyZmpXUldCN2lOSWpJUllBeUdGT1hoYkoK"
+    }
+  }
 }

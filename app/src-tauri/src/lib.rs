@@ -1849,18 +1849,21 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
-        // D-458 — the updater plugin is NOT registered here, and must not be
-        // until `plugins.updater` exists in the config with a real public key.
+        // D-458 — the updater. Registered HERE only because `plugins.updater`
+        // exists in `tauri.conf.json` with a real public key; the two must move
+        // together, always.
         //
-        // B-402: it was, briefly, on the assumption that an unconfigured
-        // updater would simply report itself unconfigured. It does not. The
-        // plugin deserializes `plugins.updater` during initialization, and a
-        // missing block is `invalid type: null, expected struct Config` — a
-        // panic in `Builder::build`, before any window exists. That shipped in
-        // v0.3.0 and made the release unlaunchable for everyone.
+        // B-402 is why that sentence is not boilerplate: this was registered
+        // once WITHOUT the config, on the assumption that an unconfigured
+        // updater would report itself unconfigured. It does not — the plugin
+        // deserializes `plugins.updater` during initialization, so a missing
+        // block is `invalid type: null, expected struct Config`, a panic in
+        // `Builder::build` before any window exists. v0.3.0 shipped that way
+        // and was unlaunchable for everyone who downloaded it.
         //
-        // Re-enable it in the SAME commit that adds the config block, and
-        // verify by running the built binary, not by compiling it.
+        // `chroma::startup_contract` now fails the suite if the pair is ever
+        // split again, and the release workflow launches the built app.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(PinchZoomDisablePlugin)
         // Apelles never customized the native menu bar before this (owner, live,
