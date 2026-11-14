@@ -142,7 +142,7 @@ export default function ShotStrip() {
           title="This session isn't saved as a project yet"
           className="shrink-0 self-center flex items-center gap-1.5 px-2 py-1 rounded-md border border-dashed border-accent/60 text-[11px] text-accent hover:bg-accent/10"
         >
-          <FloppyDiskIcon size={12} /> FloppyDiskIcon project
+          <FloppyDiskIcon size={12} /> Save project
         </button>
       )}
       {hasProject && (
