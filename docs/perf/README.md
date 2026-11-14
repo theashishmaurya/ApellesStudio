@@ -43,7 +43,7 @@ Machine: the owner's MacBook (Apple silicon), window 1470×923. The machine load
 The budget (`docs/notes/ui-harness.md`) is ≤ 50 ms for any single frame and ≥ 24 fps paint. These are measured but still short of it, or not yet re-measured:
 
 - **B-376:** the move drag (before release) spikes to 49–66 ms on some runs.
-- **B-377:** the whole `TimelinePane` re-renders on every edit (toolbar, all track headers, lanes): 4–16 ms per edit.
+- **B-377:** the whole `TimelinePane` re-renders on every edit (toolbar, all track headers, lanes): 4–16 ms per edit. **Partly fixed 2026-11-14 (D-461)** — the toolbar and the track headers are off the per-edit path (0 renders, counted; the pane body still subscribes to the timeline). The ms figure is NOT re-measured: that needs a harness run on an idle machine, with B-376.
 - **B-378:** the first preview frame after an app launch takes 1–2 s (ffmpeg/VideoToolbox decoder start-up, about 350–800 ms per new pipe).
 - **B-379:** the Inspector re-mounts for the newly selected clip a frame or two after the release: 10–20 ms, including a forced layout from a Base UI `scrollIntoViewIfNeeded`.
 - **B-375 follow-up:** pinch zoom at 300 clips was 66–109 ms worst frame before the proportional-pinch fix. It is not re-measured since.
