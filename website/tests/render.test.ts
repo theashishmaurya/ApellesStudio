@@ -11,6 +11,8 @@
  * that no section quietly grows a fabricated social-proof claim.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { experimental_AstroContainer as AstroContainer } from 'astro/container';
 import { parseHTML } from 'linkedom';
 
@@ -314,6 +316,65 @@ describe('the rebrand is complete in what actually renders', () => {
     const flat = visible('demo');
     expect(flat).toContain('predate the rename');
     expect(flat).toContain('retaken rather than retouched');
+  });
+});
+
+/**
+ * B-404: the Motion room's shipped list claimed "Ten layer primitives" and
+ * named two the engine has since renamed around, for nine weeks, because no
+ * test ever read the engine. `src/data/mcp.ts` has had that guard since D-255;
+ * `src/data/product.ts` had none, so this is the same guard for the one claim
+ * in it that is a count of something real and countable.
+ */
+describe('the Motion room’s primitive claim is counted from the real engine', () => {
+  /** The leaf primitives, from the engine's own `PRIMITIVE_PROPS` table. */
+  const props = readFileSync(
+    fileURLToPath(
+      new URL('../../packages/motion-engine/src/engine/primitiveProps.ts', import.meta.url),
+    ),
+    'utf8',
+  );
+  const table = props.slice(
+    props.indexOf('export const PRIMITIVE_PROPS'),
+    props.indexOf('} as const', props.indexOf('export const PRIMITIVE_PROPS')),
+  );
+  const primitives = [...table.matchAll(/^ {2}([a-z][a-zA-Z0-9]*):/gm)].map((m) => m[1]);
+
+  const claim = TABS.find((t) => t.id === 'motion')!.shipped.find((s) =>
+    /layer primitives/.test(s),
+  )!;
+
+  it('found the engine’s real primitive table', () => {
+    expect(primitives.length).toBeGreaterThan(5);
+    expect(primitives).toContain('text');
+  });
+
+  it('names every primitive it claims, and no primitive the engine does not have', () => {
+    const NUMBER_WORDS: Record<string, number> = {
+      Ten: 10,
+      Eleven: 11,
+      Twelve: 12,
+      Thirteen: 13,
+      Fourteen: 14,
+      Fifteen: 15,
+      Sixteen: 16,
+      Seventeen: 17,
+      Eighteen: 18,
+      Nineteen: 19,
+      Twenty: 20,
+    };
+    const stated = NUMBER_WORDS[/^(\w+) layer primitives/.exec(claim)![1]];
+    expect(stated, `the claim opens with a number word this test knows: ${claim}`).toBeDefined();
+    expect(stated, 'the stated primitive count has drifted from the engine').toBe(
+      primitives.length,
+    );
+
+    // Every lowercase single word in the sentence that is a primitive-shaped
+    // name must be a real one, so a renamed or removed primitive fails here.
+    const named = primitives.filter((p) => new RegExp(`\\b${p}\\b`).test(claim));
+    expect(named.sort(), 'the claim does not name every primitive it counts').toEqual(
+      [...primitives].sort(),
+    );
   });
 });
 

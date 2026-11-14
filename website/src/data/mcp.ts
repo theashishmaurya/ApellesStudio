@@ -6,8 +6,8 @@
  * Apelles's MCP server, transcribed from real repo sources.
  * What it does NOT do: estimate, round up, or describe a tool that is not in
  * `mcp/server.py`. Every count below was produced by counting `@mcp.tool()`
- * definitions in that file on 2026-09-09, and `verifiedOn` records that date so
- * a future reader knows how stale this page is.
+ * definitions in that file on the date `VERIFIED_ON` carries, which the docs
+ * page prints so a reader knows how stale the numbers are.
  *
  * Re-verify with:
  *   grep -c '^@mcp.tool()' mcp/server.py
@@ -16,7 +16,7 @@
  * media-understanding ones; `motion_*`; `debug_*`; the remainder is Colorist).
  */
 
-export const VERIFIED_ON = '2026-11-03';
+export const VERIFIED_ON = '2026-11-14';
 
 export interface ToolGroup {
   /** Short label used as the group's heading. */
@@ -93,6 +93,12 @@ export interface ToolGroup {
  * `motion_refill_template` and `motion_delete_template` (Motion 52 → 59).
  * Re-counted against the real file.
  *
+ * 276 → 277 on 2026-11-14 (B-404): `editor_duplicate_clip`, the Cmd/Ctrl+D
+ * duplicate (B-394), added without a re-count — so the site published 276 for
+ * ten days while the server had 277 (Edit 123 → 124). Found by this file's own
+ * test, which had been failing for exactly that reason. Re-counted against the
+ * real file, as always.
+ *
  * 275 → 276 on 2026-11-04 (D-453): `editor_cancel_media_conversion`, the
  * cancel for a source's one conversion to optimized media (Edit 122 → 123).
  * Re-counted against the real file.
@@ -165,15 +171,15 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 276,
-  shipped: 257,
+  all: 277,
+  shipped: 258,
   debugOnly: 19,
 } as const;
 
 export const TOOL_GROUPS: readonly ToolGroup[] = [
   {
     name: 'Edit',
-    count: 123,
+    count: 124,
     blurb:
       'The whole multi-track NLE. Browse and organise the media pool, place and trim clips, perform any of the seven edit types at the playhead, roll/slip/slide, manage tracks, key transforms, set transitions, markers, captions and per-clip EQ, then render the timeline to a real file.',
     sample: [

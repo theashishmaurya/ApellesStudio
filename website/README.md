@@ -45,8 +45,11 @@ deliberately outside them:
   desktop build.
 - Its release cadence is different. The site ships when copy changes; the app
   ships when the app ships.
-- Nothing in the site imports app code at runtime. It reads two repo files **at
-  test time only**, to assert it has not drifted from them (see below).
+- Nothing in the site imports app code at runtime. Its tests read several repo
+  sources **at test time only**, to assert the site has not drifted from them:
+  `packages/tokens` (the app's theme values), `mcp/server.py` and
+  `app/src-tauri/src/chroma/control.rs` (the MCP surface and its error text), and
+  `packages/motion-engine` (the primitive catalog) — see below.
 
 It is a sibling directory, matching the monorepo's existing convention of
 top-level directories that are their own thing (`ai/`, `ai-media/`, `mcp/`,
@@ -63,12 +66,15 @@ with the 2025 PLOS ONE analysis those claims rest on cited in the file and
 printed in the site's own footer.
 
 `src/styles/tokens.css` transcribes that file, and separately carries the six
-`--app-*` tokens the site draws the **product** with, verbatim from
-`app/src/utils/themes.ts`. Those are used only inside a `.frame` — the one place
-the site is allowed to be dark, because that is the application's own window
-colour.
+`--app-*` tokens the site draws the **product** with, verbatim from the app's own
+Dark theme — which since D-432 P1 is defined in `packages/tokens/src/themes.ts`
+(`cssVariablesFor('dark')`), not in `app/src/utils/themes.ts`. Those are used only
+inside a `.frame` — the one place the site is allowed to be dark, because that is
+the application's own window colour.
 
-`tests/palette.test.ts` reads both real files and fails on any drift, on any
+`tests/palette.test.ts` reads both real sources — it calls `cssVariablesFor('dark')`
+itself, rather than scraping values out of a file, which is what B-404 fixed — and
+fails on any drift, on any
 colour literal in a component that did not come through a token, on an `--app-*`
 token that is declared but never used, and on either of the two "safe" default
 typefaces appearing anywhere.
@@ -76,12 +82,15 @@ typefaces appearing anywhere.
 ### One signature, spent once
 
 In the mosaic, the Portugal pink was used on Alexander's face alone, out of
-roughly two million tesserae. `--pigment-rose` is spent the same way: it is
-referenced by exactly one CSS rule (`.signature` in `global.css`), emitted by
-exactly one component (`Signature.astro`), and rendered at most once per page —
-on the single action that page exists for. All three are asserted by tests, in
-`palette.test.ts` and `build-output.test.ts`, because a signature colour used
-twice has stopped being a signature.
+roughly two million tesserae. D-264 spent `--pigment-rose` the same way; D-284
+retired the pigment (see `src/data/palette.ts`'s own header for why ink, already
+this page's dominant colour, cannot be "spent once" like a scarce one) and kept
+the discipline that outlived it. The site's one primary action is a solid
+`--pigment-basalt` fill that is referenced by exactly one CSS rule (`.signature`
+in `global.css`), emitted by exactly one component (`Signature.astro`), and
+rendered at most once per page — on the single action that page exists for. All
+three are asserted by tests, in `palette.test.ts` and `build-output.test.ts`,
+because a signature treatment used twice has stopped being a signature.
 
 ### No claim the repo does not back up
 

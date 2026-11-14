@@ -24,6 +24,13 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PIGMENTS, TYPEFACES, BANNED_TYPEFACES, SOURCE } from '../src/data/palette.ts';
+// The app's token VALUES, from the one file that defines them (D-432 P1 moved
+// them out of app/src/utils/themes.ts into @apelles/tokens). Imported by
+// relative path, not by package name, because this site is deliberately not a
+// member of the repo's npm workspace — same arrangement as the repo files this
+// suite already reads from disk, and test-time only: nothing the site ships
+// imports app code (website/README.md).
+import { cssVariablesFor } from '../../packages/tokens/src/themes.ts';
 
 const abs = (rel: string) => fileURLToPath(new URL(rel, import.meta.url));
 const read = (rel: string) => readFileSync(abs(rel), 'utf8');
@@ -91,19 +98,37 @@ describe('the brand palette is exactly the documented one', () => {
 });
 
 describe('the product tokens are still the real app theme', () => {
-  /** Pull the app's Dark theme block out of themes.ts. */
-  const app: Record<string, string> = {};
-  {
-    const start = themes.indexOf('id: Theme.Dark');
-    expect(start, 'themes.ts should still declare a Dark theme').toBeGreaterThan(-1);
-    const block = themes.slice(start, themes.indexOf('},', themes.indexOf('cssVariables', start)));
-    for (const m of block.matchAll(/'(--app-[a-z-]+)':\s*'([^']+)'/g)) app[m[1]] = m[2];
-  }
+  /**
+   * The app's own Dark theme, from the one place its values are defined. Not
+   * re-derived here: this calls the very function `app/src/utils/themes.ts`
+   * calls, so what is compared is literally what the running app writes onto
+   * `:root`, keyed by the same `--app-*` names.
+   *
+   * B-404: this used to regex `--app-*: '…'` string literals out of
+   * `app/src/utils/themes.ts`. D-432 P1 moved the values into `@apelles/tokens`
+   * and left that file holding only `cssVariablesFor('dark')`, so the regex
+   * matched nothing, every comparison became `undefined`, and seven tests sat
+   * red — while the real drift they existed to catch (the app's whole dark
+   * chrome was redesigned, accent white → terracotta) went unreported.
+   */
+  const app = cssVariablesFor('dark');
 
   const declared = Object.entries(site).filter(([k]) => k.startsWith('--app-'));
 
   it('reads the app’s real dark theme', () => {
     expect(Object.keys(app).length).toBeGreaterThanOrEqual(10);
+  });
+
+  /**
+   * The chain the site's claim rests on: the app's theme table must still take
+   * its Dark values from this same function. If a later refactor moves them
+   * again, this fails here — loudly — instead of silently comparing the site
+   * against a token source the app has stopped using.
+   */
+  it('the app really dresses its Dark theme from this token source', () => {
+    expect(themes).toContain("from '@apelles/tokens'");
+    expect(themes).toMatch(/id:\s*Theme\.Dark/);
+    expect(themes).toMatch(/cssVariables:\s*cssVariablesFor\('dark'\)/);
   });
 
   it('declares only the app tokens it actually draws with — no dead tokens', () => {
@@ -118,7 +143,7 @@ describe('the product tokens are still the real app theme', () => {
 
   it.each(
     Object.entries(declarations(tokens)).filter(([k]) => k.startsWith('--app-')),
-  )('%s matches app/src/utils/themes.ts exactly', (name, value) => {
+  )('%s matches the app’s own dark theme exactly', (name, value) => {
     expect(app[name], `${name} has drifted from the app's own Dark theme`).toBe(value);
   });
 });
