@@ -9,7 +9,10 @@ the GitHub Release. This file is the checklist around it.
 1. Bump `"version"` in the root `package.json` (and `package-lock.json`'s two
    root entries). The app bundle takes its version from there (D-388).
 2. Write `docs/releases/v<version>.md`: the release notes, used verbatim as
-   the GitHub Release body. The workflow refuses to run without it.
+   the GitHub Release body. The workflow refuses to run without it. The
+   website's `/changelog/` page renders the same file (D-459), so this is the
+   only place the release is described for users — write it for them, and
+   nothing more is needed to publish it.
 3. In `docs/CHANGELOG.md`, turn `[Unreleased]` into `[<version>] — <date>`
    and open a fresh `[Unreleased]` above it.
 4. Run the checks the hosted runner cannot (parts need a GPU or the live app):

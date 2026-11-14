@@ -18,6 +18,7 @@
     "verify": "npm run check && npm run build && npm run test"
   },
   "dependencies": {
+    "@astrojs/markdown-remark": "6.3.9",
     "@astrojs/sitemap": "^3.7.4",
     "astro": "5.16.2"
   },

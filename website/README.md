@@ -133,10 +133,13 @@ Formspree (D-255).
 website/
   astro.config.mjs      site config; static output
   src/
+    content.config.ts   the `releases` collection: docs/releases/v*.md (D-459)
+    md/release-notes.ts the rehype pass that fits a release note under the page's own headings
     data/               the real, tested facts the site publishes
       palette.ts        the brand palette + its provenance and citation
       mcp.ts            tool counts, names and gaps, verified against mcp/server.py
       product.ts        per-room shipped features, the differentiation, the limits
+      releases.ts       each release's version, date (from the tag) and GitHub URL
       beta.ts           the signup endpoint, its validation and the roles (shared with functions/)
     layouts/Base.astro  head, fonts, nav, footer
     components/         one file per section, plus Signature and PageHead
@@ -144,6 +147,7 @@ website/
       index.astro       home — the promise, the demonstration, the ask
       who-its-for.astro the full differentiation argument
       inside.astro      what each of the three rooms really does
+      changelog.astro   every release, newest first, from docs/releases/
       docs/mcp.astro    connecting an agent (the one technical page)
       404.astro
     styles/
@@ -167,9 +171,10 @@ website/
 | `beta.test.ts` | email validation, the endpoint, and the role ordering |
 | `waitlist.test.ts` | the waitlist handlers over real SQLite (the real migration) and a mocked Resend: signup, honeypot, no-leak duplicates, throttle, confirm, unsubscribe, Resend contact sync and its failure handling |
 | `render.test.ts` | every section renders; the headline is benefit-led and under 30 words; the demonstration is genuinely interactive; the differentiation names the tools it names; the honest gaps survive; no fabricated social proof; no stray old-brand text |
+| `changelog.test.ts` | runs over `dist/`: every `docs/releases/v*.md` has a section and none is invented, newest-first, the dates and the `releases/tag/` links are real, each note's own headings survive, the README is not published as a release, and no internal `D-NNN`/`B-NNN` shorthand leaks |
 | `build-output.test.ts` | runs over `dist/`: every route built, no broken internal links or anchors, no missing images, one `h1` per page, at most one signature per page, no `TODO` or `console.*` in shipped output |
 
-`build-output.test.ts` needs `dist/` to exist. `npm run verify` builds first;
+`build-output.test.ts` and `changelog.test.ts` need `dist/` to exist. `npm run verify` builds first;
 running `npm run test` alone on a clean checkout will tell you to build.
 
 ## Deployment

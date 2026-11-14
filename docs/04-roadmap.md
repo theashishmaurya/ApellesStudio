@@ -4246,8 +4246,11 @@ the two items that do **not** depend on the unresolved D-002 licensing question.
 Still open on it: no demo video (`website/TODO-DEMO-VIDEO.md`), the four
 screenshots predate the rename and need retaking
 (`website/TODO-RECAPTURE-SHOTS.md`), no domain or deployment, no download links
-(they wait on real installers), no public changelog page, and no
-Motion/Colorist screenshots (none have ever been captured). The beta-signup
+(they wait on real installers), and no
+Motion/Colorist screenshots (none have ever been captured). The public
+changelog is **no longer open** — `/changelog/` ships (D-459, 2026-11-14),
+built at build time from `docs/releases/v*.md`, so a new release note puts
+itself on the site. The beta-signup
 form itself is **not** open anymore — it moved off the Formspree placeholder to
 the site's own waitlist (D1 + Resend, D-426, 2026-10-29; FormSubmit.co before that) (`website/BETA_SIGNUP_SETUP.md`). Abuse protection (Turnstile, blocklist, quota caps + drain Worker, D-427) is in; the owner steps to switch it on are in that file.
 
