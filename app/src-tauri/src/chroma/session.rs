@@ -319,3 +319,56 @@ async fn decode_and_install(
         state,
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **B-391's second half, as a wire contract.**
+    ///
+    /// `list_shots` reported 1920x1080 for all 17 shots of a 1080p timeline
+    /// whatever the files really were (6000x3730 for the mosaic still, 480x360
+    /// for the Méliès, 1360x1072 for the Potemkin), because the only size on
+    /// the wire was `display_info`'s — the COMPOSED frame, which is the right
+    /// answer for what the Colorist draws and the wrong one for an agent
+    /// sizing a crop. The fix put the source's own pixels beside it. Nothing
+    /// pinned them, and a field that quietly leaves a DTO is invisible to the
+    /// rest of this suite.
+    ///
+    /// Honest limit: this pins the CONTRACT — four independent numbers, under
+    /// the four names both MCP servers document — not the project-resolved
+    /// path, which needs a real open project on disk for `resolve_for` to read
+    /// (`colorist_view`'s own tests cover `display_info_for` directly instead).
+    #[test]
+    fn a_shot_reports_its_sources_own_pixels_beside_the_composed_frames() {
+        let dto = ShotDto {
+            path: "/footage/alexander-mosaic-6000.jpg".into(),
+            clip_id: Some("c1".into()),
+            name: "alexander-mosaic-6000.jpg".into(),
+            // what the Colorist draws
+            resolution: apelles_types::Resolution::new(1920, 1080),
+            // what the file is
+            source_width: 6000,
+            source_height: 3730,
+            fps: 25.0,
+            frame_count: 75,
+            duration_secs: 3.0,
+            frame: 0,
+            codec: "mjpeg".into(),
+            color_space: String::new(),
+        };
+
+        let json = serde_json::to_value(&dto).expect("a ShotDto must serialize");
+
+        // The composed frame, flattened as `width`/`height` (D-053).
+        assert_eq!(json["width"], 1920);
+        assert_eq!(json["height"], 1080);
+        // The source's own pixels, which used to be absent entirely.
+        assert_eq!(
+            json["sourceWidth"], 6000,
+            "the source's width must be on the wire under this exact name — both MCP \
+             servers' `list_shots` descriptions tell a caller to size a crop from it"
+        );
+        assert_eq!(json["sourceHeight"], 3730);
+    }
+}

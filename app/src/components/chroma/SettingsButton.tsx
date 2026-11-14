@@ -12,7 +12,9 @@
  * understanding, Settings → Processing) unreachable in practice.
  *
  * What it does NOT do: own the panel or its state. The flag lives in
- * `useUIStore` and the panel is rendered by `App.tsx`; this only sets the flag,
+ * `useUIStore` and the panel is rendered by `SettingsOverlay`, from `Root.tsx`
+ * above the tabs (it used to render inside the Colorist tab's container in
+ * `App.tsx`, which is half of why it was unreachable); this only sets the flag,
  * so the button, the keyboard shortcut and the native menu all open the same
  * one thing.
  */
