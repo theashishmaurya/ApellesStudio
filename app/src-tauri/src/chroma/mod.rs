@@ -225,6 +225,11 @@ mod scrub_bench;
 pub mod session;
 pub mod sidecar;
 pub mod speech;
+/// B-402 — the static guard over plugin registration vs. its config. Test-only
+/// by design: it has no runtime job, it exists so a build that cannot start
+/// fails `cargo test` instead of a user's launch.
+#[cfg(test)]
+mod startup_contract;
 pub mod state;
 pub mod subtitles;
 pub mod text;
