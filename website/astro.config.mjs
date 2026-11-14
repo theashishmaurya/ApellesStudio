@@ -1,7 +1,9 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
+import { rehypeHeadingIds } from '@astrojs/markdown-remark';
 import sitemap from '@astrojs/sitemap';
 import { serialize } from './src/seo/sitemap.ts';
+import { rehypeReleaseNotes } from './src/md/release-notes.ts';
 
 /**
  * Apelles's marketing + docs website (D-255, rebuilt under the new brand by
@@ -33,6 +35,19 @@ export default defineConfig({
       serialize: (item) => serialize(item, SITE),
     }),
   ],
+  markdown: {
+    // The only markdown this site renders is the release notes in
+    // `docs/releases/`, published by `/changelog/` (D-459). This plugin makes a
+    // document written to stand alone sit inside a page that already has an h1
+    // and a per-release h2; it no-ops on anything that is not a release note.
+    //
+    // `rehypeHeadingIds` is Astro's own pass, listed explicitly because Astro
+    // otherwise runs it AFTER the user's plugins — which would hand two
+    // releases the same `id="download"`. Running it first means the ids exist
+    // for `rehypeReleaseNotes` to namespace by version, and Astro's own run
+    // leaves a heading that already has an id alone.
+    rehypePlugins: [rehypeHeadingIds, rehypeReleaseNotes],
+  },
   build: {
     // One stylesheet, inlined — the whole site's CSS is a few KB and a separate
     // request costs more than it saves.

@@ -1,0 +1,269 @@
+---
+/**
+ * changelog.astro — every Apelles release, newest first (D-459).
+ *
+ * What it is: the public release history, rendered at build time from the
+ * `releases` content collection — i.e. from `docs/releases/vX.Y.Z.md`, the files
+ * the release workflow already publishes verbatim as each GitHub Release body.
+ * Nothing on this page is retyped: the version comes from the file name, the
+ * date from git (`src/data/releases.ts`), the body from the file. Writing the
+ * notes for the next release is the only step that puts it here.
+ * What it does NOT do: publish `docs/CHANGELOG.md`. That is the internal
+ * engineering log, written in `D-NNN`/`B-NNN` shorthand for whoever is next in
+ * the code — see D-459 for why the user-facing notes are the source instead.
+ */
+import { getCollection, render } from 'astro:content';
+
+import Base from '../layouts/Base.astro';
+import PageHead from '../components/PageHead.astro';
+import { REPO, formatDate, newestFirst, parseVersion, releaseDate, releaseUrl } from '../data/releases.ts';
+
+const entries = (await getCollection('releases'))
+  .filter((entry) => parseVersion(entry.id) !== null)
+  .sort((a, b) => newestFirst(a.id, b.id));
+
+const releases = await Promise.all(
+  entries.map(async (entry) => {
+    const { Content } = await render(entry);
+    const date = releaseDate(entry.id);
+    return {
+      /** `v0.3.0` — the tag, the file name and the anchor all come from this. */
+      version: entry.id,
+      /** `0.3.0`, for the heading: the page is already about versions. */
+      number: entry.id.replace(/^v/, ''),
+      anchor: entry.id.replace(/\./g, '-'),
+      iso: date.toISOString().slice(0, 10),
+      date: formatDate(date),
+      url: releaseUrl(entry.id),
+      Content,
+    };
+  }),
+);
+
+const latest = releases[0];
+---
+
+<Base
+  title="Changelog — Apelles"
+  description={`Every Apelles release and what changed in it, newest first${
+    latest ? `, from ${latest.number} on ${latest.date} back to the first beta` : ''
+  }.`}
+>
+  <PageHead
+    eyebrow="Releases"
+    title="Changelog"
+    lede="What changed in each build, in the words the release itself shipped with. Every version is still downloadable from GitHub; the install guide covers the one unusual step on first launch."
+  />
+
+  <div class="shell layout">
+    <nav class="toc" aria-label="Releases">
+      <p class="eyebrow">Versions</p>
+      {
+        releases.map((r) => (
+          <a href={`#${r.anchor}`}>
+            {r.number} <span class="when">{r.iso}</span>
+          </a>
+        ))
+      }
+      <p class="aside">
+        <a href={`${REPO}/releases`}>All downloads on GitHub</a>
+        <a href="/install/">How to install</a>
+      </p>
+    </nav>
+
+    <div class="prose">
+      {
+        releases.map((r) => (
+          <section id={r.anchor} class="rel">
+            <header class="relhd">
+              <h2>{r.number}</h2>
+              <p class="meta">
+                <time datetime={r.iso}>{r.date}</time>
+                <a class="tag" href={r.url}>Release notes and downloads on GitHub</a>
+              </p>
+            </header>
+            <div class="body">
+              <r.Content />
+            </div>
+          </section>
+        ))
+      }
+    </div>
+  </div>
+</Base>
+
+<style>
+  /* The same two-column reading layout the documentation page uses: a sticky
+     index of the thing being listed, and one measured prose column. */
+  .layout {
+    display: grid;
+    grid-template-columns: 200px minmax(0, 1fr);
+    gap: clamp(2rem, 1rem + 4vw, 5rem);
+    padding-top: 3rem;
+    padding-bottom: 5rem;
+    align-items: start;
+  }
+
+  .toc {
+    position: sticky;
+    top: 86px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    align-items: start;
+  }
+  .toc .eyebrow {
+    margin-bottom: 0.35rem;
+  }
+  .toc a {
+    font-family: var(--font-ui);
+    font-size: var(--step--1);
+    color: var(--pigment-basalt-soft);
+    transition: color var(--dur-fast) var(--ease-out);
+  }
+  .toc a:hover {
+    color: var(--pigment-terracotta);
+  }
+  .when {
+    font-family: var(--font-mono);
+    font-size: var(--step--2);
+    color: var(--pigment-basalt-soft);
+    font-variant-numeric: tabular-nums;
+  }
+  .aside {
+    margin-top: 1.1rem;
+    padding-top: 1.1rem;
+    border-top: 1px solid var(--edge);
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    align-items: start;
+  }
+
+  .prose {
+    max-width: 72ch;
+  }
+
+  .rel + .rel {
+    margin-top: 4rem;
+  }
+
+  /* Everything on this page is reached by an anchor, and the nav island is
+     fixed — without this, jumping to a release lands its heading underneath
+     the bar. 86px is the island's own height plus its inset, the same figure
+     the sticky index above is offset by. */
+  .rel,
+  .body :global(h3),
+  .body :global(h4) {
+    scroll-margin-top: 86px;
+  }
+
+  .relhd {
+    padding-bottom: 0.9rem;
+    border-bottom: 1px solid var(--edge);
+    margin-bottom: 1.5rem;
+  }
+
+  .relhd h2 {
+    font-size: var(--step-3);
+    font-weight: 300;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .meta {
+    margin-top: 0.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.1rem;
+    align-items: baseline;
+    font-family: var(--font-ui);
+    font-size: var(--step--1);
+    color: var(--pigment-basalt-soft);
+  }
+  .meta .tag {
+    color: var(--pigment-terracotta);
+  }
+  .meta .tag:hover {
+    text-decoration: underline;
+  }
+
+  /* The release body is markdown rendered by Astro, so it carries no scoped
+     class of ours — every rule below has to reach it with :global. The headings
+     inside it have already been shifted down a level and had their ids
+     namespaced by src/md/release-notes.ts, so a release's own "## Download"
+     lands here as an h3 and cannot collide with another release's. */
+  .body :global(h3) {
+    font-size: var(--step-2);
+    margin: 2.25rem 0 0.9rem;
+  }
+  .body :global(h4) {
+    font-size: var(--step-1);
+    margin: 1.75rem 0 0.75rem;
+  }
+  .body :global(p) {
+    color: var(--pigment-basalt-soft);
+    margin-bottom: 1rem;
+  }
+  .body :global(strong) {
+    color: var(--pigment-basalt);
+    font-weight: 500;
+  }
+  .body :global(a) {
+    color: var(--pigment-terracotta);
+  }
+  .body :global(a:hover) {
+    text-decoration: underline;
+  }
+  .body :global(ul) {
+    list-style: none;
+    margin: 0 0 1.25rem;
+    padding: 0;
+    display: grid;
+    gap: 0.75rem;
+  }
+  .body :global(li) {
+    position: relative;
+    padding-left: 1.15rem;
+    color: var(--pigment-basalt-soft);
+    line-height: 1.7;
+  }
+  /* The same ochre marker the documentation page sets its lists with. */
+  .body :global(li)::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.62em;
+    width: 5px;
+    height: 5px;
+    border-radius: 1px;
+    background: var(--pigment-ochre);
+  }
+  .body :global(code) {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    color: var(--pigment-terracotta);
+  }
+  .body :global(em) {
+    font-style: italic;
+  }
+
+  @media (max-width: 880px) {
+    .layout {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .toc {
+      position: static;
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 0.75rem 1.25rem;
+    }
+    .toc .eyebrow {
+      width: 100%;
+    }
+    .aside {
+      width: 100%;
+      flex-direction: row;
+      gap: 1.25rem;
+    }
+  }
+</style>

@@ -1,9 +1,9 @@
 ---
 /**
  * Nav.astro — the top bar (D-264; mark updated D-267; island treatment D-283;
- * "Connect an agent" removed D-288).
+ * "Connect an agent" removed D-288; `/changelog/` added D-459).
  *
- * What it is: a wordmark, two destinations, and one quiet action, floating
+ * What it is: a wordmark, three destinations, and one quiet action, floating
  * as a self-contained rounded island inset from the viewport edges rather
  * than a bar flush to them — real weight of its own (rounded corners, a
  * shadow, a hairline border) so it reads over any page, including the home
@@ -19,6 +19,7 @@
 const links = [
   { href: '/inside/', label: 'Inside Apelles' },
   { href: '/who-its-for/', label: 'Who it’s for' },
+  { href: '/changelog/', label: 'Changelog' },
 ];
 
 const path = Astro.url.pathname;
